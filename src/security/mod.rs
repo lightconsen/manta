@@ -1430,3 +1430,6 @@ mod header_tests {
         assert_eq!(headers.headers().get("X-Custom"), Some(&"value".to_string()));
     }
 }
+
+/// Security audit module
+pub mod audit;
