@@ -3,7 +3,9 @@
 //! This module contains shared utilities used across the application.
 
 pub mod logging;
+pub mod pool;
 pub mod profiling;
 
 pub use logging::init_logging;
-pub use profiling::{Profiler, PerformanceReport, TimerStats, MemoryStats};
+pub use pool::{ConnectionPoolManager, HttpClientPool, PoolConfig, global_manager, global_pool};
+pub use profiling::{MemoryStats, PerformanceReport, Profiler, TimerStats};
