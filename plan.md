@@ -346,7 +346,145 @@ pub struct ScheduledJob {
 - **File-Based Locking**: Prevents concurrent execution
 - **Output Mirroring**: Job results delivered to configured channels
 
-#### 7.10 Autonomy Architecture Updates
+#### 7.10 Persistent Assistant Spawning
+
+Manta can create and manage other specialized Personal AI Assistants, each with their own identity, memory, and capabilities.
+
+```rust
+pub struct AssistantSpawner;
+
+pub struct PersistentAssistant {
+    pub id: String,
+    pub name: String,
+    pub specialization: AssistantType,
+    pub system_prompt: String,
+    pub memory: AssistantMemory,
+    pub channels: Vec<ChannelConfig>,
+    pub parent_id: Option<String>, // Manta's ID if spawned by Manta
+}
+
+pub enum AssistantType {
+    Researcher,      // Deep research, analysis
+    CodeReviewer,    // Code review, PR analysis
+    Scheduler,       // Calendar, reminders, time management
+    Social,          // Different persona/tone for social channels
+    Specialist(String), // Custom specialization
+}
+
+impl AssistantSpawner {
+    /// Spawn a new persistent assistant
+    pub async fn spawn(
+        &self,
+        config: AssistantConfig,
+    ) -> Result<PersistentAssistant>;
+
+    /// List all managed assistants
+    pub async fn list_assistants(&self) -> Vec<PersistentAssistant>;
+
+    /// Send message to a specific assistant
+    pub async fn message_assistant(
+        &self,
+        assistant_id: &str,
+        message: &str,
+    ) -> Result<String>;
+
+    /// Terminate an assistant
+    pub async fn terminate(&self, assistant_id: &str) -> Result<()>;
+}
+```
+
+**Why Spawn Separate Assistants?**
+
+| Reason | Benefit |
+|--------|---------|
+| **Isolation** | One assistant crashing doesn't affect others |
+| **Specialization** | Different system prompts, tools, memory per role |
+| **Resource Management** | Limit resources per assistant |
+| **Privacy** | Sensitive data isolated to specific assistants |
+| **Scaling** | Distribute load across multiple instances |
+
+**Assistant Lifecycle:**
+
+```
+1. Manta decides to spawn specialized assistant
+   ↓
+2. Generate configuration (name, specialization, channels)
+   ↓
+3. Create isolated environment (separate DB, memory, config)
+   ↓
+4. Start assistant process/container
+   ↓
+5. Monitor and manage (restart if crashed, update config)
+   ↓
+6. Can terminate or upgrade independently
+```
+
+**Communication Between Assistants:**
+
+```rust
+pub struct AssistantMesh;
+
+impl AssistantMesh {
+    /// Route message between assistants
+    pub async fn route(
+        &self,
+        from: &str,
+        to: &str,
+        message: &str,
+    ) -> Result<String>;
+
+    /// Broadcast to all assistants
+    pub async fn broadcast(&self, message: &str) -> Vec<Result<String>>;
+}
+```
+
+**Example Use Cases:**
+
+```rust
+// Spawn a research assistant
+let researcher = spawner.spawn(AssistantConfig {
+    name: "ResearchBot".to_string(),
+    specialization: AssistantType::Researcher,
+    channels: vec![ChannelConfig::telegram("@research_bot")],
+    system_prompt: "You are a deep research assistant...".to_string(),
+}).await?;
+
+// Spawn a code review assistant
+let code_reviewer = spawner.spawn(AssistantConfig {
+    name: "CodeReviewBot".to_string(),
+    specialization: AssistantType::CodeReviewer,
+    channels: vec![ChannelConfig::slack("#code-reviews")],
+    tools: vec!["github", "linter", "test_runner"],
+}).await?;
+
+// Route work between assistants
+let research = mesh.message_assistant(
+    &researcher.id,
+    "Research Rust async patterns"
+).await?;
+
+let review = mesh.message_assistant(
+    &code_reviewer.id,
+    &format!("Review this code that uses async: {}", research)
+).await?;
+```
+
+**Spawned Assistant Architecture:**
+
+Each spawned assistant has:
+- **Isolated SQLite database** for conversations and memory
+- **Separate configuration** (can override parent's settings)
+- **Filtered tool access** (parent can restrict available tools)
+- **Shared parent API keys** (or can have its own)
+- **Independent channels** (but can share with parent)
+
+**Security:**
+- Spawned assistants run in separate processes/containers
+- Parent can monitor and terminate children
+- Children cannot spawn further assistants (prevent recursion)
+- Resource quotas per assistant
+
+#### 7.11 Autonomy Architecture Updates
 
 Updated directory structure with autonomy components:
 
@@ -381,10 +519,19 @@ manta/
 │   │   ├── todo_tool.rs        # Task management tool
 │   │   ├── code_exec.rs        # PTC code execution
 │   │   ├── delegate_tool.rs    # Subagent delegation
-│   │   └── session_search.rs   # Session search tool
+│   │   ├── session_search.rs   # Session search tool
+│   │   └── mcp.rs              # MCP client integration
+│   ├── assistants/             # Persistent assistant spawning
+│   │   ├── mod.rs              # Assistant spawner
+│   │   ├── mesh.rs             # Inter-assistant communication
+│   │   └── monitor.rs          # Health monitoring
 │   └── cron/
 │       ├── mod.rs              # Cron scheduler
 │       └── jobs.rs             # Job definitions
+├── assistants/                 # Spawned assistant instances
+│   └── {assistant_id}/
+│       ├── config.yaml
+│       └── state.db
 ├── skills/                     # User and agent-created skills
 │   └── {skill_name}/
 │       ├── SKILL.md
@@ -438,6 +585,8 @@ manta/
 - [ ] Skills Guard security scanning
 - [ ] Programmatic Tool Calling (PTC)
 - [ ] Subagent delegation
+- [ ] Persistent assistant spawning
+- [ ] Assistant mesh communication
 - [ ] Skill hub / sharing
 
 ### Phase 8: Polish (Week 10-11)
