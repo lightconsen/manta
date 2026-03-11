@@ -1,0 +1,67 @@
+# Manta Configuration Example
+# Copy to ~/.config/manta/config.yaml and customize
+
+# LLM Provider Configuration
+provider:
+  type: openai  # openai, anthropic, local
+  api_key: "your-api-key-here"
+  model: gpt-4o-mini
+  temperature: 0.7
+  max_tokens: 4096
+
+# Agent Personality
+agent:
+  name: "Manta"
+  system_prompt: |
+    You are Manta, a helpful personal AI assistant.
+    You have access to tools for file operations, web search,
+    and memory. Always be concise and helpful.
+
+# Channel Configuration
+channels:
+  cli:
+    enabled: true
+
+  telegram:
+    enabled: false
+    token: "your-telegram-bot-token"
+
+  discord:
+    enabled: false
+    token: "your-discord-bot-token"
+
+  slack:
+    enabled: false
+    token: "your-slack-bot-token"
+
+# Security Settings
+security:
+  # Require pairing code for new users
+  pairing_required: true
+
+  # Auto-allow contacts (dangerous, use with caution)
+  allow_by_default: false
+
+  # Admin user identifiers
+  admin_users: []
+
+  # Sandboxed command execution
+  sandbox:
+    enabled: true
+    allowed_commands: ["ls", "cat", "grep", "head", "tail", "curl", "date"]
+    forbidden_paths: ["/etc/passwd", "/etc/shadow", "~/.ssh"]
+
+  # Rate limiting
+  rate_limits:
+    requests_per_minute: 30
+    tokens_per_day: 100000
+
+# Storage Configuration
+storage:
+  data_dir: "~/.local/share/manta"
+  max_memory_items: 10000
+
+# Logging
+logging:
+  level: info  # error, warn, info, debug, trace
+  format: pretty  # pretty, json
