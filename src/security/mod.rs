@@ -1436,3 +1436,6 @@ mod header_tests {
 
 /// Security audit module
 pub mod audit;
+
+/// Penetration testing module
+pub mod pentest;
