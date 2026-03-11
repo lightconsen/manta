@@ -572,7 +572,7 @@ manta/
 - [✅] Implement environment variable interpolation (`${VAR}`)
 - [✅] Add config validation on load
 - [ ] Create config hot-reload mechanism
-- [ ] Write `config.example.yaml`
+- [✅] Write `config.example.yaml`
 
 #### 1.5 Core Traits
 - [✅] Define `Provider` trait with async methods
@@ -620,7 +620,7 @@ manta/
 #### 2.5 CLI Channel ✅
 - [✅] Set up `clap` CLI parser
 - [✅] Implement interactive REPL mode
-- [ ] Add command history (readline)
+- [✅] Add command history (readline)
 - [✅] Create rich output formatting
 - [✅] Add `exit`, `clear`, `help`, `tools` commands
 - [✅] Support single message mode (-m flag)
@@ -629,10 +629,10 @@ manta/
 ### Phase 3: Tools & Memory (Week 3-4)
 
 #### 3.1 Tool Registry
-- [ ] Create `ToolRegistrar` for dynamic tools
-- [ ] Implement tool name validation
-- [ ] Add tool description generation
-- [ ] Create tool parameter validation
+- [✅] Create `ToolRegistrar` for dynamic tools
+- [✅] Implement tool name validation
+- [✅] Add tool description generation
+- [✅] Create tool parameter validation
 - [ ] Implement tool result caching
 
 #### 3.2 Shell Tool
@@ -753,19 +753,19 @@ manta/
 - [ ] Create rate limit notifications
 
 #### 5.4 Input Validation
-- [ ] Add JSON schema validation
-- [ ] Implement path traversal detection
-- [ ] Add command injection detection
+- [✅] Add JSON schema validation
+- [✅] Implement path traversal detection
+- [✅] Add command injection detection
 - [ ] Sanitize user inputs
 - [ ] Validate message lengths
 
 #### 5.5 Security Audit
-- [ ] Run `cargo audit`
-- [ ] Review dependency tree
-- [ ] Check for unsafe code usage
+- [✅] Run `cargo audit`
+- [✅] Review dependency tree
+- [✅] Check for unsafe code usage
 - [ ] Implement secret scanning
 - [ ] Add security headers
-- [ ] Document security model
+- [✅] Document security model
 
 ### Phase 6: Autonomy Features (Week 6-8)
 
@@ -890,7 +890,7 @@ manta/
 
 #### 8.1 Documentation
 - [✅] Write API documentation
-- [ ] Create architecture diagrams
+- [✅] Create architecture diagrams
 - [✅] Write user guide
 - [✅] Add deployment guide
 - [✅] Create troubleshooting guide
