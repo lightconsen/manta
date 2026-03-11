@@ -1,67 +1,236 @@
-# Manta Configuration Example
-# Copy to ~/.config/manta/config.yaml and customize
+# Manta - Personal AI Assistant Configuration Example
+# Copy this file to ~/.config/manta/config.yaml and customize for your setup
 
 # LLM Provider Configuration
 provider:
-  type: openai  # openai, anthropic, local
-  api_key: "your-api-key-here"
-  model: gpt-4o-mini
-  temperature: 0.7
-  max_tokens: 4096
+  # Provider type: openai, anthropic, or local
+  type: openai
 
-# Agent Personality
+  # API key (can also use environment variable: OPENAI_API_KEY, ANTHROPIC_API_KEY)
+  api_key: "${OPENAI_API_KEY}"
+
+  # Model to use
+  # OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo
+  # Anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku
+  model: gpt-4o-mini
+
+  # Temperature (0.0 - 2.0, lower = more deterministic)
+  temperature: 0.7
+
+  # Maximum tokens per response
+  max_tokens: 2048
+
+  # Custom base URL (for proxies or local models)
+  # base_url: "https://api.openai.com/v1"
+
+# Fallback Providers (optional)
+# If the primary provider fails, try these in order
+fallback_providers:
+  - type: anthropic
+    api_key: "${ANTHROPIC_API_KEY}"
+    model: claude-3-haiku
+
+# Agent Configuration
 agent:
+  # Bot name
   name: "Manta"
+
+  # System prompt - defines the bot's personality and capabilities
   system_prompt: |
     You are Manta, a helpful personal AI assistant.
     You have access to tools for file operations, web search,
-    and memory. Always be concise and helpful.
+    memory storage, and task management.
+
+    Always be concise and helpful. When you don't know something,
+    admit it clearly. Use tools when they can help answer the
+    user's question.
+
+  # Maximum iterations for tool calling loops
+  max_iterations: 10
+
+  # Context window size (tokens)
+  context_window: 4096
 
 # Channel Configuration
 channels:
+  # CLI Channel (always available)
   cli:
     enabled: true
+    # Enable command history
+    history: true
+    # History file location
+    history_file: "~/.local/share/manta/history.txt"
 
+  # Telegram Bot
   telegram:
     enabled: false
-    token: "your-telegram-bot-token"
+    token: "${TELEGRAM_BOT_TOKEN}"
+    # Webhook URL (optional, defaults to polling)
+    # webhook_url: "https://your-domain.com/webhook"
+    # Allowed usernames (empty = allow all)
+    allowed_usernames: []
 
+  # Discord Bot
   discord:
     enabled: false
-    token: "your-discord-bot-token"
+    token: "${DISCORD_BOT_TOKEN}"
+    # Application ID for slash commands
+    application_id: "${DISCORD_APP_ID}"
+    # Default prefix for commands
+    prefix: "!"
 
+  # Slack Bot
   slack:
     enabled: false
-    token: "your-slack-bot-token"
+    token: "${SLACK_BOT_TOKEN}"
+    # Socket Mode token for real-time events
+    app_token: "${SLACK_APP_TOKEN}"
+    # Signing secret for webhooks
+    signing_secret: "${SLACK_SIGNING_SECRET}"
 
-# Security Settings
+# Security Configuration
 security:
   # Require pairing code for new users
   pairing_required: true
 
-  # Auto-allow contacts (dangerous, use with caution)
-  allow_by_default: false
+  # Auto-allow contacts (not recommended for production)
+  auto_allow_contacts: false
 
-  # Admin user identifiers
+  # Admin users (usernames or user IDs)
   admin_users: []
 
-  # Sandboxed command execution
+  # Sandbox configuration
   sandbox:
     enabled: true
-    allowed_commands: ["ls", "cat", "grep", "head", "tail", "curl", "date"]
-    forbidden_paths: ["/etc/passwd", "/etc/shadow", "~/.ssh"]
+    # Allowed shell commands
+    allowed_commands: ["ls", "cat", "grep", "curl", "wc", "head", "tail", "find", "pwd", "echo"]
+    # Forbidden paths (glob patterns)
+    forbidden_paths: ["/etc/passwd", "/etc/shadow", "~/.ssh/*", "**/.env"]
+    # Maximum command execution time (seconds)
+    timeout_seconds: 30
+    # Maximum output size (bytes)
+    max_output_size: 10240
 
   # Rate limiting
   rate_limits:
     requests_per_minute: 30
     tokens_per_day: 100000
+    # Burst allowance
+    burst_size: 5
 
-# Storage Configuration
-storage:
+# Memory Configuration
+memory:
+  # Data directory for SQLite database and files
   data_dir: "~/.local/share/manta"
-  max_memory_items: 10000
 
-# Logging
+  # SQLite configuration
+  sqlite:
+    # Database file name
+    database: "manta.db"
+    # Connection pool size
+    pool_size: 5
+    # Enable WAL mode for better concurrency
+    wal_mode: true
+
+  # Dual memory files
+  procedural_memory: "~/.config/manta/memory/agent.md"
+  user_model: "~/.config/manta/memory/user.md"
+
+  # Memory size limits (bytes)
+  max_procedural_memory_size: 4096
+  max_user_model_size: 4096
+
+# Tool Configuration
+tools:
+  # File tool settings
+  file:
+    # Allowed paths (empty = allow all)
+    allowed_paths: ["~", "/tmp"]
+    # Maximum file size to read (bytes)
+    max_read_size: 1048576
+    # Maximum file size to write (bytes)
+    max_write_size: 10485760
+
+  # Web tool settings
+  web:
+    # Domain allowlist (empty = allow all)
+    allowed_domains: []
+    # Domain blocklist
+    blocked_domains: ["localhost", "127.0.0.1", "10.*", "192.168.*"]
+    # Maximum response size (bytes)
+    max_response_size: 102400
+    # Request timeout (seconds)
+    timeout_seconds: 30
+    # User agent string
+    user_agent: "MantaBot/1.0"
+
+  # Web search settings
+  search:
+    # Search provider: duckduckgo, brave, or custom
+    provider: duckduckgo
+    # API key for search provider (if required)
+    # api_key: "${SEARCH_API_KEY}"
+    # Maximum results
+    max_results: 10
+
+# Cron Job Configuration
+cron:
+  # Enable scheduled jobs
+  enabled: true
+  # Job persistence file
+  jobs_file: "~/.local/share/manta/cron_jobs.json"
+  # Maximum concurrent jobs
+  max_concurrent_jobs: 5
+  # Default timezone
+  timezone: "UTC"
+
+# Logging Configuration
 logging:
-  level: info  # error, warn, info, debug, trace
-  format: pretty  # pretty, json
+  # Log level: ERROR, WARN, INFO, DEBUG, TRACE
+  level: "INFO"
+
+  # Log format: json, pretty
+  format: "pretty"
+
+  # Log to file (in addition to stdout)
+  file: "~/.local/share/manta/manta.log"
+
+  # Log rotation
+  rotation:
+    enabled: true
+    # Maximum file size before rotation (bytes)
+    max_size: 10485760
+    # Maximum number of archived files to keep
+    max_files: 5
+
+# MCP (Model Context Protocol) Configuration
+mcp:
+  # MCP servers to connect to
+  servers:
+    # Example filesystem server
+    # filesystem:
+    #   command: npx
+    #   args: ["-y", "@anthropic/mcp-filesystem"]
+    #   env:
+    #     HOME: "/home/user"
+
+  # Global MCP settings
+  settings:
+    # Maximum tools per server
+    max_tools: 50
+    # Tool execution timeout (seconds)
+    timeout_seconds: 60
+
+# Experimental Features
+experimental:
+  # Enable streaming responses
+  streaming: true
+
+  # Enable vector embeddings for semantic search
+  vector_embeddings: false
+
+  # Local LLM support (via Ollama)
+  local_llm:
+    enabled: false
+    url: "http://localhost:11434"
+    model: "llama2"
