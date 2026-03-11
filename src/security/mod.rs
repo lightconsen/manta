@@ -479,3 +479,181 @@ mod tests {
         assert!(auth.validate_session(&session.token).await.is_some());
     }
 }
+
+/// HTTP Security Headers
+///
+/// Provides standard security headers for HTTP responses
+pub mod headers {
+    use std::collections::HashMap;
+
+    /// Security header configuration
+    #[derive(Debug, Clone)]
+    pub struct SecurityHeaders {
+        headers: HashMap<String, String>,
+    }
+
+    impl Default for SecurityHeaders {
+        fn default() -> Self {
+            Self::secure()
+        }
+    }
+
+    impl SecurityHeaders {
+        /// Create a secure default configuration
+        pub fn secure() -> Self {
+            let mut headers = HashMap::new();
+
+            // Content Security Policy
+            headers.insert(
+                "Content-Security-Policy".to_string(),
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';".to_string(),
+            );
+
+            // X-Content-Type-Options
+            headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
+
+            // X-Frame-Options
+            headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
+
+            // X-XSS-Protection
+            headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
+
+            // Referrer-Policy
+            headers.insert("Referrer-Policy".to_string(), "strict-origin-when-cross-origin".to_string());
+
+            // Permissions-Policy
+            headers.insert(
+                "Permissions-Policy".to_string(),
+                "camera=(), microphone=(), geolocation=()".to_string(),
+            );
+
+            // Strict-Transport-Security (HSTS)
+            headers.insert(
+                "Strict-Transport-Security".to_string(),
+                "max-age=31536000; includeSubDomains".to_string(),
+            );
+
+            Self { headers }
+        }
+
+        /// Create an empty configuration (no security headers)
+        pub fn empty() -> Self {
+            Self {
+                headers: HashMap::new(),
+            }
+        }
+
+        /// Add a custom header
+        pub fn add(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+            self.headers.insert(name.into(), value.into());
+            self
+        }
+
+        /// Remove a header
+        pub fn remove(mut self, name: &str) -> Self {
+            self.headers.remove(name);
+            self
+        }
+
+        /// Get all headers as a HashMap
+        pub fn headers(&self) -> &HashMap<String, String> {
+            &self.headers
+        }
+
+        /// Convert to a Vec of tuples for HTTP frameworks
+        pub fn to_vec(&self) -> Vec<(String, String)> {
+            self.headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        }
+
+        /// Apply CORS headers
+        pub fn with_cors(mut self, allowed_origin: impl Into<String>) -> Self {
+            self.headers.insert(
+                "Access-Control-Allow-Origin".to_string(),
+                allowed_origin.into(),
+            );
+            self.headers.insert(
+                "Access-Control-Allow-Methods".to_string(),
+                "GET, POST, PUT, DELETE, OPTIONS".to_string(),
+            );
+            self.headers.insert(
+                "Access-Control-Allow-Headers".to_string(),
+                "Content-Type, Authorization".to_string(),
+            );
+            self
+        }
+
+        /// Set Content-Security-Policy
+        pub fn with_csp(mut self, policy: impl Into<String>) -> Self {
+            self.headers.insert("Content-Security-Policy".to_string(), policy.into());
+            self
+        }
+
+        /// API-specific headers (more permissive for API responses)
+        pub fn api() -> Self {
+            let mut headers = HashMap::new();
+
+            headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
+            headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
+            headers.insert(
+                "Strict-Transport-Security".to_string(),
+                "max-age=31536000; includeSubDomains".to_string(),
+            );
+
+            Self { headers }
+        }
+    }
+
+    /// Default secure headers for web applications
+    pub fn default_headers() -> SecurityHeaders {
+        SecurityHeaders::secure()
+    }
+
+    /// API-specific headers
+    pub fn api_headers() -> SecurityHeaders {
+        SecurityHeaders::api()
+    }
+
+    /// CORS headers for API
+    pub fn cors_headers(allowed_origin: impl Into<String>) -> SecurityHeaders {
+        SecurityHeaders::api().with_cors(allowed_origin)
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::headers::*;
+
+    #[test]
+    fn test_default_headers() {
+        let headers = default_headers();
+        assert!(headers.headers().contains_key("Content-Security-Policy"));
+        assert!(headers.headers().contains_key("X-Content-Type-Options"));
+        assert!(headers.headers().contains_key("X-Frame-Options"));
+        assert!(headers.headers().contains_key("Strict-Transport-Security"));
+    }
+
+    #[test]
+    fn test_api_headers() {
+        let headers = api_headers();
+        assert!(!headers.headers().contains_key("Content-Security-Policy"));
+        assert!(headers.headers().contains_key("X-Content-Type-Options"));
+    }
+
+    #[test]
+    fn test_with_cors() {
+        let headers = api_headers().with_cors("https://example.com");
+        assert_eq!(
+            headers.headers().get("Access-Control-Allow-Origin"),
+            Some(&"https://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_custom_header() {
+        let headers = SecurityHeaders::empty().add("X-Custom", "value");
+        assert_eq!(headers.headers().get("X-Custom"), Some(&"value".to_string()));
+    }
+}
