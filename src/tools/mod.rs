@@ -261,10 +261,20 @@ pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use web::{WebFetchTool, WebSearchTool};
 
-/// Registry of tools
+/// Cached tool result entry
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    result: ToolExecutionResult,
+    timestamp: std::time::Instant,
+}
+
+/// Registry of tools with optional caching
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
+    cache: std::sync::Mutex<HashMap<String, CacheEntry>>,
+    cache_ttl: Option<Duration>,
+    cache_enabled: bool,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -280,6 +290,86 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            cache: std::sync::Mutex::new(HashMap::new()),
+            cache_ttl: None,
+            cache_enabled: false,
+        }
+    }
+
+    /// Create a new registry with caching enabled
+    pub fn with_cache(ttl: Duration) -> Self {
+        Self {
+            tools: HashMap::new(),
+            cache: std::sync::Mutex::new(HashMap::new()),
+            cache_ttl: Some(ttl),
+            cache_enabled: true,
+        }
+    }
+
+    /// Enable caching with the specified TTL
+    pub fn enable_cache(&mut self, ttl: Duration) {
+        self.cache_enabled = true;
+        self.cache_ttl = Some(ttl);
+    }
+
+    /// Disable caching
+    pub fn disable_cache(&mut self) {
+        self.cache_enabled = false;
+        // Clear existing cache
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+    }
+
+    /// Clear the tool result cache
+    pub fn clear_cache(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+    }
+
+    /// Generate a cache key from tool name and arguments
+    fn cache_key(name: &str, args: &Value) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        name.hash(&mut hasher);
+        // Hash the JSON string representation of args
+        args.to_string().hash(&mut hasher);
+        format!("{}:{}", name, hasher.finish())
+    }
+
+    /// Get cached result if available and not expired
+    fn get_cached(&self, key: &str) -> Option<ToolExecutionResult> {
+        if !self.cache_enabled {
+            return None;
+        }
+
+        let cache = self.cache.lock().ok()?;
+        let entry = cache.get(key)?;
+
+        // Check if cache entry is expired
+        if let Some(ttl) = self.cache_ttl {
+            if entry.timestamp.elapsed() > ttl {
+                return None;
+            }
+        }
+
+        Some(entry.result.clone())
+    }
+
+    /// Store result in cache
+    fn store_cached(&self, key: String, result: ToolExecutionResult) {
+        if !self.cache_enabled {
+            return;
+        }
+
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.insert(key, CacheEntry {
+                result,
+                timestamp: std::time::Instant::now(),
+            });
         }
     }
 
@@ -321,8 +411,33 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Execute a tool by name
+    /// Execute a tool by name with optional caching
     pub async fn execute(
+        &self,
+        name: &str,
+        args: Value,
+        context: &ToolContext,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        // Check cache first
+        let cache_key = Self::cache_key(name, &args);
+        if let Some(cached_result) = self.get_cached(&cache_key) {
+            tracing::debug!("Cache hit for tool: {}", name);
+            return Some(Ok(cached_result));
+        }
+
+        let tool = self.get(name)?;
+        let result = tool.execute(args, context).await;
+
+        // Cache successful results
+        if let Ok(ref exec_result) = result {
+            self.store_cached(cache_key, exec_result.clone());
+        }
+
+        Some(result)
+    }
+
+    /// Execute a tool by name without caching
+    pub async fn execute_no_cache(
         &self,
         name: &str,
         args: Value,
