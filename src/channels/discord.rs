@@ -70,6 +70,8 @@ pub struct DiscordChannel {
     config: DiscordConfig,
     #[cfg(feature = "discord")]
     client: Option<Arc<tokio::sync::Mutex<Client>>>,
+    #[cfg(feature = "discord")]
+    http: Option<Arc<serenity::http::Http>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -85,10 +87,15 @@ impl std::fmt::Debug for DiscordChannel {
 impl DiscordChannel {
     /// Create a new Discord channel
     pub fn new(config: DiscordConfig) -> Self {
+        #[cfg(feature = "discord")]
+        let http = Some(Arc::new(serenity::http::Http::new(&config.token)));
+
         Self {
             config,
             #[cfg(feature = "discord")]
             client: None,
+            #[cfg(feature = "discord")]
+            http,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -217,21 +224,41 @@ impl Channel for DiscordChannel {
                 .parse()
                 .map_err(|_| crate::error::MantaError::Validation("Invalid channel ID".to_string()))?;
 
-            // Note: This is a simplified implementation
-            // In production, you'd need to store the client and use it here
-            // For now, we just return a placeholder ID
+            let http = self
+                .http
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
 
-            let _content = match &message.formatted_content {
+            let channel_id = ChannelId::new(channel_id);
+
+            // Build the message content
+            let content = match &message.formatted_content {
                 Some(FormattedContent::Markdown(md)) => Self::format_for_discord(md),
                 Some(FormattedContent::DiscordEmbed(embed)) => {
-                    // Would create embed here
-                    format!("Embed: {:?}", embed)
+                    // Send embed message
+                    let embed = Self::create_serenity_embed(embed);
+                    let builder = CreateMessage::new().add_embed(embed);
+                    let _sent = channel_id
+                        .send_message(http, builder)
+                        .await
+                        .map_err(|e| crate::error::MantaError::ExternalService {
+                            source: format!("Discord send failed: {}", e),
+                            cause: None,
+                        })?;
+                    return Ok(Id::new());
                 }
                 _ => message.content,
             };
 
-            // TODO: Actually send the message using the Discord client
-            // This requires storing the client properly and accessing the HTTP client
+            // Send text message
+            let builder = CreateMessage::new().content(content);
+            let _sent = channel_id
+                .send_message(http, builder)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord send failed: {}", e),
+                    cause: None,
+                })?;
 
             Ok(Id::new())
         }
@@ -248,9 +275,27 @@ impl Channel for DiscordChannel {
     async fn send_typing(&self, conversation_id: &ConversationId) -> crate::Result<()> {
         #[cfg(feature = "discord")]
         {
-            let _ = conversation_id;
-            // Would trigger typing indicator in the channel
-            // Requires access to the HTTP client
+            let channel_id: u64 = conversation_id
+                .0
+                .parse()
+                .map_err(|_| crate::error::MantaError::Validation("Invalid channel ID".to_string()))?;
+
+            let http = self
+                .http
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
+
+            let channel_id = ChannelId::new(channel_id);
+
+            // Trigger typing indicator
+            channel_id
+                .broadcast_typing(http)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord typing indicator failed: {}", e),
+                    cause: None,
+                })?;
+
             Ok(())
         }
 
@@ -266,9 +311,25 @@ impl Channel for DiscordChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         #[cfg(feature = "discord")]
         {
-            let _ = (message_id, new_content);
-            // Would edit the message using the Discord client
-            Ok(())
+            let message_id_num: u64 = message_id
+                .to_string()
+                .parse()
+                .map_err(|_| crate::error::MantaError::Validation("Invalid message ID".to_string()))?;
+
+            let http = self
+                .http
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
+
+            let message_id = serenity::model::id::MessageId::new(message_id_num);
+
+            // Note: We need the channel_id to edit a message. In a full implementation,
+            // we'd store a mapping of message_id -> channel_id.
+            // For now, return an error indicating this limitation.
+            warn!("Edit message requires message_id -> channel_id tracking. Message ID: {}", message_id);
+            Err(crate::error::MantaError::Internal(
+                "Message editing requires channel tracking which is not yet fully implemented".to_string()
+            ))
         }
 
         #[cfg(not(feature = "discord"))]
@@ -283,9 +344,24 @@ impl Channel for DiscordChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         #[cfg(feature = "discord")]
         {
-            let _ = message_id;
-            // Would delete the message using the Discord client
-            Ok(())
+            let message_id_num: u64 = message_id
+                .to_string()
+                .parse()
+                .map_err(|_| crate::error::MantaError::Validation("Invalid message ID".to_string()))?;
+
+            let http = self
+                .http
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
+
+            let message_id = serenity::model::id::MessageId::new(message_id_num);
+
+            // Note: We need the channel_id to delete a message.
+            // For now, log and return an informative error.
+            warn!("Delete message requires message_id -> channel_id tracking. Message ID: {}", message_id);
+            Err(crate::error::MantaError::Internal(
+                "Message deletion requires channel tracking which is not yet fully implemented".to_string()
+            ))
         }
 
         #[cfg(not(feature = "discord"))]
@@ -300,8 +376,22 @@ impl Channel for DiscordChannel {
     async fn health_check(&self) -> crate::Result<bool> {
         #[cfg(feature = "discord")]
         {
-            // Check if client is connected
-            Ok(self.running.load(std::sync::atomic::Ordering::SeqCst))
+            if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(false);
+            }
+
+            // Check HTTP client is available and can fetch current user
+            if let Some(http) = &self.http {
+                match http.get_current_user().await {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        warn!("Discord health check failed: {}", e);
+                        Ok(false)
+                    }
+                }
+            } else {
+                Ok(false)
+            }
         }
 
         #[cfg(not(feature = "discord"))]
