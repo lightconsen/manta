@@ -198,6 +198,7 @@ impl Channel for TelegramChannel {
                     .branch(Update::filter_message().endpoint(handle_message));
 
                 let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
+                    .dependencies(dptree::deps![message_tx])
                     .enable_ctrlc_handler()
                     .build();
 
@@ -367,7 +368,11 @@ impl Channel for TelegramChannel {
 }
 
 #[cfg(feature = "telegram")]
-async fn handle_message(bot: Bot, msg: Message) -> ResponseResult<()> {
+async fn handle_message(
+    bot: Bot,
+    msg: Message,
+    message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
+) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
         debug!("Received message from {:?}: {}", msg.from(), text);
 
@@ -386,10 +391,23 @@ async fn handle_message(bot: Bot, msg: Message) -> ResponseResult<()> {
                     .with_extra("chat_type", format!("{:?}", msg.chat.kind)),
             );
 
-        // TODO: Route to agent via message_tx
-        // For now, just echo back
-        let _ = incoming;
-        bot.send_message(msg.chat.id, format!("Echo: {}", text)).await?;
+        // Route to agent via message_tx if available
+        if let Some(tx) = message_tx {
+            if let Err(e) = tx.send(incoming) {
+                warn!("Failed to route message to agent: {}", e);
+                // Send error feedback to user
+                bot.send_message(
+                    msg.chat.id,
+                    "Sorry, I couldn't process your message. Please try again.",
+                )
+                .await?;
+            }
+            // Note: Response will be sent by the agent via the channel's send method
+        } else {
+            // No message handler configured, echo back for testing
+            debug!("No message_tx configured, echoing message back");
+            bot.send_message(msg.chat.id, format!("Echo: {}", text)).await?;
+        }
     }
 
     Ok(())
