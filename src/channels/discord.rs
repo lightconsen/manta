@@ -389,18 +389,21 @@ impl EventHandler for DiscordHandler {
         // Get message info
         if let Ok(message) = add_reaction.message(&ctx.http).await {
             // Check if user is allowed
-            if let Some(user_id) = add_reaction.user_id {
+            let user_id_str = if let Some(user_id) = add_reaction.user_id {
                 if !self.config.allowed_user_ids.is_empty()
                     && !self.config.allowed_user_ids.contains(&user_id.get())
                 {
                     return;
                 }
-            }
+                user_id.get().to_string()
+            } else {
+                String::new()
+            };
 
             // Create incoming message for reaction
             let reaction_content = format!("reaction_add:{}", reaction_emoji_name(&add_reaction.emoji));
             let incoming = IncomingMessage::new(
-                &user_id.map(|id| id.get().to_string()).unwrap_or_default(),
+                &user_id_str,
                 &add_reaction.channel_id.get().to_string(),
                 reaction_content,
             )
@@ -480,6 +483,7 @@ fn reaction_emoji_name(emoji: &ReactionType) -> String {
         ReactionType::Custom { animated: _, id, name } => {
             name.clone().unwrap_or_else(|| id.get().to_string())
         }
+        _ => "unknown".to_string(),
     }
 }
 

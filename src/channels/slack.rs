@@ -86,21 +86,38 @@ impl SlackChannel {
     fn markdown_to_mrkdwn(text: &str) -> String {
         let mut result = text.to_string();
 
-        // Bold: **text** or __text__ -> *text* (Slack uses single asterisks)
+        // Use placeholders to protect patterns during conversion
+        let bold_placeholder = "<<<BOLD>>>";
+        let italic_placeholder = "<<<ITALIC>>>";
+
+        // Step 1: Protect bold patterns (**text** and __text__)
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, "*$1*")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
+            })
             .to_string();
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, "*$1*")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
+            })
             .to_string();
 
-        // Italic: *text* or _text_ -> _text_ (Slack uses underscores)
-        result = regex::Regex::new(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+        // Step 2: Protect italic patterns (*text*)
+        // These become <<<ITALIC>>>text<<<ITALIC>>>
+        result = regex::Regex::new(r"\*(.+?)\*")
             .unwrap()
-            .replace_all(&result, "_$1_")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
+            })
             .to_string();
+
+        // Step 3: Restore bold placeholders as *text* (Slack bold)
+        result = result.replace(bold_placeholder, "*");
+
+        // Step 4: Restore italic placeholders as _text_ (Slack italic)
+        result = result.replace(italic_placeholder, "_");
 
         // Strikethrough: ~~text~~ -> ~text~
         result = regex::Regex::new(r"~~(.+?)~~")
@@ -121,18 +138,38 @@ impl SlackChannel {
     fn strip_markdown(text: &str) -> String {
         let mut result = text.to_string();
 
+        // Protect patterns with placeholders, then strip the markers
+        let bold_placeholder = "<<<BOLD>>>";
+        let italic_placeholder = "<<<ITALIC>>>";
+
+        // Protect bold patterns
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, "$1")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
+            })
             .to_string();
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, "$1")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
+            })
             .to_string();
-        result = regex::Regex::new(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+
+        // Protect italic patterns
+        result = regex::Regex::new(r"\*(.+?)\*")
             .unwrap()
-            .replace_all(&result, "$1")
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
+            })
             .to_string();
+
+        // Restore and strip bold placeholders (keep content only)
+        result = result.replace(bold_placeholder, "");
+
+        // Restore and strip italic placeholders (keep content only)
+        result = result.replace(italic_placeholder, "");
+
         result = regex::Regex::new(r"_(.+?)_")
             .unwrap()
             .replace_all(&result, "$1")
@@ -336,9 +373,11 @@ mod tests {
     fn test_markdown_to_mrkdwn() {
         let md = "**bold** and *italic* and `code`";
         let mrkdwn = SlackChannel::markdown_to_mrkdwn(md);
-        assert!(mrkdwn.contains("*bold*")); // Slack bold is single asterisk
-        assert!(mrkdwn.contains("_italic_")); // Slack italic is underscore
-        assert!(mrkdwn.contains("`code`")); // Code stays the same
+        println!("Input: {}", md);
+        println!("Output: {}", mrkdwn);
+        assert!(mrkdwn.contains("*bold*"), "Expected *bold* in: {}", mrkdwn); // Slack bold is single asterisk
+        assert!(mrkdwn.contains("_italic_"), "Expected _italic_ in: {}", mrkdwn); // Slack italic is underscore
+        assert!(mrkdwn.contains("`code`"), "Expected `code` in: {}", mrkdwn); // Code stays the same
     }
 
     #[test]
