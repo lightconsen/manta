@@ -50,7 +50,7 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use crate::core::Engine;
-pub use config::Config;
+pub use config::{Config, ConfigWatcher, ReloadableConfig};
 pub use error::{MantaError, Result};
 
 /// Application version
