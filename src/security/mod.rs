@@ -622,6 +622,273 @@ pub mod headers {
     }
 }
 
+/// Device fingerprinting for security tracking
+pub mod fingerprint {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    /// Device fingerprint information
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct DeviceFingerprint {
+        /// Raw fingerprint hash
+        pub hash: String,
+        /// Components that make up the fingerprint
+        pub components: FingerprintComponents,
+    }
+
+    /// Components used to generate a device fingerprint
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct FingerprintComponents {
+        /// User agent string
+        pub user_agent: Option<String>,
+        /// IP address
+        pub ip_address: Option<String>,
+        /// Platform/OS
+        pub platform: Option<String>,
+        /// Screen resolution (for web clients)
+        pub screen_resolution: Option<String>,
+        /// Timezone
+        pub timezone: Option<String>,
+        /// Language
+        pub language: Option<String>,
+        /// Additional custom data
+        pub custom_data: Option<String>,
+    }
+
+    impl Default for FingerprintComponents {
+        fn default() -> Self {
+            Self {
+                user_agent: None,
+                ip_address: None,
+                platform: None,
+                screen_resolution: None,
+                timezone: None,
+                language: None,
+                custom_data: None,
+            }
+        }
+    }
+
+    impl FingerprintComponents {
+        /// Create new empty components
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Add user agent
+        pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
+            self.user_agent = Some(ua.into());
+            self
+        }
+
+        /// Add IP address
+        pub fn with_ip(mut self, ip: impl Into<String>) -> Self {
+            self.ip_address = Some(ip.into());
+            self
+        }
+
+        /// Add platform
+        pub fn with_platform(mut self, platform: impl Into<String>) -> Self {
+            self.platform = Some(platform.into());
+            self
+        }
+
+        /// Add screen resolution
+        pub fn with_screen_resolution(mut self, res: impl Into<String>) -> Self {
+            self.screen_resolution = Some(res.into());
+            self
+        }
+
+        /// Add timezone
+        pub fn with_timezone(mut self, tz: impl Into<String>) -> Self {
+            self.timezone = Some(tz.into());
+            self
+        }
+
+        /// Add language
+        pub fn with_language(mut self, lang: impl Into<String>) -> Self {
+            self.language = Some(lang.into());
+            self
+        }
+
+        /// Add custom data
+        pub fn with_custom_data(mut self, data: impl Into<String>) -> Self {
+            self.custom_data = Some(data.into());
+            self
+        }
+    }
+
+    impl DeviceFingerprint {
+        /// Generate a fingerprint from components
+        pub fn from_components(components: FingerprintComponents) -> Self {
+            let hash = Self::compute_hash(&components);
+            Self { hash, components }
+        }
+
+        /// Generate a simple fingerprint from user agent and IP
+        pub fn simple(user_agent: impl Into<String>, ip: impl Into<String>) -> Self {
+            let components = FingerprintComponents::new()
+                .with_user_agent(user_agent)
+                .with_ip(ip);
+            Self::from_components(components)
+        }
+
+        /// Compute hash from components
+        fn compute_hash(components: &FingerprintComponents) -> String {
+            let mut hasher = DefaultHasher::new();
+            components.hash(&mut hasher);
+            format!("{:x}", hasher.finish())
+        }
+
+        /// Get fingerprint hash
+        pub fn hash(&self) -> &str {
+            &self.hash
+        }
+
+        /// Check if this fingerprint matches another (compares hashes)
+        pub fn matches(&self, other: &DeviceFingerprint) -> bool {
+            self.hash == other.hash
+        }
+
+        /// Check if this fingerprint is similar to another (allows partial matches)
+        pub fn is_similar(&self, other: &DeviceFingerprint) -> bool {
+            // Exact hash match
+            if self.hash == other.hash {
+                return true;
+            }
+
+            // Check if key components match
+            let self_comp = &self.components;
+            let other_comp = &other.components;
+
+            // If IP matches exactly, consider it similar
+            if self_comp.ip_address.is_some()
+                && self_comp.ip_address == other_comp.ip_address
+            {
+                return true;
+            }
+
+            // If multiple components match, consider it similar
+            let mut matching_components = 0;
+            let mut total_components = 0;
+
+            if self_comp.user_agent.is_some() && other_comp.user_agent.is_some() {
+                total_components += 1;
+                if self_comp.user_agent == other_comp.user_agent {
+                    matching_components += 1;
+                }
+            }
+
+            if self_comp.platform.is_some() && other_comp.platform.is_some() {
+                total_components += 1;
+                if self_comp.platform == other_comp.platform {
+                    matching_components += 1;
+                }
+            }
+
+            if self_comp.timezone.is_some() && other_comp.timezone.is_some() {
+                total_components += 1;
+                if self_comp.timezone == other_comp.timezone {
+                    matching_components += 1;
+                }
+            }
+
+            // Consider similar if at least 2 components match and more than half match
+            total_components > 0
+                && matching_components >= 2
+                && matching_components * 2 >= total_components
+        }
+
+        /// Generate a human-readable description
+        pub fn description(&self) -> String {
+            let comp = &self.components;
+            let mut parts = Vec::new();
+
+            if let Some(ref platform) = comp.platform {
+                parts.push(platform.clone());
+            }
+
+            if let Some(ref ip) = comp.ip_address {
+                // Truncate IP for privacy
+                let truncated = if ip.contains(':') {
+                    "IPv6".to_string()
+                } else {
+                    ip.split('.').take(2).collect::<Vec<_>>().join(".") + ".xx.xx"
+                };
+                parts.push(truncated);
+            }
+
+            if let Some(ref tz) = comp.timezone {
+                parts.push(tz.clone());
+            }
+
+            if parts.is_empty() {
+                format!("Device {}", self.hash)
+            } else {
+                format!("{} ({})", parts.join(" / "), &self.hash[..8])
+            }
+        }
+    }
+
+    /// Fingerprint registry for tracking devices
+    #[derive(Debug, Default)]
+    pub struct FingerprintRegistry {
+        fingerprints: std::collections::HashMap<String, Vec<DeviceFingerprint>>,
+    }
+
+    impl FingerprintRegistry {
+        /// Create a new registry
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Register a fingerprint for a user
+        pub fn register(&mut self, user_id: impl Into<String>, fingerprint: DeviceFingerprint) {
+            let user_id = user_id.into();
+            let entry = self.fingerprints.entry(user_id).or_default();
+
+            // Check if already exists
+            if !entry.iter().any(|f| f.matches(&fingerprint)) {
+                entry.push(fingerprint);
+            }
+        }
+
+        /// Check if a fingerprint is known for a user
+        pub fn is_known(&self, user_id: impl AsRef<str>, fingerprint: &DeviceFingerprint) -> bool {
+            self.fingerprints
+                .get(user_id.as_ref())
+                .map(|fingerprints| fingerprints.iter().any(|f| f.matches(fingerprint)))
+                .unwrap_or(false)
+        }
+
+        /// Check if a fingerprint is similar to known ones
+        pub fn is_similar(&self, user_id: impl AsRef<str>, fingerprint: &DeviceFingerprint) -> bool {
+            self.fingerprints
+                .get(user_id.as_ref())
+                .map(|fingerprints| fingerprints.iter().any(|f| f.is_similar(fingerprint)))
+                .unwrap_or(false)
+        }
+
+        /// Get all fingerprints for a user
+        pub fn get_user_fingerprints(&self, user_id: impl AsRef<str>) -> Vec<DeviceFingerprint> {
+            self.fingerprints
+                .get(user_id.as_ref())
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        /// Remove a user's fingerprints
+        pub fn remove_user(&mut self, user_id: impl AsRef<str>) {
+            self.fingerprints.remove(user_id.as_ref());
+        }
+
+        /// Clear all fingerprints
+        pub fn clear(&mut self) {
+            self.fingerprints.clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod header_tests {
     use super::headers::*;
