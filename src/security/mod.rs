@@ -421,6 +421,167 @@ pub struct RateLimitState {
     pub capacity: u32,
 }
 
+/// Rate limit headers for HTTP responses
+#[derive(Debug, Clone)]
+pub struct RateLimitHeaders {
+    /// The maximum number of requests allowed in the current window
+    pub limit: u32,
+    /// The number of requests remaining in the current window
+    pub remaining: u32,
+    /// Unix timestamp when the rate limit resets
+    pub reset: u64,
+    /// Seconds until the rate limit resets (optional, for convenience)
+    pub reset_after: Option<u64>,
+    /// The rate limit policy (e.g., "10;w=60" for 10 requests per 60 seconds)
+    pub policy: String,
+}
+
+impl RateLimitHeaders {
+    /// Create headers from a rate limit result
+    pub fn from_result(result: &RateLimitResult, capacity: u32, policy: impl Into<String>) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        match result {
+            RateLimitResult::Allowed {
+                remaining,
+                reset_after_secs,
+            } => Self {
+                limit: capacity,
+                remaining: *remaining,
+                reset: now + reset_after_secs,
+                reset_after: Some(*reset_after_secs),
+                policy: policy.into(),
+            },
+            RateLimitResult::Denied { retry_after_secs } => Self {
+                limit: capacity,
+                remaining: 0,
+                reset: now + retry_after_secs,
+                reset_after: Some(*retry_after_secs),
+                policy: policy.into(),
+            },
+        }
+    }
+
+    /// Convert to HTTP header tuples
+    pub fn to_headers(&self) -> Vec<(String, String)> {
+        let mut headers = vec![
+            ("X-RateLimit-Limit".to_string(), self.limit.to_string()),
+            ("X-RateLimit-Remaining".to_string(), self.remaining.to_string()),
+            ("X-RateLimit-Reset".to_string(), self.reset.to_string()),
+            ("RateLimit-Policy".to_string(), self.policy.clone()),
+        ];
+
+        if let Some(reset_after) = self.reset_after {
+            headers.push(("Retry-After".to_string(), reset_after.to_string()));
+            headers.push(("X-RateLimit-Reset-After".to_string(), reset_after.to_string()));
+        }
+
+        headers
+    }
+
+    /// Create headers for a successful request with remaining quota
+    pub fn allowed(remaining: u32, reset: u64, policy: impl Into<String>) -> Self {
+        Self {
+            limit: remaining + 1,
+            remaining,
+            reset,
+            reset_after: None,
+            policy: policy.into(),
+        }
+    }
+
+    /// Create headers for a rate-limited request
+    pub fn denied(retry_after: u64, policy: impl Into<String>) -> Self {
+        Self {
+            limit: 0,
+            remaining: 0,
+            reset: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                + retry_after,
+            reset_after: Some(retry_after),
+            policy: policy.into(),
+        }
+    }
+}
+
+/// Rate limit notification for users
+#[derive(Debug, Clone)]
+pub struct RateLimitNotification {
+    /// Whether the request was allowed
+    pub allowed: bool,
+    /// Remaining requests
+    pub remaining: u32,
+    /// Total capacity
+    pub limit: u32,
+    /// Reset timestamp
+    pub reset_at: chrono::DateTime<chrono::Utc>,
+    /// Human-readable message
+    pub message: String,
+}
+
+impl RateLimitNotification {
+    /// Create a notification from rate limit headers
+    pub fn from_headers(headers: &RateLimitHeaders) -> Self {
+        let reset_at = chrono::DateTime::from_timestamp(headers.reset as i64, 0)
+            .unwrap_or_else(chrono::Utc::now);
+
+        let (allowed, message) = if headers.remaining == 0 {
+            (
+                false,
+                format!(
+                    "Rate limit exceeded. Please try again in {} seconds.",
+                    headers.reset_after.unwrap_or(60)
+                ),
+            )
+        } else {
+            let percentage = (headers.remaining as f32 / headers.limit as f32 * 100.0) as u32;
+
+            let msg = if percentage < 20 {
+                format!(
+                    "Warning: You have {} requests remaining ({}% of your quota).",
+                    headers.remaining, percentage
+                )
+            } else {
+                format!(
+                    "{} of {} requests remaining.",
+                    headers.remaining, headers.limit
+                )
+            };
+
+            (true, msg)
+        };
+
+        Self {
+            allowed,
+            remaining: headers.remaining,
+            limit: headers.limit,
+            reset_at,
+            message,
+        }
+    }
+
+    /// Create a simple notification
+    pub fn simple(remaining: u32, limit: u32) -> Self {
+        Self {
+            allowed: remaining > 0,
+            remaining,
+            limit,
+            reset_at: chrono::Utc::now() + chrono::Duration::minutes(1),
+            message: format!("{} of {} requests remaining.", remaining, limit),
+        }
+    }
+
+    /// Format as a user-friendly message
+    pub fn to_message(&self) -> String {
+        self.message.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
