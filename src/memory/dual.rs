@@ -433,12 +433,12 @@ The agent can read from memory at startup and write updates as it learns."#
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_dual_memory_read_write() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory = DualMemory::with_dir(temp_dir.path().to_path_buf())
+        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = DualMemory::with_dir(temp_dir.clone())
             .await
             .unwrap();
 
@@ -455,8 +455,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_dual_memory_size_limit() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory = DualMemory::with_dir(temp_dir.path().to_path_buf())
+        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = DualMemory::with_dir(temp_dir.clone())
             .await
             .unwrap()
             .with_max_size(10);
@@ -474,8 +475,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_dual_memory_exists() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory = DualMemory::with_dir(temp_dir.path().to_path_buf())
+        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = DualMemory::with_dir(temp_dir.clone())
             .await
             .unwrap();
 

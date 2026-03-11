@@ -139,6 +139,12 @@ pub struct ToolExecutionResult {
     pub execution_time: Duration,
 }
 
+impl std::fmt::Display for ToolExecutionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.output)
+    }
+}
+
 impl ToolExecutionResult {
     /// Create a successful result
     pub fn success(output: impl Into<String>) -> Self {
@@ -236,16 +242,22 @@ pub type BoxedTool = Box<dyn Tool>;
 pub mod code_exec;
 pub mod delegate_tool;
 pub mod file;
+pub mod grep;
 pub mod mcp;
+pub mod memory;
 pub mod shell;
+pub mod time;
 pub mod todo_tool;
 pub mod web;
 
 pub use code_exec::CodeExecutionTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
+pub use grep::GrepTool;
 pub use mcp::McpConnectionTool;
+pub use memory::MemoryTool;
 pub use shell::ShellTool;
+pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use web::{WebFetchTool, WebSearchTool};
 

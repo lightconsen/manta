@@ -566,7 +566,7 @@ mod tests {
     fn test_mcp_config() {
         let config = McpConfig {
             command: "npx".to_string(),
-            args: vec!["-y", "@anthropic/mcp-filesystem"],
+            args: vec!["-y".to_string(), "@anthropic/mcp-filesystem".to_string()],
             env: HashMap::new(),
             working_dir: None,
         };

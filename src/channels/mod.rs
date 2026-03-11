@@ -8,6 +8,22 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod formatter;
+
+#[cfg(feature = "telegram")]
+pub mod telegram;
+
+#[cfg(feature = "discord")]
+pub mod discord;
+
+#[cfg(feature = "slack")]
+pub mod slack;
+
+pub use formatter::{
+    MessageFormatter, TelegramHtmlFormatter, DiscordFormatter,
+    SlackFormatter, PlainTextFormatter
+};
+
 /// A user identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub String);
@@ -392,6 +408,16 @@ impl ChannelRegistry {
         results
     }
 }
+
+// Re-export channel implementations
+#[cfg(feature = "telegram")]
+pub use telegram::{TelegramChannel, TelegramConfig};
+
+#[cfg(feature = "discord")]
+pub use discord::{DiscordChannel, DiscordConfig};
+
+#[cfg(feature = "slack")]
+pub use slack::{SlackChannel, SlackConfig};
 
 #[cfg(test)]
 mod tests {

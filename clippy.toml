@@ -1,28 +1,6 @@
 # Clippy configuration for Manta
 # See: https://rust-lang.github.io/rust-clippy/master/index.html
 
-# Lint groups to deny
-deny = [
-    "clippy::all",
-    "clippy::pedantic",
-    "clippy::correctness",
-    "clippy::suspicious",
-    "clippy::complexity",
-    "clippy::perf",
-    "clippy::style",
-]
-
-# Allowed lints (too strict for our use case)
-allow = [
-    # Allow these for now as they're too strict
-    "clippy::module_name_repetitions",
-    "clippy::must_use_candidate",
-    "clippy::missing_errors_doc",
-    "clippy::missing_panics_doc",
-    # Allow async functions in traits (needed for our architecture)
-    "clippy::future_not_send",
-]
-
 # Cognitive complexity threshold
 cognitive-complexity-threshold = 25
 

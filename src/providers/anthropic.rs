@@ -398,6 +398,7 @@ mod tests {
 
         let completion = AnthropicProvider::from_anthropic_response(response);
         assert_eq!(completion.message.content, "Hello!");
-        assert_eq!(completion.usage.total_tokens, 15);
+        assert!(completion.usage.is_some());
+        assert_eq!(completion.usage.unwrap().total_tokens, 15);
     }
 }
