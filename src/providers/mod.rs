@@ -275,9 +275,8 @@ pub struct FunctionDefinition {
 }
 
 /// A stream of completion chunks
-pub type CompletionStream = std::pin::Pin<
-    Box<dyn tokio_stream::Stream<Item = crate::Result<CompletionChunk>> + Send>,
->;
+pub type CompletionStream =
+    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = CompletionChunk> + Send>>;
 
 /// Trait for LLM providers
 #[async_trait]
@@ -358,9 +357,11 @@ impl ProviderRegistry {
 }
 
 pub mod anthropic;
+pub mod fallback;
 pub mod openai;
 
 pub use anthropic::AnthropicProvider;
+pub use fallback::{FallbackChainBuilder, FallbackProvider};
 pub use openai::OpenAiProvider;
 
 #[cfg(test)]

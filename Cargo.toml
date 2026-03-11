@@ -32,7 +32,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 config = "0.14"
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"], default-features = false }
+bytes = "1.5"
 
 # JSON
 serde_json = "1.0"
@@ -47,6 +48,9 @@ serde_yaml = "0.9"
 
 # Async trait support
 async-trait = "0.1"
+
+# Futures for streaming
+futures-core = "0.3"
 
 # Random number generation for jitter
 rand = "0.8"
@@ -65,10 +69,13 @@ sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "mig
 
 # Channels (optional)
 teloxide = { version = "0.12", features = ["macros"], optional = true }
-
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 [features]
 default = ["telegram"]
 telegram = ["teloxide"]
+discord = ["serenity"]
+slack = []
+all-channels = ["telegram", "discord", "slack"]
 
 [dev-dependencies]
 # Testing

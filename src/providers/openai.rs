@@ -7,9 +7,12 @@ use super::{
     Message, Provider, Role, ToolCall, ToolDefinition, Usage,
 };
 use async_trait::async_trait;
+use futures_core::Stream;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use tracing::{debug, error, instrument, warn};
 
@@ -240,12 +243,54 @@ impl Provider for OpenAiProvider {
         self.from_openai_response(openai_resp)
     }
 
-    async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
-        // Streaming implementation would go here
-        // For now, return an error
-        Err(crate::error::MantaError::Internal(
-            "Streaming not yet implemented".to_string(),
-        ))
+    async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
+        debug!("Starting streaming completion from OpenAI");
+
+        let model = request.model.unwrap_or_else(|| self.default_model.clone());
+
+        let tools: Option<Vec<OpenAiTool>> = request.tools.map(|tools| {
+            tools
+                .into_iter()
+                .map(|t| OpenAiTool {
+                    tool_type: "function".to_string(),
+                    function: t.function,
+                })
+                .collect()
+        });
+
+        let body = OpenAiRequest {
+            model,
+            messages: request.messages.iter().map(Self::to_openai_message).collect(),
+            tools,
+            temperature: request.temperature.unwrap_or(0.7),
+            max_tokens: request.max_tokens,
+            stream: Some(true),
+            stop: request.stop,
+        };
+
+        let response = self
+            .client
+            .post(self.url("/chat/completions"))
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await
+            .map_err(crate::error::MantaError::Http)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            error!("OpenAI API error: {} - {}", status, text);
+            return Err(crate::error::MantaError::ExternalService {
+                source: format!("OpenAI API error {}: {}", status, text),
+                cause: None,
+            });
+        }
+
+        let stream = response.bytes_stream();
+        let openai_stream = OpenAiStream::new(stream);
+
+        Ok(Box::pin(openai_stream))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
@@ -335,6 +380,163 @@ struct OpenAiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     total_tokens: u32,
+}
+
+// SSE Streaming types
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamResponse {
+    id: String,
+    object: String,
+    created: u64,
+    model: String,
+    choices: Vec<OpenAiStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiStreamChoice {
+    index: u32,
+    delta: OpenAiDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OpenAiDelta {
+    role: Option<String>,
+    content: Option<String>,
+    tool_calls: Option<Vec<OpenAiStreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct OpenAiStreamToolCall {
+    index: u32,
+    id: Option<String>,
+    #[serde(rename = "type")]
+    call_type: Option<String>,
+    function: Option<OpenAiStreamFunctionCall>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct OpenAiStreamFunctionCall {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+/// OpenAI SSE stream parser
+struct OpenAiStream {
+    buffer: String,
+    inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+}
+
+impl OpenAiStream {
+    fn new<S>(stream: S) -> Self
+    where
+        S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+    {
+        Self {
+            buffer: String::new(),
+            inner: Box::pin(stream),
+        }
+    }
+
+    fn parse_sse_line(&self, line: &str) -> Option<CompletionChunk> {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with(':') {
+            return None;
+        }
+
+        // Parse data lines
+        if let Some(data) = line.strip_prefix("data: ") {
+            if data == "[DONE]" {
+                return Some(CompletionChunk {
+                    content: None,
+                    tool_calls: None,
+                    is_done: true,
+                    usage: None,
+                });
+            }
+
+            // Try to parse the JSON
+            if let Ok(response) = serde_json::from_str::<OpenAiStreamResponse>(data) {
+                if let Some(choice) = response.choices.first() {
+                    let content = choice.delta.content.clone();
+
+                    // Convert tool calls
+                    let tool_calls = choice.delta.tool_calls.as_ref().map(|calls| {
+                        calls
+                            .iter()
+                            .filter_map(|tc| {
+                                Some(ToolCall {
+                                    id: tc.id.clone()?,
+                                    call_type: tc.call_type.clone()?,
+                                    function: super::FunctionCall {
+                                        name: tc.function.as_ref()?.name.clone()?,
+                                        arguments: tc.function.as_ref()?.arguments.clone()?,
+                                    },
+                                })
+                            })
+                            .collect()
+                    });
+
+                    let is_done = choice.finish_reason.is_some();
+
+                    return Some(CompletionChunk {
+                        content,
+                        tool_calls,
+                        is_done,
+                        usage: None, // Usage not typically sent in stream chunks
+                    });
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl Stream for OpenAiStream {
+    type Item = CompletionChunk;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match self.inner.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    // Convert bytes to string and add to buffer
+                    if let Ok(chunk) = std::str::from_utf8(&bytes) {
+                        self.buffer.push_str(chunk);
+
+                        // Process complete lines from buffer
+                        while let Some(pos) = self.buffer.find('\n') {
+                            let line = self.buffer[..pos].to_string();
+                            self.buffer = self.buffer[pos + 1..].to_string();
+
+                            if let Some(chunk) = self.parse_sse_line(&line) {
+                                return Poll::Ready(Some(chunk));
+                            }
+                        }
+                    }
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    warn!("Stream error: {}", e);
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(None) => {
+                    // Process any remaining data in buffer
+                    if !self.buffer.is_empty() {
+                        let line = self.buffer.clone();
+                        self.buffer.clear();
+                        if let Some(chunk) = self.parse_sse_line(&line) {
+                            return Poll::Ready(Some(chunk));
+                        }
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
