@@ -1050,6 +1050,351 @@ pub mod fingerprint {
     }
 }
 
+/// Secret scanning for detecting sensitive data leaks
+pub mod secrets {
+    use regex::Regex;
+
+    /// Secret pattern definition
+    #[derive(Debug, Clone)]
+    pub struct SecretPattern {
+        /// Pattern name
+        pub name: &'static str,
+        /// Regex pattern for detection
+        pub regex: Regex,
+        /// Severity level
+        pub severity: Severity,
+        /// Description of the secret type
+        pub description: &'static str,
+    }
+
+    /// Severity levels for secret detection
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum Severity {
+        /// Critical - API keys, private keys
+        Critical,
+        /// High - Database passwords, auth tokens
+        High,
+        /// Medium - Config secrets, session IDs
+        Medium,
+        /// Low - Less sensitive patterns
+        Low,
+    }
+
+    impl std::fmt::Display for Severity {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Severity::Critical => write!(f, "CRITICAL"),
+                Severity::High => write!(f, "HIGH"),
+                Severity::Medium => write!(f, "MEDIUM"),
+                Severity::Low => write!(f, "LOW"),
+            }
+        }
+    }
+
+    /// Detected secret
+    #[derive(Debug, Clone)]
+    pub struct DetectedSecret {
+        /// Pattern name
+        pub pattern: String,
+        /// Severity level
+        pub severity: Severity,
+        /// Line number where found
+        pub line_number: usize,
+        /// Matched content (redacted for display)
+        pub redacted: String,
+        /// Full description
+        pub description: String,
+    }
+
+    impl DetectedSecret {
+        /// Redact sensitive content for safe display
+        fn redact(content: &str) -> String {
+            if content.len() <= 8 {
+                "***".to_string()
+            } else {
+                format!("{}...{}", &content[..4], &content[content.len() - 4..])
+            }
+        }
+    }
+
+    /// Secret scanner
+    #[derive(Debug, Clone)]
+    pub struct SecretScanner {
+        patterns: Vec<SecretPattern>,
+    }
+
+    impl Default for SecretScanner {
+        fn default() -> Self {
+            Self::with_default_patterns()
+        }
+    }
+
+    impl SecretScanner {
+        /// Create a new scanner with default patterns
+        pub fn with_default_patterns() -> Self {
+            let patterns = vec![
+                // API Keys
+                SecretPattern {
+                    name: "OpenAI API Key",
+                    regex: Regex::new(r"sk-[a-zA-Z0-9]{48}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "OpenAI API key detected",
+                },
+                SecretPattern {
+                    name: "Anthropic API Key",
+                    regex: Regex::new(r"sk-ant-[a-zA-Z0-9_-]{40,}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "Anthropic API key detected",
+                },
+                SecretPattern {
+                    name: "AWS Access Key ID",
+                    regex: Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "AWS Access Key ID detected",
+                },
+                SecretPattern {
+                    name: "AWS Secret Access Key",
+                    regex: Regex::new(r"[0-9a-zA-Z/+]{40}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "Potential AWS Secret Key detected",
+                },
+                // Private Keys
+                SecretPattern {
+                    name: "RSA Private Key",
+                    regex: Regex::new(r"-----BEGIN (RSA )?PRIVATE KEY-----").unwrap(),
+                    severity: Severity::Critical,
+                    description: "RSA private key detected",
+                },
+                SecretPattern {
+                    name: "SSH Private Key",
+                    regex: Regex::new(r"-----BEGIN OPENSSH PRIVATE KEY-----").unwrap(),
+                    severity: Severity::Critical,
+                    description: "SSH private key detected",
+                },
+                SecretPattern {
+                    name: "PGP Private Key",
+                    regex: Regex::new(r"-----BEGIN PGP PRIVATE KEY BLOCK-----").unwrap(),
+                    severity: Severity::Critical,
+                    description: "PGP private key detected",
+                },
+                // Database URLs
+                SecretPattern {
+                    name: "Database Connection String",
+                    regex: Regex::new(r"(postgres|mysql|mongodb)://[^:]+:[^@]+@").unwrap(),
+                    severity: Severity::High,
+                    description: "Database connection string with password detected",
+                },
+                // Tokens
+                SecretPattern {
+                    name: "Bearer Token",
+                    regex: Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-\.]{20,}").unwrap(),
+                    severity: Severity::High,
+                    description: "Bearer token detected",
+                },
+                SecretPattern {
+                    name: "GitHub Token",
+                    regex: Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "GitHub personal access token detected",
+                },
+                SecretPattern {
+                    name: "Slack Token",
+                    regex: Regex::new(r"xox[baprs]-[0-9a-zA-Z\-]{10,48}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "Slack API token detected",
+                },
+                SecretPattern {
+                    name: "Discord Token",
+                    regex: Regex::new(r"[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}").unwrap(),
+                    severity: Severity::Critical,
+                    description: "Discord bot token detected",
+                },
+                // Generic patterns
+                SecretPattern {
+                    name: "Generic API Key",
+                    regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}").unwrap(),
+                    severity: Severity::Medium,
+                    description: "Potential API key detected",
+                },
+                SecretPattern {
+                    name: "Generic Secret",
+                    regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}").unwrap(),
+                    severity: Severity::Medium,
+                    description: "Potential password/secret detected",
+                },
+                SecretPattern {
+                    name: "JWT Token",
+                    regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*").unwrap(),
+                    severity: Severity::Medium,
+                    description: "JWT token detected",
+                },
+            ];
+
+            Self { patterns }
+        }
+
+        /// Create an empty scanner
+        pub fn empty() -> Self {
+            Self { patterns: vec![] }
+        }
+
+        /// Add a custom pattern
+        pub fn add_pattern(&mut self, pattern: SecretPattern) {
+            self.patterns.push(pattern);
+        }
+
+        /// Scan text for secrets
+        pub fn scan(&self, text: &str) -> Vec<DetectedSecret> {
+            let mut findings = Vec::new();
+
+            for (line_num, line) in text.lines().enumerate() {
+                for pattern in &self.patterns {
+                    for mat in pattern.regex.find_iter(line) {
+                        findings.push(DetectedSecret {
+                            pattern: pattern.name.to_string(),
+                            severity: pattern.severity,
+                            line_number: line_num + 1,
+                            redacted: DetectedSecret::redact(mat.as_str()),
+                            description: pattern.description.to_string(),
+                        });
+                    }
+                }
+            }
+
+            findings
+        }
+
+        /// Scan a single line
+        pub fn scan_line(&self, line: &str, line_number: usize) -> Vec<DetectedSecret> {
+            let mut findings = Vec::new();
+
+            for pattern in &self.patterns {
+                for mat in pattern.regex.find_iter(line) {
+                    findings.push(DetectedSecret {
+                        pattern: pattern.name.to_string(),
+                        severity: pattern.severity,
+                        line_number,
+                        redacted: DetectedSecret::redact(mat.as_str()),
+                        description: pattern.description.to_string(),
+                    });
+                }
+            }
+
+            findings
+        }
+
+        /// Check if text contains any secrets
+        pub fn contains_secrets(&self, text: &str) -> bool {
+            self.scan(text).is_empty()
+        }
+
+        /// Get all patterns
+        pub fn patterns(&self) -> &[SecretPattern] {
+            &self.patterns
+        }
+    }
+
+    /// Scan result summary
+    #[derive(Debug, Clone)]
+    pub struct ScanSummary {
+        /// Total secrets found
+        pub total: usize,
+        /// By severity
+        pub by_severity: std::collections::HashMap<Severity, usize>,
+        /// Unique patterns found
+        pub unique_patterns: Vec<String>,
+    }
+
+    impl From<Vec<DetectedSecret>> for ScanSummary {
+        fn from(secrets: Vec<DetectedSecret>) -> Self {
+            let mut by_severity: std::collections::HashMap<Severity, usize> =
+                std::collections::HashMap::new();
+            let mut unique: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            for secret in &secrets {
+                *by_severity.entry(secret.severity).or_insert(0) += 1;
+                unique.insert(secret.pattern.clone());
+            }
+
+            Self {
+                total: secrets.len(),
+                by_severity,
+                unique_patterns: unique.into_iter().collect(),
+            }
+        }
+    }
+
+    /// Quick scan function
+    pub fn scan_text(text: &str) -> Vec<DetectedSecret> {
+        let scanner = SecretScanner::default();
+        scanner.scan(text)
+    }
+
+    /// Quick check function
+    pub fn contains_secrets(text: &str) -> bool {
+        let scanner = SecretScanner::default();
+        !scanner.scan(text).is_empty()
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::secrets::*;
+
+    #[test]
+    fn test_detect_openai_key() {
+        let scanner = SecretScanner::with_default_patterns();
+        let text = "sk-abcdefghijklmnopqrstuvwxyz123456789012345678901234567";
+        let findings = scanner.scan(text);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().any(|f| f.pattern == "OpenAI API Key"));
+    }
+
+    #[test]
+    fn test_detect_aws_key() {
+        let scanner = SecretScanner::with_default_patterns();
+        let text = "AKIAIOSFODNN7EXAMPLE";
+        let findings = scanner.scan(text);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().any(|f| f.pattern == "AWS Access Key ID"));
+    }
+
+    #[test]
+    fn test_detect_private_key() {
+        let scanner = SecretScanner::with_default_patterns();
+        let text = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...";
+        let findings = scanner.scan(text);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().any(|f| f.pattern == "RSA Private Key"));
+    }
+
+    #[test]
+    fn test_detect_jwt() {
+        let scanner = SecretScanner::with_default_patterns();
+        let text = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let findings = scanner.scan(text);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().any(|f| f.pattern == "JWT Token"));
+    }
+
+    #[test]
+    fn test_no_false_positives() {
+        let scanner = SecretScanner::with_default_patterns();
+        let text = "This is just regular text without any secrets.";
+        let findings = scanner.scan(text);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_redaction() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz123456";
+        let redacted = super::secrets::DetectedSecret::redact(secret);
+        assert!(redacted.contains("***"));
+        assert!(!redacted.contains("abcdefghijklmnop"));
+    }
+}
+
 #[cfg(test)]
 mod header_tests {
     use super::headers::*;
