@@ -356,6 +356,311 @@ impl ToolRegistry {
     }
 }
 
+/// ToolRegistrar for dynamic tool registration with validation
+#[derive(Debug, Default)]
+pub struct ToolRegistrar {
+    registry: ToolRegistry,
+    validators: Vec<Box<dyn ToolValidator>>,
+}
+
+/// Trait for custom tool validators
+pub trait ToolValidator: Send + Sync + std::fmt::Debug {
+    /// Validate a tool before registration
+    fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError>;
+    /// Validate tool input arguments
+    fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError>;
+}
+
+/// Tool validation errors
+#[derive(Debug, Clone)]
+pub enum ToolValidationError {
+    /// Invalid tool name
+    InvalidName(String),
+    /// Invalid schema
+    InvalidSchema(String),
+    /// Input validation failed
+    InvalidInput(String),
+    /// Security violation
+    SecurityViolation(String),
+}
+
+impl std::fmt::Display for ToolValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidName(s) => write!(f, "Invalid tool name: {}", s),
+            Self::InvalidSchema(s) => write!(f, "Invalid tool schema: {}", s),
+            Self::InvalidInput(s) => write!(f, "Invalid tool input: {}", s),
+            Self::SecurityViolation(s) => write!(f, "Security violation: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for ToolValidationError {}
+
+/// Name validator - ensures tool names follow conventions
+#[derive(Debug)]
+pub struct NameValidator;
+
+impl ToolValidator for NameValidator {
+    fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
+        let name = tool.name();
+
+        // Check length
+        if name.len() < 2 || name.len() > 64 {
+            return Err(ToolValidationError::InvalidName(
+                format!("Tool name '{}' must be between 2 and 64 characters", name)
+            ));
+        }
+
+        // Check characters (alphanumeric, underscore, hyphen only)
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            return Err(ToolValidationError::InvalidName(
+                format!("Tool name '{}' contains invalid characters. Use alphanumeric, underscore, or hyphen only", name)
+            ));
+        }
+
+        // Check doesn't start with number
+        if name.chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
+            return Err(ToolValidationError::InvalidName(
+                format!("Tool name '{}' cannot start with a number", name)
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_input(&self, _tool_name: &str, _args: &Value) -> Result<(), ToolValidationError> {
+        Ok(())
+    }
+}
+
+/// Schema validator - validates JSON schemas
+#[derive(Debug)]
+pub struct SchemaValidator;
+
+impl ToolValidator for SchemaValidator {
+    fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
+        let schema = tool.parameters_schema();
+
+        // Check schema has required fields
+        if !schema.get("type").map(|v| v == "object").unwrap_or(false) {
+            return Err(ToolValidationError::InvalidSchema(
+                "Schema must have type 'object'".to_string()
+            ));
+        }
+
+        if schema.get("properties").is_none() {
+            return Err(ToolValidationError::InvalidSchema(
+                "Schema must have 'properties' field".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
+        // Basic JSON structure validation
+        if !args.is_object() && !args.is_null() {
+            return Err(ToolValidationError::InvalidInput(
+                format!("Tool '{}' arguments must be a JSON object", tool_name)
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Security validator - checks for dangerous patterns
+#[derive(Debug)]
+pub struct SecurityValidator;
+
+impl SecurityValidator {
+    /// Check for path traversal attempts
+    fn check_path_traversal(&self, value: &str) -> Result<(), ToolValidationError> {
+        let dangerous_patterns = ["../", "..\\", "~/..", "/..", "%2e%2e%2f", "%252e%252e%252f"];
+
+        for pattern in &dangerous_patterns {
+            if value.contains(pattern) {
+                return Err(ToolValidationError::SecurityViolation(
+                    format!("Path traversal attempt detected: {}", pattern)
+                ));
+            }
+        }
+
+        // Check for double slashes (can be used in some path traversal attacks)
+        if value.contains("//") || value.contains("\\\\") {
+            return Err(ToolValidationError::SecurityViolation(
+                "Suspicious path pattern detected".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check for command injection attempts
+    fn check_command_injection(&self, value: &str) -> Result<(), ToolValidationError> {
+        let dangerous_chars = [';', '&', '|', '$', '`', '\n', '\r'];
+
+        for ch in &dangerous_chars {
+            if value.contains(*ch) {
+                return Err(ToolValidationError::SecurityViolation(
+                    format!("Command injection attempt detected: contains '{}'", ch)
+                ));
+            }
+        }
+
+        // Check for command substitution patterns
+        if value.contains("$(") || value.contains("${") {
+            return Err(ToolValidationError::SecurityViolation(
+                "Command substitution pattern detected".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl ToolValidator for SecurityValidator {
+    fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
+        // Check tool description for potential issues
+        let desc = tool.description();
+        if desc.len() < 10 {
+            return Err(ToolValidationError::InvalidSchema(
+                "Tool description must be at least 10 characters".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_input(&self, _tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
+        // Recursively check all string values for security issues
+        fn check_value(value: &Value, validator: &SecurityValidator) -> Result<(), ToolValidationError> {
+            match value {
+                Value::String(s) => {
+                    validator.check_path_traversal(s)?;
+                    validator.check_command_injection(s)?;
+                    Ok(())
+                }
+                Value::Array(arr) => {
+                    for item in arr {
+                        check_value(item, validator)?;
+                    }
+                    Ok(())
+                }
+                Value::Object(obj) => {
+                    for (k, v) in obj {
+                        // Also check keys for path traversal in property names
+                        validator.check_path_traversal(k)?;
+                        check_value(v, validator)?;
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        }
+
+        check_value(args, self)
+    }
+}
+
+impl ToolRegistrar {
+    /// Create a new ToolRegistrar with default validators
+    pub fn new() -> Self {
+        Self {
+            registry: ToolRegistry::new(),
+            validators: vec![
+                Box::new(NameValidator),
+                Box::new(SchemaValidator),
+                Box::new(SecurityValidator),
+            ],
+        }
+    }
+
+    /// Create with custom validators
+    pub fn with_validators(validators: Vec<Box<dyn ToolValidator>>) -> Self {
+        Self {
+            registry: ToolRegistry::new(),
+            validators,
+        }
+    }
+
+    /// Register a tool with validation
+    pub fn register(&mut self, tool: BoxedTool) -> Result<(), ToolValidationError> {
+        // Run all validators
+        for validator in &self.validators {
+            validator.validate(tool.as_ref())?;
+        }
+
+        self.registry.register(tool);
+        Ok(())
+    }
+
+    /// Validate tool input before execution
+    pub fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
+        for validator in &self.validators {
+            validator.validate_input(tool_name, args)?;
+        }
+        Ok(())
+    }
+
+    /// Get a tool by name
+    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
+        self.registry.get(name)
+    }
+
+    /// List available tool names
+    pub fn list(&self) -> Vec<&str> {
+        self.registry.list()
+    }
+
+    /// Check if a tool exists
+    pub fn has(&self, name: &str) -> bool {
+        self.registry.has(name)
+    }
+
+    /// Get tool descriptions
+    pub fn get_descriptions(&self) -> HashMap<String, String> {
+        self.registry.list()
+            .into_iter()
+            .filter_map(|name| {
+                self.registry.get(name)
+                    .map(|t| (name.to_string(), t.description().to_string()))
+            })
+            .collect()
+    }
+
+    /// Execute a tool with validation
+    pub async fn execute(
+        &self,
+        name: &str,
+        args: Value,
+        context: &ToolContext,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        // Validate input first
+        if let Err(e) = self.validate_input(name, &args) {
+            return Some(Err(crate::error::MantaError::Validation(e.to_string())));
+        }
+
+        self.registry.execute(name, args, context).await
+    }
+
+    /// Get all tools as function definitions
+    pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
+        self.registry.get_definitions()
+    }
+
+    /// Add a custom validator
+    pub fn add_validator(&mut self, validator: Box<dyn ToolValidator>) {
+        self.validators.push(validator);
+    }
+
+    /// Get reference to inner registry
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+}
+
 /// Helper function to create a JSON schema for a tool
 pub fn create_schema(
     description: impl Into<String>,
@@ -427,5 +732,117 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["description"], "A test tool");
         assert_eq!(schema["required"], serde_json::json!(["name"]));
+    }
+
+    // ToolRegistrar tests
+
+    #[test]
+    fn test_tool_registrar_creation() {
+        let registrar = ToolRegistrar::new();
+        assert!(registrar.list().is_empty());
+    }
+
+    #[test]
+    fn test_name_validator_valid() {
+        use crate::providers::FunctionDefinition;
+
+        struct ValidTool;
+
+        #[async_trait]
+        impl Tool for ValidTool {
+            fn name(&self) -> &str {
+                "valid_tool"
+            }
+            fn description(&self) -> &str {
+                "A valid test tool"
+            }
+            fn parameters_schema(&self) -> Value {
+                create_schema("Test", serde_json::json!({}), Vec::<String>::new())
+            }
+            async fn execute(&self, _args: Value, _ctx: &ToolContext) -> crate::Result<ToolExecutionResult> {
+                Ok(ToolExecutionResult::success("ok"))
+            }
+        }
+
+        let validator = NameValidator;
+        assert!(validator.validate(&ValidTool).is_ok());
+    }
+
+    #[test]
+    fn test_name_validator_invalid() {
+        struct InvalidTool;
+
+        #[async_trait]
+        impl Tool for InvalidTool {
+            fn name(&self) -> &str {
+                "123_invalid"
+            }
+            fn description(&self) -> &str {
+                "A test tool"
+            }
+            fn parameters_schema(&self) -> Value {
+                create_schema("Test", serde_json::json!({}), Vec::<String>::new())
+            }
+            async fn execute(&self, _args: Value, _ctx: &ToolContext) -> crate::Result<ToolExecutionResult> {
+                Ok(ToolExecutionResult::success("ok"))
+            }
+        }
+
+        let validator = NameValidator;
+        let result = validator.validate(&InvalidTool);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ToolValidationError::InvalidName(_)));
+    }
+
+    #[test]
+    fn test_security_validator_path_traversal() {
+        let validator = SecurityValidator;
+
+        // Valid paths
+        assert!(validator.check_path_traversal("/home/user/file.txt").is_ok());
+        assert!(validator.check_path_traversal("./file.txt").is_ok());
+
+        // Invalid paths with traversal
+        assert!(validator.check_path_traversal("../etc/passwd").is_err());
+        assert!(validator.check_path_traversal("foo/../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_security_validator_command_injection() {
+        let validator = SecurityValidator;
+
+        // Valid commands
+        assert!(validator.check_command_injection("ls -la").is_ok());
+        assert!(validator.check_command_injection("cat file.txt").is_ok());
+
+        // Invalid commands with injection
+        assert!(validator.check_command_injection("ls; rm -rf /").is_err());
+        assert!(validator.check_command_injection("cat file | grep test").is_err());
+        assert!(validator.check_command_injection("echo $(whoami)").is_err());
+    }
+
+    #[test]
+    fn test_security_validator_input_validation() {
+        let validator = SecurityValidator;
+
+        // Valid input
+        let valid_args = serde_json::json!({
+            "path": "/home/user/file.txt",
+            "content": "hello world"
+        });
+        assert!(validator.validate_input("test", &valid_args).is_ok());
+
+        // Invalid input with path traversal
+        let invalid_args = serde_json::json!({
+            "path": "../../../etc/passwd",
+            "content": "malicious"
+        });
+        assert!(validator.validate_input("test", &invalid_args).is_err());
+
+        // Invalid input with command injection
+        let cmd_inject_args = serde_json::json!({
+            "command": "ls; rm -rf /"
+        });
+        assert!(validator.validate_input("test", &cmd_inject_args).is_err());
     }
 }
