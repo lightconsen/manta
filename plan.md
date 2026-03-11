@@ -175,6 +175,225 @@ security:
     tokens_per_day: 100000
 ```
 
+### 7. Autonomy Features (Hermes-Agent Inspired)
+
+Manta incorporates advanced autonomy mechanisms from Hermes-Agent to enable self-directed behavior and continuous improvement:
+
+#### 7.1 Agent Loop with Iteration Budget
+
+```rust
+pub struct AgentLoop {
+    max_iterations: usize,
+    iteration_budget: Arc<AtomicUsize>,
+    interrupt_flag: Arc<AtomicBool>,
+}
+
+impl AgentLoop {
+    pub async fn run(&mut self, messages: Vec<Message>) -> Result<Response> {
+        while self.iteration_budget.load(Ordering::Relaxed) > 0
+              && !self.interrupt_flag.load(Ordering::Relaxed) {
+            // Tool calling loop with budget tracking
+        }
+    }
+}
+```
+
+- **Shared Budget**: Parent and child agents share a thread-safe iteration counter
+- **Interrupt Mechanism**: Graceful shutdown via atomic flag
+- **Cost Control**: Prevents runaway execution and excessive API costs
+
+#### 7.2 Task Planning (Todo System)
+
+```rust
+pub struct TodoStore {
+    tasks: Vec<Task>,
+}
+
+pub struct Task {
+    id: String,
+    content: String,
+    status: TaskStatus, // pending, in_progress, completed, cancelled
+    created_at: DateTime<Utc>,
+}
+```
+
+- **Task Decomposition**: Break complex tasks into manageable steps
+- **Status Tracking**: Real-time progress updates
+- **Context Persistence**: Survives context window compression
+- **Behavioral Guidance**: Tool schema encodes when to use ("Use for complex tasks with 3+ steps")
+
+#### 7.3 Dual Memory Architecture
+
+| Memory Type | Storage | Purpose | Access |
+|-------------|---------|---------|--------|
+| **Procedural Memory** | `~/.config/manta/memory/agent.md` | Environment facts, tool quirks, conventions | Agent R/W |
+| **User Model** | `~/.config/manta/memory/user.md` | Preferences, communication style, habits | Agent R/W |
+| **Ephemeral Memory** | SQLite | Session-specific context, temporary data | Tool-based |
+
+**Features:**
+- Bounded size (configurable, default: 4KB each)
+- Frozen snapshots in system prompt (stable), live state via tool responses
+- Security scanning for injection/exfiltration patterns
+
+#### 7.4 Session Search
+
+```rust
+pub struct SessionSearch {
+    db: SqlitePool,
+}
+
+impl SessionSearch {
+    pub async fn search(&self, query: &str, user_id: &str) -> Result<Vec<SearchResult>> {
+        // FTS5 full-text search across conversation history
+        // LLM-based summarization of relevant sessions
+    }
+}
+```
+
+- **FTS5 Index**: Full-text search across all past conversations
+- **Smart Summarization**: Auxiliary LLM compresses relevant sessions
+- **Cross-Session Recall**: "When user references past conversation, use session_search"
+
+#### 7.5 Autonomous Skill Creation
+
+```rust
+pub struct SkillManager;
+
+impl SkillManager {
+    pub async fn create_skill(&self, name: &str, content: SkillContent) -> Result<()>;
+    pub async fn edit_skill(&self, name: &str, new_content: &str) -> Result<()>;
+    pub async fn patch_skill(&self, name: &str, find: &str, replace: &str) -> Result<()>;
+    pub async fn write_skill_file(&self, skill: &str, filename: &str, content: &str) -> Result<()>;
+}
+```
+
+**Trigger**: After complex tasks (5+ tool calls) or discovering non-trivial workflows
+
+**Skill Structure:**
+```
+skills/
+└── {skill_name}/
+    ├── SKILL.md          # Description, usage, examples
+    ├── references/       # Supporting files
+    └── scripts/          # Executable helpers
+```
+
+**Security**: Skills Guard scans for 50+ threat patterns before persistence
+
+#### 7.6 Programmatic Tool Calling (PTC)
+
+```rust
+pub struct CodeExecutionTool {
+    sandbox: Sandbox,
+    rpc_socket: UnixSocket,
+}
+```
+
+- **Self-Orchestration**: Agent writes Python scripts calling tools via RPC
+- **Efficiency**: Collapses multi-step chains into single inference turn
+- **Sandboxing**: 5-minute timeout, 50KB stdout limit, no network
+- **Clean Abstraction**: Only script stdout returned to LLM
+
+#### 7.7 Subagent Delegation
+
+```rust
+pub struct DelegateTool {
+    max_children: usize,
+    max_depth: usize,
+}
+
+impl DelegateTool {
+    pub async fn spawn_child(&self, task: TaskSpec, parent_budget: Arc<AtomicUsize>)
+        -> Result<ChildAgent>;
+}
+```
+
+- **Parallel Execution**: Up to 3 concurrent child agents
+- **Depth Limiting**: Max depth 2 (parent → child, no grandchildren)
+- **Blocked Tools**: Children cannot use `delegate`, `clarify`, `memory`, `send_message`, `execute_code`
+- **Progress Relay**: Child tool calls visible in parent UI
+
+#### 7.8 Context Compression
+
+```rust
+pub struct ContextCompressor;
+
+impl ContextCompressor {
+    pub fn compress(&self, messages: Vec<Message>, target_tokens: usize) -> Vec<Message>;
+}
+```
+
+- **Automatic Management**: Triggered when approaching context limit
+- **Priority Preservation**: Todo list and critical context preserved
+- **Cost Optimization**: Reduces token usage while maintaining coherence
+
+#### 7.9 Scheduled Automation (Cron)
+
+```rust
+pub struct CronScheduler {
+    jobs: Vec<ScheduledJob>,
+}
+
+pub struct ScheduledJob {
+    schedule: CronSchedule,
+    prompt: String,
+    channel: ChannelId,
+}
+```
+
+- **Natural Language Jobs**: Schedule tasks with natural language prompts
+- **Multi-Platform Delivery**: Executes on Telegram, Discord, Slack, etc.
+- **File-Based Locking**: Prevents concurrent execution
+- **Output Mirroring**: Job results delivered to configured channels
+
+#### 7.10 Autonomy Architecture Updates
+
+Updated directory structure with autonomy components:
+
+```
+manta/
+├── src/
+│   ├── agent/
+│   │   ├── mod.rs              # Core agent orchestration
+│   │   ├── context.rs          # Conversation context management
+│   │   ├── router.rs           # Request routing & handling
+│   │   ├── loop.rs             # Autonomous agent loop with budget
+│   │   ├── todo.rs             # Task planning system
+│   │   ├── compressor.rs       # Context compression
+│   │   └── delegate.rs         # Subagent spawning
+│   ├── memory/
+│   │   ├── mod.rs              # Memory backend trait
+│   │   ├── sqlite.rs           # SQLite implementation
+│   │   ├── vector.rs           # Vector store for embeddings
+│   │   ├── dual.rs             # Dual memory (procedural + user model)
+│   │   └── session_search.rs   # FTS5 session search
+│   ├── skills/
+│   │   ├── mod.rs              # Skill manager
+│   │   ├── guard.rs            # Security scanning
+│   │   └── loader.rs           # Skill loading & execution
+│   ├── tools/
+│   │   ├── mod.rs              # Tool trait & registry
+│   │   ├── shell.rs            # Shell command execution
+│   │   ├── file.rs             # File operations
+│   │   ├── memory.rs           # Memory storage/retrieval
+│   │   ├── web.rs              # Web search & fetch
+│   │   ├── time.rs             # Scheduling & time utilities
+│   │   ├── todo_tool.rs        # Task management tool
+│   │   ├── code_exec.rs        # PTC code execution
+│   │   ├── delegate_tool.rs    # Subagent delegation
+│   │   └── session_search.rs   # Session search tool
+│   └── cron/
+│       ├── mod.rs              # Cron scheduler
+│       └── jobs.rs             # Job definitions
+├── skills/                     # User and agent-created skills
+│   └── {skill_name}/
+│       ├── SKILL.md
+│       └── ...
+└── memory/
+    ├── agent.md                # Procedural memory
+    └── user.md                 # User model
+```
+
 ## Implementation Phases
 
 ### Phase 1: Foundation (Week 1-2)
@@ -206,11 +425,27 @@ security:
 - [ ] Rate limiting
 - [ ] Security audit
 
-### Phase 6: Polish (Week 6-7)
+### Phase 6: Autonomy Features (Week 6-8)
+- [ ] Agent loop with iteration budget
+- [ ] Task planning (todo system)
+- [ ] Dual memory architecture
+- [ ] Session search with FTS5
+- [ ] Context compression
+- [ ] Cron scheduler
+
+### Phase 7: Advanced Autonomy (Week 8-10)
+- [ ] Autonomous skill creation
+- [ ] Skills Guard security scanning
+- [ ] Programmatic Tool Calling (PTC)
+- [ ] Subagent delegation
+- [ ] Skill hub / sharing
+
+### Phase 8: Polish (Week 10-11)
 - [ ] Documentation
 - [ ] Example skills
 - [ ] Deployment configs
 - [ ] Performance optimization
+- [ ] Security audit
 
 ## Technical Specifications
 
@@ -372,9 +607,14 @@ WantedBy=multi-user.target
 3. **Multi-Agent**: Swarm coordination patterns
 4. **Hardware**: GPIO support for Raspberry Pi
 5. **Plugins**: WASM-based plugin system
+6. **RL Training**: Integration with Atropos for training tool-calling models
+7. **Embeddings**: Local embedding models for semantic search
+8. **Knowledge Base**: RAG with document ingestion
 
 ## References
 
-- NanoClaw: Container-first TypeScript implementation
-- ZeroClaw: Rust implementation with trait-driven architecture
-- Model Context Protocol: Anthropic's tool use standard
+- **NanoClaw**: Container-first TypeScript implementation (~4K lines)
+- **ZeroClaw**: Rust implementation with trait-driven architecture (<5MB RAM)
+- **Hermes-Agent**: Python-based autonomous agent with closed learning loop (40+ tools, skill creation, RL training)
+- **Model Context Protocol**: Anthropic's tool use standard
+- **Atropos**: Nous Research RL training framework for tool-calling models

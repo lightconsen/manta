@@ -16,6 +16,14 @@ Manta combines the simplicity philosophy of NanoClaw with the performance charac
 - **Multiple LLM Providers**: OpenAI, Anthropic, Local models (Ollama)
 - **Multi-Channel**: Telegram, Discord, Slack, CLI
 - **Tool System**: Sandboxed shell, file operations, web search, memory
+- **Autonomous Capabilities** (Hermes-Agent inspired):
+  - Task planning with todo system
+  - Dual memory architecture (procedural + user model)
+  - Session search across conversation history
+  - Autonomous skill creation
+  - Subagent delegation for parallel tasks
+  - Context compression
+  - Scheduled automation (cron)
 - **Secure by Design**: Deny-by-default, explicit allowlists
 - **Extensible**: Skill-based capability system
 
