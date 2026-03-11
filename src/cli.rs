@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use crate::core::Engine;
 use crate::error::Result;
+use crate::server::{ServerConfig, start_server};
 use clap::{Parser, Subcommand, ValueEnum};
 use rustyline::{history::History, DefaultEditor, Result as RustyResult};
 use std::path::PathBuf;
@@ -208,24 +209,22 @@ impl Cli {
         host: Option<String>,
         port: Option<u16>,
     ) -> Result<()> {
-        let host = host.as_ref().unwrap_or(&config.server.host);
+        let host = host.as_ref().unwrap_or(&config.server.host).clone();
         let port = port.unwrap_or(config.server.port);
 
         info!("Starting server on {}:{}", host, port);
         println!("🚀 Server starting on http://{}:{}", host, port);
 
-        // TODO: Implement actual server startup
-        // For now, we'll just demonstrate the structure
-        println!("Server would start here...");
+        // Create engine
+        let engine = Arc::new(Engine::new());
+
+        // Configure and start the server
+        let server_config = ServerConfig { host, port };
+
         println!("Press Ctrl+C to stop");
 
-        // Wait for interrupt signal
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!(
-                "Failed to listen for ctrl+c: {}",
-                e
-            )))?;
+        // Start the server (it will handle shutdown internally)
+        start_server(server_config, engine).await?;
 
         info!("Shutting down server");
         println!("\n👋 Server stopped");

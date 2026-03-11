@@ -44,6 +44,7 @@ pub mod error;
 pub mod memory;
 pub mod providers;
 pub mod security;
+pub mod server;
 pub mod skills;
 pub mod tools;
 pub mod utils;
