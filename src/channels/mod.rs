@@ -297,6 +297,8 @@ pub struct ChannelCapabilities {
     pub supports_buttons: bool,
     /// Supports slash commands
     pub supports_commands: bool,
+    /// Supports message reactions (emoji reactions)
+    pub supports_reactions: bool,
 }
 
 impl Default for ChannelCapabilities {
@@ -309,6 +311,7 @@ impl Default for ChannelCapabilities {
             supports_typing: true,
             supports_buttons: false,
             supports_commands: false,
+            supports_reactions: false,
         }
     }
 }

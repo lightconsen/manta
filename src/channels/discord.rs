@@ -17,7 +17,7 @@ use serenity::{
     async_trait as serenity_async_trait,
     builder::{CreateEmbed, CreateMessage},
     client::{Context, EventHandler},
-    model::{channel::Message, gateway::Ready, id::ChannelId},
+    model::{channel::{Message, ReactionType}, gateway::Ready, id::ChannelId},
     prelude::GatewayIntents,
     Client,
 };
@@ -157,6 +157,7 @@ impl Channel for DiscordChannel {
             supports_typing: true,
             supports_buttons: true,
             supports_commands: true,
+            supports_reactions: true,
         }
     }
 
@@ -168,7 +169,9 @@ impl Channel for DiscordChannel {
             let intents = GatewayIntents::GUILD_MESSAGES
                 | GatewayIntents::DIRECT_MESSAGES
                 | GatewayIntents::GUILDS
-                | GatewayIntents::MESSAGE_CONTENT;
+                | GatewayIntents::MESSAGE_CONTENT
+                | GatewayIntents::GUILD_MESSAGE_REACTIONS
+                | GatewayIntents::DIRECT_MESSAGE_REACTIONS;
 
             let mut client = Client::builder(&self.config.token, intents)
                 .event_handler(DiscordHandler {
@@ -373,6 +376,110 @@ impl EventHandler for DiscordHandler {
 
     async fn ready(&self, _ctx: Context, ready: Ready) {
         info!("Discord bot connected as {}", ready.user.name);
+    }
+
+    /// Handle reaction additions
+    async fn reaction_add(&self, ctx: Context, add_reaction: serenity::model::channel::Reaction) {
+        debug!(
+            "Reaction added: {:?} by user {}",
+            add_reaction.emoji,
+            add_reaction.user_id.map(|id| id.get()).unwrap_or(0)
+        );
+
+        // Get message info
+        if let Ok(message) = add_reaction.message(&ctx.http).await {
+            // Check if user is allowed
+            if let Some(user_id) = add_reaction.user_id {
+                if !self.config.allowed_user_ids.is_empty()
+                    && !self.config.allowed_user_ids.contains(&user_id.get())
+                {
+                    return;
+                }
+            }
+
+            // Create incoming message for reaction
+            let reaction_content = format!("reaction_add:{}", reaction_emoji_name(&add_reaction.emoji));
+            let incoming = IncomingMessage::new(
+                &user_id.map(|id| id.get().to_string()).unwrap_or_default(),
+                &add_reaction.channel_id.get().to_string(),
+                reaction_content,
+            )
+            .with_metadata(
+                MessageMetadata::new()
+                    .with_extra("message_id", add_reaction.message_id.get())
+                    .with_extra("reaction_emoji", reaction_emoji_name(&add_reaction.emoji))
+                    .with_extra("reaction_type", "add")
+                    .with_extra("original_message", message.content.clone()),
+            );
+
+            // Send to handler if configured
+            if let Some(tx) = &self.config.message_tx {
+                let _ = tx.send(incoming);
+            }
+        }
+    }
+
+    /// Handle reaction removals
+    async fn reaction_remove(&self, _ctx: Context, removed_reaction: serenity::model::channel::Reaction) {
+        debug!(
+            "Reaction removed: {:?}",
+            removed_reaction.emoji
+        );
+
+        // Create incoming message for reaction removal
+        let reaction_content = format!("reaction_remove:{}", reaction_emoji_name(&removed_reaction.emoji));
+        let incoming = IncomingMessage::new(
+            &removed_reaction.user_id.map(|id| id.get().to_string()).unwrap_or_default(),
+            &removed_reaction.channel_id.get().to_string(),
+            reaction_content,
+        )
+        .with_metadata(
+            MessageMetadata::new()
+                .with_extra("message_id", removed_reaction.message_id.get())
+                .with_extra("reaction_emoji", reaction_emoji_name(&removed_reaction.emoji))
+                .with_extra("reaction_type", "remove"),
+        );
+
+        // Send to handler if configured
+        if let Some(tx) = &self.config.message_tx {
+            let _ = tx.send(incoming);
+        }
+    }
+
+    /// Handle all reactions being removed from a message
+    async fn reaction_remove_all(
+        &self,
+        _ctx: Context,
+        channel_id: serenity::model::id::ChannelId,
+        message_id: serenity::model::id::MessageId,
+    ) {
+        debug!("All reactions removed from message {}", message_id);
+
+        let incoming = IncomingMessage::new(
+            "system",
+            &channel_id.get().to_string(),
+            "reaction_remove_all".to_string(),
+        )
+        .with_metadata(
+            MessageMetadata::new()
+                .with_extra("message_id", message_id.get())
+                .with_extra("reaction_type", "remove_all"),
+        );
+
+        if let Some(tx) = &self.config.message_tx {
+            let _ = tx.send(incoming);
+        }
+    }
+}
+
+/// Get emoji name for reaction
+#[cfg(feature = "discord")]
+fn reaction_emoji_name(emoji: &ReactionType) -> String {
+    match emoji {
+        ReactionType::Unicode(s) => s.clone(),
+        ReactionType::Custom { animated: _, id, name } => {
+            name.clone().unwrap_or_else(|| id.get().to_string())
+        }
     }
 }
 

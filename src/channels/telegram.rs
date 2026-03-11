@@ -152,6 +152,7 @@ impl Channel for TelegramChannel {
             supports_typing: true,
             supports_buttons: true,
             supports_commands: true,
+            supports_reactions: true,
         }
     }
 

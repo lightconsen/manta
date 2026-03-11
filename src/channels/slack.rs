@@ -165,6 +165,7 @@ impl Channel for SlackChannel {
             supports_typing: false, // Slack doesn't have typing indicators in the same way
             supports_buttons: true,
             supports_commands: true,
+            supports_reactions: true,
         }
     }
 
