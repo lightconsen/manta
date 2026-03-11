@@ -1108,7 +1108,7 @@ pub mod secrets {
 
     impl DetectedSecret {
         /// Redact sensitive content for safe display
-        fn redact(content: &str) -> String {
+        pub fn redact(content: &str) -> String {
             if content.len() <= 8 {
                 "***".to_string()
             } else {
