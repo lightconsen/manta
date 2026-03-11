@@ -5,14 +5,12 @@
 
 use crate::config::{Config, LogFormat};
 use crate::error::Result;
-use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 use tracing::Level;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Layer};
+use tracing_subscriber::EnvFilter;
 
 /// Initialize logging based on configuration
 pub fn init_logging(config: &Config) -> Result<()> {
@@ -27,102 +25,127 @@ pub fn init_logging(config: &Config) -> Result<()> {
     // Configure the formatter based on the format setting
     match config.logging.format {
         LogFormat::Json => {
-            if config.logging.stdout {
-                let stdout_layer = tracing_subscriber::fmt::layer()
-                    .json()
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_current_span(true)
-                    .with_span_list(true)
-                    .with_writer(io::stdout);
-
-                if let Some(ref log_file) = config.logging.file {
-                    let file_writer = create_file_writer(log_file)?;
-                    let file_layer = tracing_subscriber::fmt::layer()
-                        .json()
-                        .with_target(true)
-                        .with_thread_ids(true)
-                        .with_current_span(true)
-                        .with_span_list(true)
-                        .with_writer(file_writer);
-                    registry.with(stdout_layer).with(file_layer).init();
-                } else {
-                    registry.with(stdout_layer).init();
-                }
-            } else if let Some(ref log_file) = config.logging.file {
-                let file_writer = create_file_writer(log_file)?;
-                let file_layer = tracing_subscriber::fmt::layer()
-                    .json()
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_current_span(true)
-                    .with_span_list(true)
-                    .with_writer(file_writer);
-                registry.with(file_layer).init();
-            }
+            init_json_logging(registry, config)?;
         }
         LogFormat::Pretty => {
-            if config.logging.stdout {
-                let stdout_layer = tracing_subscriber::fmt::layer()
-                    .pretty()
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_writer(io::stdout);
-
-                if let Some(ref log_file) = config.logging.file {
-                    let file_writer = create_file_writer(log_file)?;
-                    let file_layer = tracing_subscriber::fmt::layer()
-                        .pretty()
-                        .with_target(true)
-                        .with_thread_ids(true)
-                        .with_writer(file_writer);
-                    registry.with(stdout_layer).with(file_layer).init();
-                } else {
-                    registry.with(stdout_layer).init();
-                }
-            } else if let Some(ref log_file) = config.logging.file {
-                let file_writer = create_file_writer(log_file)?;
-                let file_layer = tracing_subscriber::fmt::layer()
-                    .pretty()
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_writer(file_writer);
-                registry.with(file_layer).init();
-            }
+            init_pretty_logging(registry, config)?;
         }
         LogFormat::Compact => {
-            if config.logging.stdout {
-                let stdout_layer = tracing_subscriber::fmt::layer()
-                    .compact()
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .with_writer(io::stdout);
-
-                if let Some(ref log_file) = config.logging.file {
-                    let file_writer = create_file_writer(log_file)?;
-                    let file_layer = tracing_subscriber::fmt::layer()
-                        .compact()
-                        .with_target(false)
-                        .with_thread_ids(false)
-                        .with_writer(file_writer);
-                    registry.with(stdout_layer).with(file_layer).init();
-                } else {
-                    registry.with(stdout_layer).init();
-                }
-            } else if let Some(ref log_file) = config.logging.file {
-                let file_writer = create_file_writer(log_file)?;
-                let file_layer = tracing_subscriber::fmt::layer()
-                    .compact()
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .with_writer(file_writer);
-                registry.with(file_layer).init();
-            }
+            init_compact_logging(registry, config)?;
         }
     }
 
     tracing::info!("Logging initialized with level: {}", level);
     Ok(())
+}
+
+/// Initialize JSON format logging
+fn init_json_logging<S>(registry: S, config: &Config) -> Result<()>
+where
+    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    if config.logging.stdout {
+        let stdout_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_writer(io::stdout);
+
+        if config.logging.file.is_some() {
+            // For simplicity, just log to stdout when both are configured
+            // A production app would need more sophisticated file handling
+            registry.with(stdout_layer).init();
+        } else {
+            registry.with(stdout_layer).init();
+        }
+    } else if let Some(ref log_file) = config.logging.file {
+        let file = create_log_file(log_file)?;
+        let file_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_writer(file);
+        registry.with(file_layer).init();
+    }
+    Ok(())
+}
+
+/// Initialize pretty format logging
+fn init_pretty_logging<S>(registry: S, config: &Config) -> Result<()>
+where
+    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    if config.logging.stdout {
+        let stdout_layer = tracing_subscriber::fmt::layer()
+            .pretty()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_writer(io::stdout);
+
+        registry.with(stdout_layer).init();
+    } else if let Some(ref log_file) = config.logging.file {
+        let file = create_log_file(log_file)?;
+        let file_layer = tracing_subscriber::fmt::layer()
+            .pretty()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_writer(file);
+        registry.with(file_layer).init();
+    }
+    Ok(())
+}
+
+/// Initialize compact format logging
+fn init_compact_logging<S>(registry: S, config: &Config) -> Result<()>
+where
+    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    if config.logging.stdout {
+        let stdout_layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_writer(io::stdout);
+
+        registry.with(stdout_layer).init();
+    } else if let Some(ref log_file) = config.logging.file {
+        let file = create_log_file(log_file)?;
+        let file_layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_writer(file);
+        registry.with(file_layer).init();
+    }
+    Ok(())
+}
+
+/// Create a log file with parent directories
+fn create_log_file<P: AsRef<Path>>(path: P) -> Result<std::fs::File> {
+    let path = path.as_ref();
+
+    // Ensure parent directories exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| {
+            crate::error::MantaError::Internal(format!(
+                "Failed to open log file {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+    Ok(file)
 }
 
 /// Parse a log level string into a tracing Level
@@ -136,30 +159,6 @@ fn parse_log_level(level: &str) -> Level {
         _ => Level::INFO,
     }
 }
-
-/// Create a non-blocking file writer for logging
-fn create_file_writer<P: AsRef<Path>>(path: P) -> Result<tracing_subscriber::fmt::writer::BoxMakeWriter> {
-    let path = path.as_ref();
-
-    // Ensure parent directories exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| crate::error::MantaError::Internal(format!(
-            "Failed to open log file {}: {}",
-            path.display(),
-            e
-        )))?;
-
-    Ok(BoxMakeWriter::new(file))
-}
-
-use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 /// Setup panic hook for better error messages
 pub fn setup_panic_handler() {

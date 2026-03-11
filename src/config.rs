@@ -120,6 +120,9 @@ pub struct LoggingConfig {
     /// Whether to log to stdout
     #[serde(default = "default_true")]
     pub stdout: bool,
+    /// Log rotation configuration
+    #[serde(default)]
+    pub rotation: LogRotationConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +131,30 @@ pub enum LogFormat {
     Json,
     Pretty,
     Compact,
+}
+
+/// Log rotation configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogRotationConfig {
+    /// Enable log rotation
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Maximum file size before rotation (bytes)
+    #[serde(default = "default_max_size")]
+    pub max_size: u64,
+    /// Maximum number of archived files to keep
+    #[serde(default = "default_max_files")]
+    pub max_files: usize,
+}
+
+impl Default for LogRotationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_size: 10 * 1024 * 1024, // 10 MB
+            max_files: 5,
+        }
+    }
 }
 
 fn default_log_level() -> String {
@@ -142,6 +169,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_max_size() -> u64 {
+    10 * 1024 * 1024 // 10 MB
+}
+
+fn default_max_files() -> usize {
+    5
+}
+
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
@@ -149,6 +184,7 @@ impl Default for LoggingConfig {
             format: default_log_format(),
             file: None,
             stdout: true,
+            rotation: LogRotationConfig::default(),
         }
     }
 }
