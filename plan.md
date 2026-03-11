@@ -707,7 +707,7 @@ manta/
 - [✅] Add message sending
 - [✅] Implement embed support
 - [✅] Add slash command registration
-- [ ] Handle message reactions
+- [✅] Handle message reactions
 
 #### 4.3 Slack Channel [✅]
 - [✅] Set up Web API integration
