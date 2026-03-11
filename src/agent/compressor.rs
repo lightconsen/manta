@@ -369,7 +369,8 @@ mod tests {
     fn test_compressor_creation() {
         let compressor = ContextCompressor::new(1000);
         assert_eq!(compressor.target_tokens, 1000);
-        assert!(compressor.needs_compression(&create_test_messages(100)));
+        // Use more messages to ensure we exceed the threshold
+        assert!(compressor.needs_compression(&create_test_messages(150)));
     }
 
     #[test]

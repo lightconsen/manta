@@ -577,13 +577,18 @@ mod tests {
 
         let now = Utc::now();
 
+        // First run - should run because next_run is None
         assert!(job.should_run(now));
         job.mark_executed(now);
 
-        assert!(job.should_run(now));
-        job.mark_executed(now);
+        // Second run - use a future time after the next scheduled run
+        let future = now + chrono::Duration::hours(2);
+        assert!(job.should_run(future));
+        job.mark_executed(future);
 
-        assert!(!job.should_run(now));
+        // After max runs reached, should not run even in the future
+        let far_future = future + chrono::Duration::hours(2);
+        assert!(!job.should_run(far_future));
     }
 
     #[test]

@@ -104,10 +104,35 @@ impl TelegramChannel {
             .to_string();
 
         // Italic: *text* or _text_ -> <i>text</i>
-        result = regex::Regex::new(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+        // Use placeholders to protect bold from being converted to italic
+        let bold_placeholder = "\x00BOLD\x00";
+        result = regex::Regex::new(r"\*\*(.+?)\*\*")
+            .unwrap()
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+            })
+            .to_string();
+
+        result = regex::Regex::new(r"__(.+?)__")
+            .unwrap()
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+            })
+            .to_string();
+
+        // Now process italic
+        result = regex::Regex::new(r"\*([^*]+)\*")
             .unwrap()
             .replace_all(&result, "<i>$1</i>")
             .to_string();
+
+        result = regex::Regex::new(r"_([^_]+)_")
+            .unwrap()
+            .replace_all(&result, "<i>$1</i>")
+            .to_string();
+
+        // Restore bold and apply formatting
+        result = result.replace(bold_placeholder, "<b>$1</b>");
 
         // Code: `text` -> <code>text</code>
         result = regex::Regex::new(r"`([^`]+)`")

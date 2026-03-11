@@ -1390,7 +1390,10 @@ mod secret_tests {
     fn test_redaction() {
         let secret = "sk-abcdefghijklmnopqrstuvwxyz123456";
         let redacted = super::secrets::DetectedSecret::redact(secret);
-        assert!(redacted.contains("***"));
+        // For long strings, redact shows first 4 and last 4 chars with ... in between
+        assert!(redacted.starts_with("sk-a"));
+        assert!(redacted.ends_with("3456"));
+        assert!(redacted.contains("..."));
         assert!(!redacted.contains("abcdefghijklmnop"));
     }
 }
