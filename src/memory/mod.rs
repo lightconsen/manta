@@ -7,12 +7,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
+pub mod db;
 pub mod dual;
 pub mod session_search;
 pub mod sqlite;
 
+pub use db::{DatabaseStore, DbStats, QueryBuilder};
 pub use dual::{DualMemory, DualMemoryType};
-pub use session_search::{SessionSearch, SessionSearchQuery, SearchResult};
+pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
 
 /// Unique identifier for a memory entry
