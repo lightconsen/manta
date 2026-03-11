@@ -19,6 +19,7 @@ anyhow = "1.0"
 
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }
+rustyline = { version = "14.0", default-features = false }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

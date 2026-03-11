@@ -8,6 +8,7 @@ use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use crate::core::Engine;
 use crate::error::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use rustyline::{history::History, DefaultEditor, Result as RustyResult};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, instrument};
@@ -412,7 +413,6 @@ impl Cli {
         use crate::agent::{AgentConfig, AgentBuilder};
         use crate::channels::{ConversationId, IncomingMessage};
         use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool};
-        use std::io::{self, Write};
 
         println!("🤖 Manta AI Assistant");
         println!("=====================");
@@ -503,9 +503,6 @@ impl Cli {
         });
         println!("📱 Conversation ID: {}", conversation_id);
         println!();
-        println!("Type 'exit' or 'quit' to end the conversation.");
-        println!("Type 'help' for available commands.");
-        println!();
 
         // Single message mode
         if let Some(message) = single_message {
@@ -515,18 +512,52 @@ impl Cli {
             return Ok(());
         }
 
-        // Interactive REPL mode
-        loop {
-            print!("💬 You: ");
-            io::stdout().flush()?;
+        // Setup history file path
+        let history_file = dirs::data_dir()
+            .map(|p| p.join("manta").join("history.txt"))
+            .unwrap_or_else(|| PathBuf::from(".manta_history"));
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = history_file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Initialize rustyline editor
+        let mut rl = DefaultEditor::new()
+            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to initialize readline: {}", e)))?;
+
+        // Load history from file if it exists
+        let _ = rl.load_history(&history_file);
+
+        println!("Interactive chat mode. Type 'help' for commands, 'exit' to quit.");
+        println!();
+
+        // Interactive REPL mode with readline
+        loop {
+            let input = match rl.readline("💬 You: ") {
+                Ok(line) => line,
+                Err(rustyline::error::ReadlineError::Interrupted) => {
+                    println!("^C");
+                    continue;
+                }
+                Err(rustyline::error::ReadlineError::Eof) => {
+                    println!("^D");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("❌ Readline error: {}", e);
+                    break;
+                }
+            };
+
             let input = input.trim();
 
             if input.is_empty() {
                 continue;
             }
+
+            // Add to history (ignore errors)
+            let _ = rl.add_history_entry(input);
 
             // Handle special commands
             match input.to_lowercase().as_str() {
@@ -540,6 +571,7 @@ impl Cli {
                     println!("  exit     - Exit the chat");
                     println!("  clear    - Clear the conversation context");
                     println!("  tools    - List available tools");
+                    println!("  history  - Show command history count");
                     println!();
                     continue;
                 }
@@ -554,6 +586,13 @@ impl Cli {
                     for tool in tools {
                         println!("  - {}", tool);
                     }
+                    println!();
+                    continue;
+                }
+                "history" => {
+                    let count = rl.history().len();
+                    println!("📜 Command history: {} entries", count);
+                    println!("   History file: {}", history_file.display());
                     println!();
                     continue;
                 }
@@ -574,6 +613,9 @@ impl Cli {
                 }
             }
         }
+
+        // Save history to file (ignore errors)
+        let _ = rl.save_history(&history_file);
 
         Ok(())
     }
