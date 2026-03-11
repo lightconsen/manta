@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: manta-config
+  namespace: manta
+data:
+  config.yaml: |
+    # LLM Provider Configuration
+    provider:
+      type: openai
+      model: gpt-4o-mini
+      temperature: 0.7
+
+    # Agent Configuration
+    agent:
+      name: Manta
+      system_prompt: |
+        You are Manta, a helpful AI assistant running in Kubernetes.
+        You have access to tools for file operations, web search, and more.
+
+    # Feature Flags
+    features:
+      skills: true
+      cron: true
+      memory: true
+
+    # Security Settings
+    security:
+      allow_shell: false
+      sandboxed: true
+      max_budget: 50
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: manta-skills
+  namespace: manta
+data:
+  # Example skill - can be mounted as files
+  weather.md: |
+    # Weather Skill
+
+    ## Triggers
+    - Keyword: "weather"
+
+    ## Prompt
+    When user asks about weather, use web_search to find current weather information.
