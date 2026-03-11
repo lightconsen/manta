@@ -546,84 +546,85 @@ manta/
 ### Phase 1: Foundation (Week 1-2)
 
 #### 1.1 Project Setup
-- [ ] Initialize Cargo workspace with `Cargo.toml`
-- [ ] Create workspace structure: `src/`, `tests/`, `examples/`
-- [ ] Set up Rust edition 2021 and MSRV (1.75+)
-- [ ] Configure `.gitignore` for Rust project
+- [✅] Initialize Cargo workspace with `Cargo.toml`
+- [✅] Create workspace structure: `src/`, `tests/`, `examples/`
+- [✅] Set up Rust edition 2021 and MSRV (1.75+)
+- [✅] Configure `.gitignore` for Rust project
 - [ ] Create `rustfmt.toml` and `clippy.toml`
 
 #### 1.2 Error Handling
-- [ ] Define `Error` enum with `thiserror`
-- [ ] Create `Result<T>` type alias
-- [ ] Implement error conversion traits
-- [ ] Add error context with `anyhow`
-- [ ] Create error response formatter for users
+- [✅] Define `Error` enum with `thiserror`
+- [✅] Create `Result<T>` type alias
+- [✅] Implement error conversion traits
+- [✅] Add error context with `anyhow`
+- [✅] Create error response formatter for users
 
 #### 1.3 Logging
-- [ ] Set up `tracing` subscriber
-- [ ] Configure log levels (ERROR, WARN, INFO, DEBUG, TRACE)
-- [ ] Add structured logging with `tracing-subscriber`
+- [✅] Set up `tracing` subscriber
+- [✅] Configure log levels (ERROR, WARN, INFO, DEBUG, TRACE)
+- [✅] Add structured logging with `tracing-subscriber`
 - [ ] Create log rotation for production
-- [ ] Add span tracing for async operations
+- [✅] Add span tracing for async operations
 
 #### 1.4 Configuration System
-- [ ] Define `Config` struct with `serde`
-- [ ] Support YAML/JSON/TOML formats
-- [ ] Implement environment variable interpolation (`${VAR}`)
-- [ ] Add config validation on load
+- [✅] Define `Config` struct with `serde`
+- [✅] Support YAML/JSON/TOML formats
+- [✅] Implement environment variable interpolation (`${VAR}`)
+- [✅] Add config validation on load
 - [ ] Create config hot-reload mechanism
 - [ ] Write `config.example.yaml`
 
 #### 1.5 Core Traits
-- [ ] Define `Provider` trait with async methods
-- [ ] Define `Channel` trait with message handlers
-- [ ] Define `Tool` trait with JSON schema
-- [ ] Create `Message` struct for conversations
-- [ ] Define `ToolCall` and `ToolResult` types
+- [✅] Define `Provider` trait with async methods
+- [✅] Define `Channel` trait with message handlers
+- [✅] Define `Tool` trait with JSON schema
+- [✅] Create `Message` struct for conversations
+- [✅] Define `ToolCall` and `ToolResult` types
 
 ### Phase 2: Core Agent (Week 2-3)
 
 #### 2.1 Message Loop
-- [ ] Create `Agent` struct
-- [ ] Implement message intake queue
-- [ ] Add message dispatcher
-- [ ] Create response formatter
-- [ ] Add concurrent request handling
-- [ ] Implement graceful shutdown
+- [✅] Create `Agent` struct
+- [✅] Implement message intake queue
+- [✅] Add message dispatcher
+- [✅] Create response formatter
+- [✅] Add concurrent request handling
+- [✅] Implement graceful shutdown
 
 #### 2.2 Context Management
-- [ ] Define `Context` struct for conversations
-- [ ] Implement message history storage
-- [ ] Add context window tracking (token counting)
-- [ ] Create context pruning strategy
-- [ ] Implement system prompt injection
-- [ ] Add per-user context isolation
+- [✅] Define `Context` struct for conversations
+- [✅] Implement message history storage
+- [✅] Add context window tracking (token counting)
+- [✅] Create context pruning strategy
+- [✅] Implement system prompt injection
+- [✅] Add per-user context isolation
 
 #### 2.3 Provider Abstraction
-- [ ] Create `ProviderRegistry`
-- [ ] Implement OpenAI provider
-  - [ ] Chat completions API
+- [✅] Create `ProviderRegistry`
+- [✅] Implement OpenAI provider
+  - [✅] Chat completions API
   - [ ] Streaming responses
-  - [ ] Tool calling support
-  - [ ] Error handling for API failures
+  - [✅] Tool calling support
+  - [✅] Error handling for API failures
 - [ ] Add provider fallback mechanism
-- [ ] Implement request/response logging
+- [✅] Implement request/response logging
 
 #### 2.4 Tool Orchestration
-- [ ] Create `ToolRegistry` with tool discovery
-- [ ] Implement tool schema generation
-- [ ] Add tool call parsing from LLM responses
-- [ ] Create tool result formatter
-- [ ] Implement parallel tool execution
-- [ ] Add tool execution timeouts
+- [✅] Create `ToolRegistry` with tool discovery
+- [✅] Implement tool schema generation
+- [✅] Add tool call parsing from LLM responses
+- [✅] Create tool result formatter
+- [✅] Implement parallel tool execution
+- [✅] Add tool execution timeouts
 
-#### 2.5 CLI Channel
-- [ ] Set up `clap` CLI parser
-- [ ] Implement interactive REPL mode
+#### 2.5 CLI Channel ✅
+- [✅] Set up `clap` CLI parser
+- [✅] Implement interactive REPL mode
 - [ ] Add command history (readline)
-- [ ] Create rich output formatting
-- [ ] Add `/quit`, `/clear`, `/help` commands
-- [ ] Support piping input/output
+- [✅] Create rich output formatting
+- [✅] Add `exit`, `clear`, `help`, `tools` commands
+- [✅] Support single message mode (-m flag)
+- [✅] Provider-agnostic configuration (MANTA_BASE_URL, MANTA_API_KEY, MANTA_MODEL)
 
 ### Phase 3: Tools & Memory (Week 3-4)
 
@@ -635,56 +636,56 @@ manta/
 - [ ] Implement tool result caching
 
 #### 3.2 Shell Tool
-- [ ] Define `ShellTool` struct
-- [ ] Implement command allowlist
-- [ ] Add command timeout (30s default)
-- [ ] Capture stdout/stderr
-- [ ] Implement working directory restrictions
-- [ ] Add environment variable filtering
-- [ ] Create output truncation (max 10KB)
+- [✅] Define `ShellTool` struct
+- [✅] Implement command allowlist
+- [✅] Add command timeout (30s default)
+- [✅] Capture stdout/stderr
+- [✅] Implement working directory restrictions
+- [✅] Add environment variable filtering
+- [✅] Create output truncation (max 10KB)
 
 #### 3.3 File Tools
-- [ ] Implement `FileReadTool`
-  - [ ] Path allowlist validation
-  - [ ] File size limits (1MB)
-  - [ ] Binary file detection
-- [ ] Implement `FileWriteTool`
-  - [ ] Directory creation
-  - [ ] Backup existing files
-  - [ ] Size limits
-- [ ] Implement `FileEditTool`
-  - [ ] Find/replace with regex
-  - [ ] Line-based edits
-  - [ ] Atomic writes
-- [ ] Implement `GlobTool`
-  - [ ] Pattern matching
-  - [ ] Result limits (100 files)
+- [✅] Implement `FileReadTool`
+  - [✅] Path allowlist validation
+  - [✅] File size limits (1MB)
+  - [✅] Binary file detection
+- [✅] Implement `FileWriteTool`
+  - [✅] Directory creation
+  - [✅] Backup existing files
+  - [✅] Size limits
+- [✅] Implement `FileEditTool`
+  - [✅] Find/replace with regex
+  - [✅] Line-based edits
+  - [✅] Atomic writes
+- [✅] Implement `GlobTool`
+  - [✅] Pattern matching
+  - [✅] Result limits (100 files)
 - [ ] Implement `GrepTool`
   - [ ] Regex search
   - [ ] Context lines
   - [ ] Result limits
 
-#### 3.4 Memory System
-- [ ] Create `MemoryStore` trait
-- [ ] Implement SQLite backend
-  - [ ] Schema migrations
-  - [ ] Connection pooling
-- [ ] Create `Memory` struct with embeddings
-- [ ] Implement memory storage
-- [ ] Add memory retrieval by ID
-- [ ] Implement semantic search
-- [ ] Add memory expiration/TTL
+#### 3.4 Memory System ✅
+- [✅] Create `MemoryStore` trait
+- [✅] Implement SQLite backend
+  - [✅] Schema migrations
+  - [✅] Connection pooling
+- [✅] Create `Memory` struct with embeddings
+- [✅] Implement memory storage
+- [✅] Add memory retrieval by ID
+- [✅] Implement semantic search
+- [✅] Add memory expiration/TTL
 
-#### 3.5 Web Tools
-- [ ] Implement `WebFetchTool`
-  - [ ] HTTP GET requests
-  - [ ] Content type detection
-  - [ ] HTML to markdown conversion
-  - [ ] Size limits (100KB)
-- [ ] Implement `WebSearchTool`
-  - [ ] Search provider abstraction
-  - [ ] Result formatting
-  - [ ] Rate limiting
+#### 3.5 Web Tools ✅
+- [✅] Implement `WebFetchTool`
+  - [✅] HTTP GET requests
+  - [✅] Content type detection
+  - [✅] HTML to markdown conversion
+  - [✅] Size limits (100KB)
+- [✅] Implement `WebSearchTool`
+  - [✅] Search provider abstraction
+  - [✅] Result formatting
+  - [✅] Rate limiting
 
 ### Phase 4: Channels (Week 4-5)
 
@@ -728,26 +729,26 @@ manta/
 ### Phase 5: Security (Week 5-6)
 
 #### 5.1 Authentication
-- [ ] Create `AuthManager`
-- [ ] Implement pairing code generation
-- [ ] Add user registration flow
-- [ ] Store user credentials securely
-- [ ] Implement session management
+- [✅] Create `AuthManager`
+- [✅] Implement pairing code generation
+- [✅] Add user registration flow
+- [✅] Store user credentials securely
+- [✅] Implement session management
 - [ ] Add device fingerprinting
 
 #### 5.2 Allowlist Management
-- [ ] Create `Allowlist` struct
-- [ ] Implement user ID validation
-- [ ] Add channel-specific allowlists
-- [ ] Implement admin override
-- [ ] Add temporary access grants
-- [ ] Create allowlist persistence
+- [✅] Create `Allowlist` struct
+- [✅] Implement user ID validation
+- [✅] Add channel-specific allowlists
+- [✅] Implement admin override
+- [✅] Add temporary access grants
+- [✅] Create allowlist persistence
 
 #### 5.3 Rate Limiting
-- [ ] Implement token bucket algorithm
-- [ ] Add per-user rate limits
-- [ ] Add per-channel rate limits
-- [ ] Implement global rate limits
+- [✅] Implement token bucket algorithm
+- [✅] Add per-user rate limits
+- [✅] Add per-channel rate limits
+- [✅] Implement global rate limits
 - [ ] Add rate limit headers
 - [ ] Create rate limit notifications
 
@@ -769,149 +770,149 @@ manta/
 ### Phase 6: Autonomy Features (Week 6-8)
 
 #### 6.1 Iteration Budget
-- [ ] Create `IterationBudget` struct
-- [ ] Implement atomic counter
-- [ ] Add budget sharing between parent/child
-- [ ] Create budget exhaustion handlers
-- [ ] Add budget configuration
-- [ ] Implement budget warnings
+- [✅] Create `IterationBudget` struct
+- [✅] Implement atomic counter
+- [✅] Add budget sharing between parent/child
+- [✅] Create budget exhaustion handlers
+- [✅] Add budget configuration
+- [✅] Implement budget warnings
 
 #### 6.2 Task Planning (Todo)
-- [ ] Define `Task` struct
-- [ ] Create `TodoStore` in-memory
-- [ ] Implement task CRUD operations
-- [ ] Add task status tracking
-- [ ] Implement task dependencies
-- [ ] Create task persistence
-- [ ] Add task notifications
+- [✅] Define `Task` struct
+- [✅] Create `TodoStore` in-memory
+- [✅] Implement task CRUD operations
+- [✅] Add task status tracking
+- [✅] Implement task dependencies
+- [✅] Create task persistence
+- [✅] Add task notifications
 
 #### 6.3 Dual Memory
-- [ ] Create `ProceduralMemory` (agent.md)
-- [ ] Create `UserModel` (user.md)
-- [ ] Implement memory file reading
-- [ ] Add memory file writing
-- [ ] Implement memory size limits (4KB)
-- [ ] Add memory injection to prompts
+- [✅] Create `ProceduralMemory` (agent.md)
+- [✅] Create `UserModel` (user.md)
+- [✅] Implement memory file reading
+- [✅] Add memory file writing
+- [✅] Implement memory size limits (4KB)
+- [✅] Add memory injection to prompts
 
 #### 6.4 Session Search
-- [ ] Set up SQLite FTS5
-- [ ] Index conversation messages
-- [ ] Implement full-text search
-- [ ] Add result ranking
-- [ ] Implement LLM summarization
-- [ ] Add search result formatting
+- [✅] Set up SQLite FTS5
+- [✅] Index conversation messages
+- [✅] Implement full-text search
+- [✅] Add result ranking
+- [✅] Implement LLM summarization
+- [✅] Add search result formatting
 
 #### 6.5 Context Compression
-- [ ] Create `ContextCompressor`
-- [ ] Implement token counting
-- [ ] Add message summarization
-- [ ] Create priority scoring
-- [ ] Implement sliding window
-- [ ] Add compression triggers
+- [✅] Create `ContextCompressor`
+- [✅] Implement token counting
+- [✅] Add message summarization
+- [✅] Create priority scoring
+- [✅] Implement sliding window
+- [✅] Add compression triggers
 
 #### 6.6 Cron Scheduler
-- [ ] Create `CronScheduler` struct
-- [ ] Parse cron expressions
-- [ ] Implement job queue
-- [ ] Add job execution
-- [ ] Implement job persistence
-- [ ] Add job notifications
-- [ ] Handle missed executions
+- [✅] Create `CronScheduler` struct
+- [✅] Parse cron expressions
+- [✅] Implement job queue
+- [✅] Add job execution
+- [✅] Implement job persistence
+- [✅] Add job notifications
+- [✅] Handle missed executions
 
 ### Phase 7: Advanced Autonomy (Week 8-10)
 
 #### 7.1 Autonomous Skill Creation
-- [ ] Create `SkillManager`
-  - [ ] Define skill structure
-  - [ ] Create skill validation
-  - [ ] Implement skill storage
-- [ ] Implement skill generation
-  - [ ] Prompt for skill creation
-  - [ ] Generate SKILL.md
-  - [ ] Create supporting files
-- [ ] Add skill loading
-- [ ] Implement skill execution
-- [ ] Create skill versioning
+- [✅] Create `SkillManager`
+  - [✅] Define skill structure
+  - [✅] Create skill validation
+  - [✅] Implement skill storage
+- [✅] Implement skill generation
+  - [✅] Prompt for skill creation
+  - [✅] Generate SKILL.md
+  - [✅] Create supporting files
+- [✅] Add skill loading
+- [✅] Implement skill execution
+- [✅] Create skill versioning
 
 #### 7.2 Skills Guard
-- [ ] Define security patterns (50+)
-- [ ] Implement pattern matching
-- [ ] Add code injection detection
-- [ ] Detect secret exfiltration
-- [ ] Check for privilege escalation
-- [ ] Create security report
+- [✅] Define security patterns (50+)
+- [✅] Implement pattern matching
+- [✅] Add code injection detection
+- [✅] Detect secret exfiltration
+- [✅] Check for privilege escalation
+- [✅] Create security report
 
 #### 7.3 Programmatic Tool Calling (PTC)
-- [ ] Create `CodeExecutionTool`
-- [ ] Set up Python sandbox
-- [ ] Implement RPC between Python and agent
-- [ ] Add tool call serialization
-- [ ] Implement result capture
-- [ ] Add execution timeout
-- [ ] Create output size limits
+- [✅] Create `CodeExecutionTool`
+- [✅] Set up Python sandbox
+- [✅] Implement RPC between Python and agent
+- [✅] Add tool call serialization
+- [✅] Implement result capture
+- [✅] Add execution timeout
+- [✅] Create output size limits
 
 #### 7.4 Subagent Delegation
-- [ ] Create `DelegateTool`
-- [ ] Implement child agent spawning
-- [ ] Add parent-child communication
-- [ ] Implement budget sharing
-- [ ] Add depth limiting (max 2)
-- [ ] Create child isolation
-- [ ] Implement result aggregation
+- [✅] Create `DelegateTool`
+- [✅] Implement child agent spawning
+- [✅] Add parent-child communication
+- [✅] Implement budget sharing
+- [✅] Add depth limiting (max 2)
+- [✅] Create child isolation
+- [✅] Implement result aggregation
 
 #### 7.5 Persistent Assistant Spawning
-- [ ] Create `AssistantSpawner`
-- [ ] Define `AssistantType` enum
-- [ ] Implement assistant configuration
-- [ ] Create isolated environment per assistant
-- [ ] Implement assistant lifecycle
-- [ ] Add `AssistantMesh` for communication
-- [ ] Create assistant monitoring
-- [ ] Implement resource quotas
+- [✅] Create `AssistantSpawner`
+- [✅] Define `AssistantType` enum
+- [✅] Implement assistant configuration
+- [✅] Create isolated environment per assistant
+- [✅] Implement assistant lifecycle
+- [✅] Add `AssistantMesh` for communication
+- [✅] Create assistant monitoring
+- [✅] Implement resource quotas
 
 #### 7.6 Assistant Mesh
-- [ ] Implement message routing
-- [ ] Add broadcast capability
-- [ ] Create discovery mechanism
-- [ ] Implement load balancing
-- [ ] Add failure detection
-- [ ] Create mesh topology
+- [✅] Implement message routing
+- [✅] Add broadcast capability
+- [✅] Create discovery mechanism
+- [✅] Implement load balancing
+- [✅] Add failure detection
+- [✅] Create mesh topology
 
 #### 7.7 MCP Integration
-- [ ] Create `McpClient`
-- [ ] Implement stdio transport
-- [ ] Implement SSE transport
-- [ ] Add tool discovery
-- [ ] Implement MCP tool calling
-- [ ] Add server management
+- [✅] Create `McpClient`
+- [✅] Implement stdio transport
+- [✅] Implement SSE transport
+- [✅] Add tool discovery
+- [✅] Implement MCP tool calling
+- [✅] Add server management
 
 ### Phase 8: Polish (Week 10-11)
 
 #### 8.1 Documentation
-- [ ] Write API documentation
+- [✅] Write API documentation
 - [ ] Create architecture diagrams
-- [ ] Write user guide
-- [ ] Add deployment guide
-- [ ] Create troubleshooting guide
+- [✅] Write user guide
+- [✅] Add deployment guide
+- [✅] Create troubleshooting guide
 - [ ] Write contribution guidelines
 - [ ] Add changelog
 
 #### 8.2 Example Skills
-- [ ] Create weather skill
-- [ ] Create news skill
-- [ ] Create todo management skill
-- [ ] Create calculator skill
-- [ ] Create reminder skill
+- [✅] Create weather skill
+- [✅] Create news skill
+- [✅] Create todo management skill
+- [✅] Create calculator skill
+- [✅] Create reminder skill
 - [ ] Add skill templates
 
 #### 8.3 Deployment
-- [ ] Create Dockerfile
-- [ ] Write docker-compose.yml
-- [ ] Create systemd service file
+- [✅] Create Dockerfile
+- [✅] Write docker-compose.yml
+- [✅] Create systemd service file
 - [ ] Write Kubernetes manifests
 - [ ] Add GitHub Actions CI/CD
 - [ ] Create release script
-- [ ] Write installation guide
+- [✅] Write installation guide
 
 #### 8.4 Performance Optimization
 - [ ] Profile CPU usage

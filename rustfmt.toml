@@ -1,0 +1,65 @@
+# Rustfmt configuration for Manta
+# See: https://rust-lang.github.io/rustfmt/
+
+# Maximum width of each line
+max_width = 100
+
+# Number of spaces per tab/indentation
+tab_spaces = 4
+
+# Use Unix line endings
+newline_style = "Unix"
+
+# Add trailing comma where appropriate
+trailing_comma = "Vertical"
+
+# Add trailing semicolon after a macro invocation
+# trailing_semicolon = true
+
+# Indentation style for function call arguments
+fn_call_width = 80
+
+# Indentation style for struct/enum literals
+struct_lit_width = 30
+
+# Maximum width of an array literal before wrapping
+array_width = 60
+
+# Maximum width of a chain of method calls
+chain_width = 60
+
+# Reorder imports alphabetically
+reorder_imports = true
+
+# Group imports by crate
+group_imports = "StdExternalCrate"
+
+# Reorder module statements alphabetically
+reorder_modules = true
+
+# Remove nested parens
+remove_nested_parens = true
+
+# Format code in doc comments
+format_code_in_doc_comments = true
+
+# Format strings
+format_strings = true
+
+# Wrap comments at max_width
+wrap_comments = true
+
+# Normalize doc attributes (convert #![doc] to //!)
+normalize_doc_attributes = true
+
+# Format generated code
+format_generated_files = true
+
+# Use field initialization shorthand
+use_field_init_shorthand = true
+
+# Use try shorthand (?) instead of try! macro
+use_try_shorthand = true
+
+# Edition to use for parsing
+edition = "2021"

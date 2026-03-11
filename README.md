@@ -1,31 +1,18 @@
 # Manta
 
-A lightweight, fast, and secure Personal AI Assistant written in Rust.
+A lightweight, fast, and secure application written in Rust with clean architecture.
 
 ## Overview
 
-Manta combines the simplicity philosophy of NanoClaw with the performance characteristics of ZeroClaw:
+Manta demonstrates modern Rust development practices with a layered architecture:
 
-- **Binary size**: <10MB
-- **Memory usage**: <20MB
-- **Startup time**: <50ms
-- **Single binary**: Easy deployment
-
-## Features
-
-- **Multiple LLM Providers**: OpenAI, Anthropic, Local models (Ollama)
-- **Multi-Channel**: Telegram, Discord, Slack, CLI
-- **Tool System**: Sandboxed shell, file operations, web search, memory
-- **Autonomous Capabilities** (Hermes-Agent inspired):
-  - Task planning with todo system
-  - Dual memory architecture (procedural + user model)
-  - Session search across conversation history
-  - Autonomous skill creation
-  - Subagent delegation for parallel tasks
-  - Context compression
-  - Scheduled automation (cron)
-- **Secure by Design**: Deny-by-default, explicit allowlists
-- **Extensible**: Skill-based capability system
+- **Clean Architecture**: Core domain logic independent of external frameworks
+- **Layered Design**: Clear separation between core, adapters, and interfaces
+- **Async/Await**: Modern async Rust patterns
+- **Error Handling**: Structured error types with context
+- **Configuration**: Multi-source configuration (files, environment)
+- **Observability**: Structured logging with tracing
+- **CLI**: Comprehensive command-line interface
 
 ## Quick Start
 
@@ -33,18 +20,126 @@ Manta combines the simplicity philosophy of NanoClaw with the performance charac
 # Build
 cargo build --release
 
-# Configure
-cp config.example.yaml ~/.config/manta/config.yaml
-# Edit config.yaml with your API keys
+# Configure (optional)
+# Manta works out of the box with defaults
 
-# Run
-./target/release/manta
+# Run CLI
+./target/release/manta --help
+
+# Start server
+./target/release/manta server
+
+# Create and manage entities
+./target/release/manta entity create "My Entity"
+./target/release/manta entity list
 ```
 
 ## Architecture
 
-See [plan.md](plan.md) for detailed architecture and implementation plan.
+Manta follows clean architecture principles:
+
+```
+manta/
+├── src/
+│   ├── core/           # Domain logic (independent)
+│   │   ├── models.rs   # Domain models (Entity, Status, etc.)
+│   │   └── engine.rs   # Business logic
+│   ├── adapters/       # External integrations
+│   │   ├── storage.rs  # Storage implementations
+│   │   └── api.rs      # HTTP client with retry logic
+│   ├── config.rs       # Configuration management
+│   ├── cli.rs          # Command-line interface
+│   ├── error.rs        # Error types
+│   └── utils/          # Utilities
+│       └── logging.rs  # Logging setup
+├── tests/              # Integration tests
+└── CLAUDE.md           # Development guide
+```
+
+## Features
+
+### Implemented
+
+- ✅ Clean architecture with separation of concerns
+- ✅ Entity management (create, read, update, delete)
+- ✅ Configuration system (file, env, CLI)
+- ✅ Structured logging with tracing
+- ✅ CLI with subcommands
+- ✅ In-memory and file-based storage
+- ✅ HTTP client with retry logic
+- ✅ Comprehensive error handling
+- ✅ Unit and integration tests
+
+### Planned
+
+- Multiple LLM Providers (OpenAI, Anthropic, Local)
+- Multi-Channel support (Telegram, Discord, CLI)
+- Tool system for autonomous operations
+- Memory management
+
+See [plan.md](plan.md) for detailed architecture and roadmap.
+
+## Configuration
+
+Manta can be configured via:
+
+1. **Configuration file**: `manta.toml` or `~/.config/manta/manta.toml`
+2. **Environment variables**: `MANTA_SERVER_HOST`, `MANTA_LOG_LEVEL`, etc.
+3. **Command-line flags**: `--config`, `--log-level`
+
+### Example Configuration
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[logging]
+level = "info"
+format = "compact"  # Options: compact, pretty, json
+
+[storage]
+type = "memory"  # Options: memory, file
+```
+
+## Development
+
+### Prerequisites
+
+- Rust 1.75 or later
+- Cargo
+
+### Building
+
+```bash
+# Debug build
+cargo build
+
+# Release build
+cargo build --release
+
+# Run tests
+cargo test
+
+# Run with logging
+cargo run -- --log-level debug server
+```
+
+### Code Quality
+
+```bash
+# Format code
+cargo fmt
+
+# Run linter
+cargo clippy -- -D warnings
+
+# Generate documentation
+cargo doc --no-deps
+```
+
+See [CLAUDE.md](CLAUDE.md) for Rust best practices and development guidelines.
 
 ## License
 
-MIT
+MIT OR Apache-2.0

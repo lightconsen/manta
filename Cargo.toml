@@ -1,0 +1,90 @@
+[package]
+name = "manta"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Manta Contributors"]
+description = "Manta - A Rust application"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/manta"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-stream = "0.1"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+# Configuration
+config = "0.14"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# JSON
+serde_json = "1.0"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+dirs = "5.0"
+
+# YAML support
+serde_yaml = "0.9"
+
+# Async trait support
+async-trait = "0.1"
+
+# Random number generation for jitter
+rand = "0.8"
+
+# Glob patterns
+glob = "0.3"
+
+# URL encoding
+urlencoding = "2.1"
+
+# Regex for security scanning
+regex = "1.10"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
+
+# Channels (optional)
+teloxide = { version = "0.12", features = ["macros"], optional = true }
+
+[features]
+default = ["telegram"]
+telegram = ["teloxide"]
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+wiremock = "0.6"
+mockall = "0.12"
+
+# Assertions
+pretty_assertions = "1.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
