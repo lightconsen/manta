@@ -409,6 +409,190 @@ impl ChannelRegistry {
     }
 }
 
+/// Input validation and sanitization for messages
+pub mod validation {
+    use super::*;
+
+    /// Default maximum message length (10,000 characters)
+    pub const DEFAULT_MAX_MESSAGE_LENGTH: usize = 10_000;
+
+    /// Minimum message length (non-empty)
+    pub const MIN_MESSAGE_LENGTH: usize = 1;
+
+    /// Validation error for incoming messages
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ValidationError {
+        /// Message is too long
+        TooLong { max: usize, actual: usize },
+        /// Message is too short (empty)
+        TooShort { min: usize, actual: usize },
+        /// Contains potentially dangerous content
+        SuspiciousContent(String),
+        /// Contains control characters
+        ControlCharacters(String),
+    }
+
+    impl std::fmt::Display for ValidationError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::TooLong { max, actual } => {
+                    write!(f, "Message too long: {} characters (max {})", actual, max)
+                }
+                Self::TooShort { min, actual } => {
+                    write!(f, "Message too short: {} characters (min {})", actual, min)
+                }
+                Self::SuspiciousContent(reason) => {
+                    write!(f, "Suspicious content detected: {}", reason)
+                }
+                Self::ControlCharacters(chars) => {
+                    write!(f, "Control characters not allowed: {}", chars)
+                }
+            }
+        }
+    }
+
+    impl std::error::Error for ValidationError {}
+
+    /// Message validator with configurable limits
+    #[derive(Debug, Clone)]
+    pub struct MessageValidator {
+        max_length: usize,
+        min_length: usize,
+        allow_control_chars: bool,
+        sanitize_html: bool,
+    }
+
+    impl Default for MessageValidator {
+        fn default() -> Self {
+            Self {
+                max_length: DEFAULT_MAX_MESSAGE_LENGTH,
+                min_length: MIN_MESSAGE_LENGTH,
+                allow_control_chars: false,
+                sanitize_html: true,
+            }
+        }
+    }
+
+    impl MessageValidator {
+        /// Create a new validator with default settings
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Set maximum message length
+        pub fn with_max_length(mut self, max: usize) -> Self {
+            self.max_length = max;
+            self
+        }
+
+        /// Set minimum message length
+        pub fn with_min_length(mut self, min: usize) -> Self {
+            self.min_length = min;
+            self
+        }
+
+        /// Allow control characters
+        pub fn allow_control_chars(mut self, allow: bool) -> Self {
+            self.allow_control_chars = allow;
+            self
+        }
+
+        /// Enable/disable HTML sanitization
+        pub fn with_html_sanitization(mut self, sanitize: bool) -> Self {
+            self.sanitize_html = sanitize;
+            self
+        }
+
+        /// Validate a message, returning an error if invalid
+        pub fn validate(&self, message: &str) -> Result<(), ValidationError> {
+            let length = message.chars().count();
+
+            // Check minimum length
+            if length < self.min_length {
+                return Err(ValidationError::TooShort {
+                    min: self.min_length,
+                    actual: length,
+                });
+            }
+
+            // Check maximum length
+            if length > self.max_length {
+                return Err(ValidationError::TooLong {
+                    max: self.max_length,
+                    actual: length,
+                });
+            }
+
+            // Check for control characters
+            if !self.allow_control_chars {
+                let control_chars: Vec<char> = message
+                    .chars()
+                    .filter(|c| c.is_control() && !c.is_whitespace())
+                    .collect();
+                if !control_chars.is_empty() {
+                    return Err(ValidationError::ControlCharacters(
+                        control_chars.iter().collect()
+                    ));
+                }
+            }
+
+            // Check for null bytes
+            if message.contains('\0') {
+                return Err(ValidationError::SuspiciousContent(
+                    "Null bytes not allowed".to_string()
+                ));
+            }
+
+            Ok(())
+        }
+
+        /// Sanitize a message, removing/replacing dangerous content
+        pub fn sanitize(&self, message: &str) -> String {
+            let mut sanitized = message.to_string();
+
+            // Remove null bytes
+            sanitized = sanitized.replace('\0', "");
+
+            // Remove control characters (except whitespace)
+            if !self.allow_control_chars {
+                sanitized = sanitized
+                    .chars()
+                    .filter(|c| !c.is_control() || c.is_whitespace())
+                    .collect();
+            }
+
+            // Trim leading/trailing whitespace
+            sanitized = sanitized.trim().to_string();
+
+            // Limit length if too long
+            if sanitized.chars().count() > self.max_length {
+                sanitized = sanitized.chars().take(self.max_length).collect();
+            }
+
+            sanitized
+        }
+
+        /// Validate and sanitize in one step
+        pub fn validate_and_sanitize(&self, message: &str) -> Result<String, ValidationError> {
+            let sanitized = self.sanitize(message);
+            self.validate(&sanitized)?;
+            Ok(sanitized)
+        }
+    }
+
+    /// Quick validation function for simple use cases
+    pub fn validate_message(message: &str) -> Result<(), ValidationError> {
+        let validator = MessageValidator::new();
+        validator.validate(message)
+    }
+
+    /// Quick sanitization function for simple use cases
+    pub fn sanitize_message(message: &str) -> String {
+        let validator = MessageValidator::new();
+        validator.sanitize(message)
+    }
+}
+
 // Re-export channel implementations
 #[cfg(feature = "telegram")]
 pub use telegram::{TelegramChannel, TelegramConfig};
