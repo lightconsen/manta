@@ -56,6 +56,7 @@ async-trait = "0.1"
 
 # Futures for streaming
 futures-core = "0.3"
+async-stream = "0.3"
 
 # Random number generation for jitter
 rand = "0.8"

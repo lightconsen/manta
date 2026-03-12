@@ -2,11 +2,14 @@
 //!
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
-use super::{CompletionRequest, CompletionResponse, FunctionDefinition, Message, Provider, Role, ToolCall, ToolResult, Usage};
+use super::{CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider, Role, ToolCall, ToolResult, Usage};
 use async_trait::async_trait;
+use futures_core::Stream;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 use std::time::Duration;
+use tokio_stream::StreamExt;
 use tracing::{debug, error, instrument};
 
 /// Anthropic API client
@@ -99,6 +102,41 @@ struct AnthropicError {
     #[serde(rename = "type")]
     error_type: String,
     message: String,
+}
+
+/// Anthropic streaming event
+#[derive(Debug, Deserialize)]
+struct StreamEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    delta: Option<StreamDelta>,
+    #[serde(default)]
+    message: Option<StreamMessage>,
+    #[serde(default)]
+    usage: Option<StreamUsage>,
+}
+
+/// Delta in streaming response
+#[derive(Debug, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+/// Message start in streaming
+#[derive(Debug, Deserialize)]
+struct StreamMessage {
+    usage: Option<StreamUsage>,
+}
+
+/// Usage in streaming
+#[derive(Debug, Deserialize)]
+struct StreamUsage {
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
 }
 
 impl AnthropicProvider {
@@ -255,6 +293,67 @@ impl AnthropicProvider {
             input_schema: func.parameters.clone(),
         }
     }
+
+    /// Parse Server-Sent Events (SSE) from streaming response
+    fn parse_sse_events(text: &str) -> Vec<CompletionChunk> {
+        let mut chunks = Vec::new();
+        let mut current_text = String::new();
+
+        for line in text.lines() {
+            let line = line.trim();
+
+            // SSE events start with "data: "
+            if let Some(data) = line.strip_prefix("data: ") {
+                // Handle completion
+                if data == "[DONE]" {
+                    chunks.push(CompletionChunk {
+                        content: None,
+                        tool_calls: None,
+                        is_done: true,
+                        usage: None,
+                    });
+                    break;
+                }
+
+                // Parse the event JSON
+                match serde_json::from_str::<StreamEvent>(data) {
+                    Ok(event) => {
+                        match event.event_type.as_str() {
+                            "content_block_delta" => {
+                                if let Some(delta) = event.delta {
+                                    if let Some(text) = delta.text {
+                                        current_text.push_str(&text);
+                                        chunks.push(CompletionChunk {
+                                            content: Some(text),
+                                            tool_calls: None,
+                                            is_done: false,
+                                            usage: None,
+                                        });
+                                    }
+                                }
+                            }
+                            "message_stop" => {
+                                chunks.push(CompletionChunk {
+                                    content: None,
+                                    tool_calls: None,
+                                    is_done: true,
+                                    usage: None,
+                                });
+                            }
+                            _ => {
+                                // Ignore other event types (message_start, content_block_start, etc.)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Failed to parse stream event: {} - {}", e, data);
+                    }
+                }
+            }
+        }
+
+        chunks
+    }
 }
 
 #[async_trait]
@@ -320,11 +419,60 @@ impl Provider for AnthropicProvider {
         Ok(Self::from_anthropic_response(anthropic_response))
     }
 
-    async fn stream(&self, _request: CompletionRequest) -> crate::Result<super::CompletionStream> {
-        // Streaming not implemented yet for Anthropic
-        Err(crate::error::MantaError::Internal(
-            "Streaming not yet implemented for Anthropic provider".to_string()
-        ))
+    async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
+        let (system, messages) = Self::to_anthropic_messages(&request.messages);
+
+        let anthropic_request = AnthropicRequest {
+            model: request.model.unwrap_or_else(|| self.default_model.clone()),
+            max_tokens: request.max_tokens.unwrap_or(4096),
+            system,
+            messages,
+            tools: None, // Tools not supported in streaming for now
+            temperature: request.temperature,
+            stream: Some(true),
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/v1/messages", self.base_url))
+            .headers(self.headers())
+            .json(&anthropic_request)
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: format!("Anthropic streaming request failed: {}", e),
+                cause: Some(Box::new(e)),
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!("Anthropic API error: {} - {}", status, body);
+            return Err(crate::error::MantaError::ExternalService {
+                source: format!("Anthropic API error {}: {}", status, body),
+                cause: None,
+            });
+        }
+
+        // Process the stream as SSE events
+        let body_stream = response.bytes_stream();
+        let stream = async_stream::stream! {
+            for await chunk in body_stream {
+                match chunk {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        for event in Self::parse_sse_events(&text) {
+                            yield event;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Stream error: {}", e);
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
     }
 
     fn supports_tools(&self) -> bool {
