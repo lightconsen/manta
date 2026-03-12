@@ -76,6 +76,22 @@ impl fmt::Display for Status {
     }
 }
 
+impl std::str::FromStr for Status {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(Status::Pending),
+            "active" => Ok(Status::Active),
+            "paused" => Ok(Status::Paused),
+            "completed" => Ok(Status::Completed),
+            "failed" => Ok(Status::Failed),
+            "archived" => Ok(Status::Archived),
+            _ => Err(format!("Unknown status: {}", s)),
+        }
+    }
+}
+
 impl Default for Status {
     fn default() -> Self {
         Status::Pending
@@ -139,6 +155,9 @@ pub struct Entity {
     /// Optional description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
     /// Current status
     pub status: Status,
     /// Entity metadata
@@ -152,6 +171,7 @@ impl Entity {
             id: Id::new(),
             name: name.into(),
             description: None,
+            tags: None,
             status: Status::default(),
             metadata: Metadata::new(),
         }
@@ -160,6 +180,12 @@ impl Entity {
     /// Set the description
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    /// Set tags
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = Some(tags);
         self
     }
 

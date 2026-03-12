@@ -66,6 +66,17 @@ pub enum Commands {
         #[arg(short, long)]
         message: Option<String>,
     },
+    /// Run as an assistant process (internal use)
+    AssistantRun {
+        /// Configuration file path
+        #[arg(short, long)]
+        config: PathBuf,
+    },
+    /// Cron job management
+    Cron {
+        #[command(subcommand)]
+        command: CronCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -120,6 +131,48 @@ pub enum EntityCommands {
         #[arg(short, long)]
         force: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CronCommands {
+    /// List all cron jobs
+    List,
+    /// Add a new cron job
+    Add {
+        /// Job name
+        name: String,
+        /// Cron schedule expression (e.g., "0 * * * *" for hourly)
+        #[arg(short, long)]
+        schedule: String,
+        /// Command to execute
+        #[arg(short, long)]
+        command: String,
+        /// Description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Remove a cron job
+    Remove {
+        /// Job name
+        name: String,
+    },
+    /// Enable a cron job
+    Enable {
+        /// Job name
+        name: String,
+    },
+    /// Disable a cron job
+    Disable {
+        /// Job name
+        name: String,
+    },
+    /// Run a job immediately (one-time execution)
+    Run {
+        /// Job name
+        name: String,
+    },
+    /// Show cron job status and next run times
+    Status,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -200,6 +253,10 @@ impl Cli {
             Commands::Chat { conversation, message } => {
                 self.run_chat(&config, conversation.clone(), message.clone()).await
             }
+            Commands::AssistantRun { config: assistant_config } => {
+                self.run_assistant_process(assistant_config).await
+            }
+            Commands::Cron { command } => self.run_cron_command(command).await,
         }
     }
 
@@ -364,6 +421,133 @@ impl Cli {
         Ok(())
     }
 
+    async fn run_cron_command(&self, command: &CronCommands) -> Result<()> {
+        use crate::cron::ScheduledJob;
+        use serde_json;
+
+        let data_dir = dirs::data_dir()
+            .ok_or_else(|| crate::error::MantaError::Internal("Could not find data directory".to_string()))?
+            .join("manta");
+        tokio::fs::create_dir_all(&data_dir).await.ok();
+        let jobs_file = data_dir.join("cron_jobs.json");
+
+        let mut jobs: Vec<ScheduledJob> = if jobs_file.exists() {
+            let content = tokio::fs::read_to_string(&jobs_file).await.unwrap_or_default();
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        match command {
+            CronCommands::List => {
+                if jobs.is_empty() {
+                    println!("No cron jobs configured");
+                    return Ok(());
+                }
+
+                println!("{:<20} {:<20} {:<10} {:<10}", "Name", "Schedule", "Status", "Run Count");
+                println!("{}", "-".repeat(70));
+
+                for job in &jobs {
+                    let status = if job.enabled { "enabled" } else { "disabled" };
+                    println!("{:<20} {:<20} {:<10} {}",
+                        truncate(&job.name, 20),
+                        truncate(&job.schedule, 20),
+                        status,
+                        job.run_count
+                    );
+                }
+            }
+            CronCommands::Add { name, schedule, command: cmd, description } => {
+                if jobs.iter().any(|j| j.name == *name) {
+                    return Err(crate::error::MantaError::Validation(format!("Job '{}' already exists", name)));
+                }
+
+                let job = ScheduledJob::new(
+                    uuid::Uuid::new_v4().to_string(),
+                    name.clone(),
+                    schedule.clone(),
+                    cmd.clone(),
+                    "cli".to_string()
+                );
+
+                jobs.push(job);
+
+                let content = serde_json::to_string_pretty(&jobs)?;
+                tokio::fs::write(&jobs_file, content).await?;
+
+                println!("✅ Added cron job '{}' with schedule '{}'", name, schedule);
+                if let Some(desc) = description {
+                    println!("   Description: {}", desc);
+                }
+            }
+            CronCommands::Remove { name } => {
+                let initial_len = jobs.len();
+                jobs.retain(|j| j.name != *name);
+
+                if jobs.len() == initial_len {
+                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                }
+
+                let content = serde_json::to_string_pretty(&jobs)?;
+                tokio::fs::write(&jobs_file, content).await?;
+
+                println!("✅ Removed cron job '{}'", name);
+            }
+            CronCommands::Enable { name } => {
+                if let Some(job) = jobs.iter_mut().find(|j| j.name == *name) {
+                    job.enabled = true;
+                    let content = serde_json::to_string_pretty(&jobs)?;
+                    tokio::fs::write(&jobs_file, content).await?;
+                    println!("✅ Enabled cron job '{}'", name);
+                } else {
+                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                }
+            }
+            CronCommands::Disable { name } => {
+                if let Some(job) = jobs.iter_mut().find(|j| j.name == *name) {
+                    job.enabled = false;
+                    let content = serde_json::to_string_pretty(&jobs)?;
+                    tokio::fs::write(&jobs_file, content).await?;
+                    println!("✅ Disabled cron job '{}'", name);
+                } else {
+                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                }
+            }
+            CronCommands::Run { name } => {
+                if let Some(job) = jobs.iter().find(|j| j.name == *name) {
+                    println!("Running cron job '{}'...", name);
+                    println!("Command: {}", job.prompt);
+                    println!("✅ Simulated execution of cron job '{}'", name);
+                } else {
+                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                }
+            }
+            CronCommands::Status => {
+                println!("📅 Cron Scheduler Status");
+                println!("=======================");
+                println!("Total jobs: {}", jobs.len());
+                println!("Enabled jobs: {}", jobs.iter().filter(|j| j.enabled).count());
+                println!("Jobs file: {:?}", jobs_file);
+
+                if !jobs.is_empty() {
+                    println!("\nConfigured jobs:");
+                    for job in &jobs {
+                        let status = if job.enabled { "✅" } else { "❌" };
+                        println!("  {} {} - {} (runs: {})",
+                            status,
+                            job.name,
+                            job.schedule,
+                            job.run_count
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn show_config(&self, config: &Config, format: ConfigFormat) -> Result<()> {
         match format {
             ConfigFormat::Toml => {
@@ -411,7 +595,8 @@ impl Cli {
     ) -> Result<()> {
         use crate::agent::{AgentConfig, AgentBuilder};
         use crate::channels::{ConversationId, IncomingMessage};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool};
+        use tracing::warn;
 
         println!("🤖 Manta AI Assistant");
         println!("=====================");
@@ -486,6 +671,13 @@ impl Cli {
         tool_registry.register(Box::new(FileEditTool::new()));
         tool_registry.register(Box::new(GlobTool::new()));
         tool_registry.register(Box::new(TodoTool::new()));
+        tool_registry.register(Box::new(MemoryTool::new()));
+
+        // Add MCP tool
+        let mcp_tool = crate::tools::McpConnectionTool::new();
+        tool_registry.register(Box::new(mcp_tool));
+        println!("✅ Loaded MCP connection tool");
+
         println!("✅ Loaded {} tools", tool_registry.list().len());
 
         // Build agent
@@ -616,6 +808,180 @@ impl Cli {
         // Save history to file (ignore errors)
         let _ = rl.save_history(&history_file);
 
+        Ok(())
+    }
+
+    /// Run as an assistant subprocess (internal use)
+    async fn run_assistant_process(&self, config_path: &PathBuf) -> Result<()> {
+        use crate::assistants::{AssistantConfig, AssistantType};
+        use crate::assistants::process::IpcMessage;
+        use crate::agent::{AgentConfig, AgentBuilder};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, WebSearchTool, WebFetchTool};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
+        use std::collections::HashMap;
+
+        // Read environment variables set by parent
+        let assistant_id = std::env::var("MANTA_ASSISTANT_ID")
+            .unwrap_or_else(|_| "unknown".to_string());
+        let assistant_name = std::env::var("MANTA_ASSISTANT_NAME")
+            .unwrap_or_else(|_| "Assistant".to_string());
+        let assistant_type_str = std::env::var("MANTA_ASSISTANT_TYPE")
+            .unwrap_or_else(|_| "specialist".to_string());
+        let parent_id = std::env::var("MANTA_PARENT_ASSISTANT_ID").ok();
+
+        // Parse assistant type
+        let assistant_type = match assistant_type_str.as_str() {
+            "researcher" => AssistantType::Researcher,
+            "code_reviewer" => AssistantType::CodeReviewer,
+            "scheduler" => AssistantType::Scheduler,
+            "social" => AssistantType::Social,
+            s if s.starts_with("specialist:") => {
+                AssistantType::Specialist(s.strip_prefix("specialist:").unwrap_or(s).to_string())
+            }
+            _ => AssistantType::Specialist(assistant_type_str.clone()),
+        };
+
+        // Load configuration
+        let config_content = tokio::fs::read_to_string(config_path).await
+            .map_err(|e| crate::error::MantaError::Internal(
+                format!("Failed to read assistant config: {}", e)
+            ))?;
+        let assistant_config: AssistantConfig = serde_yaml::from_str(&config_content)
+            .map_err(|e| crate::error::MantaError::Internal(
+                format!("Failed to parse assistant config: {}", e)
+            ))?;
+
+        // Set up logging for this assistant
+        eprintln!("🤖 Assistant '{}' starting (ID: {}, Type: {})",
+            assistant_name, assistant_id, assistant_type);
+
+        // Create provider from environment
+        let base_url = std::env::var("MANTA_BASE_URL")
+            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let api_key = std::env::var("MANTA_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .map_err(|_| crate::error::MantaError::Validation(
+                "MANTA_API_KEY or OPENAI_API_KEY environment variable required".to_string()
+            ))?;
+        let model = std::env::var("MANTA_MODEL")
+            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+
+        // Create provider
+        let provider: Arc<dyn crate::providers::Provider> = {
+            use crate::providers::openai::OpenAiProvider;
+            Arc::new(OpenAiProvider::with_base_url(api_key, base_url)?.with_model(model))
+        };
+
+        // Create tool registry with tools based on assistant type
+        let mut tool_registry = ToolRegistry::new();
+        let tools = assistant_config.effective_tools();
+        for tool_name in tools {
+            match tool_name.as_str() {
+                "shell" => tool_registry.register(Box::new(ShellTool::new())),
+                "file_read" => tool_registry.register(Box::new(FileReadTool::new())),
+                "file_write" => tool_registry.register(Box::new(FileWriteTool::new())),
+                "file_edit" => tool_registry.register(Box::new(FileEditTool::new())),
+                "glob" => tool_registry.register(Box::new(GlobTool::new())),
+                "todo" => tool_registry.register(Box::new(TodoTool::new())),
+                "web_search" => tool_registry.register(Box::new(WebSearchTool::new())),
+                "web_fetch" => tool_registry.register(Box::new(WebFetchTool::new())),
+                _ => {
+                    eprintln!("Warning: Unknown tool '{}' requested", tool_name);
+                }
+            }
+        }
+
+        // Build agent
+        let agent_config = AgentConfig {
+            system_prompt: assistant_config.effective_system_prompt(),
+            max_context_tokens: 4096,
+            max_concurrent_tools: 5,
+            temperature: 0.7,
+            max_tokens: 2048,
+        };
+        let agent = AgentBuilder::new()
+            .config(agent_config)
+            .provider(provider)
+            .tools(Arc::new(tool_registry))
+            .build()?;
+
+        // Set up stdin/stdout for IPC
+        let stdin = stdin();
+        let stdout = Arc::new(tokio::sync::Mutex::new(stdout()));
+        let mut reader = BufReader::new(stdin).lines();
+
+        eprintln!("✅ Assistant ready. Waiting for messages...");
+
+        // IPC loop
+        while let Ok(Some(line)) = reader.next_line().await {
+            let message: IpcMessage = match serde_json::from_str(&line) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error parsing IPC message: {}", e);
+                    continue;
+                }
+            };
+
+            match message {
+                IpcMessage::ProcessRequest { request_id, message: user_message, context: _ } => {
+                    // Process the message
+                    let conversation_id = format!("assistant-{}", assistant_id);
+                    let incoming = crate::channels::IncomingMessage::new(
+                        "parent",
+                        &conversation_id,
+                        user_message
+                    );
+
+                    let response_content = match agent.process_message(incoming).await {
+                        Ok(response) => response.content,
+                        Err(e) => {
+                            format!("Error processing message: {}", e)
+                        }
+                    };
+
+                    // Send response
+                    let response = IpcMessage::ProcessResponse {
+                        request_id,
+                        response: response_content,
+                        success: true,
+                        error: None,
+                    };
+
+                    let mut stdout = stdout.lock().await;
+                    let json = serde_json::to_string(&response).unwrap();
+                    if let Err(e) = stdout.write_all(json.as_bytes()).await {
+                        eprintln!("Error writing response: {}", e);
+                        break;
+                    }
+                    if let Err(e) = stdout.write_all(b"\n").await {
+                        eprintln!("Error writing newline: {}", e);
+                        break;
+                    }
+                    if let Err(e) = stdout.flush().await {
+                        eprintln!("Error flushing stdout: {}", e);
+                        break;
+                    }
+                }
+                IpcMessage::Ping { request_id } => {
+                    let pong = IpcMessage::Pong { request_id };
+                    let mut stdout = stdout.lock().await;
+                    let json = serde_json::to_string(&pong).unwrap();
+                    let _ = stdout.write_all(json.as_bytes()).await;
+                    let _ = stdout.write_all(b"\n").await;
+                    let _ = stdout.flush().await;
+                }
+                IpcMessage::Shutdown { reason } => {
+                    eprintln!("Shutdown requested: {:?}", reason);
+                    break;
+                }
+                _ => {
+                    // Ignore other message types
+                }
+            }
+        }
+
+        eprintln!("👋 Assistant '{}' shutting down", assistant_name);
         Ok(())
     }
 }

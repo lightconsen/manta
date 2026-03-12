@@ -5,6 +5,7 @@
 use crate::core::models::{Entity, Id};
 use crate::error::MantaError;
 use async_trait::async_trait;
+use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -357,8 +358,8 @@ impl SqliteStorage {
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
         let status_str: String = row.get("status");
-        let status = Status::try_from(status_str.as_str())
-            .map_err(|_| StorageError::Serialization(format!("Invalid status: {}", status_str)))?;
+        let status = status_str.parse::<Status>()
+            .map_err(|e| StorageError::Serialization(format!("Invalid status: {} - {}", status_str, e)))?;
 
         let created_at_str: String = row.get("created_at");
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -376,12 +377,13 @@ impl SqliteStorage {
             id,
             name,
             description,
-            tags,
+            tags: Some(tags),
             status,
             metadata: Metadata {
                 created_at,
                 updated_at,
-                version: version as u32,
+                version: version as u64,
+                tags: None,
             },
         })
     }

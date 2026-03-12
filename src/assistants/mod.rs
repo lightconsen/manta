@@ -12,6 +12,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+// Re-export process types
+pub use process::{IpcMessage, AssistantProcess, ProcessManager};
+
 /// Type of specialized assistant
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -364,6 +367,8 @@ pub struct AssistantSpawner {
     base_dir: PathBuf,
     /// Spawned assistants
     assistants: Arc<RwLock<HashMap<String, PersistentAssistant>>>,
+    /// Process manager for actual subprocess management
+    process_manager: process::ProcessManager,
 }
 
 impl AssistantSpawner {
@@ -379,6 +384,7 @@ impl AssistantSpawner {
         Ok(Self {
             base_dir,
             assistants: Arc::new(RwLock::new(HashMap::new())),
+            process_manager: process::ProcessManager::new(),
         })
     }
 
@@ -414,13 +420,13 @@ impl AssistantSpawner {
             })?;
         }
 
-        // Create the assistant
-        let assistant = PersistentAssistant::from_config(config, data_dir);
-
-        // Save configuration
-        let config_path = assistant.data_dir.join("config.yaml");
-        let config_yaml = serde_yaml::to_string(&assistant.to_config())?;
+        // Save configuration first (before consuming config)
+        let config_path = data_dir.join("config.yaml");
+        let config_yaml = serde_yaml::to_string(&config)?;
         tokio::fs::write(&config_path, config_yaml).await.map_err(crate::error::MantaError::Io)?;
+
+        // Create the assistant (config is moved here)
+        let assistant = PersistentAssistant::from_config(config, data_dir);
 
         // Store in registry
         {
@@ -434,13 +440,14 @@ impl AssistantSpawner {
         );
 
         // Start the assistant (in background)
-        self.start_assistant(&assistant.id).await?;
+        let assistant_config = assistant.to_config();
+        self.start_assistant(&assistant.id, &assistant_config).await?;
 
         Ok(assistant)
     }
 
     /// Start an assistant process
-    async fn start_assistant(&self, assistant_id: &str) -> crate::Result<()> {
+    async fn start_assistant(&self, assistant_id: &str, config: &AssistantConfig) -> crate::Result<()> {
         let assistant = {
             let assistants = self.assistants.read().await;
             assistants
@@ -449,19 +456,15 @@ impl AssistantSpawner {
                 .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Assistant {}", assistant_id) })?
         };
 
-        debug!("Starting assistant: {}", assistant_id);
+        debug!("Starting assistant process: {}", assistant_id);
 
-        // In a full implementation, this would:
-        // 1. Start a new process or container for the assistant
-        // 2. Load its configuration
-        // 3. Initialize its tools and memory
-        // 4. Connect to its channels
-        // 5. Monitor its health
+        // Spawn the actual process
+        self.process_manager.start(&assistant, config).await?;
 
-        // For now, just mark as running
+        // Mark as running
         self.update_status(assistant_id, AssistantStatus::Running).await;
 
-        info!("Assistant {} started successfully", assistant_id);
+        info!("Assistant {} started successfully (process spawned)", assistant_id);
         Ok(())
     }
 
@@ -491,19 +494,23 @@ impl AssistantSpawner {
             )));
         }
 
+        // Verify the process is actually running
+        if !self.process_manager.is_running(assistant_id).await {
+            self.update_status(assistant_id, AssistantStatus::Error).await;
+            return Err(crate::error::MantaError::ExternalService {
+                source: format!("assistant-{}: Assistant process is not running", assistant_id),
+                cause: None,
+            });
+        }
+
         debug!("Sending message to assistant {}: {}", assistant_id, message.chars().take(50).collect::<String>());
 
-        // In a full implementation, this would:
-        // 1. Send the message to the assistant's process
-        // 2. Wait for a response
-        // 3. Return the response
+        // Send message via process manager (real IPC)
+        let context = HashMap::new();
+        let response = self.process_manager.send_message(assistant_id, message, context).await?;
 
-        // Mock response for now
-        Ok(format!(
-            "Assistant '{}' received: '{}' (mock response)",
-            assistant.name,
-            message.chars().take(50).collect::<String>()
-        ))
+        info!("Received response from assistant {} ({} chars)", assistant_id, response.len());
+        Ok(response)
     }
 
     /// Terminate an assistant
@@ -517,19 +524,14 @@ impl AssistantSpawner {
 
         self.update_status(assistant_id, AssistantStatus::Stopping).await;
 
-        // In a full implementation, this would:
-        // 1. Gracefully shutdown the assistant process
-        // 2. Clean up resources
-        // 3. Optionally archive data
+        // Stop the actual process
+        self.process_manager.stop(assistant_id, Some("Terminated by parent".to_string())).await?;
 
         // Remove from registry
         {
             let mut assistants = self.assistants.write().await;
             assistants.remove(assistant_id);
         }
-
-        // Optionally clean up data directory
-        // tokio::fs::remove_dir_all(&assistant.data_dir).await?;
 
         info!("Assistant {} terminated", assistant_id);
         Ok(())
@@ -576,6 +578,8 @@ impl AssistantSpawner {
 
 /// Assistant mesh for inter-assistant communication
 pub mod mesh;
+/// Process management for spawned assistants
+pub mod process;
 
 /// Tool for spawning assistants
 pub mod tool {

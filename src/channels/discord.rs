@@ -73,6 +73,9 @@ pub struct DiscordChannel {
     #[cfg(feature = "discord")]
     http: Option<Arc<serenity::http::Http>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Message ID to Channel ID mapping for edit/delete operations
+    #[cfg(feature = "discord")]
+    message_channel_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, u64>>>,
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -97,7 +100,23 @@ impl DiscordChannel {
             #[cfg(feature = "discord")]
             http,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(feature = "discord")]
+            message_channel_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Track a message ID to channel ID mapping
+    #[cfg(feature = "discord")]
+    async fn track_message(&self, message_id: u64, channel_id: u64) {
+        let mut map = self.message_channel_map.write().await;
+        map.insert(message_id, channel_id);
+    }
+
+    /// Get channel ID for a message ID
+    #[cfg(feature = "discord")]
+    async fn get_message_channel(&self, message_id: u64) -> Option<u64> {
+        let map = self.message_channel_map.read().await;
+        map.get(&message_id).copied()
     }
 
     /// Check if user is allowed
@@ -252,13 +271,18 @@ impl Channel for DiscordChannel {
 
             // Send text message
             let builder = CreateMessage::new().content(content);
-            let _sent = channel_id
+            let sent = channel_id
                 .send_message(http, builder)
                 .await
                 .map_err(|e| crate::error::MantaError::ExternalService {
                     source: format!("Discord send failed: {}", e),
                     cause: None,
                 })?;
+
+            // Track the message for edit/delete operations
+            let message_id = sent.id.get();
+            let channel_id_val = channel_id.get();
+            self.track_message(message_id, channel_id_val).await;
 
             Ok(Id::new())
         }
@@ -316,20 +340,30 @@ impl Channel for DiscordChannel {
                 .parse()
                 .map_err(|_| crate::error::MantaError::Validation("Invalid message ID".to_string()))?;
 
+            // Look up the channel ID from our tracking map
+            let channel_id_num = self.get_message_channel(message_id_num).await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking (may have been sent before bot started)", message_id_num)
+                })?;
+
             let http = self
                 .http
                 .as_ref()
                 .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
 
+            let channel_id = ChannelId::new(channel_id_num);
             let message_id = serenity::model::id::MessageId::new(message_id_num);
 
-            // Note: We need the channel_id to edit a message. In a full implementation,
-            // we'd store a mapping of message_id -> channel_id.
-            // For now, return an error indicating this limitation.
-            warn!("Edit message requires message_id -> channel_id tracking. Message ID: {}", message_id);
-            Err(crate::error::MantaError::Internal(
-                "Message editing requires channel tracking which is not yet fully implemented".to_string()
-            ))
+            // Edit the message
+            channel_id
+                .edit_message(http, message_id, serenity::builder::EditMessage::new().content(new_content))
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord edit failed: {}", e),
+                    cause: None,
+                })?;
+
+            Ok(())
         }
 
         #[cfg(not(feature = "discord"))]
@@ -349,19 +383,34 @@ impl Channel for DiscordChannel {
                 .parse()
                 .map_err(|_| crate::error::MantaError::Validation("Invalid message ID".to_string()))?;
 
+            // Look up the channel ID from our tracking map
+            let channel_id_num = self.get_message_channel(message_id_num).await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking (may have been sent before bot started)", message_id_num)
+                })?;
+
             let http = self
                 .http
                 .as_ref()
                 .ok_or_else(|| crate::error::MantaError::Internal("HTTP client not initialized".to_string()))?;
 
+            let channel_id = ChannelId::new(channel_id_num);
             let message_id = serenity::model::id::MessageId::new(message_id_num);
 
-            // Note: We need the channel_id to delete a message.
-            // For now, log and return an informative error.
-            warn!("Delete message requires message_id -> channel_id tracking. Message ID: {}", message_id);
-            Err(crate::error::MantaError::Internal(
-                "Message deletion requires channel tracking which is not yet fully implemented".to_string()
-            ))
+            // Delete the message
+            channel_id
+                .delete_message(http, message_id)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord delete failed: {}", e),
+                    cause: None,
+                })?;
+
+            // Remove from tracking
+            let mut map = self.message_channel_map.write().await;
+            map.remove(&message_id_num);
+
+            Ok(())
         }
 
         #[cfg(not(feature = "discord"))]

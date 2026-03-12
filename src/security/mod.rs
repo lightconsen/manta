@@ -1439,3 +1439,6 @@ pub mod audit;
 
 /// Penetration testing module
 pub mod pentest;
+
+// Re-export SecurityValidator and validation types from tools module for use in security tests
+pub use crate::tools::{SecurityValidator, ToolValidator, ToolValidationError};
