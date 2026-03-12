@@ -378,6 +378,7 @@ pub trait Tool: Send + Sync {
 pub type BoxedTool = Box<dyn Tool>;
 
 pub mod code_exec;
+pub mod cron_tool;
 pub mod delegate_tool;
 pub mod file;
 pub mod grep;
@@ -389,6 +390,7 @@ pub mod todo_tool;
 pub mod web;
 
 pub use code_exec::CodeExecutionTool;
+pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;

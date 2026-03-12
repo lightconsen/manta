@@ -595,7 +595,7 @@ impl Cli {
     ) -> Result<()> {
         use crate::agent::{AgentConfig, AgentBuilder};
         use crate::channels::{ConversationId, IncomingMessage};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool};
         use tracing::warn;
 
         println!("🤖 Manta AI Assistant");
@@ -672,6 +672,7 @@ impl Cli {
         tool_registry.register(Box::new(GlobTool::new()));
         tool_registry.register(Box::new(TodoTool::new()));
         tool_registry.register(Box::new(MemoryTool::new()));
+        tool_registry.register(Box::new(CronTool::new()));
 
         // Add MCP tool
         let mcp_tool = crate::tools::McpConnectionTool::new();
@@ -791,7 +792,7 @@ impl Cli {
         use crate::assistants::{AssistantConfig, AssistantType};
         use crate::assistants::process::IpcMessage;
         use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, WebSearchTool, WebFetchTool};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, WebSearchTool, WebFetchTool, CronTool};
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
         use std::collections::HashMap;
 
@@ -861,6 +862,7 @@ impl Cli {
                 "todo" => tool_registry.register(Box::new(TodoTool::new())),
                 "web_search" => tool_registry.register(Box::new(WebSearchTool::new())),
                 "web_fetch" => tool_registry.register(Box::new(WebFetchTool::new())),
+                "cron" => tool_registry.register(Box::new(CronTool::new())),
                 _ => {
                     eprintln!("Warning: Unknown tool '{}' requested", tool_name);
                 }
