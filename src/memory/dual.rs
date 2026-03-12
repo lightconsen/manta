@@ -21,6 +21,12 @@ pub enum DualMemoryType {
     Procedural,
     /// User model - preferences, communication style, habits
     UserModel,
+    /// Soul memory - core personality, values, behavioral guidelines (OpenClaw-style)
+    Soul,
+    /// Identity memory - agent identity, name, role definition (OpenClaw-style)
+    Identity,
+    /// Bootstrap memory - initial startup behavior, first-run logic (OpenClaw-style)
+    Bootstrap,
 }
 
 impl DualMemoryType {
@@ -29,6 +35,9 @@ impl DualMemoryType {
         match self {
             DualMemoryType::Procedural => "agent.md",
             DualMemoryType::UserModel => "user.md",
+            DualMemoryType::Soul => "SOUL.md",
+            DualMemoryType::Identity => "IDENTITY.md",
+            DualMemoryType::Bootstrap => "BOOTSTRAP.md",
         }
     }
 
@@ -40,6 +49,15 @@ impl DualMemoryType {
             }
             DualMemoryType::UserModel => {
                 "User preferences, communication style, habits, and personal information"
+            }
+            DualMemoryType::Soul => {
+                "Core personality, values, behavioral guidelines, and character traits (OpenClaw-style)"
+            }
+            DualMemoryType::Identity => {
+                "Agent identity, name, role definition, and self-concept (OpenClaw-style)"
+            }
+            DualMemoryType::Bootstrap => {
+                "Initial startup behavior, first-run logic, and onboarding (OpenClaw-style)"
             }
         }
     }
@@ -179,32 +197,43 @@ impl DualMemory {
 
     /// Get memory content formatted for system prompt
     pub async fn format_for_prompt(&self) -> crate::Result<String> {
+        // OpenClaw-style personality files (loaded first for identity)
+        let soul = self.read(DualMemoryType::Soul).await?;
+        let identity = self.read(DualMemoryType::Identity).await?;
+        let bootstrap = self.read(DualMemoryType::Bootstrap).await?;
+
+        // Traditional dual memory
         let procedural = self.read(DualMemoryType::Procedural).await?;
         let user_model = self.read(DualMemoryType::UserModel).await?;
 
         let mut sections = Vec::new();
 
+        // OpenClaw-style personality (priority order)
+        if !identity.is_empty() {
+            sections.push(format!("## Identity\n{}\n", identity.trim()));
+        }
+
+        if !soul.is_empty() {
+            sections.push(format!("## Soul\n{}\n", soul.trim()));
+        }
+
+        if !bootstrap.is_empty() {
+            sections.push(format!("## Bootstrap\n{}\n", bootstrap.trim()));
+        }
+
+        // Traditional dual memory
         if !procedural.is_empty() {
-            sections.push(format!(
-                "## Procedural Memory\n{}\n",
-                procedural.trim()
-            ));
+            sections.push(format!("## Procedural Memory\n{}\n", procedural.trim()));
         }
 
         if !user_model.is_empty() {
-            sections.push(format!(
-                "## User Model\n{}\n",
-                user_model.trim()
-            ));
+            sections.push(format!("## User Model\n{}\n", user_model.trim()));
         }
 
         if sections.is_empty() {
             Ok(String::new())
         } else {
-            Ok(format!(
-                "\n### Learned Context\n{}\n",
-                sections.join("\n")
-            ))
+            Ok(format!("\n### Learned Context\n{}\n", sections.join("\n")))
         }
     }
 
@@ -269,6 +298,78 @@ This file contains information about the user's preferences.
             self.write(DualMemoryType::UserModel, default_user).await?;
         }
 
+        // SOUL.md - Core personality (OpenClaw-style)
+        if !self.exists(DualMemoryType::Soul).await {
+            let default_soul = r#"# SOUL
+
+Core personality, values, and behavioral guidelines.
+
+## Values
+- Be helpful, harmless, and honest
+- Respect user autonomy and privacy
+- Prioritize clarity over cleverness
+
+## Communication Style
+- Clear and concise explanations
+- Ask clarifying questions when uncertain
+- Admit limitations openly
+
+## Behavioral Guidelines
+- Always confirm destructive operations
+- Provide alternatives when saying no
+- Learn from user corrections
+"#;
+            self.write(DualMemoryType::Soul, default_soul).await?;
+        }
+
+        // IDENTITY.md - Agent identity (OpenClaw-style)
+        if !self.exists(DualMemoryType::Identity).await {
+            let default_identity = r#"# IDENTITY
+
+Agent identity and self-concept.
+
+## Name
+Manta
+
+## Role
+AI Assistant with software engineering expertise
+
+## Capabilities
+- Code analysis and generation
+- File and system operations
+- Tool use and orchestration
+- Memory and learning
+
+## Purpose
+Help users accomplish tasks efficiently while respecting their preferences and constraints.
+"#;
+            self.write(DualMemoryType::Identity, default_identity).await?;
+        }
+
+        // BOOTSTRAP.md - Initial behavior (OpenClaw-style)
+        if !self.exists(DualMemoryType::Bootstrap).await {
+            let default_bootstrap = r#"# BOOTSTRAP
+
+Initial startup behavior and first-run logic.
+
+## Greeting Style
+- Friendly but professional
+- Brief status summary when relevant
+- Offer assistance without being pushy
+
+## First Run Behavior
+- Introduce capabilities concisely
+- Ask about user preferences
+- Set up initial context
+
+## Session Start
+- Review recent context if available
+- Confirm current task or goals
+- Check for pending items
+"#;
+            self.write(DualMemoryType::Bootstrap, default_bootstrap).await?;
+        }
+
         Ok(())
     }
 }
@@ -309,9 +410,12 @@ pub mod tool {
         fn description(&self) -> &str {
             r#"Read and write to the agent's dual memory system.
 
-This tool manages two types of persistent memory:
+This tool manages persistent memory files:
 - procedural: Environment facts, tool quirks, conventions
 - user_model: User preferences, communication style, habits
+- soul: Core personality, values, behavioral guidelines (OpenClaw-style)
+- identity: Agent identity, name, role definition (OpenClaw-style)
+- bootstrap: Initial startup behavior, first-run logic (OpenClaw-style)
 
 Use this to remember important information across sessions.
 The agent can read from memory at startup and write updates as it learns."#
@@ -328,7 +432,7 @@ The agent can read from memory at startup and write updates as it learns."#
                     },
                     "memory_type": {
                         "type": "string",
-                        "enum": ["procedural", "user_model"],
+                        "enum": ["procedural", "user_model", "soul", "identity", "bootstrap"],
                         "description": "Which memory to access"
                     },
                     "content": {
@@ -356,6 +460,9 @@ The agent can read from memory at startup and write updates as it learns."#
             let mem_type = match mem_type_str {
                 "procedural" => DualMemoryType::Procedural,
                 "user_model" => DualMemoryType::UserModel,
+                "soul" => DualMemoryType::Soul,
+                "identity" => DualMemoryType::Identity,
+                "bootstrap" => DualMemoryType::Bootstrap,
                 _ => {
                     return Err(MantaError::Validation(format!(
                         "Invalid memory_type: {}",
