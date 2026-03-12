@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
+mod builtin;
 mod config;
 mod frontmatter;
 mod install;
@@ -464,10 +465,21 @@ impl SkillManager {
     pub async fn load_all(&mut self) -> crate::Result<usize> {
         let mut total_count = 0;
 
-        // Get all skill files from storage
-        let skill_files = self.storage.discover_all().await;
-
         let mut skills = self.skills.write().await;
+
+        // First, load built-in skills (lowest priority, can be overridden)
+        let builtin_skills = builtin::get_builtin_skills();
+        for (name, skill) in builtin_skills {
+            info!(
+                "Loaded built-in skill: {} (eligible: {}, enabled: {})",
+                name, skill.is_eligible, skill.enabled
+            );
+            skills.insert(name, skill);
+            total_count += 1;
+        }
+
+        // Then load skills from storage (user, workspace, project)
+        let skill_files = self.storage.discover_all().await;
 
         for skill_location in skill_files {
             let path = &skill_location.skill_file;
@@ -483,6 +495,15 @@ impl SkillManager {
 
                     // Set source level from discovery
                     skill.source_level = skill_location.level;
+
+                    // Check if this is overriding a built-in skill
+                    let is_override = skills.contains_key(&skill.name);
+                    if is_override {
+                        info!(
+                            "Overriding built-in skill: {} with version from {:?}",
+                            skill.name, skill_location.level
+                        );
+                    }
 
                     info!(
                         "Loaded skill: {} (eligible: {}, enabled: {}, level: {:?})",
