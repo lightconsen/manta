@@ -46,6 +46,14 @@ pub struct ToolContext {
     pub allowed_commands: Vec<String>,
     /// Whether the tool is being executed in a sandbox
     pub sandboxed: bool,
+    /// Maximum memory allowed for child processes in bytes (if sandboxed)
+    pub memory_limit: Option<usize>,
+    /// Maximum CPU time in seconds (if sandboxed)
+    pub cpu_limit: Option<u64>,
+    /// Maximum number of open file descriptors
+    pub fd_limit: Option<u64>,
+    /// Maximum process count (for preventing fork bombs)
+    pub process_limit: Option<u64>,
 }
 
 impl Default for ToolContext {
@@ -53,12 +61,17 @@ impl Default for ToolContext {
         Self {
             user_id: String::new(),
             conversation_id: String::new(),
-            working_directory: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            working_directory: std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".")),
             environment: std::env::vars().collect(),
             timeout: Duration::from_secs(30),
             allowed_paths: Vec::new(),
             allowed_commands: Vec::new(),
             sandboxed: false,
+            memory_limit: None,
+            cpu_limit: None,
+            fd_limit: None,
+            process_limit: None,
         }
     }
 }
@@ -101,6 +114,131 @@ impl ToolContext {
     pub fn sandboxed(mut self, sandboxed: bool) -> Self {
         self.sandboxed = sandboxed;
         self
+    }
+
+    /// Set memory limit in bytes (only effective when sandboxed)
+    pub fn with_memory_limit(mut self, bytes: usize) -> Self {
+        self.memory_limit = Some(bytes);
+        self
+    }
+
+    /// Set CPU time limit in seconds (only effective when sandboxed)
+    pub fn with_cpu_limit(mut self, seconds: u64) -> Self {
+        self.cpu_limit = Some(seconds);
+        self
+    }
+
+    /// Set file descriptor limit (only effective when sandboxed)
+    pub fn with_fd_limit(mut self, count: u64) -> Self {
+        self.fd_limit = Some(count);
+        self
+    }
+
+    /// Set process limit for preventing fork bombs (only effective when sandboxed)
+    pub fn with_process_limit(mut self, count: u64) -> Self {
+        self.process_limit = Some(count);
+        self
+    }
+
+    /// Apply resource limits to the current process (Unix only)
+    /// This should be called in a pre_exec hook before spawning the child process
+    #[cfg(unix)]
+    pub fn apply_resource_limits(&self) -> std::io::Result<()> {
+        use std::io;
+
+        // Only apply limits if sandboxed
+        if !self.sandboxed {
+            return Ok(());
+        }
+
+        // Apply memory limit
+        if let Some(memory_limit) = self.memory_limit {
+            unsafe {
+                let limit = libc::rlimit {
+                    rlim_cur: memory_limit as libc::rlim_t,
+                    rlim_max: memory_limit as libc::rlim_t,
+                };
+                if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+
+        // Apply CPU limit
+        if let Some(cpu_limit) = self.cpu_limit {
+            unsafe {
+                let limit = libc::rlimit {
+                    rlim_cur: cpu_limit as libc::rlim_t,
+                    rlim_max: cpu_limit as libc::rlim_t,
+                };
+                if libc::setrlimit(libc::RLIMIT_CPU, &limit) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+
+        // Apply file descriptor limit
+        if let Some(fd_limit) = self.fd_limit {
+            unsafe {
+                let limit = libc::rlimit {
+                    rlim_cur: fd_limit as libc::rlim_t,
+                    rlim_max: fd_limit as libc::rlim_t,
+                };
+                if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+
+        // Apply process limit (NPROC)
+        if let Some(process_limit) = self.process_limit {
+            unsafe {
+                let limit = libc::rlimit {
+                    rlim_cur: process_limit as libc::rlim_t,
+                    rlim_max: process_limit as libc::rlim_t,
+                };
+                if libc::setrlimit(libc::RLIMIT_NPROC, &limit) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply resource limits is a no-op on non-Unix platforms
+    #[cfg(not(unix))]
+    pub fn apply_resource_limits(&self) -> std::io::Result<()> {
+        // Resource limits are not implemented for non-Unix platforms
+        Ok(())
+    }
+
+    /// Get a human-readable summary of resource limits
+    pub fn resource_limits_summary(&self) -> String {
+        if !self.sandboxed {
+            return "No sandbox (no resource limits)".to_string();
+        }
+
+        let mut parts = vec!["Sandbox active".to_string()];
+
+        if let Some(mem) = self.memory_limit {
+            parts.push(format!("Memory: {} MB", mem / 1024 / 1024));
+        }
+        if let Some(cpu) = self.cpu_limit {
+            parts.push(format!("CPU: {}s", cpu));
+        }
+        if let Some(fd) = self.fd_limit {
+            parts.push(format!("FDs: {}", fd));
+        }
+        if let Some(proc) = self.process_limit {
+            parts.push(format!("Processes: {}", proc));
+        }
+
+        if parts.len() == 1 {
+            parts.push("No specific limits set".to_string());
+        }
+
+        parts.join(" | ")
     }
 
     /// Check if a path is allowed

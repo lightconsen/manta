@@ -126,19 +126,85 @@ impl Tool for ShellTool {
 
         let start_time = std::time::Instant::now();
 
-        let result = timeout(
-            context.timeout,
-            Command::new(&shell)
-                .arg("-c")
-                .arg(command_str)
-                .current_dir(&working_dir)
-                .env_clear()
-                .envs(&context.environment)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await;
+        // Build the command with resource limits if sandboxed
+        let mut cmd = Command::new(&shell);
+        cmd.arg("-c")
+            .arg(command_str)
+            .current_dir(&working_dir)
+            .env_clear()
+            .envs(&context.environment)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // Apply resource limits in sandboxed mode (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            if context.sandboxed {
+                let limits_summary = context.resource_limits_summary();
+                debug!("Applying resource limits: {}", limits_summary);
+
+                // Clone the limits to move into the closure
+                let memory_limit = context.memory_limit;
+                let cpu_limit = context.cpu_limit;
+                let fd_limit = context.fd_limit;
+                let process_limit = context.process_limit;
+
+                // SAFETY: pre_exec runs in the child process after fork but before exec.
+                // We only call async-signal-safe functions (setrlimit) here.
+                unsafe {
+                    cmd.pre_exec(move || {
+                        // Apply memory limit
+                        if let Some(limit_bytes) = memory_limit {
+                            let limit = libc::rlimit {
+                                rlim_cur: limit_bytes as libc::rlim_t,
+                                rlim_max: limit_bytes as libc::rlim_t,
+                            };
+                            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+
+                        // Apply CPU limit
+                        if let Some(limit_secs) = cpu_limit {
+                            let limit = libc::rlimit {
+                                rlim_cur: limit_secs as libc::rlim_t,
+                                rlim_max: limit_secs as libc::rlim_t,
+                            };
+                            if libc::setrlimit(libc::RLIMIT_CPU, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+
+                        // Apply FD limit
+                        if let Some(limit_count) = fd_limit {
+                            let limit = libc::rlimit {
+                                rlim_cur: limit_count as libc::rlim_t,
+                                rlim_max: limit_count as libc::rlim_t,
+                            };
+                            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+
+                        // Apply process limit
+                        if let Some(limit_count) = process_limit {
+                            let limit = libc::rlimit {
+                                rlim_cur: limit_count as libc::rlim_t,
+                                rlim_max: limit_count as libc::rlim_t,
+                            };
+                            if libc::setrlimit(libc::RLIMIT_NPROC, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+
+                        Ok(())
+                    });
+                }
+            }
+        }
+
+        let result = timeout(context.timeout, cmd.output()).await;
 
         let duration = start_time.elapsed();
 
