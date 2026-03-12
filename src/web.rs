@@ -165,9 +165,13 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
                 }
             }
 
-            // Handle cron broadcasts
+            // Handle cron broadcasts (plain text with 📅 prefix)
             Ok(cron_msg) = cron_rx.recv() => {
-                if socket.send(Message::Text(cron_msg)).await.is_err() {
+                let cron_json = serde_json::json!({
+                    "type": "cron",
+                    "content": cron_msg
+                });
+                if socket.send(Message::Text(cron_json.to_string())).await.is_err() {
                     break;
                 }
             }
@@ -273,9 +277,13 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
                 }
             }
 
-            // Handle cron broadcasts
+            // Handle cron broadcasts (plain text with 📅 prefix)
             Ok(cron_msg) = cron_rx.recv() => {
-                if socket.send(Message::Text(cron_msg)).await.is_err() {
+                let cron_json = serde_json::json!({
+                    "type": "cron",
+                    "content": cron_msg
+                });
+                if socket.send(Message::Text(cron_json.to_string())).await.is_err() {
                     break;
                 }
             }

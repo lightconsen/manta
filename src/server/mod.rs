@@ -41,11 +41,9 @@ pub async fn init_cron_broadcast() -> broadcast::Receiver<String> {
 pub async fn broadcast_cron_output(output: &str) {
     let guard = CRON_BROADCAST.read().await;
     if let Some(ref tx) = *guard {
-        let msg = serde_json::json!({
-            "type": "cron",
-            "content": output
-        });
-        let _ = tx.send(msg.to_string());
+        // Send as plain text with cron prefix, not JSON
+        let msg = format!("📅 {}", output);
+        let _ = tx.send(msg);
     }
 }
 
@@ -749,7 +747,7 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
                 if (data.error) {
                     addMessage('Error: ' + data.error, 'error');
                 } else if (data.type === 'cron') {
-                    addMessage('📅 ' + data.content, 'system');
+                    addMessage(data.content, 'system');
                 } else if (data.response) {
                     addMessage(data.response, 'assistant');
                 }
