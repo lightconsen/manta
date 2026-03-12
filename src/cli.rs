@@ -725,6 +725,7 @@ impl Cli {
         conversation_id: String,
     ) -> Result<()> {
         use std::io::{self, Write};
+        use std::io::Write as _;
 
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands\n");
 
@@ -748,6 +749,8 @@ impl Cli {
             let input = input.trim();
 
             if input.is_empty() {
+                print!("💬 You > ");
+                io::stdout().flush()?;
                 continue;
             }
 
@@ -759,11 +762,15 @@ impl Cli {
                 }
                 "help" => {
                     println!("📋 Commands: help, exit, tools");
+                    print!("💬 You > ");
+                    io::stdout().flush()?;
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
                     println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
+                    print!("💬 You > ");
+                    io::stdout().flush()?;
                     continue;
                 }
                 _ => {}
@@ -804,6 +811,7 @@ impl Cli {
         conversation_id: String,
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, BufReader, stdin};
+        use std::io::{Write as _};
 
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit");
 
@@ -816,6 +824,7 @@ impl Cli {
 
             if input.is_empty() {
                 print!("💬 You > ");
+                std::io::stdout().flush()?;
                 continue;
             }
 
@@ -827,11 +836,15 @@ impl Cli {
                 }
                 "help" => {
                     println!("📋 Commands: help, exit, tools");
+                    print!("💬 You > ");
+                    std::io::stdout().flush()?;
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
                     println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
+                    print!("💬 You > ");
+                    std::io::stdout().flush()?;
                     continue;
                 }
                 _ => {}
@@ -849,10 +862,16 @@ impl Cli {
                     eprint!("\r\x1B[2K");
                     let content = response.content.trim().replace('\n', " ");
                     println!("🤖 {}", content);
+                    // Print prompt for next input
+                    print!("💬 You > ");
+                    std::io::stdout().flush()?;
                 }
                 Err(e) => {
                     eprint!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
+                    // Print prompt for next input
+                    print!("💬 You > ");
+                    std::io::stdout().flush()?;
                 }
             }
         }
