@@ -8,8 +8,9 @@ use crate::channels::{
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "telegram")]
@@ -61,6 +62,8 @@ pub struct TelegramChannel {
     config: TelegramConfig,
     bot: Option<Bot>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Mapping from internal message ID to (chat_id, telegram_message_id)
+    message_map: Arc<RwLock<HashMap<Id, (i64, i32)>>>,
 }
 
 impl TelegramChannel {
@@ -70,6 +73,7 @@ impl TelegramChannel {
             config,
             bot: None,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            message_map: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -263,11 +267,19 @@ impl Channel for TelegramChannel {
                 // For now, skipping reply functionality
             }
 
-            let _sent = req.await.map_err(|e| crate::error::MantaError::Internal(
+            let sent = req.await.map_err(|e| crate::error::MantaError::Internal(
                 format!("Telegram send error: {}", e)
             ))?;
 
-            Ok(Id::new())
+            // Store the message ID mapping for edit/delete operations
+            let internal_id = Id::new();
+            let telegram_msg_id = sent.id.0;
+            {
+                let mut map = self.message_map.write().await;
+                map.insert(internal_id.clone(), (chat_id, telegram_msg_id));
+            }
+
+            Ok(internal_id)
         }
 
         #[cfg(not(feature = "telegram"))]
@@ -313,10 +325,29 @@ impl Channel for TelegramChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         #[cfg(feature = "telegram")]
         {
-            let _ = (message_id, new_content);
-            // Note: We need the chat_id to edit, which we don't have stored
-            // This is a limitation - would need to track message_id -> chat_id mapping
-            warn!("Edit message requires chat_id tracking, not fully implemented");
+            let bot = self
+                .bot
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("Bot not initialized".to_string()))?;
+
+            // Look up the chat_id and telegram message_id from our mapping
+            let (chat_id, telegram_msg_id) = {
+                let map = self.message_map.read().await;
+                map.get(&message_id)
+                    .copied()
+                    .ok_or_else(|| crate::error::MantaError::Validation(
+                        format!("Message ID {} not found", message_id)
+                    ))?
+            };
+
+            // Edit the message
+            bot.edit_message_text(ChatId(chat_id), MessageId(telegram_msg_id), new_content)
+                .await
+                .map_err(|e| crate::error::MantaError::Internal(
+                    format!("Telegram edit error: {}", e)
+                ))?;
+
+            info!("Edited message {} in chat {}", telegram_msg_id, chat_id);
             Ok(())
         }
 
@@ -332,9 +363,35 @@ impl Channel for TelegramChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         #[cfg(feature = "telegram")]
         {
-            let _ = message_id;
-            // Similar limitation as edit_message
-            warn!("Delete message requires chat_id tracking, not fully implemented");
+            let bot = self
+                .bot
+                .as_ref()
+                .ok_or_else(|| crate::error::MantaError::Internal("Bot not initialized".to_string()))?;
+
+            // Look up the chat_id and telegram message_id from our mapping
+            let (chat_id, telegram_msg_id) = {
+                let map = self.message_map.read().await;
+                map.get(&message_id)
+                    .copied()
+                    .ok_or_else(|| crate::error::MantaError::Validation(
+                        format!("Message ID {} not found", message_id)
+                    ))?
+            };
+
+            // Delete the message
+            bot.delete_message(ChatId(chat_id), MessageId(telegram_msg_id))
+                .await
+                .map_err(|e| crate::error::MantaError::Internal(
+                    format!("Telegram delete error: {}", e)
+                ))?;
+
+            // Remove from mapping after successful deletion
+            {
+                let mut map = self.message_map.write().await;
+                map.remove(&message_id);
+            }
+
+            info!("Deleted message {} from chat {}", telegram_msg_id, chat_id);
             Ok(())
         }
 
