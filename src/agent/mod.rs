@@ -8,7 +8,7 @@ use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, Too
 use crate::tools::{ToolContext, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 
 pub mod budget;
 pub mod compressor;

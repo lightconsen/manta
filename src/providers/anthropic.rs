@@ -2,14 +2,11 @@
 //!
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
-use super::{CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider, Role, ToolCall, ToolResult, Usage};
+use super::{CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider, Role, ToolCall, Usage};
 use async_trait::async_trait;
-use futures_core::Stream;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
+use reqwest::header::{CONTENT_TYPE, HeaderMap};
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
 use std::time::Duration;
-use tokio_stream::StreamExt;
 use tracing::{debug, error, instrument};
 
 /// Anthropic API client

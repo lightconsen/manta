@@ -60,7 +60,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Code blocks first (to protect content inside)
         result = regex::Regex::new(r"```(\w+)?\n(.*?)```")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let code = caps.get(2).map(|m| m.as_str()).unwrap_or("");
                 self.format_code_block(code, Some(lang))
@@ -70,14 +70,14 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Bold
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_bold(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_bold(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -87,14 +87,14 @@ impl MessageFormatter for TelegramHtmlFormatter {
         let bold_placeholder = "\x00BOLD\x00";
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
@@ -102,7 +102,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Now process italic
         result = regex::Regex::new(r"\*([^*]+)\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -113,7 +113,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Inline code
         result = regex::Regex::new(r"`([^`]+)`")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_inline_code(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -121,7 +121,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Strikethrough
         result = regex::Regex::new(r"~~(.+?)~~")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("<s>{}</s>", Self::escape_html(caps.get(1).map(|m| m.as_str()).unwrap_or("")))
             })
             .to_string();
@@ -129,7 +129,7 @@ impl MessageFormatter for TelegramHtmlFormatter {
         // Links
         result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let url = caps.get(2).map(|m| m.as_str()).unwrap_or("");
                 self.format_link(text, url)
@@ -201,7 +201,7 @@ impl MessageFormatter for DiscordFormatter {
     fn format(&self, text: &str) -> String {
         // Discord supports standard markdown well
         // We just need to handle some edge cases
-        let mut result = text.to_string();
+        let result = text.to_string();
 
         // Strikethrough: ~~text~~ (Discord supports this natively)
         // Underline: __text__ (Discord supports this natively)
@@ -273,7 +273,7 @@ impl MessageFormatter for SlackFormatter {
         // Code blocks (protect first)
         result = regex::Regex::new(r"```(\w+)?\n(.*?)```")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let code = caps.get(2).map(|m| m.as_str()).unwrap_or("");
                 self.format_code_block(code, Some(lang))
@@ -285,7 +285,7 @@ impl MessageFormatter for SlackFormatter {
         let bold_placeholder = "\x00BOLD\x00";
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
@@ -293,7 +293,7 @@ impl MessageFormatter for SlackFormatter {
         // Also handle __bold__
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
@@ -301,7 +301,7 @@ impl MessageFormatter for SlackFormatter {
         // Italic: *text* -> _text_
         result = regex::Regex::new(r"\*([^*]+)\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -309,7 +309,7 @@ impl MessageFormatter for SlackFormatter {
         // Italic: _text_ -> _text_ (keep as is)
         result = regex::Regex::new(r"_([^_]+)_")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_italic(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -320,7 +320,7 @@ impl MessageFormatter for SlackFormatter {
         // Inline code
         result = regex::Regex::new(r"`([^`]+)`")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 self.format_inline_code(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
             })
             .to_string();
@@ -328,7 +328,7 @@ impl MessageFormatter for SlackFormatter {
         // Strikethrough: ~~text~~ -> ~text~
         result = regex::Regex::new(r"~~(.+?)~~")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("~{}~", Self::escape_slack(caps.get(1).map(|m| m.as_str()).unwrap_or("")))
             })
             .to_string();
@@ -336,7 +336,7 @@ impl MessageFormatter for SlackFormatter {
         // Links: [text](url) -> <url|text>
         result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let url = caps.get(2).map(|m| m.as_str()).unwrap_or("");
                 self.format_link(text, url)
@@ -411,14 +411,14 @@ impl PlainTextFormatter {
         let bold_placeholder = "\x00BOLD\x00";
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();

@@ -4,7 +4,7 @@
 //! messages when approaching token limits.
 
 use crate::providers::{Message, Role};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Estimated tokens per character (approximation)
 const TOKENS_PER_CHAR: f32 = 0.25;

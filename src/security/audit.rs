@@ -8,7 +8,6 @@
 //! - Security boundary documentation
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
@@ -995,7 +994,7 @@ impl SecurityAuditor {
     fn collect_sandbox_issues(
         &self,
         audit: &SandboxAudit,
-        critical: &mut Vec<SecurityIssue>,
+        _critical: &mut Vec<SecurityIssue>,
         warnings: &mut Vec<SecurityIssue>,
         recommendations: &mut Vec<String>,
     ) {

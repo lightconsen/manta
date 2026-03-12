@@ -3,7 +3,7 @@
 //! This provider wraps multiple providers and tries them in order until one succeeds.
 
 use super::{
-    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, Provider,
+    CompletionRequest, CompletionResponse, CompletionStream, Provider,
 };
 use async_trait::async_trait;
 use std::sync::Arc;

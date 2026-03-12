@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace};
+use tracing::trace;
 
 /// Performance metrics collector
 #[derive(Debug, Default)]

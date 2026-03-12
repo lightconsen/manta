@@ -3,7 +3,7 @@
 //! The engine contains the main business logic and orchestrates
 //! operations. It is independent of external adapters.
 
-use super::models::{CreateEntityRequest, Entity, Id, Metadata, Status, UpdateEntityRequest};
+use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
 use crate::error::{MantaError, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

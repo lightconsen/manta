@@ -2,7 +2,7 @@
 //!
 //! Provides query optimization, batching, and indexing for improved performance.
 
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::time::Duration;
 use tracing::{debug, info, instrument};
 

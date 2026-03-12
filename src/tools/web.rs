@@ -5,7 +5,7 @@
 use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Maximum content size to fetch (100KB)
 const MAX_CONTENT_SIZE: usize = 100 * 1024;

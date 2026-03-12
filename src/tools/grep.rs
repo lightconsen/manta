@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Maximum file size to search (5MB)
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;

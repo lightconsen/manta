@@ -4,8 +4,7 @@
 //! Jobs can be scheduled with natural language or standard cron syntax.
 
 use crate::agent::Agent;
-use crate::channels::{ConversationId, IncomingMessage, OutgoingMessage, UserId};
-use async_trait::async_trait;
+use crate::channels::IncomingMessage;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

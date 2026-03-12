@@ -9,15 +9,12 @@
 //! - Slash command integration
 //! - YAML frontmatter with SKILL.md format
 
-use async_trait::async_trait;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 mod builtin;
 mod config;
@@ -547,7 +544,7 @@ impl SkillManager {
 
     /// Start file watcher for hot reloading
     async fn start_watcher(&mut self) -> crate::Result<()> {
-        let skills = Arc::clone(&self.skills);
+        let _skills = Arc::clone(&self.skills);
         let reload_tx = self.reload_tx.clone();
         let storage_paths = self.storage.get_all_paths();
 
@@ -739,7 +736,7 @@ impl SkillManager {
 
         // Update in-memory skill if present
         let mut skills = self.skills.write().await;
-        if let Some(skill) = skills.get_mut(name) {
+        if let Some(_skill) = skills.get_mut(name) {
             // Note: skill eligibility is separate from config enabled state
             info!("Skill {} enabled state changed to: {}", name, enabled);
         }

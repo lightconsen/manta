@@ -5,7 +5,6 @@
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader, SeekFrom};
-use tracing::{error, info};
 
 /// Get the default log file path
 pub fn log_file_path() -> PathBuf {

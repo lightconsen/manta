@@ -3,7 +3,6 @@
 use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, cosine_similarity};
 use async_trait::async_trait;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
-use sqlx::Row as _;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use tracing::{debug, info};

@@ -484,7 +484,7 @@ Progress and results are relayed to the parent."#
                         "child_id is required for cancel".to_string()
                     ))?;
 
-                if let Some(child) = self.tracker.remove_child(child_id).await {
+                if let Some(_child) = self.tracker.remove_child(child_id).await {
                     info!("Cancelled child agent: {}", child_id);
                     Ok(ToolExecutionResult::success(format!(
                         "Cancelled child {}", child_id

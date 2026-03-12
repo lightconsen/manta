@@ -219,7 +219,7 @@ fn is_due(schedule: &str, minute: u32, hour: u32, day: u32, month: u32, weekday:
 }
 
 /// Check if a value matches a cron field pattern
-fn matches_field(pattern: &str, value: u32, min: u32, max: u32) -> bool {
+fn matches_field(pattern: &str, value: u32, _min: u32, _max: u32) -> bool {
     if pattern == "*" {
         return true;
     }

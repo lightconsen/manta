@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 // Re-export process types
@@ -515,7 +515,7 @@ impl AssistantSpawner {
 
     /// Terminate an assistant
     pub async fn terminate(&self, assistant_id: &str) -> crate::Result<()> {
-        let assistant = self
+        let _assistant = self
             .get_assistant(assistant_id)
             .await
             .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Assistant {}", assistant_id) })?;

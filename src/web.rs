@@ -13,14 +13,12 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tracing::{error, info};
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
 use crate::client::DaemonClient;
-use crate::server::{broadcast_cron_output, init_cron_broadcast};
-use std::sync::Arc as StdArc;
+use crate::server::init_cron_broadcast;
 
 // Re-export broadcast functions from server module
 

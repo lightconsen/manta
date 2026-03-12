@@ -4,13 +4,12 @@
 
 use super::{
     CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition,
-    Message, Provider, Role, ToolCall, ToolDefinition, Usage,
+    Message, Provider, Role, ToolCall, Usage,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;

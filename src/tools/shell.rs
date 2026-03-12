@@ -6,7 +6,6 @@ use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::process::Stdio;
-use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
@@ -139,7 +138,6 @@ impl Tool for ShellTool {
         // Apply resource limits in sandboxed mode (Unix only)
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
             if context.sandboxed {
                 let limits_summary = context.resource_limits_summary();
                 debug!("Applying resource limits: {}", limits_summary);

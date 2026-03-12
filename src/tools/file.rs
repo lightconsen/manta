@@ -5,11 +5,10 @@
 use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs as tokio_fs;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;

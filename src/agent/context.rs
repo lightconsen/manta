@@ -3,7 +3,7 @@
 //! Context handles message history, token counting, and pruning
 //! to keep conversations within the context window.
 
-use crate::providers::{Message, Role};
+use crate::providers::Message;
 use std::time::SystemTime;
 
 /// Conversation context

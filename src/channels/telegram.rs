@@ -3,22 +3,22 @@
 //! This module implements the Channel trait for Telegram using teloxide.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, MessageOptions, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent,
+    IncomingMessage, MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "telegram")]
 use teloxide::{
-    dispatching::{dialogue::InMemStorage, Dispatcher, UpdateFilterExt},
+    dispatching::{Dispatcher, UpdateFilterExt},
     payloads::SendMessageSetters,
     prelude::*,
-    types::{InputFile, Message, MessageId, ParseMode},
+    types::{Message, MessageId, ParseMode},
     Bot,
 };
 
@@ -112,14 +112,14 @@ impl TelegramChannel {
         let bold_placeholder = "\x00BOLD\x00";
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
             })
             .to_string();
@@ -192,7 +192,7 @@ impl Channel for TelegramChannel {
 
             let bot = Bot::new(&self.config.token);
             let message_tx = self.config.message_tx.clone();
-            let allowed_usernames = self.config.allowed_usernames.clone();
+            let _allowed_usernames = self.config.allowed_usernames.clone();
             let running = self.running.clone();
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);

@@ -5,7 +5,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::Command;
-use tracing::{debug, error, info};
 
 /// Daemon configuration
 #[derive(Debug, Clone)]
@@ -336,7 +335,7 @@ impl DaemonManager {
     async fn is_process_running(&self, pid: u32) -> bool {
         #[cfg(unix)]
         {
-            use nix::sys::signal::Signal;
+            
             use nix::unistd::Pid;
 
             // Send signal 0 to check if process exists

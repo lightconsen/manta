@@ -414,7 +414,7 @@ impl ChannelRegistry {
 
 /// Input validation and sanitization for messages
 pub mod validation {
-    use super::*;
+    
 
     /// Default maximum message length (10,000 characters)
     pub const DEFAULT_MAX_MESSAGE_LENGTH: usize = 10_000;

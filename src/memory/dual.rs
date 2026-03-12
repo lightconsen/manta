@@ -7,7 +7,7 @@
 //! Both are stored as markdown files with bounded size (default 4KB each).
 
 use crate::error::MantaError;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -114,7 +114,7 @@ impl DualMemory {
 
     /// Write memory content (with size limit)
     pub async fn write(&self, mem_type: DualMemoryType, content: &str) -> crate::Result<()> {
-        let path = self.memory_path(mem_type);
+        let _path = self.memory_path(mem_type);
 
         // Check size limit
         if content.len() > self.max_size {

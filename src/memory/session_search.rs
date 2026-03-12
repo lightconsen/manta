@@ -3,11 +3,10 @@
 //! This module implements FTS5-based search for session history,
 //! allowing the agent to recall information from past conversations.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// A search result from session history
 #[derive(Debug, Clone, Serialize, Deserialize)]

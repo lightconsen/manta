@@ -2,13 +2,12 @@
 //!
 //! Provides authentication, authorization, rate limiting, and sandboxing.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Unique identifier for a user
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

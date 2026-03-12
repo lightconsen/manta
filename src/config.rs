@@ -3,7 +3,7 @@
 //! This module handles loading and validating configuration from
 //! multiple sources: defaults, config files, and environment variables.
 
-use crate::error::{ConfigError, MantaError, Result};
+use crate::error::{ConfigError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

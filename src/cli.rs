@@ -9,7 +9,6 @@ use crate::core::Engine;
 use crate::error::Result;
 use crate::server::ServerConfig;
 use clap::{Parser, Subcommand, ValueEnum};
-use rustyline::{history::History, DefaultEditor, Result as RustyResult};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -684,7 +683,7 @@ impl Cli {
         use crate::skills::{SkillManager, Skill, TriggerType};
 
         match command {
-            SkillCommands::List { all, format } => {
+            SkillCommands::List { all: _, format } => {
                 let mut manager = SkillManager::new().await?;
                 let count = manager.initialize().await?;
 
@@ -853,7 +852,7 @@ impl Cli {
                 let skill = Skill::new(name, &desc, "")
                     .with_trigger(TriggerType::Keyword, name);
 
-                let mut manager = SkillManager::new().await?;
+                let manager = SkillManager::new().await?;
                 manager.create_skill(&skill).await?;
 
                 println!("✅ Created skill template '{}'", name);
@@ -938,7 +937,7 @@ impl Cli {
         single_message: Option<String>,
     ) -> Result<()> {
         use crate::client::check_daemon;
-        use std::io::{self, Write};
+        
 
         println!("🤖 Manta AI Assistant");
         println!("=====================");
@@ -1228,7 +1227,7 @@ impl Cli {
         use crate::agent::{AgentConfig, AgentBuilder};
         use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, WebSearchTool, WebFetchTool, CronTool};
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
-        use std::collections::HashMap;
+        
 
         // Read environment variables set by parent
         let assistant_id = std::env::var("MANTA_ASSISTANT_ID")
@@ -1237,7 +1236,7 @@ impl Cli {
             .unwrap_or_else(|_| "Assistant".to_string());
         let assistant_type_str = std::env::var("MANTA_ASSISTANT_TYPE")
             .unwrap_or_else(|_| "specialist".to_string());
-        let parent_id = std::env::var("MANTA_PARENT_ASSISTANT_ID").ok();
+        let _parent_id = std::env::var("MANTA_PARENT_ASSISTANT_ID").ok();
 
         // Parse assistant type
         let assistant_type = match assistant_type_str.as_str() {
