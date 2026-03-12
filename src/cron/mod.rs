@@ -3,6 +3,8 @@
 //! This module implements scheduled task execution using cron expressions.
 //! Jobs can be scheduled with natural language or standard cron syntax.
 
+use crate::agent::Agent;
+use crate::channels::{ConversationId, IncomingMessage, OutgoingMessage, UserId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -95,8 +97,20 @@ impl ScheduledJob {
     }
 }
 
+/// Job execution result
+#[derive(Debug, Clone)]
+pub struct JobExecutionResult {
+    /// Job ID
+    pub job_id: String,
+    /// Whether execution succeeded
+    pub success: bool,
+    /// Result message
+    pub message: String,
+    /// Timestamp
+    pub executed_at: DateTime<Utc>,
+}
+
 /// Cron scheduler
-#[derive(Debug)]
 pub struct CronScheduler {
     /// Jobs storage
     jobs: Arc<RwLock<HashMap<String, ScheduledJob>>>,
@@ -106,6 +120,22 @@ pub struct CronScheduler {
     handle: Option<JoinHandle<()>>,
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
+    /// Optional agent for processing job prompts
+    agent: Option<Arc<Agent>>,
+    /// Results channel
+    results_tx: Option<mpsc::Sender<JobExecutionResult>>,
+}
+
+impl std::fmt::Debug for CronScheduler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CronScheduler")
+            .field("jobs", &self.jobs)
+            .field("handle", &self.handle.is_some())
+            .field("shutdown_tx", &self.shutdown_tx.is_some())
+            .field("has_agent", &self.agent.is_some())
+            .field("has_results_tx", &self.results_tx.is_some())
+            .finish()
+    }
 }
 
 /// Commands for the scheduler
@@ -130,8 +160,30 @@ impl CronScheduler {
             command_tx,
             handle: None,
             shutdown_tx: None,
+            agent: None,
+            results_tx: None,
         };
         (scheduler, command_rx)
+    }
+
+    /// Create a new cron scheduler with an agent for processing jobs
+    pub fn with_agent(agent: Arc<Agent>) -> (Self, mpsc::Receiver<JobCommand>) {
+        let (command_tx, command_rx) = mpsc::channel(100);
+        let scheduler = Self {
+            jobs: Arc::new(RwLock::new(HashMap::new())),
+            command_tx,
+            handle: None,
+            shutdown_tx: None,
+            agent: Some(agent),
+            results_tx: None,
+        };
+        (scheduler, command_rx)
+    }
+
+    /// Set the results channel for job execution notifications
+    pub fn with_results_channel(mut self, tx: mpsc::Sender<JobExecutionResult>) -> Self {
+        self.results_tx = Some(tx);
+        self
     }
 
     /// Start the scheduler
@@ -140,6 +192,8 @@ impl CronScheduler {
         self.shutdown_tx = Some(shutdown_tx);
 
         let jobs = Arc::clone(&self.jobs);
+        let agent = self.agent.clone();
+        let results_tx = self.results_tx.clone();
 
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
@@ -147,11 +201,11 @@ impl CronScheduler {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        Self::check_and_run_jobs(&jobs).await;
+                        Self::check_and_run_jobs(&jobs, agent.as_ref(), results_tx.as_ref()).await;
                     }
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, cmd).await;
+                            Self::handle_command(&jobs, agent.as_ref(), results_tx.as_ref(), cmd).await;
                         }
                     }
                     _ = shutdown_rx.recv() => {
@@ -233,7 +287,12 @@ impl CronScheduler {
     }
 
     /// Handle scheduler commands
-    async fn handle_command(jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>, cmd: JobCommand) {
+    async fn handle_command(
+        jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>,
+        agent: Option<&Arc<Agent>>,
+        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
+        cmd: JobCommand,
+    ) {
         let mut jobs_lock = jobs.write().await;
         match cmd {
             JobCommand::Add(job) => {
@@ -253,44 +312,113 @@ impl CronScheduler {
             JobCommand::Trigger(id) => {
                 if let Some(job) = jobs_lock.get_mut(&id) {
                     info!("Triggering job: {}", id);
-                    Self::execute_job(job).await;
+                    Self::execute_job(job, agent, results_tx).await;
                 }
             }
         }
     }
 
     /// Check and run due jobs
-    async fn check_and_run_jobs(jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>) {
+    async fn check_and_run_jobs(
+        jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>,
+        agent: Option<&Arc<Agent>>,
+        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
+    ) {
         let now = Utc::now();
         let mut jobs_lock = jobs.write().await;
 
         for job in jobs_lock.values_mut() {
             if job.should_run(now) {
                 info!("Running scheduled job: {}", job.name);
-                Self::execute_job(job).await;
+                Self::execute_job(job, agent, results_tx).await;
                 job.mark_executed(now);
             }
         }
     }
 
-    /// Execute a job
-    async fn execute_job(job: &mut ScheduledJob) {
-        // In a real implementation, this would:
-        // 1. Create an agent instance
-        // 2. Process the prompt
-        // 3. Deliver results to the specified channel
-        // 4. Handle errors and retries
-
+    /// Execute a job using the agent if available
+    async fn execute_job(
+        job: &mut ScheduledJob,
+        agent: Option<&Arc<Agent>>,
+        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
+    ) {
         info!(
             "Executing job '{}' with prompt: {}",
             job.name,
             job.prompt.chars().take(50).collect::<String>()
         );
 
-        // Simulate execution
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // Update last run time
+        job.last_run = Some(Utc::now());
+        job.run_count += 1;
 
-        debug!("Job '{}' completed", job.name);
+        if let Some(agent) = agent {
+            // Create incoming message from job
+            let message = IncomingMessage::new(
+                "system",
+                format!("cron:{}", job.id),
+                job.prompt.clone(),
+            )
+            .with_metadata(
+                crate::channels::MessageMetadata::new()
+                    .with_extra("job_id", job.id.clone())
+                    .with_extra("job_name", job.name.clone())
+                    .with_extra("channel", job.channel.clone()),
+            );
+
+            // Process the message through the agent
+            match agent.process_message(message).await {
+                Ok(response) => {
+                    info!(
+                        "Job '{}' completed successfully. Response: {} chars",
+                        job.name,
+                        response.content.len()
+                    );
+
+                    // Send result notification if channel is configured
+                    if let Some(tx) = results_tx {
+                        let result = JobExecutionResult {
+                            job_id: job.id.clone(),
+                            success: true,
+                            message: response.content,
+                            executed_at: Utc::now(),
+                        };
+                        let _ = tx.send(result).await;
+                    }
+                }
+                Err(e) => {
+                    error!("Job '{}' failed: {}", job.name, e);
+
+                    if let Some(tx) = results_tx {
+                        let result = JobExecutionResult {
+                            job_id: job.id.clone(),
+                            success: false,
+                            message: format!("Error: {}", e),
+                            executed_at: Utc::now(),
+                        };
+                        let _ = tx.send(result).await;
+                    }
+                }
+            }
+        } else {
+            // No agent configured - log a warning
+            warn!(
+                "No agent configured for job execution. Job '{}' would execute with prompt: {}",
+                job.name, job.prompt
+            );
+
+            if let Some(tx) = results_tx {
+                let result = JobExecutionResult {
+                    job_id: job.id.clone(),
+                    success: false,
+                    message: "No agent configured".to_string(),
+                    executed_at: Utc::now(),
+                };
+                let _ = tx.send(result).await;
+            }
+        }
+
+        debug!("Job '{}' execution completed", job.name);
     }
 }
 
