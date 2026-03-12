@@ -141,6 +141,9 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
             }
         }
 
+        // Check if any jobs need to run
+        let jobs_count = jobs_to_run.len();
+
         // Execute due jobs
         for (job_id, command) in jobs_to_run {
             debug!("Executing cron job '{}' with command: {}", job_id, command);
@@ -189,6 +192,10 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
             }
         }
 
+        // Re-print prompt after jobs execute so user knows where to type
+        if jobs_count > 0 {
+            println!("\n💬 You > ");
+        }
     }
 }
 
