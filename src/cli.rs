@@ -703,22 +703,9 @@ impl Cli {
             return Ok(());
         }
 
-        // Setup history file path
-        let history_file = dirs::data_dir()
-            .map(|p| p.join("manta").join("history.txt"))
-            .unwrap_or_else(|| PathBuf::from(".manta_history"));
-
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = history_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        // Initialize rustyline editor
+        // Initialize rustyline editor without history (avoids macOS panic)
         let mut rl = DefaultEditor::new()
             .map_err(|e| crate::error::MantaError::Internal(format!("Failed to initialize readline: {}", e)))?;
-
-        // Load history from file if it exists
-        let _ = rl.load_history(&history_file);
 
         println!("Interactive chat mode. Type 'help' for commands, 'exit' to quit.");
         println!();
@@ -747,8 +734,7 @@ impl Cli {
                 continue;
             }
 
-            // Add to history (ignore errors)
-            let _ = rl.add_history_entry(input);
+            // History disabled - add_history_entry causes panic on macOS
 
             // Handle special commands
             match input.to_lowercase().as_str() {
@@ -762,7 +748,6 @@ impl Cli {
                     println!("  exit     - Exit the chat");
                     println!("  clear    - Clear the conversation context");
                     println!("  tools    - List available tools");
-                    println!("  history  - Show command history count");
                     println!();
                     continue;
                 }
@@ -777,13 +762,6 @@ impl Cli {
                     for tool in tools {
                         println!("  - {}", tool);
                     }
-                    println!();
-                    continue;
-                }
-                "history" => {
-                    let count = rl.history().len();
-                    println!("📜 Command history: {} entries", count);
-                    println!("   History file: {}", history_file.display());
                     println!();
                     continue;
                 }
@@ -804,9 +782,6 @@ impl Cli {
                 }
             }
         }
-
-        // Save history to file (ignore errors)
-        let _ = rl.save_history(&history_file);
 
         Ok(())
     }
