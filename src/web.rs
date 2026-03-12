@@ -180,8 +180,8 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
 }
 
 /// HTML page with terminal interface
-async fn index_handler() -> Html<&'static str> {
-    Html(TERMINAL_HTML)
+async fn index_handler() -> Html<String> {
+    Html(terminal_html())
 }
 
 /// WebSocket upgrade handler
@@ -292,7 +292,9 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
 }
 
 /// HTML/CSS/JS for the terminal interface
-const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
+fn terminal_html() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let html = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -333,11 +335,41 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             gap: 8px;
         }
 
+        .header-center {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
         .status {
             display: flex;
             align-items: center;
             gap: 8px;
             font-size: 12px;
+        }
+
+        .version {
+            font-size: 12px;
+            color: #8b949e;
+            background: #21262d;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .settings-btn {
+            background: transparent;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .settings-btn:hover {
+            background: #21262d;
+            border-color: #58a6ff;
         }
 
         .status-dot {
@@ -541,10 +573,14 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
 <body>
     <div class="header">
         <h1>🤖 Manta AI Terminal</h1>
-        <div class="status">
-            <span class="status-dot" id="statusDot"></span>
-            <span id="statusText">Connecting...</span>
+        <div class="header-center">
+            <div class="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <span class="version" id="versionText">v{VERSION}</span>
         </div>
+        <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
     </div>
 
     <div class="terminal" id="terminal"></div>
@@ -737,8 +773,43 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             }
         });
 
+        // Settings button handler
+        const settingsBtn = document.getElementById('settingsBtn');
+        settingsBtn.addEventListener('click', () => {
+            addSystemMessage('Settings panel coming soon! 🚧');
+        });
+
         connect();
         messageInput.focus();
     </script>
 </body>
 </html>"##;
+    html.replace("{VERSION}", version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_terminal_html_contains_version() {
+        let html = terminal_html();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(html.contains(&format!("v{}", version)),
+            "HTML should contain version v{}", version);
+    }
+
+    #[test]
+    fn test_terminal_html_contains_settings_button() {
+        let html = terminal_html();
+        assert!(html.contains("settingsBtn"), "HTML should contain settings button");
+        assert!(html.contains("⚙️"), "HTML should contain settings icon");
+    }
+
+    #[test]
+    fn test_terminal_html_contains_version_span() {
+        let html = terminal_html();
+        assert!(html.contains("versionText"), "HTML should contain version span");
+        assert!(html.contains("header-center"), "HTML should contain header-center div");
+    }
+}
