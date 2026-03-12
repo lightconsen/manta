@@ -48,6 +48,7 @@ pub mod security;
 pub mod server;
 pub mod skills;
 pub mod tools;
+pub mod web_terminal;
 pub mod utils;
 
 // Re-export commonly used types

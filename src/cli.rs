@@ -67,6 +67,12 @@ pub enum Commands {
         #[arg(short, long)]
         message: Option<String>,
     },
+    /// Start web terminal interface
+    Web {
+        /// Port to listen on
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
     /// Run as an assistant process (internal use)
     AssistantRun {
         /// Configuration file path
@@ -256,6 +262,9 @@ impl Cli {
             }
             Commands::AssistantRun { config: assistant_config } => {
                 self.run_assistant_process(assistant_config).await
+            }
+            Commands::Web { port } => {
+                self.run_web_terminal(&config, *port).await
             }
             Commands::Cron { command } => self.run_cron_command(command).await,
         }
@@ -877,6 +886,76 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    /// Run web terminal server
+    async fn run_web_terminal(&self, _config: &Config, port: u16) -> Result<()> {
+        use crate::agent::{AgentConfig, AgentBuilder};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool};
+        use crate::web_terminal::start_web_terminal;
+
+        println!("🌐 Starting Manta Web Terminal");
+        println!("================================");
+
+        // Read environment variables
+        let base_url = std::env::var("MANTA_BASE_URL").ok();
+        let api_key = std::env::var("MANTA_API_KEY").ok();
+        let model = std::env::var("MANTA_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+
+        // Validate required environment variables
+        if base_url.is_none() || api_key.is_none() {
+            println!("❌ Error: MANTA_BASE_URL and MANTA_API_KEY must be set.");
+            println!("   Example: export MANTA_BASE_URL=https://api.kimi.com/coding/");
+            println!("   Example: export MANTA_API_KEY=your-api-key");
+            return Ok(());
+        }
+
+        // Check if using Anthropic API format
+        let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+
+        // Create provider
+        let provider: Arc<dyn crate::providers::Provider> = if is_anthropic {
+            use crate::providers::anthropic::AnthropicProvider;
+            let base = base_url.unwrap();
+            let key = api_key.unwrap();
+            println!("✅ Using Anthropic provider");
+            Arc::new(AnthropicProvider::with_base_url(key, base)?.with_model(model))
+        } else {
+            use crate::providers::openai::OpenAiProvider;
+            let base = base_url.unwrap();
+            let key = api_key.unwrap();
+            println!("✅ Using OpenAI-compatible provider");
+            Arc::new(OpenAiProvider::with_base_url(key, base)?.with_model(model))
+        };
+
+        // Create tool registry with default tools
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(ShellTool::new()));
+        tool_registry.register(Box::new(FileReadTool::new()));
+        tool_registry.register(Box::new(FileWriteTool::new()));
+        tool_registry.register(Box::new(FileEditTool::new()));
+        tool_registry.register(Box::new(GlobTool::new()));
+        tool_registry.register(Box::new(TodoTool::new()));
+        tool_registry.register(Box::new(MemoryTool::new()));
+        tool_registry.register(Box::new(CronTool::new()));
+
+        // Add MCP tool
+        let mcp_tool = crate::tools::McpConnectionTool::new();
+        tool_registry.register(Box::new(mcp_tool));
+        println!("✅ Loaded {} tools", tool_registry.list().len());
+
+        // Build agent
+        let agent_config = AgentConfig::default();
+        let agent = AgentBuilder::new()
+            .config(agent_config)
+            .provider(provider)
+            .tools(Arc::new(tool_registry))
+            .build()?;
+
+        // Start web terminal
+        start_web_terminal(Arc::new(agent), port).await
     }
 
     /// Run as an assistant subprocess (internal use)
