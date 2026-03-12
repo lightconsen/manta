@@ -738,9 +738,7 @@ impl Cli {
         // Print header
         stdout.execute(terminal::Clear(ClearType::All))?;
         stdout.execute(cursor::MoveTo(0, 0))?;
-        println!("🤖 Manta Terminal Chat");
-        println!("Type 'exit' to quit, 'help' for commands");
-        println!();
+        println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands");
         stdout.flush()?;
 
         let mut input_buffer = String::new();
@@ -801,27 +799,19 @@ impl Cli {
                     break;
                 }
                 "help" => {
-                    println!("\n📋 Available commands:");
-                    println!("   help     - Show this help message");
-                    println!("   exit     - Exit the chat");
-                    println!("   tools    - List available tools");
-                    println!();
+                    println!("📋 Commands: help, exit, tools");
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
-                    println!("\n🔧 Available tools ({}):", tools.len());
-                    for tool in tools {
-                        println!("   • {}", tool);
-                    }
-                    println!();
+                    println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
                     continue;
                 }
                 _ => {}
             }
 
-            // Show thinking indicator
-            print!("\n🤖 Thinking...");
+            // Show thinking indicator on same line
+            print!("🤖 Thinking...");
             stdout.flush()?;
 
             // Process message
@@ -831,13 +821,13 @@ impl Cli {
                 Ok(response) => {
                     // Clear thinking indicator and show response
                     print!("\r\x1B[2K"); // Clear entire line
-                    println!("🤖 {}", response.content);
-                    println!();
+                    // Print response, trimming extra whitespace
+                    let content = response.content.trim();
+                    println!("🤖 {}", content);
                 }
                 Err(e) => {
                     print!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
-                    println!();
                 }
             }
 
@@ -856,9 +846,7 @@ impl Cli {
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, BufReader, stdin};
 
-        println!("🤖 Manta Terminal Chat (line mode)");
-        println!("Type 'exit' to quit, 'help' for commands");
-        println!();
+        println!("🤖 Manta Terminal Chat (line mode) - Type 'exit' to quit");
 
         let stdin = BufReader::new(stdin());
         let mut lines = stdin.lines();
@@ -879,44 +867,34 @@ impl Cli {
                     break;
                 }
                 "help" => {
-                    println!("\n📋 Available commands:");
-                    println!("   help     - Show this help message");
-                    println!("   exit     - Exit the chat");
-                    println!("   tools    - List available tools");
-                    println!();
+                    println!("📋 Commands: help, exit, tools");
                     print!("💬 You: > ");
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
-                    println!("\n🔧 Available tools ({}):", tools.len());
-                    for tool in tools {
-                        println!("   • {}", tool);
-                    }
-                    println!();
+                    println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
                     print!("💬 You: > ");
                     continue;
                 }
                 _ => {}
             }
 
-            // Show thinking indicator (non-blocking feel)
-            eprint!("🤖 Thinking...\r");
+            // Show thinking indicator
+            eprint!("🤖 Thinking...");
 
             // Process message
             let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, input);
 
             match agent.process_message(incoming).await {
                 Ok(response) => {
-                    // Clear thinking and show response
-                    eprint!("\x1B[2K\r"); // Clear line
-                    println!("🤖 {}", response.content);
-                    println!();
+                    // Clear thinking and show response (trimmed)
+                    eprint!("\r\x1B[2K"); // Clear line
+                    println!("🤖 {}", response.content.trim());
                 }
                 Err(e) => {
-                    eprint!("\x1B[2K\r");
+                    eprint!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
-                    println!();
                 }
             }
 
