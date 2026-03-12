@@ -143,7 +143,7 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
 
         // Execute due jobs
         for (job_id, command) in jobs_to_run {
-            info!("Executing cron job '{}' with command: {}", job_id, command);
+            debug!("Executing cron job '{}' with command: {}", job_id, command);
 
             // Execute the command
             let output = tokio::process::Command::new("sh")
@@ -158,8 +158,13 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
                     let stderr = String::from_utf8_lossy(&result.stderr);
 
                     if result.status.success() {
-                        info!("Job '{}' executed successfully. Output: {}", job_id, stdout.trim());
+                        // Print output cleanly to stdout so user sees it
+                        if !stdout.trim().is_empty() {
+                            println!("{}", stdout.trim());
+                        }
+                        debug!("Job '{}' executed successfully", job_id);
                     } else {
+                        eprintln!("Job failed: {}", stderr.trim());
                         error!("Job '{}' failed. Stderr: {}", job_id, stderr.trim());
                     }
                 }
