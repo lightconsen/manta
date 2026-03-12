@@ -13,10 +13,43 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info};
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
+
+/// Broadcast channel for cron output
+static CRON_BROADCAST: RwLock<Option<broadcast::Sender<String>>> = RwLock::const_new(None);
+
+/// Initialize the cron broadcast channel
+pub async fn init_cron_broadcast() -> broadcast::Receiver<String> {
+    let tx = {
+        let guard = CRON_BROADCAST.read().await;
+        if let Some(ref tx) = *guard {
+            tx.clone()
+        } else {
+            drop(guard);
+            let (tx, _rx) = broadcast::channel(100);
+            let mut guard = CRON_BROADCAST.write().await;
+            *guard = Some(tx.clone());
+            tx
+        }
+    };
+    tx.subscribe()
+}
+
+/// Broadcast a cron job output to all connected web clients
+pub async fn broadcast_cron_output(output: &str) {
+    let guard = CRON_BROADCAST.read().await;
+    if let Some(ref tx) = *guard {
+        let msg = serde_json::json!({
+            "type": "cron",
+            "content": output
+        });
+        let _ = tx.send(msg.to_string());
+    }
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -26,6 +59,9 @@ pub struct WebTerminalState {
 
 /// Start the web terminal server
 pub async fn start_web_terminal(agent: Arc<Agent>, port: u16) -> crate::Result<()> {
+    // Initialize broadcast channel
+    let _ = init_cron_broadcast().await;
+
     let state = WebTerminalState { agent };
 
     let app = Router::new()
@@ -60,6 +96,9 @@ async fn ws_handler(
 async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
     info!("New WebSocket connection established");
 
+    // Subscribe to cron broadcasts
+    let mut cron_rx = init_cron_broadcast().await;
+
     // Generate conversation ID for this session
     let conversation_id = uuid::Uuid::new_v4().to_string();
 
@@ -73,66 +112,77 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
         return;
     }
 
-    // Main message processing loop
+    // Main message processing loop with cron broadcast handling
     loop {
-        // Receive messages from WebSocket client
-        match socket.recv().await {
-            Some(Ok(Message::Text(text))) => {
-                info!("Received message: {}", text);
+        tokio::select! {
+            // Handle incoming WebSocket messages
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        info!("Received message: {}", text);
 
-                // Send typing indicator
-                let typing = serde_json::json!({
-                    "type": "typing",
-                    "content": true
-                });
-                if socket.send(Message::Text(typing.to_string())).await.is_err() {
-                    break;
-                }
-
-                // Process message with agent
-                let incoming = IncomingMessage::new(
-                    "user",
-                    &conversation_id,
-                    &text
-                );
-
-                match state.agent.process_message(incoming).await {
-                    Ok(response) => {
-                        let resp_json = serde_json::json!({
-                            "type": "message",
-                            "role": "assistant",
-                            "content": response.content
+                        // Send typing indicator
+                        let typing = serde_json::json!({
+                            "type": "typing",
+                            "content": true
                         });
-                        if socket.send(Message::Text(resp_json.to_string())).await.is_err() {
+                        if socket.send(Message::Text(typing.to_string())).await.is_err() {
+                            break;
+                        }
+
+                        // Process message with agent
+                        let incoming = IncomingMessage::new(
+                            "user",
+                            &conversation_id,
+                            &text
+                        );
+
+                        match state.agent.process_message(incoming).await {
+                            Ok(response) => {
+                                let resp_json = serde_json::json!({
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": response.content
+                                });
+                                if socket.send(Message::Text(resp_json.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Agent error: {}", e);
+                                let error_json = serde_json::json!({
+                                    "type": "error",
+                                    "content": format!("Error: {}", e)
+                                });
+                                if socket.send(Message::Text(error_json.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Send typing indicator off
+                        let typing_off = serde_json::json!({
+                            "type": "typing",
+                            "content": false
+                        });
+                        if socket.send(Message::Text(typing_off.to_string())).await.is_err() {
                             break;
                         }
                     }
-                    Err(e) => {
-                        error!("Agent error: {}", e);
-                        let error_json = serde_json::json!({
-                            "type": "error",
-                            "content": format!("Error: {}", e)
-                        });
-                        if socket.send(Message::Text(error_json.to_string())).await.is_err() {
-                            break;
-                        }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                        info!("WebSocket connection closed");
+                        break;
                     }
+                    _ => {}
                 }
+            }
 
-                // Send typing indicator off
-                let typing_off = serde_json::json!({
-                    "type": "typing",
-                    "content": false
-                });
-                if socket.send(Message::Text(typing_off.to_string())).await.is_err() {
+            // Handle cron broadcasts
+            Ok(cron_msg) = cron_rx.recv() => {
+                if socket.send(Message::Text(cron_msg)).await.is_err() {
                     break;
                 }
             }
-            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                info!("WebSocket connection closed");
-                break;
-            }
-            _ => {}
         }
     }
 }
@@ -221,6 +271,10 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             flex-direction: row-reverse;
         }
 
+        .message.cron {
+            opacity: 0.8;
+        }
+
         .avatar {
             width: 32px;
             height: 32px;
@@ -242,6 +296,10 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
 
         .message.system .avatar {
             background: #6e7681;
+        }
+
+        .message.cron .avatar {
+            background: #8957e5;
         }
 
         .content {
@@ -266,6 +324,13 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             color: #8b949e;
             font-style: italic;
             font-size: 12px;
+        }
+
+        .message.cron .content {
+            background: #212136;
+            border: 1px solid #8957e5;
+            font-family: monospace;
+            font-size: 13px;
         }
 
         .typing {
@@ -417,7 +482,6 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
                 statusText.textContent = 'Disconnected';
                 sendButton.disabled = true;
 
-                // Attempt to reconnect
                 if (reconnectAttempts < maxReconnectAttempts) {
                     reconnectAttempts++;
                     setTimeout(connect, 2000);
@@ -445,6 +509,9 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
                     } else {
                         addUserMessage(data.content);
                     }
+                    break;
+                case 'cron':
+                    addCronMessage(data.content);
                     break;
                 case 'typing':
                     if (data.content) {
@@ -493,6 +560,17 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             scrollToBottom();
         }
 
+        function addCronMessage(content) {
+            const msg = document.createElement('div');
+            msg.className = 'message cron';
+            msg.innerHTML = `
+                <div class="avatar">⏰</div>
+                <div class="content">${escapeHtml(content)}</div>
+            `;
+            terminal.appendChild(msg);
+            scrollToBottom();
+        }
+
         let typingElement = null;
 
         function showTyping() {
@@ -519,24 +597,12 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
         }
 
         function formatContent(content) {
-            // Simple markdown-like formatting
             let formatted = escapeHtml(content);
-
-            // Code blocks
             formatted = formatted.replace(/```(\w+)?\n([\s\S]*?)```/g, '<div class="code-block"><pre><code>$2</code></pre></div>');
-
-            // Inline code
             formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-            // Bold
             formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-            // Italic
             formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-            // Line breaks
             formatted = formatted.replace(/\n/g, '<br>');
-
             return formatted;
         }
 
@@ -567,10 +633,7 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             }
         });
 
-        // Connect on page load
         connect();
-
-        // Focus input
         messageInput.focus();
     </script>
 </body>
