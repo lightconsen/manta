@@ -165,9 +165,19 @@ impl DelegationTracker {
 }
 
 /// Delegate tool for spawning child agents
-#[derive(Debug)]
 pub struct DelegateTool {
     tracker: DelegationTracker,
+    /// Optional agent for executing child tasks
+    agent: Option<Arc<crate::agent::Agent>>,
+}
+
+impl std::fmt::Debug for DelegateTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DelegateTool")
+            .field("tracker", &self.tracker)
+            .field("has_agent", &self.agent.is_some())
+            .finish()
+    }
 }
 
 impl DelegateTool {
@@ -175,6 +185,15 @@ impl DelegateTool {
     pub fn new(depth: usize) -> Self {
         Self {
             tracker: DelegationTracker::new(depth),
+            agent: None,
+        }
+    }
+
+    /// Create a new delegate tool with an agent for execution
+    pub fn with_agent(depth: usize, agent: Arc<crate::agent::Agent>) -> Self {
+        Self {
+            tracker: DelegationTracker::new(depth),
+            agent: Some(agent),
         }
     }
 
@@ -220,39 +239,80 @@ impl DelegateTool {
 
         // Start the child agent execution in the background
         let tracker = self.tracker.clone();
+        let agent = self.agent.clone();
         tokio::spawn(async move {
-            execute_child_task(child_id, task, tracker, iterations).await;
+            execute_child_task(child_id, task, tracker, iterations, agent).await;
         });
 
         Ok(child)
     }
 }
 
-/// Execute a child task
+/// Execute a child task using the provided agent
 async fn execute_child_task(
     child_id: String,
     task: TaskSpec,
     tracker: DelegationTracker,
     iterations: Arc<AtomicUsize>,
+    agent: Option<Arc<crate::agent::Agent>>,
 ) {
     tracker.update_status(&child_id, ChildStatus::Running).await;
 
     debug!("Child {} starting execution", child_id);
 
-    // Simulate execution - in a real implementation, this would:
-    // 1. Create a new agent instance with restricted tools
-    // 2. Process the task prompt
-    // 3. Track iterations against budget
-    // 4. Capture result or error
+    if let Some(agent) = agent {
+        // Create incoming message for the child task
+        let message = crate::channels::IncomingMessage::new(
+            &format!("child:{}", child_id),
+            &format!("delegation:{}", child_id),
+            &task.prompt,
+        )
+        .with_metadata(
+            crate::channels::MessageMetadata::new()
+                .with_extra("child_id", child_id.clone())
+                .with_extra("output_format", task.output_format.clone().unwrap_or_default())
+                .with_extra("allowed_tools", task.allowed_tools.join(",")),
+        );
 
-    // Simulate some work
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // Process the task through the agent
+        match agent.process_message(message).await {
+            Ok(response) => {
+                iterations.fetch_add(1, Ordering::SeqCst);
 
-    // Mark as completed with a mock result
-    let result = format!("Completed task: {}", task.prompt);
-    tracker.set_result(&child_id, result).await;
+                info!(
+                    "Child {} completed successfully. Response: {} chars",
+                    child_id,
+                    response.content.len()
+                );
 
-    debug!("Child {} completed execution", child_id);
+                // Format result based on output_format if specified
+                let result = if let Some(format) = &task.output_format {
+                    format!("Output format ({}): {}", format, response.content)
+                } else {
+                    response.content
+                };
+
+                tracker.set_result(&child_id, result).await;
+            }
+            Err(e) => {
+                error!("Child {} failed: {}", child_id, e);
+                tracker.set_error(&child_id, format!("Task execution failed: {}", e)).await;
+            }
+        }
+    } else {
+        // No agent configured - log warning and mark as failed
+        warn!(
+            "No agent configured for child {}. Task would execute with prompt: {}",
+            child_id,
+            task.prompt
+        );
+        tracker.set_error(
+            &child_id,
+            "No agent configured for delegation".to_string(),
+        ).await;
+    }
+
+    debug!("Child {} execution completed", child_id);
 }
 
 #[async_trait]
