@@ -333,13 +333,28 @@ pub struct WebSearchTool {
 pub enum SearchProvider {
     /// DuckDuckGo (HTML scraping)
     DuckDuckGo,
-    /// Bing API (requires key)
-    Bing { api_key: String },
+    /// Bing Web Search API (requires key)
+    /// https://www.microsoft.com/en-us/bing/apis/bing-web-search-api
+    Bing { api_key: String, endpoint: String },
+    /// Google Custom Search JSON API (requires key and cx)
+    /// https://developers.google.com/custom-search/v1/overview
+    Google { api_key: String, cx: String },
+    /// Brave Search API (requires key)
+    /// https://brave.com/search/api/
+    Brave { api_key: String },
     /// Custom search provider
     Custom {
         url: String,
         api_key: Option<String>,
+        headers: Option<std::collections::HashMap<String, String>>,
+        result_parser: Option<fn(&str, usize) -> Vec<SearchResult>>,
     },
+}
+
+impl Default for SearchProvider {
+    fn default() -> Self {
+        SearchProvider::DuckDuckGo
+    }
 }
 
 impl Default for WebSearchTool {
@@ -481,6 +496,271 @@ impl WebSearchTool {
         results
     }
 
+    /// Search using Bing Web Search API
+    async fn search_bing(&self, api_key: &str, endpoint: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+        let url = format!("{}/v7.0/search?q={}&count={}", endpoint.trim_end_matches('/'), urlencoding::encode(query), limit.min(50));
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Ocp-Apim-Subscription-Key", api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Bing search request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Bing search failed: HTTP {}",
+                response.status()
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Bing response: {}", e)))?;
+
+        let mut results = Vec::new();
+
+        // Parse Bing API response
+        if let Some(web_pages) = json.get("webPages").and_then(|wp| wp.get("value")) {
+            if let Some(items) = web_pages.as_array() {
+                for item in items.iter().take(limit) {
+                    let title = item.get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = item.get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let snippet = item.get("snippet")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !title.is_empty() && !url.is_empty() {
+                        results.push(SearchResult { title, url, snippet });
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Google Custom Search JSON API
+    async fn search_google(&self, api_key: &str, cx: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+        let url = format!(
+            "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
+            api_key, cx, urlencoding::encode(query), limit.min(10)
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Google search request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Google search failed: HTTP {} - {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Google response: {}", e)))?;
+
+        let mut results = Vec::new();
+
+        // Parse Google Custom Search response
+        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+            for item in items.iter().take(limit) {
+                let title = item.get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let url = item.get("link")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let snippet = item.get("snippet")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !title.is_empty() && !url.is_empty() {
+                    results.push(SearchResult { title, url, snippet });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using Brave Search API
+    async fn search_brave(&self, api_key: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+        let url = format!(
+            "https://api.search.brave.com/res/v1/web/search?q={}&count={}&offset=0",
+            urlencoding::encode(query),
+            limit.min(20)
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Accept", "application/json")
+            .header("X-Subscription-Token", api_key)
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Brave search request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Brave search failed: HTTP {} - {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Brave response: {}", e)))?;
+
+        let mut results = Vec::new();
+
+        // Parse Brave Search API response
+        if let Some(web) = json.get("web").and_then(|w| w.get("results")) {
+            if let Some(items) = web.as_array() {
+                for item in items.iter().take(limit) {
+                    let title = item.get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = item.get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let snippet = item.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !title.is_empty() && !url.is_empty() {
+                        results.push(SearchResult { title, url, snippet });
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search using custom provider
+    async fn search_custom(
+        &self,
+        url: &str,
+        api_key: &Option<String>,
+        headers: &Option<std::collections::HashMap<String, String>>,
+        parser: &Option<fn(&str, usize) -> Vec<SearchResult>>,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        // Replace placeholders in URL
+        let url = url.replace("{query}", &urlencoding::encode(query));
+        let url = url.replace("{limit}", &limit.to_string());
+
+        let mut request = self.client.get(&url);
+
+        // Add API key if provided
+        if let Some(key) = api_key {
+            request = request.header("Authorization", format!("Bearer {}", key));
+        }
+
+        // Add custom headers if provided
+        if let Some(hdrs) = headers {
+            for (key, value) in hdrs {
+                request = request.header(key, value);
+            }
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Custom search request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Custom search failed: HTTP {}",
+                response.status()
+            )));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to read response: {}", e)))?;
+
+        // Use custom parser if provided, otherwise try to parse as JSON
+        let results = if let Some(parser_fn) = parser {
+            parser_fn(&body, limit)
+        } else {
+            // Default JSON parsing - assumes format similar to { "results": [{ "title": "...", "url": "...", "snippet": "..." }] }
+            Self::parse_generic_json_results(&body, limit)
+        };
+
+        Ok(results)
+    }
+
+    /// Parse generic JSON search results
+    fn parse_generic_json_results(json: &str, limit: usize) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+            // Try common result paths
+            let results_array = value.get("results")
+                .and_then(|v| v.as_array())
+                .or_else(|| value.get("items").and_then(|v| v.as_array()))
+                .or_else(|| value.get("data").and_then(|v| v.as_array()));
+
+            if let Some(items) = results_array {
+                for item in items.iter().take(limit) {
+                    let title = item.get("title")
+                        .or_else(|| item.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = item.get("url")
+                        .or_else(|| item.get("link"))
+                        .or_else(|| item.get("href"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let snippet = item.get("snippet")
+                        .or_else(|| item.get("description"))
+                        .or_else(|| item.get("summary"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !title.is_empty() && !url.is_empty() {
+                        results.push(SearchResult { title, url, snippet });
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
     /// Clean HTML entities and tags from text
     fn clean_html(html: &str) -> String {
         // First, strip actual HTML tags (but not entity-encoded ones)
@@ -571,10 +851,17 @@ impl Tool for WebSearchTool {
 
         let results = match &self.provider {
             SearchProvider::DuckDuckGo => self.search_duckduckgo(query, limit).await,
-            _ => {
-                // For now, only DuckDuckGo is implemented
-                warn!("Search provider not fully implemented, falling back to DuckDuckGo");
-                self.search_duckduckgo(query, limit).await
+            SearchProvider::Bing { api_key, endpoint } => {
+                self.search_bing(api_key, endpoint, query, limit).await
+            }
+            SearchProvider::Google { api_key, cx } => {
+                self.search_google(api_key, cx, query, limit).await
+            }
+            SearchProvider::Brave { api_key } => {
+                self.search_brave(api_key, query, limit).await
+            }
+            SearchProvider::Custom { url, api_key, headers, result_parser } => {
+                self.search_custom(url, api_key, headers, result_parser, query, limit).await
             }
         }?;
 
