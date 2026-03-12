@@ -99,7 +99,7 @@ impl Agent {
         &self,
         message: IncomingMessage,
     ) -> crate::Result<OutgoingMessage> {
-        info!("Processing message from user: {}", message.user_id);
+        debug!("Processing message from user: {}", message.user_id);
 
         // Get or create context
         let mut context = self.get_context(&message.conversation_id.0).await;

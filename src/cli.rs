@@ -729,7 +729,7 @@ impl Cli {
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands\n");
 
         // Print initial prompt immediately
-        print!("💬 You: > ");
+        print!("💬 You > ");
         io::stdout().flush()?;
 
         // Interactive terminal mode using standard input
@@ -791,7 +791,7 @@ impl Cli {
             }
 
             // Print prompt for next input
-            print!("💬 You: > ");
+            print!("💬 You > ");
             io::stdout().flush()?;
         }
 
@@ -815,7 +815,7 @@ impl Cli {
             let input = line.trim();
 
             if input.is_empty() {
-                print!("💬 You: > ");
+                print!("💬 You > ");
                 continue;
             }
 
