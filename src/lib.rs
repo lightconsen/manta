@@ -38,17 +38,20 @@ pub mod agent;
 pub mod assistants;
 pub mod channels;
 pub mod cli;
+pub mod client;
 pub mod config;
 pub mod core;
 pub mod cron;
+pub mod daemon;
 pub mod error;
+pub mod logs;
 pub mod memory;
 pub mod providers;
 pub mod security;
 pub mod server;
 pub mod skills;
 pub mod tools;
-pub mod web_terminal;
+pub mod web;
 pub mod utils;
 
 // Re-export commonly used types

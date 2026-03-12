@@ -165,7 +165,7 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
                         if !stdout.trim().is_empty() {
                             println!("{}", stdout.trim());
                             // Also broadcast to web terminal clients
-                            crate::web_terminal::broadcast_cron_output(stdout.trim()).await;
+                            crate::server::broadcast_cron_output(stdout.trim()).await;
                         }
                         debug!("Job '{}' executed successfully", job_id);
                     } else {

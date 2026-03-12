@@ -13,43 +13,16 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 use tracing::{error, info};
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
+use crate::client::DaemonClient;
+use crate::server::{broadcast_cron_output, init_cron_broadcast};
+use std::sync::Arc as StdArc;
 
-/// Broadcast channel for cron output
-static CRON_BROADCAST: RwLock<Option<broadcast::Sender<String>>> = RwLock::const_new(None);
-
-/// Initialize the cron broadcast channel
-pub async fn init_cron_broadcast() -> broadcast::Receiver<String> {
-    let tx = {
-        let guard = CRON_BROADCAST.read().await;
-        if let Some(ref tx) = *guard {
-            tx.clone()
-        } else {
-            drop(guard);
-            let (tx, _rx) = broadcast::channel(100);
-            let mut guard = CRON_BROADCAST.write().await;
-            *guard = Some(tx.clone());
-            tx
-        }
-    };
-    tx.subscribe()
-}
-
-/// Broadcast a cron job output to all connected web clients
-pub async fn broadcast_cron_output(output: &str) {
-    let guard = CRON_BROADCAST.read().await;
-    if let Some(ref tx) = *guard {
-        let msg = serde_json::json!({
-            "type": "cron",
-            "content": output
-        });
-        let _ = tx.send(msg.to_string());
-    }
-}
+// Re-export broadcast functions from server module
 
 /// Shared application state
 #[derive(Clone)]
@@ -77,6 +50,129 @@ pub async fn start_web_terminal(agent: Arc<Agent>, port: u16) -> crate::Result<(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// State for daemon-connected web terminal
+#[derive(Clone)]
+pub struct DaemonWebState {
+    pub client: DaemonClient,
+}
+
+/// Start web terminal that connects to daemon
+pub async fn start_web_terminal_with_daemon(client: DaemonClient, port: u16) -> crate::Result<()> {
+    // Initialize broadcast channel
+    let _ = init_cron_broadcast().await;
+
+    let state = DaemonWebState { client };
+
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/ws", get(ws_handler_daemon))
+        .with_state(state);
+
+    let addr = format!("0.0.0.0:{}", port);
+    info!("🌐 Web Terminal (daemon mode) starting on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// WebSocket upgrade handler for daemon mode
+async fn ws_handler_daemon(
+    ws: WebSocketUpgrade,
+    State(state): State<DaemonWebState>,
+) -> impl axum::response::IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket_daemon(socket, state))
+}
+
+/// Handle WebSocket connection with daemon
+async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
+    info!("New WebSocket connection (daemon mode)");
+
+    // Subscribe to cron broadcasts
+    let mut cron_rx = init_cron_broadcast().await;
+
+    // Generate conversation ID for this session
+    let conversation_id = uuid::Uuid::new_v4().to_string();
+
+    // Send welcome message
+    let welcome = serde_json::json!({
+        "type": "system",
+        "content": "Connected to Manta AI Assistant (via daemon). Type your message below."
+    });
+    if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
+        error!("Failed to send welcome: {}", e);
+        return;
+    }
+
+    // Main message processing loop
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        info!("Received message: {}", text);
+
+                        // Send typing indicator
+                        let typing = serde_json::json!({
+                            "type": "typing",
+                            "content": true
+                        });
+                        if socket.send(Message::Text(typing.to_string())).await.is_err() {
+                            break;
+                        }
+
+                        // Process message via daemon
+                        match state.client.chat(&text, Some(&conversation_id)).await {
+                            Ok(response) => {
+                                let resp_json = serde_json::json!({
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": response.response
+                                });
+                                if socket.send(Message::Text(resp_json.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Daemon error: {}", e);
+                                let error_json = serde_json::json!({
+                                    "type": "error",
+                                    "content": format!("Error: {}", e)
+                                });
+                                if socket.send(Message::Text(error_json.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Send typing indicator off
+                        let typing_off = serde_json::json!({
+                            "type": "typing",
+                            "content": false
+                        });
+                        if socket.send(Message::Text(typing_off.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                        info!("WebSocket connection closed");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Handle cron broadcasts
+            Ok(cron_msg) = cron_rx.recv() => {
+                if socket.send(Message::Text(cron_msg)).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// HTML page with terminal interface

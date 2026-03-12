@@ -33,6 +33,8 @@ pub struct AgentConfig {
     pub temperature: f32,
     /// Maximum tokens per completion
     pub max_tokens: u32,
+    /// Skills prompt (appended to system prompt)
+    pub skills_prompt: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -43,6 +45,17 @@ impl Default for AgentConfig {
             max_concurrent_tools: 5,
             temperature: 0.7,
             max_tokens: 2048,
+            skills_prompt: None,
+        }
+    }
+}
+
+impl AgentConfig {
+    /// Get the full system prompt including skills
+    pub fn full_system_prompt(&self) -> String {
+        match &self.skills_prompt {
+            Some(skills) => format!("{}\n\n## Skills\n\n{}", self.system_prompt, skills),
+            None => self.system_prompt.clone(),
         }
     }
 }
@@ -86,7 +99,7 @@ impl Agent {
             .or_insert_with(|| {
                 Context::new(
                     conversation_id.to_string(),
-                    self.config.system_prompt.clone(),
+                    self.config.full_system_prompt(),
                     self.config.max_context_tokens,
                 )
             })
@@ -258,6 +271,14 @@ impl AgentBuilder {
 
     /// Set configuration
     pub fn config(mut self, config: AgentConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// Set skills prompt
+    pub fn skills(mut self, skills_prompt: String) -> Self {
+        let mut config = self.config.unwrap_or_default();
+        config.skills_prompt = Some(skills_prompt);
         self.config = Some(config);
         self
     }

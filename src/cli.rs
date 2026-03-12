@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use crate::core::Engine;
 use crate::error::Result;
-use crate::server::{ServerConfig, start_server};
+use crate::server::ServerConfig;
 use clap::{Parser, Subcommand, ValueEnum};
 use rustyline::{history::History, DefaultEditor, Result as RustyResult};
 use std::io::IsTerminal;
@@ -15,10 +15,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, instrument};
 
-/// Manta - A Rust application
+/// Manta - Your AI assistant
 #[derive(Debug, Parser)]
 #[command(name = "manta")]
-#[command(about = "Manta - A Rust application")]
+#[command(about = "Manta - Your AI assistant")]
 #[command(version)]
 pub struct Cli {
     /// Configuration file path
@@ -83,6 +83,112 @@ pub enum Commands {
     Cron {
         #[command(subcommand)]
         command: CronCommands,
+    },
+    /// Skill management commands
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
+    /// Start the Manta daemon (background server)
+    Start {
+        /// Host to bind to
+        #[arg(short, long, default_value = "127.0.0.1")]
+        host: String,
+        /// API port to listen on
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        /// Web terminal port
+        #[arg(short = 'w', long, default_value = "8080")]
+        web_port: u16,
+        /// Run in foreground (don't detach)
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Stop the Manta daemon
+    Stop {
+        /// Force kill if graceful shutdown fails
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Check daemon status
+    Status,
+    /// Show and tail daemon logs
+    Logs {
+        /// Number of lines to show (default: 50)
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+        /// Follow/tail the logs (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Run as daemon (internal use - spawned by start command)
+    Daemon {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// API port to listen on
+        #[arg(long, default_value = "3000")]
+        port: u16,
+        /// Web terminal port
+        #[arg(long, default_value = "8080")]
+        web_port: u16,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillCommands {
+    /// List all available skills
+    List {
+        /// Show all skills including ineligible ones
+        #[arg(short, long)]
+        all: bool,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Show detailed information about a skill
+    Info {
+        /// Skill name
+        name: String,
+    },
+    /// Install a skill from a directory or git repo
+    Install {
+        /// Path to skill directory or git URL
+        source: String,
+        /// Skill name (optional, defaults to directory name)
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+    /// Uninstall a skill
+    Uninstall {
+        /// Skill name
+        name: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Enable a skill
+    Enable {
+        /// Skill name
+        name: String,
+    },
+    /// Disable a skill
+    Disable {
+        /// Skill name
+        name: String,
+    },
+    /// Install dependencies for a skill
+    Setup {
+        /// Skill name (if not provided, sets up all eligible skills)
+        name: Option<String>,
+    },
+    /// Create a new skill template
+    Init {
+        /// Skill name
+        name: String,
+        /// Skill description
+        #[arg(short, long)]
+        description: Option<String>,
     },
 }
 
@@ -264,9 +370,19 @@ impl Cli {
                 self.run_assistant_process(assistant_config).await
             }
             Commands::Web { port } => {
-                self.run_web_terminal(&config, *port).await
+                self.run_web(&config, *port).await
             }
             Commands::Cron { command } => self.run_cron_command(command).await,
+            Commands::Skill { command } => self.run_skill_command(command).await,
+            Commands::Start { host, port, web_port, foreground } => {
+                self.run_start_daemon(host, *port, *web_port, *foreground).await
+            },
+            Commands::Stop { force } => self.run_stop_daemon(*force).await,
+            Commands::Status => self.run_daemon_status().await,
+            Commands::Logs { lines, follow } => self.run_logs(*lines, *follow).await,
+            Commands::Daemon { host, port, web_port } => {
+                self.run_daemon_internal(host, *port, *web_port).await
+            }
         }
     }
 
@@ -286,12 +402,18 @@ impl Cli {
         let engine = Arc::new(Engine::new());
 
         // Configure and start the server
-        let server_config = ServerConfig { host, port };
+        let server_config = ServerConfig {
+            host: host.clone(),
+            port,
+            web_port: 8080, // Default web port
+        };
 
         println!("Press Ctrl+C to stop");
 
-        // Start the server (it will handle shutdown internally)
-        start_server(server_config, engine).await?;
+        // Start the server with agent (for full server mode)
+        // For simple server mode without AI, we still use the same function but without agent
+        let agent = crate::agent::AgentBuilder::new().build()?;
+        crate::server::start_server_with_agent(server_config, engine, Arc::new(agent)).await?;
 
         info!("Shutting down server");
         println!("\n👋 Server stopped");
@@ -558,6 +680,190 @@ impl Cli {
         Ok(())
     }
 
+    async fn run_skill_command(&self, command: &SkillCommands) -> Result<()> {
+        use crate::skills::{SkillManager, Skill, TriggerType};
+
+        match command {
+            SkillCommands::List { all, format } => {
+                let mut manager = SkillManager::new().await?;
+                let count = manager.initialize().await?;
+
+                let skills = manager.list_skills().await;
+
+                if skills.is_empty() {
+                    println!("No skills installed. Use 'manta skill init <name>' to create one.");
+                    return Ok(());
+                }
+
+                println!("📦 Skills ({} total)\n", count);
+
+                match format {
+                    OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&skills)?);
+                    }
+                    OutputFormat::Yaml => {
+                        println!("{}", serde_yaml::to_string(&skills)?);
+                    }
+                    OutputFormat::Table => {
+                        println!("{:<20} {:<8} {:<10} {:<30}", "Name", "Status", "Level", "Description");
+                        println!("{}", "-".repeat(70));
+                        for skill in skills {
+                            let status = if skill.is_eligible { "✅" } else { "⚠️" };
+                            let enabled = if skill.enabled { "" } else { " (disabled)" };
+                            let desc = truncate(&skill.description, 30);
+                            println!("{:<20} {:<8} {:<10} {}{}",
+                                skill.name,
+                                status,
+                                skill.source_level,
+                                desc,
+                                enabled
+                            );
+                        }
+                    }
+                    OutputFormat::Plain => {
+                        for skill in skills {
+                            println!("{} - {}", skill.name, skill.description);
+                        }
+                    }
+                }
+            }
+            SkillCommands::Info { name } => {
+                let mut manager = SkillManager::new().await?;
+                manager.initialize().await?;
+
+                if let Some(skill) = manager.get_skill(name).await {
+                    println!("📦 Skill: {} {}", skill.metadata.emoji, skill.name);
+                    println!("{}\n", "=".repeat(50));
+                    println!("Description: {}", skill.description);
+                    println!("Status: {}", if skill.is_eligible { "✅ Eligible" } else { "⚠️ Not eligible" });
+                    println!("Enabled: {}", if skill.enabled { "Yes" } else { "No" });
+                    println!("Source: {:?}", skill.source_level);
+                    println!("File: {:?}", skill.source_path);
+
+                    if !skill.metadata.requires.bins.is_empty() {
+                        println!("\nRequired binaries: {:?}", skill.metadata.requires.bins);
+                    }
+                    if !skill.metadata.requires.env.is_empty() {
+                        println!("Required env vars: {:?}", skill.metadata.requires.env);
+                    }
+                    if !skill.metadata.install.is_empty() {
+                        println!("\nInstall specs: {}", skill.metadata.install.len());
+                    }
+                    if !skill.triggers.is_empty() {
+                        println!("\nTriggers:");
+                        for trigger in &skill.triggers {
+                            println!("  - {:?}: {}", trigger.trigger_type, trigger.pattern);
+                        }
+                    }
+                } else {
+                    println!("❌ Skill '{}' not found", name);
+                }
+            }
+            SkillCommands::Install { source, name } => {
+                println!("📦 Installing skill from '{}'...", source);
+                let path = std::path::Path::new(source);
+
+                if !path.exists() {
+                    println!("❌ Source path '{}' does not exist", source);
+                    return Ok(());
+                }
+
+                let skill_name = name.clone().unwrap_or_else(|| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string()
+                });
+
+                let storage = crate::skills::SkillStorage::new()?;
+                let dest = storage.install_to_user(path, &skill_name).await?;
+
+                println!("✅ Installed skill '{}' to {:?}", skill_name, dest);
+                println!("   Run 'manta skill setup {}' to install dependencies", skill_name);
+            }
+            SkillCommands::Uninstall { name, force } => {
+                if !force {
+                    print!("Are you sure you want to uninstall skill '{}'? [y/N] ", name);
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Cancelled");
+                        return Ok(());
+                    }
+                }
+
+                let storage = crate::skills::SkillStorage::new()?;
+                storage.uninstall_from_user(name).await?;
+                println!("✅ Uninstalled skill '{}'", name);
+            }
+            SkillCommands::Enable { name } => {
+                let mut manager = SkillManager::new().await?;
+                manager.initialize().await?;
+                manager.set_skill_enabled(name, true).await?;
+                println!("✅ Enabled skill '{}'", name);
+            }
+            SkillCommands::Disable { name } => {
+                let mut manager = SkillManager::new().await?;
+                manager.initialize().await?;
+                manager.set_skill_enabled(name, false).await?;
+                println!("✅ Disabled skill '{}'", name);
+            }
+            SkillCommands::Setup { name } => {
+                let mut manager = SkillManager::new().await?;
+                manager.initialize().await?;
+
+                if let Some(skill_name) = name {
+                    println!("📦 Setting up skill '{}'...", skill_name);
+                    let results = manager.install_skill(skill_name).await?;
+
+                    for result in results {
+                        match result {
+                            crate::skills::InstallResult::Installed { spec } => {
+                                println!("✅ Installed: {:?}", spec);
+                            }
+                            crate::skills::InstallResult::AlreadyPresent { spec } => {
+                                println!("✓ Already present: {:?}", spec);
+                            }
+                            crate::skills::InstallResult::Failed { spec, error } => {
+                                println!("❌ Failed to install {:?}: {}", spec, error);
+                            }
+                            crate::skills::InstallResult::Skipped { spec, reason } => {
+                                println!("⚠️ Skipped {:?}: {}", spec, reason);
+                            }
+                        }
+                    }
+                } else {
+                    println!("📦 Setting up all skills...");
+                    let skills = manager.list_skills().await;
+                    for skill in skills {
+                        if skill.is_eligible {
+                            println!("\nSetting up '{}'...", skill.name);
+                            let _ = manager.install_skill(&skill.name).await;
+                        }
+                    }
+                }
+            }
+            SkillCommands::Init { name, description } => {
+                let desc = description.clone().unwrap_or_else(|| format!("{} skill", name));
+
+                let skill = Skill::new(name, &desc, "")
+                    .with_trigger(TriggerType::Keyword, name);
+
+                let mut manager = SkillManager::new().await?;
+                manager.create_skill(&skill).await?;
+
+                println!("✅ Created skill template '{}'", name);
+                println!("   Edit: ~/.config/manta/skills/{}/SKILL.md", name);
+            }
+        }
+
+        Ok(())
+    }
+
     fn show_config(&self, config: &Config, format: ConfigFormat) -> Result<()> {
         match format {
             ConfigFormat::Toml => {
@@ -597,157 +903,104 @@ impl Cli {
         Ok(())
     }
 
+    /// Load skills and build the skills prompt
+    pub async fn load_skills_prompt() -> Result<Option<String>> {
+        use crate::skills::SkillManager;
+
+        let mut manager = SkillManager::new().await?;
+        let count = manager.initialize().await?;
+
+        if count == 0 {
+            return Ok(None);
+        }
+
+        let skills = manager.list_skills().await;
+        let mut eligible_skills = Vec::new();
+
+        for skill in skills {
+            if skill.is_eligible && skill.enabled {
+                eligible_skills.push(skill.to_prompt_section());
+            }
+        }
+
+        if eligible_skills.is_empty() {
+            return Ok(None);
+        }
+
+        let prompt = eligible_skills.join("\n\n---\n\n");
+        Ok(Some(prompt))
+    }
+
     async fn run_chat(
         &self,
-        config: &Config,
+        _config: &Config,
         conversation_id: Option<String>,
         single_message: Option<String>,
     ) -> Result<()> {
-        use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::channels::{ConversationId, IncomingMessage};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool};
-        use tracing::warn;
+        use crate::client::check_daemon;
+        use std::io::{self, Write};
 
         println!("🤖 Manta AI Assistant");
         println!("=====================");
         println!();
 
-        // Read environment variables (Claude Code style)
-        let base_url = std::env::var("MANTA_BASE_URL").ok();
-        let api_key = std::env::var("MANTA_API_KEY").ok();
-        let model = std::env::var("MANTA_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-        // Optional: custom API path for non-standard endpoints
-        let _api_path = std::env::var("MANTA_API_PATH").ok();
-
-        // Validate required environment variables
-        if base_url.is_none() {
-            println!("❌ Error: MANTA_BASE_URL environment variable not set.");
-            println!();
-            println!("Configuration Guide:");
-            println!();
-            println!("OpenAI-compatible providers (default):");
-            println!("  export MANTA_BASE_URL=https://api.openai.com/v1");
-            println!("  export MANTA_API_KEY=sk-your-key");
-            println!("  export MANTA_MODEL=gpt-4o-mini");
-            println!();
-            println!("Anthropic/Claude:");
-            println!("  export MANTA_IS_ANTHROPIC=true");
-            println!("  export MANTA_BASE_URL=https://api.anthropic.com");
-            println!("  export MANTA_API_KEY=sk-ant-your-key");
-            println!("  export MANTA_MODEL=claude-3-5-sonnet-20241022");
-            println!();
-            println!("Ollama (local):");
-            println!("  export MANTA_BASE_URL=http://localhost:11434/v1");
-            println!("  export MANTA_API_KEY=ollama");
-            println!("  export MANTA_MODEL=llama3.1");
-            println!();
-            return Ok(());
-        }
-
-        if api_key.is_none() {
-            println!("❌ Error: MANTA_API_KEY environment variable not set.");
-            println!("   Example: export MANTA_API_KEY=your-api-key");
-            println!();
-            return Ok(());
-        }
-
-        // Check if using Anthropic API format
-        let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false);
-
-        // Create provider
-        let provider: Arc<dyn crate::providers::Provider> = if is_anthropic {
-            use crate::providers::anthropic::AnthropicProvider;
-            let base = base_url.unwrap();
-            let key = api_key.unwrap();
-            println!("✅ Using Anthropic provider at: {}", base);
-            println!("✅ Model: {}", model);
-            Arc::new(AnthropicProvider::with_base_url(key, base)?.with_model(model))
-        } else {
-            use crate::providers::openai::OpenAiProvider;
-            let base = base_url.unwrap();
-            let key = api_key.unwrap();
-            println!("✅ Using OpenAI-compatible provider at: {}", base);
-            println!("✅ Model: {}", model);
-            Arc::new(OpenAiProvider::with_base_url(key, base)?.with_model(model))
+        // Check if daemon is running
+        let client = match check_daemon().await {
+            Ok(client) => client,
+            Err(e) => {
+                println!("❌ {}", e);
+                return Ok(());
+            }
         };
 
-        // Create tool registry with default tools
-        let mut tool_registry = ToolRegistry::new();
-        tool_registry.register(Box::new(ShellTool::new()));
-        tool_registry.register(Box::new(FileReadTool::new()));
-        tool_registry.register(Box::new(FileWriteTool::new()));
-        tool_registry.register(Box::new(FileEditTool::new()));
-        tool_registry.register(Box::new(GlobTool::new()));
-        tool_registry.register(Box::new(TodoTool::new()));
-        tool_registry.register(Box::new(MemoryTool::new()));
-        tool_registry.register(Box::new(CronTool::new()));
-
-        // Add MCP tool
-        let mcp_tool = crate::tools::McpConnectionTool::new();
-        tool_registry.register(Box::new(mcp_tool));
-        println!("✅ Loaded MCP connection tool");
-
-        println!("✅ Loaded {} tools", tool_registry.list().len());
-
-        // Build agent
-        let agent_config = AgentConfig::default();
-        let agent = AgentBuilder::new()
-            .config(agent_config)
-            .provider(provider)
-            .tools(Arc::new(tool_registry))
-            .build()?;
+        println!("✅ Connected to daemon");
+        println!();
 
         // Generate or use provided conversation ID
         let conversation_id = conversation_id.unwrap_or_else(|| {
-            ConversationId::generate().to_string()
+            crate::channels::ConversationId::generate().to_string()
         });
         println!("📱 Conversation ID: {}", conversation_id);
         println!();
 
         // Single message mode
         if let Some(message) = single_message {
-            let incoming = IncomingMessage::new("user", &conversation_id, message);
-            let response = agent.process_message(incoming).await?;
-            println!("🤖 {}", response.content);
+            match client.chat_ws(&message, Some(&conversation_id)).await {
+                Ok(response) => println!("🤖 {}", response.response),
+                Err(e) => println!("❌ Error: {}", e),
+            }
             return Ok(());
         }
 
-        // Check if we're running in a TTY (interactive terminal)
-        let is_tty = std::io::stdin().is_terminal();
+        // Interactive mode
+        println!("Type 'exit' to quit, 'help' for commands\n");
 
-        let agent = Arc::new(agent);
+        // Check if we're running in a TTY
+        let is_tty = std::io::stdin().is_terminal();
 
         if is_tty {
             // Terminal UI mode
-            Self::run_interactive_terminal(agent, conversation_id).await
+            Self::run_interactive_daemon_chat(client, conversation_id).await
         } else {
             // Simple line-based mode for piped input
-            Self::run_simple_interactive(agent, conversation_id).await
+            Self::run_simple_daemon_chat(client, conversation_id).await
         }
     }
 
-    /// Run interactive mode with full terminal UI
-    async fn run_interactive_terminal(
-        agent: Arc<crate::agent::Agent>,
+    /// Run interactive chat with daemon (TTY mode)
+    async fn run_interactive_daemon_chat(
+        client: crate::client::DaemonClient,
         conversation_id: String,
     ) -> Result<()> {
         use std::io::{self, Write};
-        use std::io::Write as _;
 
-        println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands\n");
-
-        // Print initial prompt immediately
         print!("💬 You > ");
         io::stdout().flush()?;
 
-        // Interactive terminal mode using standard input
         loop {
-            // Read input line
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {
-                Ok(0) => break, // EOF
+                Ok(0) => break,
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("❌ Input error: {}", e);
@@ -763,21 +1016,13 @@ impl Cli {
                 continue;
             }
 
-            // Handle special commands
             match input.to_lowercase().as_str() {
                 "exit" | "quit" => {
                     println!("👋 Goodbye!");
                     break;
                 }
                 "help" => {
-                    println!("📋 Commands: help, exit, tools");
-                    print!("💬 You > ");
-                    io::stdout().flush()?;
-                    continue;
-                }
-                "tools" => {
-                    let tools = agent.get_tools().list();
-                    println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
+                    println!("📋 Commands: help, exit");
                     print!("💬 You > ");
                     io::stdout().flush()?;
                     continue;
@@ -785,20 +1030,13 @@ impl Cli {
                 _ => {}
             }
 
-            // Show thinking indicator
             eprint!("🤖 Thinking...");
             io::stderr().flush()?;
 
-            // Process message
-            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, input);
-
-            match agent.process_message(incoming).await {
+            match client.chat_ws(input, Some(&conversation_id)).await {
                 Ok(response) => {
-                    // Clear thinking indicator
                     eprint!("\r\x1B[2K");
-                    // Print response (single line, trimmed)
-                    let content = response.content.trim().replace('\n', " ");
-                    println!("🤖 {}", content);
+                    println!("🤖 {}", response.response.trim().replace('\n', " "));
                 }
                 Err(e) => {
                     eprint!("\r\x1B[2K");
@@ -806,7 +1044,6 @@ impl Cli {
                 }
             }
 
-            // Print prompt for next input
             print!("💬 You > ");
             io::stdout().flush()?;
         }
@@ -814,20 +1051,19 @@ impl Cli {
         Ok(())
     }
 
-    /// Run simple line-based interactive mode (for non-TTY)
-    async fn run_simple_interactive(
-        agent: Arc<crate::agent::Agent>,
+    /// Run simple chat with daemon (non-TTY mode)
+    async fn run_simple_daemon_chat(
+        client: crate::client::DaemonClient,
         conversation_id: String,
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, BufReader, stdin};
-        use std::io::{Write as _};
+        use std::io::Write;
 
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit");
 
         let stdin = BufReader::new(stdin());
         let mut lines = stdin.lines();
 
-        // Interactive REPL mode
         while let Ok(Some(line)) = lines.next_line().await {
             let input = line.trim();
 
@@ -837,48 +1073,22 @@ impl Cli {
                 continue;
             }
 
-            // Handle special commands
             match input.to_lowercase().as_str() {
                 "exit" | "quit" => {
                     println!("👋 Goodbye!");
                     break;
                 }
-                "help" => {
-                    println!("📋 Commands: help, exit, tools");
-                    print!("💬 You > ");
-                    std::io::stdout().flush()?;
-                    continue;
-                }
-                "tools" => {
-                    let tools = agent.get_tools().list();
-                    println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
-                    print!("💬 You > ");
-                    std::io::stdout().flush()?;
-                    continue;
-                }
                 _ => {}
             }
 
-            // Show thinking indicator
-            eprint!("🤖 Thinking...");
-
-            // Process message
-            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, input);
-
-            match agent.process_message(incoming).await {
+            match client.chat_ws(input, Some(&conversation_id)).await {
                 Ok(response) => {
-                    // Clear thinking and show response (single line)
-                    eprint!("\r\x1B[2K");
-                    let content = response.content.trim().replace('\n', " ");
-                    println!("🤖 {}", content);
-                    // Print prompt for next input
+                    println!("🤖 {}", response.response.trim().replace('\n', " "));
                     print!("💬 You > ");
                     std::io::stdout().flush()?;
                 }
                 Err(e) => {
-                    eprint!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
-                    // Print prompt for next input
                     print!("💬 You > ");
                     std::io::stdout().flush()?;
                 }
@@ -888,74 +1098,127 @@ impl Cli {
         Ok(())
     }
 
-    /// Run web terminal server
-    async fn run_web_terminal(&self, _config: &Config, port: u16) -> Result<()> {
-        use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool};
-        use crate::web_terminal::start_web_terminal;
+    /// Run web terminal server (connects to daemon)
+    async fn run_web(&self, _config: &Config, port: u16) -> Result<()> {
+        use crate::client::check_daemon;
+        use crate::web::start_web_terminal_with_daemon;
 
         println!("🌐 Starting Manta Web Terminal");
         println!("================================");
 
-        // Read environment variables
-        let base_url = std::env::var("MANTA_BASE_URL").ok();
-        let api_key = std::env::var("MANTA_API_KEY").ok();
-        let model = std::env::var("MANTA_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-
-        // Validate required environment variables
-        if base_url.is_none() || api_key.is_none() {
-            println!("❌ Error: MANTA_BASE_URL and MANTA_API_KEY must be set.");
-            println!("   Example: export MANTA_BASE_URL=https://api.kimi.com/coding/");
-            println!("   Example: export MANTA_API_KEY=your-api-key");
-            return Ok(());
-        }
-
-        // Check if using Anthropic API format
-        let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false);
-
-        // Create provider
-        let provider: Arc<dyn crate::providers::Provider> = if is_anthropic {
-            use crate::providers::anthropic::AnthropicProvider;
-            let base = base_url.unwrap();
-            let key = api_key.unwrap();
-            println!("✅ Using Anthropic provider");
-            Arc::new(AnthropicProvider::with_base_url(key, base)?.with_model(model))
-        } else {
-            use crate::providers::openai::OpenAiProvider;
-            let base = base_url.unwrap();
-            let key = api_key.unwrap();
-            println!("✅ Using OpenAI-compatible provider");
-            Arc::new(OpenAiProvider::with_base_url(key, base)?.with_model(model))
+        // Check if daemon is running
+        let client = match check_daemon().await {
+            Ok(client) => client,
+            Err(e) => {
+                println!("❌ {}", e);
+                return Ok(());
+            }
         };
 
-        // Create tool registry with default tools
-        let mut tool_registry = ToolRegistry::new();
-        tool_registry.register(Box::new(ShellTool::new()));
-        tool_registry.register(Box::new(FileReadTool::new()));
-        tool_registry.register(Box::new(FileWriteTool::new()));
-        tool_registry.register(Box::new(FileEditTool::new()));
-        tool_registry.register(Box::new(GlobTool::new()));
-        tool_registry.register(Box::new(TodoTool::new()));
-        tool_registry.register(Box::new(MemoryTool::new()));
-        tool_registry.register(Box::new(CronTool::new()));
+        println!("✅ Connected to daemon");
+        println!("🌐 Starting web terminal on port {}", port);
+        println!();
+        println!("Open http://localhost:{} in your browser", port);
 
-        // Add MCP tool
-        let mcp_tool = crate::tools::McpConnectionTool::new();
-        tool_registry.register(Box::new(mcp_tool));
-        println!("✅ Loaded {} tools", tool_registry.list().len());
+        // Start web terminal that proxies to daemon
+        start_web_terminal_with_daemon(client, port).await
+    }
 
-        // Build agent
-        let agent_config = AgentConfig::default();
-        let agent = AgentBuilder::new()
-            .config(agent_config)
-            .provider(provider)
-            .tools(Arc::new(tool_registry))
-            .build()?;
+    /// Start the Manta daemon
+    async fn run_start_daemon(&self, host: &str, port: u16, web_port: u16, foreground: bool) -> Result<()> {
+        use crate::daemon::{DaemonManager, DaemonConfig};
 
-        // Start web terminal
-        start_web_terminal(Arc::new(agent), port).await
+        let config = DaemonConfig {
+            host: host.to_string(),
+            port,
+            web_port,
+            pid_file: dirs::runtime_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                .join("manta.pid"),
+        };
+
+        let daemon = DaemonManager::new(config)?;
+
+        if foreground {
+            println!("🚀 Starting Manta daemon in foreground...");
+            println!("   Host: {}", host);
+            println!("   API Port: {}", port);
+            println!("   Web Port: {}", web_port);
+            println!("   Press Ctrl+C to stop\n");
+            daemon.run_foreground().await
+        } else {
+            println!("🚀 Starting Manta daemon in background...");
+            daemon.start().await
+        }
+    }
+
+    /// Stop the Manta daemon
+    async fn run_stop_daemon(&self, force: bool) -> Result<()> {
+        use crate::daemon::{DaemonManager, DaemonConfig};
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            web_port: 8080,
+            pid_file: dirs::runtime_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                .join("manta.pid"),
+        };
+
+        let daemon = DaemonManager::new(config)?;
+
+        if force {
+            println!("🛑 Force stopping Manta daemon...");
+            daemon.stop_force().await
+        } else {
+            println!("🛑 Stopping Manta daemon...");
+            daemon.stop().await
+        }
+    }
+
+    /// Check daemon status
+    async fn run_daemon_status(&self) -> Result<()> {
+        use crate::daemon::{DaemonManager, DaemonConfig};
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            web_port: 8080,
+            pid_file: dirs::runtime_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                .join("manta.pid"),
+        };
+
+        let daemon = DaemonManager::new(config)?;
+        daemon.status().await
+    }
+
+    /// Show daemon logs
+    async fn run_logs(&self, lines: usize, follow: bool) -> Result<()> {
+        use crate::logs::{show_logs, tail_logs};
+
+        if follow {
+            tail_logs(lines).await
+        } else {
+            show_logs(lines).await
+        }
+    }
+
+    /// Run as daemon (internal use)
+    async fn run_daemon_internal(&self, host: &str, port: u16, web_port: u16) -> Result<()> {
+        use crate::daemon::{DaemonManager, DaemonConfig};
+
+        let config = DaemonConfig {
+            host: host.to_string(),
+            port,
+            web_port,
+            pid_file: dirs::runtime_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                .join("manta.pid"),
+        };
+
+        let daemon = DaemonManager::new(config)?;
+        daemon.run_foreground().await
     }
 
     /// Run as an assistant subprocess (internal use)
@@ -1047,6 +1310,7 @@ impl Cli {
             max_concurrent_tools: 5,
             temperature: 0.7,
             max_tokens: 2048,
+            skills_prompt: None,
         };
         let agent = AgentBuilder::new()
             .config(agent_config)
