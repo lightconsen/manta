@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::server::{ServerConfig, start_server};
 use clap::{Parser, Subcommand, ValueEnum};
 use rustyline::{history::History, DefaultEditor, Result as RustyResult};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, instrument};
@@ -705,12 +706,12 @@ impl Cli {
         }
 
         // Check if we're running in a TTY (interactive terminal)
-        let is_tty = crossterm::tty::IsTty::is_tty(&std::io::stdin());
+        let is_tty = std::io::stdin().is_terminal();
 
         let agent = Arc::new(agent);
 
         if is_tty {
-            // Terminal UI mode with crossterm
+            // Terminal UI mode
             Self::run_interactive_terminal(agent, conversation_id).await
         } else {
             // Simple line-based mode for piped input
@@ -723,69 +724,28 @@ impl Cli {
         agent: Arc<crate::agent::Agent>,
         conversation_id: String,
     ) -> Result<()> {
-        use crossterm::{
-            cursor::{self, Show},
-            event::{self, Event, KeyCode, KeyEventKind},
-            terminal::{self, ClearType},
-            ExecutableCommand, QueueableCommand,
-        };
-        use std::io::{stdout, Write};
+        use std::io::{self, Write};
 
-        // Enable raw mode for terminal-like experience
-        terminal::enable_raw_mode()?;
-        let mut stdout = stdout();
-
-        // Print header
-        stdout.execute(terminal::Clear(ClearType::All))?;
-        stdout.execute(cursor::MoveTo(0, 0))?;
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands");
-        stdout.flush()?;
 
-        let mut input_buffer = String::new();
-
-        // Interactive terminal mode
+        // Interactive terminal mode using standard input
         loop {
-            // Show prompt with > character
-            print!("\r💬 You: > ");
-            stdout.flush()?;
+            // Show prompt
+            print!("💬 You: > ");
+            io::stdout().flush()?;
 
-            // Read input character by character for real-time feel
-            loop {
-                if event::poll(std::time::Duration::from_millis(50))? {
-                    if let Event::Key(key) = event::read()? {
-                        if key.kind == KeyEventKind::Press {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    println!();
-                                    break;
-                                }
-                                KeyCode::Char(c) => {
-                                    input_buffer.push(c);
-                                    print!("{}", c);
-                                    stdout.flush()?;
-                                }
-                                KeyCode::Backspace => {
-                                    if !input_buffer.is_empty() {
-                                        input_buffer.pop();
-                                        print!("\x08 \x08");
-                                        stdout.flush()?;
-                                    }
-                                }
-                                KeyCode::Esc | KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                                    input_buffer.clear();
-                                    println!("\n^C");
-                                    print!("\r💬 You: > ");
-                                    stdout.flush()?;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+            // Read input line
+            let mut input = String::new();
+            match io::stdin().read_line(&mut input) {
+                Ok(0) => break, // EOF
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("❌ Input error: {}", e);
+                    break;
                 }
             }
 
-            let input = input_buffer.trim().to_string();
-            input_buffer.clear();
+            let input = input.trim();
 
             if input.is_empty() {
                 continue;
@@ -794,8 +754,7 @@ impl Cli {
             // Handle special commands
             match input.to_lowercase().as_str() {
                 "exit" | "quit" => {
-                    println!("\n👋 Goodbye!");
-                    let _ = terminal::disable_raw_mode();
+                    println!("👋 Goodbye!");
                     break;
                 }
                 "help" => {
@@ -810,32 +769,28 @@ impl Cli {
                 _ => {}
             }
 
-            // Show thinking indicator on same line
-            print!("🤖 Thinking...");
-            stdout.flush()?;
+            // Show thinking indicator
+            eprint!("🤖 Thinking...");
+            io::stderr().flush()?;
 
             // Process message
-            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, &input);
+            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, input);
 
             match agent.process_message(incoming).await {
                 Ok(response) => {
-                    // Clear thinking indicator and show response
-                    print!("\r\x1B[2K"); // Clear entire line
-                    // Print response, trimming extra whitespace
-                    let content = response.content.trim();
+                    // Clear thinking indicator
+                    eprint!("\r\x1B[2K");
+                    // Print response (single line, trimmed)
+                    let content = response.content.trim().replace('\n', " ");
                     println!("🤖 {}", content);
                 }
                 Err(e) => {
-                    print!("\r\x1B[2K");
+                    eprint!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
                 }
             }
-
-            stdout.flush()?;
         }
 
-        let _ = terminal::disable_raw_mode();
-        let _ = stdout.execute(Show);
         Ok(())
     }
 
@@ -846,7 +801,7 @@ impl Cli {
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, BufReader, stdin};
 
-        println!("🤖 Manta Terminal Chat (line mode) - Type 'exit' to quit");
+        println!("🤖 Manta Terminal Chat - Type 'exit' to quit");
 
         let stdin = BufReader::new(stdin());
         let mut lines = stdin.lines();
@@ -868,13 +823,11 @@ impl Cli {
                 }
                 "help" => {
                     println!("📋 Commands: help, exit, tools");
-                    print!("💬 You: > ");
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
                     println!("🔧 Tools ({}): {}", tools.len(), tools.join(", "));
-                    print!("💬 You: > ");
                     continue;
                 }
                 _ => {}
@@ -888,17 +841,16 @@ impl Cli {
 
             match agent.process_message(incoming).await {
                 Ok(response) => {
-                    // Clear thinking and show response (trimmed)
-                    eprint!("\r\x1B[2K"); // Clear line
-                    println!("🤖 {}", response.content.trim());
+                    // Clear thinking and show response (single line)
+                    eprint!("\r\x1B[2K");
+                    let content = response.content.trim().replace('\n', " ");
+                    println!("🤖 {}", content);
                 }
                 Err(e) => {
                     eprint!("\r\x1B[2K");
                     eprintln!("❌ Error: {}", e);
                 }
             }
-
-            print!("💬 You: > ");
         }
 
         Ok(())
