@@ -25,17 +25,22 @@ impl CronTool {
         let jobs = Arc::new(RwLock::new(Vec::new()));
         let tool = Self { jobs: Arc::clone(&jobs) };
 
-        // Start the background scheduler
-        tokio::spawn(scheduler_loop(Arc::clone(&jobs)));
-
-        // Load existing jobs
+        // Load existing jobs and defer scheduler startup
         let jobs_clone = Arc::clone(&jobs);
         tokio::spawn(async move {
+            // Load jobs first
             if let Ok(loaded) = load_jobs_from_file().await {
                 let mut guard = jobs_clone.write().await;
                 *guard = loaded;
                 info!("Loaded {} cron jobs", guard.len());
+                drop(guard);
             }
+
+            // Defer scheduler start by 2 seconds to let UI initialize
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
+            // Start the background scheduler
+            scheduler_loop(Arc::clone(&jobs_clone)).await;
         });
 
         tool

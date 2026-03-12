@@ -726,14 +726,14 @@ impl Cli {
     ) -> Result<()> {
         use std::io::{self, Write};
 
-        println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands");
+        println!("🤖 Manta Terminal Chat - Type 'exit' to quit, 'help' for commands\n");
+
+        // Print initial prompt immediately
+        print!("💬 You: > ");
+        io::stdout().flush()?;
 
         // Interactive terminal mode using standard input
         loop {
-            // Show prompt
-            print!("💬 You: > ");
-            io::stdout().flush()?;
-
             // Read input line
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {
@@ -789,6 +789,10 @@ impl Cli {
                     eprintln!("❌ Error: {}", e);
                 }
             }
+
+            // Print prompt for next input
+            print!("💬 You: > ");
+            io::stdout().flush()?;
         }
 
         Ok(())
