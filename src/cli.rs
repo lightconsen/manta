@@ -704,38 +704,173 @@ impl Cli {
             return Ok(());
         }
 
-        // Initialize rustyline editor without history (avoids macOS panic)
-        let mut rl = DefaultEditor::new()
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to initialize readline: {}", e)))?;
+        // Check if we're running in a TTY (interactive terminal)
+        let is_tty = crossterm::tty::IsTty::is_tty(&std::io::stdin());
 
-        println!("Interactive chat mode. Type 'help' for commands, 'exit' to quit.");
+        let agent = Arc::new(agent);
+
+        if is_tty {
+            // Terminal UI mode with crossterm
+            Self::run_interactive_terminal(agent, conversation_id).await
+        } else {
+            // Simple line-based mode for piped input
+            Self::run_simple_interactive(agent, conversation_id).await
+        }
+    }
+
+    /// Run interactive mode with full terminal UI
+    async fn run_interactive_terminal(
+        agent: Arc<crate::agent::Agent>,
+        conversation_id: String,
+    ) -> Result<()> {
+        use crossterm::{
+            cursor::{self, Show},
+            event::{self, Event, KeyCode, KeyEventKind},
+            terminal::{self, ClearType},
+            ExecutableCommand, QueueableCommand,
+        };
+        use std::io::{stdout, Write};
+
+        // Enable raw mode for terminal-like experience
+        terminal::enable_raw_mode()?;
+        let mut stdout = stdout();
+
+        // Print header
+        stdout.execute(terminal::Clear(ClearType::All))?;
+        stdout.execute(cursor::MoveTo(0, 0))?;
+        println!("🤖 Manta Terminal Chat");
+        println!("Type 'exit' to quit, 'help' for commands");
         println!();
+        stdout.flush()?;
 
-        // Interactive REPL mode with readline
+        let mut input_buffer = String::new();
+
+        // Interactive terminal mode
         loop {
-            let input = match rl.readline("💬 You: ") {
-                Ok(line) => line,
-                Err(rustyline::error::ReadlineError::Interrupted) => {
-                    println!("^C");
-                    continue;
-                }
-                Err(rustyline::error::ReadlineError::Eof) => {
-                    println!("^D");
-                    break;
-                }
-                Err(e) => {
-                    eprintln!("❌ Readline error: {}", e);
-                    break;
-                }
-            };
+            // Show prompt with > character
+            print!("\r💬 You: > ");
+            stdout.flush()?;
 
-            let input = input.trim();
+            // Read input character by character for real-time feel
+            loop {
+                if event::poll(std::time::Duration::from_millis(50))? {
+                    if let Event::Key(key) = event::read()? {
+                        if key.kind == KeyEventKind::Press {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    println!();
+                                    break;
+                                }
+                                KeyCode::Char(c) => {
+                                    input_buffer.push(c);
+                                    print!("{}", c);
+                                    stdout.flush()?;
+                                }
+                                KeyCode::Backspace => {
+                                    if !input_buffer.is_empty() {
+                                        input_buffer.pop();
+                                        print!("\x08 \x08");
+                                        stdout.flush()?;
+                                    }
+                                }
+                                KeyCode::Esc | KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                    input_buffer.clear();
+                                    println!("\n^C");
+                                    print!("\r💬 You: > ");
+                                    stdout.flush()?;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            let input = input_buffer.trim().to_string();
+            input_buffer.clear();
 
             if input.is_empty() {
                 continue;
             }
 
-            // History disabled - add_history_entry causes panic on macOS
+            // Handle special commands
+            match input.to_lowercase().as_str() {
+                "exit" | "quit" => {
+                    println!("\n👋 Goodbye!");
+                    let _ = terminal::disable_raw_mode();
+                    break;
+                }
+                "help" => {
+                    println!("\n📋 Available commands:");
+                    println!("   help     - Show this help message");
+                    println!("   exit     - Exit the chat");
+                    println!("   tools    - List available tools");
+                    println!();
+                    continue;
+                }
+                "tools" => {
+                    let tools = agent.get_tools().list();
+                    println!("\n🔧 Available tools ({}):", tools.len());
+                    for tool in tools {
+                        println!("   • {}", tool);
+                    }
+                    println!();
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Show thinking indicator
+            print!("\n🤖 Thinking...");
+            stdout.flush()?;
+
+            // Process message
+            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, &input);
+
+            match agent.process_message(incoming).await {
+                Ok(response) => {
+                    // Clear thinking indicator and show response
+                    print!("\r\x1B[2K"); // Clear entire line
+                    println!("🤖 {}", response.content);
+                    println!();
+                }
+                Err(e) => {
+                    print!("\r\x1B[2K");
+                    eprintln!("❌ Error: {}", e);
+                    println!();
+                }
+            }
+
+            stdout.flush()?;
+        }
+
+        let _ = terminal::disable_raw_mode();
+        let _ = stdout.execute(Show);
+        Ok(())
+    }
+
+    /// Run simple line-based interactive mode (for non-TTY)
+    async fn run_simple_interactive(
+        agent: Arc<crate::agent::Agent>,
+        conversation_id: String,
+    ) -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, BufReader, stdin};
+
+        println!("🤖 Manta Terminal Chat (line mode)");
+        println!("Type 'exit' to quit, 'help' for commands");
+        println!();
+
+        let stdin = BufReader::new(stdin());
+        let mut lines = stdin.lines();
+
+        // Interactive REPL mode
+        while let Ok(Some(line)) = lines.next_line().await {
+            let input = line.trim();
+
+            if input.is_empty() {
+                print!("💬 You: > ");
+                continue;
+            }
 
             // Handle special commands
             match input.to_lowercase().as_str() {
@@ -744,44 +879,48 @@ impl Cli {
                     break;
                 }
                 "help" => {
-                    println!("Available commands:");
-                    println!("  help     - Show this help message");
-                    println!("  exit     - Exit the chat");
-                    println!("  clear    - Clear the conversation context");
-                    println!("  tools    - List available tools");
+                    println!("\n📋 Available commands:");
+                    println!("   help     - Show this help message");
+                    println!("   exit     - Exit the chat");
+                    println!("   tools    - List available tools");
                     println!();
-                    continue;
-                }
-                "clear" => {
-                    println!("🗑️  Conversation context cleared.");
-                    println!();
+                    print!("💬 You: > ");
                     continue;
                 }
                 "tools" => {
                     let tools = agent.get_tools().list();
-                    println!("Available tools ({}):", tools.len());
+                    println!("\n🔧 Available tools ({}):", tools.len());
                     for tool in tools {
-                        println!("  - {}", tool);
+                        println!("   • {}", tool);
                     }
                     println!();
+                    print!("💬 You: > ");
                     continue;
                 }
                 _ => {}
             }
 
+            // Show thinking indicator (non-blocking feel)
+            eprint!("🤖 Thinking...\r");
+
             // Process message
-            let incoming = IncomingMessage::new("user", &conversation_id, input);
+            let incoming = crate::channels::IncomingMessage::new("user", &conversation_id, input);
 
             match agent.process_message(incoming).await {
                 Ok(response) => {
+                    // Clear thinking and show response
+                    eprint!("\x1B[2K\r"); // Clear line
                     println!("🤖 {}", response.content);
                     println!();
                 }
                 Err(e) => {
+                    eprint!("\x1B[2K\r");
                     eprintln!("❌ Error: {}", e);
                     println!();
                 }
             }
+
+            print!("💬 You: > ");
         }
 
         Ok(())
