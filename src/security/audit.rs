@@ -605,7 +605,7 @@ impl SecurityAuditor {
         audit
     }
 
-    /// Check for potential data leaks
+    /// Check for potential data leaks by scanning source files
     async fn check_data_leaks(&self) -> DataLeakAudit {
         debug!("Checking for data leaks");
         let mut audit = DataLeakAudit::default();
@@ -614,30 +614,170 @@ impl SecurityAuditor {
             return audit;
         }
 
-        // Check for common data leak patterns in code
-        audit.checks_performed = 5;
+        use crate::security::secrets::SecretScanner;
+        use std::fs;
+        use std::path::Path;
 
-        // Simulated check for sensitive data in logs
-        audit.leaks.push(PotentialLeak {
-            category: LeakCategory::LogLeak,
-            description: "User API keys may be logged in debug output".to_string(),
-            location: "src/providers/mod.rs:debug!() calls".to_string(),
-            severity: RiskLevel::Medium,
-            recommendation: "Use structured logging with field redaction".to_string(),
-        });
-        audit.leaks_found += 1;
+        let scanner = SecretScanner::with_default_patterns();
+        let source_extensions = [".rs", ".toml", ".yaml", ".yml", ".json", ".env"];
 
-        // Check for sensitive data in error messages
-        audit.leaks.push(PotentialLeak {
-            category: LeakCategory::ErrorLeak,
-            description: "File paths may be exposed in error messages".to_string(),
-            location: "src/tools/file.rs:error responses".to_string(),
-            severity: RiskLevel::Low,
-            recommendation: "Sanitize paths in user-facing errors".to_string(),
-        });
-        audit.leaks_found += 1;
+        // Scan configured paths
+        for path_str in &self.config.paths_to_check {
+            let path = Path::new(path_str);
+            if !path.exists() {
+                warn!("Path does not exist: {}", path_str);
+                continue;
+            }
+
+            let entries = match fs::read_dir(path) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    warn!("Failed to read directory {}: {}", path_str, e);
+                    continue;
+                }
+            };
+
+            for entry in entries.flatten() {
+                let file_path = entry.path();
+                let file_name = file_path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+
+                // Skip hidden files and non-source files
+                if file_name.starts_with('.') {
+                    continue;
+                }
+
+                // Check if it's a file with a source extension
+                if !file_path.is_file() {
+                    continue;
+                }
+
+                let ext = file_path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+
+                if !source_extensions.contains(&ext) {
+                    continue;
+                }
+
+                // Skip test files that may contain test secrets
+                if file_name.contains("test") || file_name.contains("mock") {
+                    continue;
+                }
+
+                audit.checks_performed += 1;
+
+                // Read and scan the file
+                let content = match fs::read_to_string(&file_path) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        debug!("Failed to read file {}: {}", file_path.display(), e);
+                        continue;
+                    }
+                };
+
+                // Scan for secrets
+                let findings = scanner.scan(&content);
+                for finding in findings {
+                    let category = match finding.severity {
+                        crate::security::secrets::Severity::Critical => LeakCategory::CredentialExposure,
+                        crate::security::secrets::Severity::High => LeakCategory::UnencryptedStorage,
+                        _ => LeakCategory::LogLeak,
+                    };
+
+                    let severity = match finding.severity {
+                        crate::security::secrets::Severity::Critical => RiskLevel::Critical,
+                        crate::security::secrets::Severity::High => RiskLevel::High,
+                        crate::security::secrets::Severity::Medium => RiskLevel::Medium,
+                        crate::security::secrets::Severity::Low => RiskLevel::Low,
+                    };
+
+                    audit.leaks.push(PotentialLeak {
+                        category,
+                        description: format!("{}: {}", finding.pattern, finding.description),
+                        location: format!("{}:{}", file_path.display(), finding.line_number),
+                        severity,
+                        recommendation: "Remove secrets from source code and use environment variables or a secrets manager".to_string(),
+                    });
+                    audit.leaks_found += 1;
+                }
+            }
+        }
+
+        // Also check for sensitive patterns in error handling
+        audit.checks_performed += 1;
+        if let Some(leak) = self.check_error_message_leaks().await {
+            audit.leaks.push(leak);
+            audit.leaks_found += 1;
+        }
+
+        info!("Data leak scan complete: {} checks performed, {} potential leaks found",
+            audit.checks_performed, audit.leaks_found);
 
         audit
+    }
+
+    /// Check for potential sensitive data in error message patterns
+    async fn check_error_message_leaks(&self) -> Option<PotentialLeak> {
+        // Scan for patterns that might expose sensitive data in errors
+        use std::fs;
+        use std::path::Path;
+
+        let sensitive_patterns = [
+            "api_key",
+            "apikey",
+            "password",
+            "secret",
+            "token",
+            "credential",
+        ];
+
+        let src_path = Path::new("src");
+        if !src_path.exists() {
+            return None;
+        }
+
+        // Check common error formatting patterns in source files
+        for entry in fs::read_dir(src_path).ok()?.flatten() {
+            let file_path = entry.path();
+            if !file_path.is_file() {
+                continue;
+            }
+
+            let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "rs" {
+                continue;
+            }
+
+            let content = match fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            // Check for potentially sensitive data in error messages
+            for pattern in &sensitive_patterns {
+                // Check if sensitive variable names appear in format strings
+                if content.contains(&format!("{}: {:?}", pattern, "").trim_end_matches('"'))
+                    || content.contains(&format!("{}: {}", pattern, "").trim_end_matches('"'))
+                {
+                    return Some(PotentialLeak {
+                        category: LeakCategory::ErrorLeak,
+                        description: format!(
+                            "Potential sensitive data exposure: '{}' may be logged or displayed",
+                            pattern
+                        ),
+                        location: file_path.display().to_string(),
+                        severity: RiskLevel::Medium,
+                        recommendation:
+                            "Use structured error types and avoid including raw sensitive data in error messages"
+                                .to_string(),
+                    });
+                }
+            }
+        }
+
+        None
     }
 
     /// Verify sandboxing capabilities
