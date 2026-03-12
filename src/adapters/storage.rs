@@ -286,6 +286,227 @@ impl Storage for FileStorage {
     }
 }
 
+/// SQLite-backed storage implementation
+#[derive(Debug, Clone)]
+pub struct SqliteStorage {
+    pool: sqlx::SqlitePool,
+}
+
+impl SqliteStorage {
+    /// Create a new SQLite storage with an existing pool
+    pub fn new(pool: sqlx::SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new SQLite storage from a database URL
+    pub async fn connect(database_url: &str) -> Result<Self, StorageError> {
+        let pool = sqlx::SqlitePool::connect(database_url)
+            .await
+            .map_err(|e| StorageError::Backend(format!("Failed to connect: {}", e)))?;
+
+        let storage = Self { pool };
+        storage.init().await?;
+        Ok(storage)
+    }
+
+    /// Initialize the database schema
+    async fn init(&self) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS entities (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                tags TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create table: {}", e)))?;
+
+        // Create index on status for faster filtering
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_entities_status ON entities(status)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create index: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Convert a database row to an Entity
+    fn row_to_entity(row: &sqlx::sqlite::SqliteRow) -> Result<Entity, StorageError> {
+        use chrono::DateTime;
+        use crate::core::models::{Metadata, Status};
+
+        let id_str: String = row.get("id");
+        let id = Id::parse(&id_str)
+            .map_err(|_| StorageError::Serialization(format!("Invalid ID: {}", id_str)))?;
+
+        let name: String = row.get("name");
+        let description: Option<String> = row.get("description");
+
+        let tags_str: String = row.get("tags");
+        let tags: Vec<String> = serde_json::from_str(&tags_str)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+
+        let status_str: String = row.get("status");
+        let status = Status::try_from(status_str.as_str())
+            .map_err(|_| StorageError::Serialization(format!("Invalid status: {}", status_str)))?;
+
+        let created_at_str: String = row.get("created_at");
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?
+            .with_timezone(&chrono::Utc);
+
+        let updated_at_str: String = row.get("updated_at");
+        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?
+            .with_timezone(&chrono::Utc);
+
+        let version: i64 = row.get("version");
+
+        Ok(Entity {
+            id,
+            name,
+            description,
+            tags,
+            status,
+            metadata: Metadata {
+                created_at,
+                updated_at,
+                version: version as u32,
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl Storage for SqliteStorage {
+    async fn get(&self, id: Id) -> Result<Entity, StorageError> {
+        let row = sqlx::query(
+            "SELECT * FROM entities WHERE id = ?1"
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        match row {
+            Some(row) => Self::row_to_entity(&row),
+            None => Err(StorageError::NotFound(id)),
+        }
+    }
+
+    async fn list(&self) -> Result<Vec<Entity>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT * FROM entities ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        rows.iter()
+            .map(Self::row_to_entity)
+            .collect()
+    }
+
+    async fn create(&self, entity: &Entity) -> Result<(), StorageError> {
+        let tags_json = serde_json::to_string(&entity.tags)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO entities (id, name, description, tags, status, created_at, updated_at, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#
+        )
+        .bind(entity.id.to_string())
+        .bind(&entity.name)
+        .bind(&entity.description)
+        .bind(tags_json)
+        .bind(entity.status.to_string())
+        .bind(entity.metadata.created_at.to_rfc3339())
+        .bind(entity.metadata.updated_at.to_rfc3339())
+        .bind(entity.metadata.version as i64)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update(&self, entity: &Entity) -> Result<(), StorageError> {
+        let tags_json = serde_json::to_string(&entity.tags)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE entities
+            SET name = ?1, description = ?2, tags = ?3, status = ?4,
+                updated_at = ?5, version = ?6
+            WHERE id = ?7
+            "#
+        )
+        .bind(&entity.name)
+        .bind(&entity.description)
+        .bind(tags_json)
+        .bind(entity.status.to_string())
+        .bind(entity.metadata.updated_at.to_rfc3339())
+        .bind(entity.metadata.version as i64)
+        .bind(entity.id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound(entity.id));
+        }
+
+        Ok(())
+    }
+
+    async fn delete(&self, id: Id) -> Result<(), StorageError> {
+        let result = sqlx::query("DELETE FROM entities WHERE id = ?1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound(id));
+        }
+
+        Ok(())
+    }
+
+    async fn count(&self) -> Result<usize, StorageError> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM entities")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        let count: i64 = row.get("count");
+        Ok(count as usize)
+    }
+
+    async fn health_check(&self) -> Result<(), StorageError> {
+        // Try to execute a simple query
+        let _: (i64,) = sqlx::query_as("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

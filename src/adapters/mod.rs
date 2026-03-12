@@ -7,4 +7,4 @@ pub mod api;
 pub mod storage;
 
 pub use api::ApiClient;
-pub use storage::{Storage, StorageError};
+pub use storage::{Storage, StorageError, InMemoryStorage, FileStorage, SqliteStorage};
