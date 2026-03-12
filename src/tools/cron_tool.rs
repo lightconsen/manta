@@ -1,21 +1,44 @@
 //! Cron Tool for Manta
 //!
 //! This tool allows the AI to schedule recurring tasks using cron expressions.
+//! Jobs are stored in a JSON file and executed by a background scheduler.
 
 use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, info, warn};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info, warn};
+use chrono::{Utc, Datelike, Timelike};
 
 /// Cron tool for scheduling recurring tasks
 #[derive(Debug)]
-pub struct CronTool;
+pub struct CronTool {
+    jobs: Arc<RwLock<Vec<CronJobEntry>>>,
+}
 
 impl CronTool {
-    /// Create a new cron tool
+    /// Create a new cron tool and start the scheduler
     pub fn new() -> Self {
-        Self
+        let jobs = Arc::new(RwLock::new(Vec::new()));
+        let tool = Self { jobs: Arc::clone(&jobs) };
+
+        // Start the background scheduler
+        tokio::spawn(scheduler_loop(Arc::clone(&jobs)));
+
+        // Load existing jobs
+        let jobs_clone = Arc::clone(&jobs);
+        tokio::spawn(async move {
+            if let Ok(loaded) = load_jobs_from_file().await {
+                let mut guard = jobs_clone.write().await;
+                *guard = loaded;
+                info!("Loaded {} cron jobs", guard.len());
+            }
+        });
+
+        tool
     }
 
     /// Get the jobs file path
@@ -25,33 +48,9 @@ impl CronTool {
             .unwrap_or_else(|| std::path::PathBuf::from(".manta_cron_jobs.json"))
     }
 
-    /// Load existing jobs
-    async fn load_jobs(&self) -> Vec<CronJobEntry> {
-        let jobs_file = Self::jobs_file();
-        if !jobs_file.exists() {
-            return Vec::new();
-        }
-
-        match tokio::fs::read_to_string(&jobs_file).await {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(e) => {
-                warn!("Failed to read jobs file: {}", e);
-                Vec::new()
-            }
-        }
-    }
-
     /// Save jobs to file
     async fn save_jobs(&self, jobs: &[CronJobEntry]) -> crate::Result<()> {
-        let jobs_file = Self::jobs_file();
-        if let Some(parent) = jobs_file.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-
-        let content = serde_json::to_string_pretty(jobs)?;
-        tokio::fs::write(&jobs_file, content).await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
-        Ok(())
+        save_jobs_to_file(jobs).await
     }
 }
 
@@ -72,6 +71,174 @@ struct CronJobEntry {
     enabled: bool,
     created_at: String,
     run_count: u32,
+    last_run: Option<String>,
+}
+
+/// Load jobs from file
+async fn load_jobs_from_file() -> crate::Result<Vec<CronJobEntry>> {
+    let jobs_file = CronTool::jobs_file();
+    if !jobs_file.exists() {
+        return Ok(Vec::new());
+    }
+
+    match tokio::fs::read_to_string(&jobs_file).await {
+        Ok(content) => {
+            let jobs: Vec<CronJobEntry> = serde_json::from_str(&content).unwrap_or_default();
+            Ok(jobs)
+        }
+        Err(e) => {
+            warn!("Failed to read jobs file: {}", e);
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Save jobs to file
+async fn save_jobs_to_file(jobs: &[CronJobEntry]) -> crate::Result<()> {
+    let jobs_file = CronTool::jobs_file();
+    if let Some(parent) = jobs_file.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let content = serde_json::to_string_pretty(jobs)?;
+    tokio::fs::write(&jobs_file, content).await
+        .map_err(|e| crate::error::MantaError::Io(e))?;
+    Ok(())
+}
+
+/// Background scheduler loop
+async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
+    let mut tick = interval(Duration::from_secs(30)); // Check every 30 seconds
+
+    loop {
+        tick.tick().await;
+
+        let now = Utc::now();
+        let current_minute = now.minute();
+        let current_hour = now.hour();
+        let current_day = now.day();
+        let current_month = now.month();
+        let current_weekday = now.weekday().num_days_from_sunday();
+
+        let mut jobs_to_run: Vec<(String, String)> = Vec::new();
+
+        // Check which jobs are due
+        {
+            let jobs_guard = jobs.read().await;
+            for job in jobs_guard.iter() {
+                if !job.enabled {
+                    continue;
+                }
+
+                if is_due(&job.schedule, current_minute, current_hour, current_day, current_month, current_weekday) {
+                    jobs_to_run.push((job.id.clone(), job.command.clone()));
+                }
+            }
+        }
+
+        // Execute due jobs
+        for (job_id, command) in jobs_to_run {
+            info!("Executing cron job '{}' with command: {}", job_id, command);
+
+            // Execute the command
+            let output = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .output()
+                .await;
+
+            match output {
+                Ok(result) => {
+                    let stdout = String::from_utf8_lossy(&result.stdout);
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+
+                    if result.status.success() {
+                        info!("Job '{}' executed successfully. Output: {}", job_id, stdout.trim());
+                    } else {
+                        error!("Job '{}' failed. Stderr: {}", job_id, stderr.trim());
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to execute job '{}': {}", job_id, e);
+                }
+            }
+
+            // Update job run count and last_run
+            let mut jobs_guard = jobs.write().await;
+            if let Some(job) = jobs_guard.iter_mut().find(|j| j.id == job_id) {
+                job.run_count += 1;
+                job.last_run = Some(Utc::now().to_rfc3339());
+            }
+
+            // Save updated jobs
+            let jobs_vec = jobs_guard.clone();
+            drop(jobs_guard);
+
+            if let Err(e) = save_jobs_to_file(&jobs_vec).await {
+                error!("Failed to save jobs after execution: {}", e);
+            }
+        }
+    }
+}
+
+/// Check if a job is due based on its cron schedule
+fn is_due(schedule: &str, minute: u32, hour: u32, day: u32, month: u32, weekday: u32) -> bool {
+    let parts: Vec<&str> = schedule.split_whitespace().collect();
+    if parts.len() != 5 {
+        return false;
+    }
+
+    // Parse each field
+    let minute_match = matches_field(parts[0], minute, 0, 59);
+    let hour_match = matches_field(parts[1], hour, 0, 23);
+    let day_match = matches_field(parts[2], day, 1, 31);
+    let month_match = matches_field(parts[3], month, 1, 12);
+    let weekday_match = matches_field(parts[4], weekday, 0, 6);
+
+    minute_match && hour_match && day_match && month_match && weekday_match
+}
+
+/// Check if a value matches a cron field pattern
+fn matches_field(pattern: &str, value: u32, min: u32, max: u32) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+
+    // Handle step values like */5
+    if pattern.starts_with("*/") {
+        if let Ok(step) = pattern[2..].parse::<u32>() {
+            return value % step == 0;
+        }
+    }
+
+    // Handle ranges like 1-5
+    if pattern.contains('-') {
+        let range: Vec<&str> = pattern.split('-').collect();
+        if range.len() == 2 {
+            if let (Ok(start), Ok(end)) = (range[0].parse::<u32>(), range[1].parse::<u32>()) {
+                return value >= start && value <= end;
+            }
+        }
+    }
+
+    // Handle lists like 1,2,3
+    if pattern.contains(',') {
+        for part in pattern.split(',') {
+            if let Ok(v) = part.parse::<u32>() {
+                if v == value {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Handle single value
+    if let Ok(v) = pattern.parse::<u32>() {
+        return v == value;
+    }
+
+    true // Default to true for unknown patterns
 }
 
 #[async_trait]
@@ -83,6 +250,7 @@ impl Tool for CronTool {
     fn description(&self) -> &str {
         "Schedule and manage recurring tasks using cron expressions. \
          Can create, list, enable, disable, and remove scheduled jobs. \
+         Jobs run automatically in the background according to their schedule. \
          Cron format: 'minute hour day month weekday' (e.g., '0 * * * *' = hourly, '*/5 * * * *' = every 5 minutes)"
     }
 
@@ -148,7 +316,7 @@ impl Tool for CronTool {
                     ));
                 }
 
-                let mut jobs = self.load_jobs().await;
+                let mut jobs = self.jobs.write().await;
 
                 // Check for duplicate name
                 if jobs.iter().any(|j| j.name == name) {
@@ -166,29 +334,31 @@ impl Tool for CronTool {
                     enabled: true,
                     created_at: chrono::Utc::now().to_rfc3339(),
                     run_count: 0,
+                    last_run: None,
                 };
 
                 jobs.push(job);
                 self.save_jobs(&jobs).await?;
+                drop(jobs);
 
                 info!("Created cron job '{}' with schedule '{}'", name, schedule);
 
                 Ok(ToolExecutionResult::success(
-                    &format!("✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active and will run according to the schedule.", name, schedule, command)
+                    &format!("✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active and will run automatically according to the schedule.", name, schedule, command)
                 ))
             }
             "list" => {
-                let jobs = self.load_jobs().await;
+                let jobs = self.jobs.read().await;
 
                 if jobs.is_empty() {
                     return Ok(ToolExecutionResult::success("No cron jobs configured. Use 'create' action to add a job."));
                 }
 
                 let mut output = format!("📅 Cron Jobs ({} total)\n", jobs.len());
-                output.push_str("=" .repeat(50).as_str());
+                output.push_str(&"=".repeat(50));
                 output.push('\n');
 
-                for job in &jobs {
+                for job in jobs.iter() {
                     let status = if job.enabled { "✅" } else { "❌" };
                     output.push_str(&format!("\n{} {}\n", status, job.name));
                     output.push_str(&format!("   Schedule: {}\n", job.schedule));
@@ -197,6 +367,9 @@ impl Tool for CronTool {
                         output.push_str(&format!("   Description: {}\n", job.description));
                     }
                     output.push_str(&format!("   Run count: {}\n", job.run_count));
+                    if let Some(last) = &job.last_run {
+                        output.push_str(&format!("   Last run: {}\n", last));
+                    }
                 }
 
                 Ok(ToolExecutionResult::success(&output))
@@ -206,7 +379,7 @@ impl Tool for CronTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
 
-                let mut jobs = self.load_jobs().await;
+                let mut jobs = self.jobs.write().await;
 
                 if let Some(job) = jobs.iter_mut().find(|j| j.name == name) {
                     job.enabled = true;
@@ -221,7 +394,7 @@ impl Tool for CronTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
 
-                let mut jobs = self.load_jobs().await;
+                let mut jobs = self.jobs.write().await;
 
                 if let Some(job) = jobs.iter_mut().find(|j| j.name == name) {
                     job.enabled = false;
@@ -236,7 +409,7 @@ impl Tool for CronTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
 
-                let mut jobs = self.load_jobs().await;
+                let mut jobs = self.jobs.write().await;
                 let initial_len = jobs.len();
                 jobs.retain(|j| j.name != name);
 
@@ -252,15 +425,36 @@ impl Tool for CronTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
 
-                let jobs = self.load_jobs().await;
+                let jobs = self.jobs.read().await;
 
                 if let Some(job) = jobs.iter().find(|j| j.name == name) {
-                    let mut output = format!("🔄 Running cron job '{}'\n", name);
-                    output.push_str(&format!("Command: {}\n", job.command));
-                    output.push_str("\nNote: This is a manual trigger. The job will also run automatically according to its schedule.\n");
-                    output.push_str("To execute the command now, use the shell tool with the command above.");
+                    // Execute the command immediately
+                    let output = tokio::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&job.command)
+                        .output()
+                        .await;
 
-                    Ok(ToolExecutionResult::success(&output))
+                    match output {
+                        Ok(result) => {
+                            let stdout = String::from_utf8_lossy(&result.stdout);
+                            let stderr = String::from_utf8_lossy(&result.stderr);
+
+                            let mut output_text = format!("🔄 Manually running cron job '{}'\n", name);
+                            output_text.push_str(&format!("Command: {}\n\n", job.command));
+
+                            if result.status.success() {
+                                output_text.push_str(&format!("✅ Success!\nOutput:\n{}", stdout));
+                            } else {
+                                output_text.push_str(&format!("❌ Failed!\nError:\n{}", stderr));
+                            }
+
+                            Ok(ToolExecutionResult::success(&output_text))
+                        }
+                        Err(e) => {
+                            Ok(ToolExecutionResult::error(&format!("Failed to execute: {}", e)))
+                        }
+                    }
                 } else {
                     Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
                 }
@@ -280,5 +474,25 @@ mod tests {
     fn test_cron_tool_new() {
         let tool = CronTool::new();
         assert_eq!(tool.name(), "cron");
+    }
+
+    #[test]
+    fn test_matches_field_star() {
+        assert!(matches_field("*", 5, 0, 59));
+        assert!(matches_field("*", 0, 0, 59));
+    }
+
+    #[test]
+    fn test_matches_field_step() {
+        assert!(matches_field("*/5", 0, 0, 59));
+        assert!(matches_field("*/5", 5, 0, 59));
+        assert!(matches_field("*/5", 10, 0, 59));
+        assert!(!matches_field("*/5", 3, 0, 59));
+    }
+
+    #[test]
+    fn test_matches_field_exact() {
+        assert!(matches_field("15", 15, 0, 59));
+        assert!(!matches_field("15", 16, 0, 59));
     }
 }
