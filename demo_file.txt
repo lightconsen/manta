@@ -1,0 +1,9 @@
+This is a demonstration file created by Manta.
+
+Created: Thu Mar 12 12:21:34 CST 2026
+Purpose: Showcasing file writing capabilities
+
+Features demonstrated:
+- File creation
+- Content writing
+- Directory handling
