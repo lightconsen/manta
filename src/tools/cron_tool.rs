@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
+use std::io::Write as _;
 use chrono::{Utc, Datelike, Timelike};
 
 /// Cron tool for scheduling recurring tasks
@@ -141,6 +142,9 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
             }
         }
 
+        // Track if any jobs ran
+        let jobs_ran = !jobs_to_run.is_empty();
+
         // Execute due jobs
         for (job_id, command) in jobs_to_run {
             info!("Executing cron job '{}' with command: {}", job_id, command);
@@ -182,6 +186,13 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<CronJobEntry>>>) {
             if let Err(e) = save_jobs_to_file(&jobs_vec).await {
                 error!("Failed to save jobs after execution: {}", e);
             }
+        }
+
+        // Re-print prompt so user always sees where to type
+        if jobs_ran {
+            eprintln!();
+            eprint!("💬 You > ");
+            let _ = std::io::stderr().flush();
         }
     }
 }
