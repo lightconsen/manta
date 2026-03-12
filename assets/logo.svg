@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <!-- Gradient for the manta body -->
+    <linearGradient id="mantaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1f6feb;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#58a6ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8957e5;stop-opacity:1" />
+    </linearGradient>
+    <!-- Glow effect -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="90" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+
+  <!-- Abstract Manta Ray -->
+  <g transform="translate(100, 100)" filter="url(#glow)">
+    <!-- Main body (diamond/ray shape) -->
+    <path d="M 0,-60
+             C 30,-40 60,-20 70,10
+             C 60,20 40,25 25,15
+             C 20,35 15,50 10,65
+             C 5,55 0,45 0,45
+             C 0,45 -5,55 -10,65
+             C -15,50 -20,35 -25,15
+             C -40,25 -60,20 -70,10
+             C -60,-20 -30,-40 0,-60 Z"
+          fill="url(#mantaGradient)"
+          opacity="0.95"/>
+
+    <!-- Inner highlight/detail -->
+    <path d="M 0,-45
+             C 20,-30 40,-15 45,5
+             C 35,12 20,15 10,8
+             C 8,20 5,30 2,40
+             C 0,35 0,30 0,30
+             C 0,30 0,35 -2,40
+             C -5,30 -8,20 -10,8
+             C -20,15 -35,12 -45,5
+             C -40,-15 -20,-30 0,-45 Z"
+          fill="#c9d1d9"
+          opacity="0.3"/>
+
+    <!-- Eye/AI indicator -->
+    <circle cx="0" cy="-10" r="8" fill="#0d1117"/>
+    <circle cx="0" cy="-10" r="5" fill="#238636"/>
+    <circle cx="2" cy="-12" r="2" fill="#ffffff" opacity="0.8"/>
+  </g>
+
+  <!-- Outer ring decoration -->
+  <circle cx="100" cy="100" r="85" fill="none" stroke="url(#mantaGradient)" stroke-width="1" opacity="0.5"/>
+</svg>

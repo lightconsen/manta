@@ -332,7 +332,13 @@ fn terminal_html() -> String {
             color: #58a6ff;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+        }
+
+        .logo {
+            width: 28px;
+            height: 28px;
+            flex-shrink: 0;
         }
 
         .header-center {
@@ -572,7 +578,7 @@ fn terminal_html() -> String {
 </head>
 <body>
     <div class="header">
-        <h1>🤖 Manta AI Terminal</h1>
+        <h1><svg class="logo" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#1f6feb"/><stop offset="100%" style="stop-color:#8957e5"/></linearGradient></defs><rect width="32" height="32" rx="6" fill="#0d1117"/><path d="M16 4l12 10-4 2-6-2-6 2-4-2z" fill="url(#lg)"/><path d="M16 8l8 6-2 1-4-1-4 1-2-1z" fill="#58a6ff" opacity="0.5"/><circle cx="16" cy="14" r="2" fill="#238636"/></svg> Manta AI Terminal</h1>
         <div class="header-center">
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
