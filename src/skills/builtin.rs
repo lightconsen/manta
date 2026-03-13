@@ -47,6 +47,9 @@ pub fn get_builtin_skills() -> HashMap<String, Skill> {
     let self_improving_agent_skill = create_self_improving_agent_skill();
     skills.insert(self_improving_agent_skill.name.clone(), self_improving_agent_skill);
 
+    let agent_creator_skill = create_agent_creator_skill();
+    skills.insert(agent_creator_skill.name.clone(), agent_creator_skill);
+
     skills
 }
 
@@ -2086,6 +2089,245 @@ Would you like me to help with any of these?
 ```
 "#;
 
+/// Create the agent-creator built-in skill
+fn create_agent_creator_skill() -> Skill {
+    let mut skill = Skill::new(
+        "agent-creator",
+        "Create new agent personalities using natural language",
+        AGENT_CREATOR_PROMPT,
+    )
+    .with_emoji("🎭")
+    .by("manta");
+
+    skill.triggers = vec![
+        SkillTrigger {
+            trigger_type: TriggerType::Command,
+            pattern: "create-agent".to_string(),
+            priority: 100,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "create agent".to_string(),
+            priority: 95,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "new agent".to_string(),
+            priority: 95,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "make an agent".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "agent personality".to_string(),
+            priority: 85,
+            user_invocable: true,
+            model_invocable: true,
+        },
+    ];
+
+    skill.source_level = StorageLevel::Bundled;
+    skill.is_eligible = true;
+    skill.enabled = true;
+
+    skill
+}
+
+/// Agent Creator skill prompt
+const AGENT_CREATOR_PROMPT: &str = r#"# Agent Creator - Create New Agent Personalities
+
+Create new agent personalities using natural language. This skill parses your description and creates OpenClaw-style memory files (SOUL.md, IDENTITY.md, BOOTSTRAP.md).
+
+## When to Use
+
+Use this skill when the user says:
+- "create agent named X"
+- "make an agent that does Y"
+- "new agent personality for Z"
+- "agent that behaves like..."
+- "/create-agent"
+
+## How It Works
+
+You extract information from the user's request and use the `file_write` tool to create the three memory files.
+
+## File Locations
+
+Agents are stored in: `~/.config/manta/agents/<agent-name>/`
+
+## Required Files
+
+### 1. IDENTITY.md
+Contains the agent's identity information:
+```markdown
+# Agent Identity
+
+## Name
+<Display Name>
+
+## Role
+<Role description>
+
+## Communication Style
+<style: concise/detailed/friendly/professional/technical>
+
+## Created
+<timestamp>
+```
+
+### 2. SOUL.md
+Contains personality, values, and behavior:
+```markdown
+# Agent Soul
+
+## Core Values
+- <Value 1>
+- <Value 2>
+
+## Behavioral Guidelines
+- <Behavior 1>
+- <Behavior 2>
+
+## Expertise
+<Domain expertise>
+
+## Communication Style
+- Tone: <tone>
+- Vocabulary: <vocabulary level>
+- Response Length: <length preference>
+```
+
+### 3. BOOTSTRAP.md
+Contains startup behavior and system prompt:
+```markdown
+# Bootstrap Configuration
+
+## System Prompt
+<Full system prompt for the agent>
+
+## Initial Greeting
+<Optional greeting message>
+
+## Startup Behavior
+- <Behavior 1>
+- <Behavior 2>
+```
+
+## Workflow
+
+### Step 1: Extract Information
+
+From the user's request, extract:
+- **Name**: Agent identifier (directory name) - use lowercase, no spaces
+- **Display Name**: Human-readable name
+- **Role**: What the agent does (e.g., "Code Reviewer", "Creative Writer")
+- **Style**: Communication style (concise, detailed, friendly, professional, technical)
+- **Expertise**: Domain knowledge areas
+- **Purpose**: What tasks this agent will handle
+
+### Step 2: Create Directory
+
+Use `shell` tool to create the agent directory:
+```bash
+mkdir -p ~/.config/manta/agents/<agent-name>
+```
+
+### Step 3: Write Memory Files
+
+Use `file_write` tool to create all three files.
+
+### Step 4: Confirm Success
+
+Report what was created and how to use it.
+
+## Examples
+
+### Example 1: Code Reviewer Agent
+
+**User**: "Create an agent named 'codereview' that acts as a strict senior code reviewer"
+
+**Your Actions**:
+1. Create directory: `mkdir -p ~/.config/manta/agents/codereview`
+2. Write IDENTITY.md with name "Code Reviewer", role "Senior Code Reviewer"
+3. Write SOUL.md with values: thoroughness, security, performance
+4. Write BOOTSTRAP.md with strict code review prompt
+
+### Example 2: Creative Writer Agent
+
+**User**: "Make an agent for creative writing with a friendly, encouraging style"
+
+**Your Actions**:
+1. Create directory: `mkdir -p ~/.config/manta/agents/creative`
+2. Write IDENTITY.md with name "Creative Muse", style "friendly"
+3. Write SOUL.md emphasizing creativity, encouragement, brainstorming
+4. Write BOOTSTRAP.md with creative writing focus
+
+### Example 3: Minimal Request
+
+**User**: "new agent named helper"
+
+**Your Actions**:
+1. Create with defaults: role "AI Assistant", style "professional"
+2. Write all three files with sensible defaults
+
+## Best Practices
+
+1. **Derive from description**: Infer personality traits from user's description
+2. **Be specific**: Tailor system prompt to the specific role
+3. **Consistent naming**: Use kebab-case for agent names (e.g., "code-reviewer")
+4. **Validate**: Confirm files were created successfully
+5. **Show usage**: Tell user how to activate the agent
+
+## Output Format
+
+After creating the agent, report:
+
+```
+🎭 Created Agent: <name>
+
+📋 Details:
+   Name: <display name>
+   Role: <role>
+   Style: <style>
+
+📁 Files Created:
+   ~/.config/manta/agents/<name>/
+   ├── SOUL.md
+   ├── IDENTITY.md
+   └── BOOTSTRAP.md
+
+🚀 To Use:
+   manta agent set <name>
+
+   Or via web terminal:
+   "switch to <name> agent"
+```
+
+## Error Handling
+
+- If agent already exists: Ask if user wants to overwrite
+- If directory creation fails: Report error with path
+- If file write fails: Clean up and report
+
+## Important Notes
+
+- Agent names should be lowercase with hyphens (not spaces)
+- Default location is ~/.config/manta/agents/
+- Agent won't be active until user runs `manta agent set <name>`
+- Files follow OpenClaw specification
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2105,7 +2347,8 @@ mod tests {
         assert!(skills.contains_key("api-gateway"));
         assert!(skills.contains_key("nano-pdf"));
         assert!(skills.contains_key("self-improving-agent"));
-        assert_eq!(skills.len(), 12);
+        assert!(skills.contains_key("agent-creator"));
+        assert_eq!(skills.len(), 13);
     }
 
     #[test]
@@ -2247,6 +2490,18 @@ mod tests {
 
         assert_eq!(skill.name, "self-improving-agent");
         assert_eq!(skill.metadata.emoji, "🔄");
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert!(!skill.triggers.is_empty());
+    }
+
+    #[test]
+    fn test_agent_creator_properties() {
+        let skills = get_builtin_skills();
+        let skill = skills.get("agent-creator").unwrap();
+
+        assert_eq!(skill.name, "agent-creator");
+        assert_eq!(skill.metadata.emoji, "🎭");
         assert!(skill.is_eligible);
         assert!(skill.enabled);
         assert!(!skill.triggers.is_empty());

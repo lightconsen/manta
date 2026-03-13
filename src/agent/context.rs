@@ -248,6 +248,7 @@ mod tests {
 
     #[test]
     fn test_to_messages() {
+        use crate::providers::Role;
         let mut ctx = Context::new("test", "System prompt", 1000);
         ctx.add_message(Message::user("Hello"));
         ctx.add_message(Message::assistant("Hi!"));
