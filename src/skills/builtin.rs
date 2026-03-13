@@ -35,6 +35,15 @@ pub fn get_builtin_skills() -> HashMap<String, Skill> {
     let github_skill = create_github_skill();
     skills.insert(github_skill.name.clone(), github_skill);
 
+    let agent_browser_skill = create_agent_browser_skill();
+    skills.insert(agent_browser_skill.name.clone(), agent_browser_skill);
+
+    let api_gateway_skill = create_api_gateway_skill();
+    skills.insert(api_gateway_skill.name.clone(), api_gateway_skill);
+
+    let nano_pdf_skill = create_nano_pdf_skill();
+    skills.insert(nano_pdf_skill.name.clone(), nano_pdf_skill);
+
     skills
 }
 
@@ -1165,6 +1174,609 @@ gh pr create --fill
 - Use `gh api` for advanced GraphQL/REST API calls if needed
 "#;
 
+/// Create the agent-browser built-in skill
+fn create_agent_browser_skill() -> Skill {
+    let mut skill = Skill::new(
+        "agent-browser",
+        "Navigate and interact with websites on behalf of the user",
+        AGENT_BROWSER_PROMPT,
+    )
+    .with_emoji("🌐")
+    .by("manta");
+
+    skill.triggers = vec![
+        SkillTrigger {
+            trigger_type: TriggerType::Command,
+            pattern: "browse".to_string(),
+            priority: 100,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "browse to".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "go to website".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "visit".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "navigate to".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "web".to_string(),
+            priority: 70,
+            user_invocable: true,
+            model_invocable: true,
+        },
+    ];
+
+    skill.source_level = StorageLevel::Bundled;
+    skill.is_eligible = true;
+    skill.enabled = true;
+
+    skill
+}
+
+/// Agent Browser skill prompt
+const AGENT_BROWSER_PROMPT: &str = r#"# Agent Browser - Web Navigation
+
+Navigate and interact with websites programmatically on behalf of the user.
+
+## When to Use
+
+Use this skill when the user asks:
+- "browse to [website]"
+- "go to [URL]"
+- "visit [website]"
+- "navigate to [page]"
+- "open [website] in browser"
+- "check what's on [website]"
+
+## Capabilities
+
+### Fetch Web Pages
+
+Use the `web_fetch` tool to retrieve page content:
+
+```json
+{
+  "url": "https://example.com"
+}
+```
+
+The tool returns the page content as markdown, making it easy to read and analyze.
+
+### Search and Navigate
+
+1. **Direct URL Access**: If the user provides a full URL, fetch it directly
+2. **Search First**: If the user provides a partial name, use `web_search` to find the correct URL
+3. **Follow Links**: Extract links from pages to navigate deeper
+
+## Workflow
+
+### Basic Browsing
+
+1. User says: "Browse to github.com"
+2. Use `web_fetch` with `https://github.com`
+3. Summarize the page content for the user
+
+### Searching for Sites
+
+1. User says: "Go to the Rust programming language website"
+2. Use `web_search` with query "Rust programming language official"
+3. Identify the correct URL from search results
+4. Use `web_fetch` to retrieve the site
+5. Present the content
+
+### Multi-Step Navigation
+
+For complex tasks:
+1. Fetch the initial page
+2. Identify the relevant link
+3. Fetch the linked page
+4. Continue as needed
+
+## Best Practices
+
+1. **Verify URLs**: Always check if the URL is valid before fetching
+2. **Handle errors**: If a page fails to load, try searching for alternatives
+3. **Respect limits**: Some sites may block automated access
+4. **Summarize**: Don't dump raw HTML; extract relevant information
+5. **Security**: Never submit forms with sensitive data unless explicitly requested
+
+## Output Format
+
+Present findings clearly:
+
+```
+🌐 [Page Title]
+URL: [URL]
+
+**Summary**: Brief overview of the page
+
+**Key Content**:
+- Point 1
+- Point 2
+
+**Links of Interest**:
+- [Link description](URL)
+```
+
+## Examples
+
+**Example 1**: "Browse to example.com"
+```
+🌐 Example Domain
+URL: https://example.com
+
+This domain is for use in illustrative examples in documents.
+```
+
+**Example 2**: "What's on the front page of Hacker News?"
+1. Fetch https://news.ycombinator.com
+2. Extract top stories
+3. Present as a numbered list with links
+"#;
+
+/// Create the api-gateway built-in skill
+fn create_api_gateway_skill() -> Skill {
+    let mut skill = Skill::new(
+        "api-gateway",
+        "Design, test, and manage API endpoints and integrations",
+        API_GATEWAY_PROMPT,
+    )
+    .with_emoji("🚪")
+    .by("manta");
+
+    skill.triggers = vec![
+        SkillTrigger {
+            trigger_type: TriggerType::Command,
+            pattern: "api".to_string(),
+            priority: 100,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "api endpoint".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "rest api".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "api design".to_string(),
+            priority: 85,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "test api".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "curl".to_string(),
+            priority: 70,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "http request".to_string(),
+            priority: 70,
+            user_invocable: true,
+            model_invocable: true,
+        },
+    ];
+
+    skill.source_level = StorageLevel::Bundled;
+    skill.is_eligible = true;
+    skill.enabled = true;
+
+    skill
+}
+
+/// API Gateway skill prompt
+const API_GATEWAY_PROMPT: &str = r#"# API Gateway - API Design & Testing
+
+Design, test, and manage API endpoints and integrations using HTTP requests.
+
+## When to Use
+
+Use this skill when the user asks:
+- "test this API endpoint"
+- "design an API for..."
+- "make a POST request to..."
+- "curl this URL"
+- "api endpoint for..."
+- "rest api design"
+
+## Tools Available
+
+### HTTP Requests with curl
+
+Use `shell` tool to execute curl commands:
+
+```bash
+curl -X [METHOD] [URL] [OPTIONS]
+```
+
+### Common Options:
+
+```bash
+# GET request (default)
+curl https://api.example.com/users
+
+# POST with JSON data
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "John", "email": "john@example.com"}'
+
+# With authentication
+curl -H "Authorization: Bearer $TOKEN" https://api.example.com/protected
+
+# With query parameters
+curl "https://api.example.com/search?q=hello&limit=10"
+
+# Save response to file
+curl -o response.json https://api.example.com/data
+
+# Show response headers
+curl -I https://api.example.com/users
+
+# Follow redirects
+curl -L https://bit.ly/xxx
+```
+
+## API Design Guidelines
+
+### RESTful Principles
+
+1. **Resources**: Use nouns, not verbs
+   - ✅ `/users`, `/orders`, `/products`
+   - ❌ `/getUsers`, `/createOrder`
+
+2. **HTTP Methods**:
+   - `GET` - Read
+   - `POST` - Create
+   - `PUT` - Update (full)
+   - `PATCH` - Update (partial)
+   - `DELETE` - Remove
+
+3. **Status Codes**:
+   - `200` - OK
+   - `201` - Created
+   - `400` - Bad Request
+   - `401` - Unauthorized
+   - `404` - Not Found
+   - `500` - Server Error
+
+4. **Versioning**:
+   - URL: `/v1/users`
+   - Header: `Accept: application/vnd.api.v1+json`
+
+### Example API Design
+
+```yaml
+# User API
+
+## Endpoints
+
+GET    /api/v1/users          # List users
+POST   /api/v1/users          # Create user
+GET    /api/v1/users/:id      # Get user
+PUT    /api/v1/users/:id      # Update user
+DELETE /api/v1/users/:id      # Delete user
+
+## Request/Response Examples
+
+POST /api/v1/users
+Request:
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com"
+}
+
+Response (201 Created):
+{
+  "id": "123",
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+
+## Testing APIs
+
+### Step-by-Step Testing
+
+1. **Start with GET**: Test read endpoints first
+2. **Check headers**: Verify Content-Type, auth tokens
+3. **Test error cases**: Invalid inputs, missing auth
+4. **Validate responses**: Check structure and data types
+
+### Example Test Session
+
+```bash
+# 1. Test GET
+curl https://jsonplaceholder.typicode.com/posts/1
+
+# 2. Test POST
+curl -X POST https://jsonplaceholder.typicode.com/posts \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Test", "body": "Content", "userId": 1}'
+
+# 3. Test with auth (if needed)
+curl -H "Authorization: Bearer $TOKEN" \
+  https://api.example.com/protected
+```
+
+## Best Practices
+
+1. **Use environment variables** for secrets
+2. **Pretty-print JSON** with `| jq .` if available
+3. **Document response formats** clearly
+4. **Handle rate limits** - watch for 429 status
+5. **Test edge cases** - empty inputs, special characters
+
+## Security
+
+- Never hardcode API keys in commands
+- Use HTTPS for production APIs
+- Be careful with PUT/DELETE - they modify data
+- Sanitize user input before using in URLs
+"#;
+
+/// Create the nano-pdf built-in skill
+fn create_nano_pdf_skill() -> Skill {
+    let mut skill = Skill::new(
+        "nano-pdf",
+        "Read, create, and manipulate PDF documents",
+        NANO_PDF_PROMPT,
+    )
+    .with_emoji("📄")
+    .by("manta");
+
+    skill.triggers = vec![
+        SkillTrigger {
+            trigger_type: TriggerType::Command,
+            pattern: "pdf".to_string(),
+            priority: 100,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "pdf".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "read pdf".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "create pdf".to_string(),
+            priority: 85,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "extract text".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "pdf to text".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+    ];
+
+    // Note: requires_bin takes ownership, must chain before assigning to skill
+    let mut skill = skill
+        .requires_bin("pdftotext")
+        .requires_bin("pandoc");
+
+    skill.source_level = StorageLevel::Bundled;
+    skill.is_eligible = true;
+    skill.enabled = true;
+
+    skill
+}
+
+/// Nano PDF skill prompt
+const NANO_PDF_PROMPT: &str = r#"# Nano PDF - PDF Document Processing
+
+Read, create, and manipulate PDF documents using command-line tools.
+
+## When to Use
+
+Use this skill when the user asks:
+- "read this PDF"
+- "extract text from pdf"
+- "create a PDF from..."
+- "convert pdf to text"
+- "pdf to markdown"
+- "search in pdf"
+
+## Requirements
+
+Optional tools (will limit functionality if not available):
+- `pdftotext` - Part of poppler-utils (text extraction)
+- `pandoc` - Document conversion
+- `pdfinfo` - PDF metadata
+
+## Capabilities
+
+### Extract Text from PDF
+
+```bash
+# Basic text extraction
+pdftotext input.pdf output.txt
+
+# Keep layout
+pdftotext -layout input.pdf output.txt
+
+# Extract specific page range
+pdftotext -f 1 -l 5 input.pdf output.txt  # Pages 1-5
+
+# Extract to stdout
+pdftotext - input.pdf -
+
+# Raw mode (no formatting)
+pdftotext -raw input.pdf output.txt
+```
+
+### PDF Information
+
+```bash
+# Get metadata
+pdfinfo input.pdf
+
+# List form fields
+pdfinfo -meta input.pdf
+```
+
+### Convert PDF to Other Formats
+
+```bash
+# PDF to HTML
+pdftohtml input.pdf output.html
+
+# PDF to images (one per page)
+pdftoppm input.pdf output -png
+
+# Using pandoc for complex conversions
+pandoc input.pdf -t markdown -o output.md
+```
+
+### Create PDF from Other Formats
+
+```bash
+# Markdown to PDF (via pandoc)
+pandoc input.md -o output.pdf
+
+# HTML to PDF
+pandoc input.html -o output.pdf
+
+# Text to PDF
+enscript -p - input.txt | ps2pdf - output.pdf
+```
+
+### Merge and Split PDFs
+
+```bash
+# Merge PDFs (requires pdftk or qpdf)
+pdftk file1.pdf file2.pdf cat output merged.pdf
+
+# Or using qpdf
+qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
+
+# Split PDF (extract specific pages)
+pdftk input.pdf cat 1-5 output first_five.pdf
+```
+
+## Reading PDF Content
+
+When a user asks to read a PDF:
+
+1. **Check if file exists** using file tools
+2. **Extract text** using `pdftotext`
+3. **Summarize** the content for the user
+4. **Answer questions** about the content
+
+### Example Workflow
+
+User: "Read this PDF document.pdf"
+
+Steps:
+1. Verify file exists
+2. Extract text: `pdftotext document.pdf -`
+3. Present summary with key points
+4. Offer to search for specific terms
+
+## Creating PDFs
+
+### From Markdown
+
+```bash
+# Simple approach
+pandoc input.md -o output.pdf
+
+# With styling
+pandoc input.md -o output.pdf --pdf-engine=xelatex -V geometry:margin=1in
+```
+
+### From Code/Text Output
+
+```bash
+# Pretty-print code to PDF
+enscript -p - -Ejavascript code.js | ps2pdf - code.pdf
+```
+
+## Best Practices
+
+1. **Check tool availability** before using (pdftotext, pandoc)
+2. **Handle large PDFs** - consider page ranges for big documents
+3. **Preserve formatting** when needed (-layout flag)
+4. **Respect scanned PDFs** - OCR may be needed for image-based PDFs
+5. **Clean up** temporary files after processing
+
+## Limitations
+
+- `pdftotext` works best on text-based PDFs
+- Image/scanned PDFs require OCR (not supported natively)
+- Complex layouts may lose formatting
+- Password-protected PDFs cannot be processed
+
+## Tips
+
+- Use `-layout` to preserve columns and tables
+- Pipe to `head` or `tail` for preview: `pdftotext -layout doc.pdf - | head -50`
+- Check page count first with `pdfinfo` for large documents
+- For code/docs, consider Markdown → PDF via pandoc
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1180,7 +1792,10 @@ mod tests {
         assert!(skills.contains_key("weather"));
         assert!(skills.contains_key("tmux"));
         assert!(skills.contains_key("github"));
-        assert_eq!(skills.len(), 8);
+        assert!(skills.contains_key("agent-browser"));
+        assert!(skills.contains_key("api-gateway"));
+        assert!(skills.contains_key("nano-pdf"));
+        assert_eq!(skills.len(), 11);
     }
 
     #[test]
@@ -1275,5 +1890,43 @@ mod tests {
         assert!(skill.is_eligible);
         assert!(skill.enabled);
         assert!(!skill.triggers.is_empty());
+    }
+
+    #[test]
+    fn test_agent_browser_properties() {
+        let skills = get_builtin_skills();
+        let skill = skills.get("agent-browser").unwrap();
+
+        assert_eq!(skill.name, "agent-browser");
+        assert_eq!(skill.metadata.emoji, "🌐");
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert!(!skill.triggers.is_empty());
+    }
+
+    #[test]
+    fn test_api_gateway_properties() {
+        let skills = get_builtin_skills();
+        let skill = skills.get("api-gateway").unwrap();
+
+        assert_eq!(skill.name, "api-gateway");
+        assert_eq!(skill.metadata.emoji, "🚪");
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert!(!skill.triggers.is_empty());
+    }
+
+    #[test]
+    fn test_nano_pdf_properties() {
+        let skills = get_builtin_skills();
+        let skill = skills.get("nano-pdf").unwrap();
+
+        assert_eq!(skill.name, "nano-pdf");
+        assert_eq!(skill.metadata.emoji, "📄");
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert!(!skill.triggers.is_empty());
+        // Nano PDF requires pdftotext and pandoc
+        assert!(skill.metadata.requires.bins.contains(&"pdftotext".to_string()));
     }
 }
