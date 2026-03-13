@@ -13,6 +13,17 @@ use tracing::{debug, info, warn};
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
 
+/// Expand tilde (~) to home directory
+fn expand_home(path: &str) -> PathBuf {
+    if path.starts_with("~/") || path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            let rest = &path[1..]; // Remove the leading ~
+            return home.join(rest.trim_start_matches('/'));
+        }
+    }
+    PathBuf::from(path)
+}
+
 /// File read tool
 #[derive(Debug, Default)]
 pub struct FileReadTool;
@@ -81,7 +92,7 @@ impl Tool for FileReadTool {
             .as_str()
             .ok_or_else(|| crate::error::MantaError::Validation("Missing 'path' argument".to_string()))?;
 
-        let path = PathBuf::from(path_str);
+        let path = expand_home(path_str);
 
         // Validate path is within allowed directories
         if !context.is_path_allowed(&path) {
@@ -218,7 +229,7 @@ impl Tool for FileWriteTool {
             .as_str()
             .ok_or_else(|| crate::error::MantaError::Validation("Missing 'content' argument".to_string()))?;
 
-        let path = PathBuf::from(path_str);
+        let path = expand_home(path_str);
 
         // Validate path is within allowed directories
         if !context.is_path_allowed(&path) {
@@ -323,7 +334,7 @@ impl Tool for FileEditTool {
             .as_str()
             .ok_or_else(|| crate::error::MantaError::Validation("Missing 'new_string' argument".to_string()))?;
 
-        let path = PathBuf::from(path_str);
+        let path = expand_home(path_str);
 
         // Validate path
         if !context.is_path_allowed(&path) {
@@ -426,7 +437,7 @@ impl Tool for GlobTool {
 
         let base_path = args["path"]
             .as_str()
-            .map(PathBuf::from)
+            .map(expand_home)
             .unwrap_or_else(|| context.working_directory.clone());
 
         if !context.is_path_allowed(&base_path) {
