@@ -1,0 +1,10 @@
+{
+  "name": "manta",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:web": "cd web && pnpm build",
+    "build:web:logo": "cd web && pnpm build:logo && pnpm build",
+    "dev:web": "cd web && pnpm dev"
+  }
+}

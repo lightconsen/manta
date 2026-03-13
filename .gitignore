@@ -32,3 +32,8 @@ logs/
 config.yaml
 config.json
 !config.example.yaml
+
+# Web (Node.js/pnpm)
+web/node_modules/
+web/dist/
+web/.vite/
