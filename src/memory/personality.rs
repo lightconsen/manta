@@ -1,10 +1,11 @@
-//! Dual Memory Architecture for Manta
+//! OpenClaw-Style Memory Architecture for Manta
 //!
-//! This module implements a dual memory system inspired by Hermes-Agent:
-//! - Procedural Memory: Environment facts, tool quirks, conventions
-//! - User Model: Preferences, communication style, habits
+//! This module implements an OpenClaw-compatible memory system:
+//! - SOUL.md: Core personality, values, behavioral guidelines
+//! - IDENTITY.md: Agent identity, name, role definition
+//! - BOOTSTRAP.md: Initial startup behavior, first-run logic
 //!
-//! Both are stored as markdown files with bounded size (default 4KB each).
+//! All stored as markdown files with bounded size (default 4KB each).
 
 use crate::error::MantaError;
 use std::path::PathBuf;
@@ -14,47 +15,47 @@ use tracing::{debug, info, warn};
 /// Default maximum size for memory files (4KB)
 pub const DEFAULT_MAX_MEMORY_SIZE: usize = 4096;
 
-/// Types of dual memory
+/// Types of OpenClaw-style memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DualMemoryType {
-    /// Procedural memory - environment facts, tool quirks, conventions
-    Procedural,
-    /// User model - preferences, communication style, habits
-    UserModel,
+pub enum MemoryType {
+    /// Soul memory - core personality, values, behavioral guidelines
+    Soul,
+    /// Identity memory - agent identity, name, role definition
+    Identity,
+    /// Bootstrap memory - initial startup behavior, first-run logic
+    Bootstrap,
 }
 
-impl DualMemoryType {
+impl MemoryType {
     /// Get the filename for this memory type
     pub fn filename(&self) -> &'static str {
         match self {
-            DualMemoryType::Procedural => "agent.md",
-            DualMemoryType::UserModel => "user.md",
+            MemoryType::Soul => "SOUL.md",
+            MemoryType::Identity => "IDENTITY.md",
+            MemoryType::Bootstrap => "BOOTSTRAP.md",
         }
     }
 
     /// Get the description of this memory type
     pub fn description(&self) -> &'static str {
         match self {
-            DualMemoryType::Procedural => {
-                "Environment facts, tool quirks, conventions, and learned behaviors"
-            }
-            DualMemoryType::UserModel => {
-                "User preferences, communication style, habits, and personal information"
-            }
+            MemoryType::Soul => "Core personality, values, behavioral guidelines, and character traits",
+            MemoryType::Identity => "Agent identity, name, role definition, and self-concept",
+            MemoryType::Bootstrap => "Initial startup behavior, first-run logic, and onboarding",
         }
     }
 }
 
-/// Dual memory storage manager
+/// Personality memory storage manager
 #[derive(Debug, Clone)]
-pub struct DualMemory {
+pub struct PersonalityMemory {
     /// Base directory for memory files
     base_dir: PathBuf,
     /// Maximum size for each memory file
     max_size: usize,
 }
 
-impl DualMemory {
+impl PersonalityMemory {
     /// Create a new dual memory manager with default location
     pub async fn new() -> crate::Result<Self> {
         let base_dir = dirs::config_dir()
@@ -88,12 +89,12 @@ impl DualMemory {
     }
 
     /// Get the path for a specific memory type
-    fn memory_path(&self, mem_type: DualMemoryType) -> PathBuf {
+    fn memory_path(&self, mem_type: MemoryType) -> PathBuf {
         self.base_dir.join(mem_type.filename())
     }
 
     /// Read memory content
-    pub async fn read(&self, mem_type: DualMemoryType) -> crate::Result<String> {
+    pub async fn read(&self, mem_type: MemoryType) -> crate::Result<String> {
         let path = self.memory_path(mem_type);
 
         if !path.exists() {
@@ -113,7 +114,7 @@ impl DualMemory {
     }
 
     /// Write memory content (with size limit)
-    pub async fn write(&self, mem_type: DualMemoryType, content: &str) -> crate::Result<()> {
+    pub async fn write(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         let _path = self.memory_path(mem_type);
 
         // Check size limit
@@ -140,7 +141,7 @@ impl DualMemory {
     }
 
     /// Write without checks (internal use)
-    async fn write_unchecked(&self, mem_type: DualMemoryType, content: &str) -> crate::Result<()> {
+    async fn write_unchecked(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         let path = self.memory_path(mem_type);
 
         fs::write(&path, content).await.map_err(|e| {
@@ -155,56 +156,53 @@ impl DualMemory {
     }
 
     /// Append to memory content (with size limit)
-    pub async fn append(&self, mem_type: DualMemoryType, addition: &str) -> crate::Result<()> {
+    pub async fn append(&self, mem_type: MemoryType, addition: &str) -> crate::Result<()> {
         let current = self.read(mem_type).await?;
         let new_content = format!("{}\n{}", current, addition);
         self.write(mem_type, &new_content).await
     }
 
     /// Check if memory exists
-    pub async fn exists(&self, mem_type: DualMemoryType) -> bool {
+    pub async fn exists(&self, mem_type: MemoryType) -> bool {
         self.memory_path(mem_type).exists()
     }
 
     /// Get memory size in bytes
-    pub async fn size(&self, mem_type: DualMemoryType) -> crate::Result<usize> {
+    pub async fn size(&self, mem_type: MemoryType) -> crate::Result<usize> {
         let content = self.read(mem_type).await?;
         Ok(content.len())
     }
 
     /// Clear memory
-    pub async fn clear(&self, mem_type: DualMemoryType) -> crate::Result<()> {
+    pub async fn clear(&self, mem_type: MemoryType) -> crate::Result<()> {
         self.write_unchecked(mem_type, "").await
     }
 
     /// Get memory content formatted for system prompt
     pub async fn format_for_prompt(&self) -> crate::Result<String> {
-        let procedural = self.read(DualMemoryType::Procedural).await?;
-        let user_model = self.read(DualMemoryType::UserModel).await?;
+        // OpenClaw-style personality files (loaded in priority order)
+        let identity = self.read(MemoryType::Identity).await?;
+        let soul = self.read(MemoryType::Soul).await?;
+        let bootstrap = self.read(MemoryType::Bootstrap).await?;
 
         let mut sections = Vec::new();
 
-        if !procedural.is_empty() {
-            sections.push(format!(
-                "## Procedural Memory\n{}\n",
-                procedural.trim()
-            ));
+        if !identity.is_empty() {
+            sections.push(format!("## Identity\n{}\n", identity.trim()));
         }
 
-        if !user_model.is_empty() {
-            sections.push(format!(
-                "## User Model\n{}\n",
-                user_model.trim()
-            ));
+        if !soul.is_empty() {
+            sections.push(format!("## Soul\n{}\n", soul.trim()));
+        }
+
+        if !bootstrap.is_empty() {
+            sections.push(format!("## Bootstrap\n{}\n", bootstrap.trim()));
         }
 
         if sections.is_empty() {
             Ok(String::new())
         } else {
-            Ok(format!(
-                "\n### Learned Context\n{}\n",
-                sections.join("\n")
-            ))
+            Ok(format!("\n### Learned Context\n{}\n", sections.join("\n")))
         }
     }
 
@@ -231,90 +229,125 @@ impl DualMemory {
 
     /// Initialize default memory files if they don't exist
     pub async fn initialize_defaults(&self) -> crate::Result<()> {
-        // Procedural memory default
-        if !self.exists(DualMemoryType::Procedural).await {
-            let default_procedural = r#"# Procedural Memory
+        // IDENTITY.md - Agent identity (OpenClaw-style)
+        if !self.exists(MemoryType::Identity).await {
+            let default_identity = r#"# IDENTITY
 
-This file contains learned facts about the environment and tools.
+Agent identity and self-concept.
 
-## Shell Commands
-- Use `ls -la` for detailed directory listings
-- Use `find` with `-name` for filename searches
-- Prefer `grep -r` for recursive text search
+## Name
+Manta
 
-## File Operations
-- Always verify file existence before reading
-- Use atomic writes for critical files
-- Respect .gitignore patterns
+## Role
+AI Assistant with software engineering expertise
+
+## Capabilities
+- Code analysis and generation
+- File and system operations
+- Tool use and orchestration
+- Memory and learning
+
+## Purpose
+Help users accomplish tasks efficiently while respecting their preferences and constraints.
 "#;
-            self.write(DualMemoryType::Procedural, default_procedural)
-                .await?;
+            self.write(MemoryType::Identity, default_identity).await?;
         }
 
-        // User model default
-        if !self.exists(DualMemoryType::UserModel).await {
-            let default_user = r#"# User Model
+        // SOUL.md - Core personality (OpenClaw-style)
+        if !self.exists(MemoryType::Soul).await {
+            let default_soul = r#"# SOUL
 
-This file contains information about the user's preferences.
+Core personality, values, and behavioral guidelines.
+
+## Values
+- Be helpful, harmless, and honest
+- Respect user autonomy and privacy
+- Prioritize clarity over cleverness
 
 ## Communication Style
-- Preference: concise and direct
-- Technical level: advanced
+- Clear and concise explanations
+- Ask clarifying questions when uncertain
+- Admit limitations openly
 
-## Common Tasks
-- Code review and analysis
-- File and system management
-- Information retrieval
+## Behavioral Guidelines
+- Always confirm destructive operations
+- Provide alternatives when saying no
+- Learn from user corrections
 "#;
-            self.write(DualMemoryType::UserModel, default_user).await?;
+            self.write(MemoryType::Soul, default_soul).await?;
+        }
+
+        // BOOTSTRAP.md - Initial behavior (OpenClaw-style)
+        if !self.exists(MemoryType::Bootstrap).await {
+            let default_bootstrap = r#"# BOOTSTRAP
+
+Initial startup behavior and first-run logic.
+
+## Greeting Style
+- Friendly but professional
+- Brief status summary when relevant
+- Offer assistance without being pushy
+
+## First Run Behavior
+- Introduce capabilities concisely
+- Ask about user preferences
+- Set up initial context
+
+## Session Start
+- Review recent context if available
+- Confirm current task or goals
+- Check for pending items
+"#;
+            self.write(MemoryType::Bootstrap, default_bootstrap).await?;
         }
 
         Ok(())
     }
 }
 
-/// Tool for managing dual memory
+/// Tool for managing personality memory
 pub mod tool {
     use super::*;
     use crate::tools::{Tool, ToolContext, ToolExecutionResult};
     use async_trait::async_trait;
     use serde_json::json;
 
-    /// Tool for reading and writing dual memory
+    /// Tool for reading and writing personality memory
     #[derive(Debug)]
-    pub struct DualMemoryTool {
-        memory: DualMemory,
+    pub struct PersonalityMemoryTool {
+        memory: PersonalityMemory,
     }
 
-    impl DualMemoryTool {
-        /// Create a new dual memory tool
+    impl PersonalityMemoryTool {
+        /// Create a new personality memory tool
         pub async fn new() -> crate::Result<Self> {
-            let memory = DualMemory::new().await?;
+            let memory = PersonalityMemory::new().await?;
             Ok(Self { memory })
         }
 
         /// Create with custom directory
         pub async fn with_dir(dir: PathBuf) -> crate::Result<Self> {
-            let memory = DualMemory::with_dir(dir).await?;
+            let memory = PersonalityMemory::with_dir(dir).await?;
             Ok(Self { memory })
         }
     }
 
     #[async_trait]
-    impl Tool for DualMemoryTool {
+    impl Tool for PersonalityMemoryTool {
         fn name(&self) -> &str {
-            "dual_memory"
+            "personality_memory"
         }
 
         fn description(&self) -> &str {
-            r#"Read and write to the agent's dual memory system.
+            r#"Read and write to the agent's OpenClaw-style memory system.
 
-This tool manages two types of persistent memory:
-- procedural: Environment facts, tool quirks, conventions
-- user_model: User preferences, communication style, habits
+This tool manages personality and identity memory files:
+- identity: Agent identity, name, role definition (IDENTITY.md)
+- soul: Core personality, values, behavioral guidelines (SOUL.md)
+- bootstrap: Initial startup behavior, first-run logic (BOOTSTRAP.md)
 
-Use this to remember important information across sessions.
-The agent can read from memory at startup and write updates as it learns."#
+Use this to define agent personality and behavior across sessions.
+These files are loaded into the system prompt at startup."#
         }
 
         fn parameters_schema(&self) -> serde_json::Value {
@@ -328,8 +361,8 @@ The agent can read from memory at startup and write updates as it learns."#
                     },
                     "memory_type": {
                         "type": "string",
-                        "enum": ["procedural", "user_model"],
-                        "description": "Which memory to access"
+                        "enum": ["identity", "soul", "bootstrap"],
+                        "description": "Which memory file to access"
                     },
                     "content": {
                         "type": "string",
@@ -354,8 +387,9 @@ The agent can read from memory at startup and write updates as it learns."#
                 .ok_or_else(|| MantaError::Validation("memory_type is required".to_string()))?;
 
             let mem_type = match mem_type_str {
-                "procedural" => DualMemoryType::Procedural,
-                "user_model" => DualMemoryType::UserModel,
+                "identity" => MemoryType::Identity,
+                "soul" => MemoryType::Soul,
+                "bootstrap" => MemoryType::Bootstrap,
                 _ => {
                     return Err(MantaError::Validation(format!(
                         "Invalid memory_type: {}",
@@ -435,59 +469,59 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_dual_memory_read_write() {
+    async fn test_personality_memory_read_write() {
         let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let memory = DualMemory::with_dir(temp_dir.clone())
+        let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap();
 
-        // Write to procedural memory
+        // Write to identity memory
         memory
-            .write(DualMemoryType::Procedural, "Test content")
+            .write(MemoryType::Identity, "Test content")
             .await
             .unwrap();
 
         // Read it back
-        let content = memory.read(DualMemoryType::Procedural).await.unwrap();
+        let content = memory.read(MemoryType::Identity).await.unwrap();
         assert_eq!(content, "Test content");
     }
 
     #[tokio::test]
-    async fn test_dual_memory_size_limit() {
+    async fn test_personality_memory_size_limit() {
         let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let memory = DualMemory::with_dir(temp_dir.clone())
+        let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap()
             .with_max_size(10);
 
         // Write content larger than limit
         memory
-            .write(DualMemoryType::Procedural, "This is a long content")
+            .write(MemoryType::Soul, "This is a long content")
             .await
             .unwrap();
 
         // Should be truncated
-        let content = memory.read(DualMemoryType::Procedural).await.unwrap();
+        let content = memory.read(MemoryType::Soul).await.unwrap();
         assert_eq!(content.len(), 10);
     }
 
     #[tokio::test]
-    async fn test_dual_memory_exists() {
+    async fn test_personality_memory_exists() {
         let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let memory = DualMemory::with_dir(temp_dir.clone())
+        let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap();
 
-        assert!(!memory.exists(DualMemoryType::Procedural).await);
+        assert!(!memory.exists(MemoryType::Bootstrap).await);
 
         memory
-            .write(DualMemoryType::Procedural, "content")
+            .write(MemoryType::Bootstrap, "content")
             .await
             .unwrap();
 
-        assert!(memory.exists(DualMemoryType::Procedural).await);
+        assert!(memory.exists(MemoryType::Bootstrap).await);
     }
 }
