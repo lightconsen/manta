@@ -44,6 +44,9 @@ pub fn get_builtin_skills() -> HashMap<String, Skill> {
     let nano_pdf_skill = create_nano_pdf_skill();
     skills.insert(nano_pdf_skill.name.clone(), nano_pdf_skill);
 
+    let self_improving_agent_skill = create_self_improving_agent_skill();
+    skills.insert(self_improving_agent_skill.name.clone(), self_improving_agent_skill);
+
     skills
 }
 
@@ -1777,6 +1780,312 @@ enscript -p - -Ejavascript code.js | ps2pdf - code.pdf
 - For code/docs, consider Markdown → PDF via pandoc
 "#;
 
+/// Create the self-improving-agent built-in skill
+fn create_self_improving_agent_skill() -> Skill {
+    let mut skill = Skill::new(
+        "self-improving-agent",
+        "Analyze and improve Manta's own performance and configuration",
+        SELF_IMPROVING_AGENT_PROMPT,
+    )
+    .with_emoji("🔄")
+    .by("manta");
+
+    skill.triggers = vec![
+        SkillTrigger {
+            trigger_type: TriggerType::Command,
+            pattern: "self-improve".to_string(),
+            priority: 100,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "improve yourself".to_string(),
+            priority: 95,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "self improve".to_string(),
+            priority: 95,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "analyze performance".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "optimize manta".to_string(),
+            priority: 90,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "fix your config".to_string(),
+            priority: 85,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "debug yourself".to_string(),
+            priority: 85,
+            user_invocable: true,
+            model_invocable: true,
+        },
+        SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "system check".to_string(),
+            priority: 80,
+            user_invocable: true,
+            model_invocable: true,
+        },
+    ];
+
+    skill.source_level = StorageLevel::Bundled;
+    skill.is_eligible = true;
+    skill.enabled = true;
+
+    skill
+}
+
+/// Self-Improving Agent skill prompt
+const SELF_IMPROVING_AGENT_PROMPT: &str = r#"# Self-Improving Agent - System Analysis & Optimization
+
+Analyze Manta's performance, configuration, and behavior to suggest and implement improvements.
+
+## When to Use
+
+Use this skill when the user asks:
+- "improve yourself"
+- "analyze your performance"
+- "optimize manta"
+- "fix your config"
+- "debug yourself"
+- "system check"
+- "self improve"
+
+## Capabilities
+
+### 1. Configuration Analysis
+
+Check Manta's configuration files for issues:
+- `~/.config/manta/config.yaml` - Main config
+- `~/.config/manta/skills/` - User skills
+- `./.manta/skills/` - Project skills
+
+### 2. Log Analysis
+
+Analyze recent logs to identify issues:
+```bash
+# View recent logs (if available)
+tail -n 100 ~/.local/share/manta/logs/manta.log
+```
+
+### 3. Performance Metrics
+
+Check system resources:
+```bash
+# Memory usage
+ps aux | grep manta
+
+# Disk space
+df -h ~/.config/manta
+
+# Large files in manta directories
+find ~/.config/manta -type f -size +10M
+```
+
+### 4. Skill Health Check
+
+Verify installed skills:
+- Check for broken skill files
+- Identify duplicate skills
+- Find skills with missing requirements
+- List unused skills
+
+## Analysis Workflow
+
+### Step 1: Gather Information
+
+When user triggers self-improvement:
+1. Check current configuration
+2. List installed skills
+3. Check for errors in recent sessions
+4. Analyze resource usage
+
+### Step 2: Identify Issues
+
+Look for common problems:
+- **Config Issues**: Missing API keys, invalid settings
+- **Skill Issues**: Ineligible skills, missing binaries
+- **Performance**: Slow response times, high memory usage
+- **Storage**: Old logs, temporary files, duplicates
+
+### Step 3: Generate Recommendations
+
+Create actionable suggestions:
+```
+🔧 Self-Improvement Report
+
+📊 Current State:
+- Skills loaded: X
+- Eligible skills: Y
+- Config file: OK/Missing/Issues
+
+⚠️ Issues Found:
+1. [Issue description]
+   → [Suggested fix]
+
+2. [Issue description]
+   → [Suggested fix]
+
+💡 Recommendations:
+1. [Recommendation]
+2. [Recommendation]
+```
+
+### Step 4: Apply Fixes (with permission)
+
+Ask user before making changes:
+- "Should I clean up old log files?"
+- "Can I disable the broken X skill?"
+- "Shall I update your config with Y?"
+
+## Common Improvements
+
+### Cleanup Tasks
+
+```bash
+# Clean old logs (>30 days)
+find ~/.local/share/manta/logs -name "*.log" -mtime +30 -delete
+
+# Remove empty skill directories
+find ~/.config/manta/skills -type d -empty -delete
+
+# Clear temporary files
+rm -rf /tmp/manta-*
+```
+
+### Config Optimization
+
+Suggest optimal settings based on usage:
+- Model selection for hardware
+- Timeout adjustments
+- Token limits
+- Provider preferences
+
+### Skill Management
+
+- Disable unused skills
+- Update outdated skills
+- Fix skill requirements
+- Consolidate duplicate functionality
+
+## Safety Guidelines
+
+1. **Always ask permission** before modifying files
+2. **Backup before changes** - suggest creating backups
+3. **Explain the rationale** - why is this change needed?
+4. **Test after changes** - verify fixes work
+5. **Respect user preferences** - honor explicit settings
+
+## Output Format
+
+Present findings clearly:
+
+```
+🔄 Self-Improvement Analysis
+
+📊 System Health: [Good/Warning/Critical]
+
+🔍 Analysis Results:
+[Detailed findings]
+
+⚡ Quick Wins:
+1. [Easy improvement]
+2. [Easy improvement]
+
+🔧 Recommended Actions:
+1. [Action with explanation]
+   Run: [command if applicable]
+
+2. [Action with explanation]
+
+📝 Config Suggestions:
+```yaml
+# Add to ~/.config/manta/config.yaml
+setting: value
+```
+
+Would you like me to apply any of these fixes?
+```
+
+## Self-Monitoring Commands
+
+Useful commands for self-analysis:
+
+```bash
+# Check if manta is running
+pgrep -f manta
+
+# Memory usage
+ps -o pid,rss,vsz,comm -p $(pgrep -f manta)
+
+# Open files
+lsof -p $(pgrep -f manta) 2>/dev/null | head -20
+
+# Config syntax check
+cat ~/.config/manta/config.yaml | head -20
+
+# Disk usage of manta directories
+du -sh ~/.config/manta ~/.local/share/manta ~/.cache/manta 2>/dev/null
+```
+
+## Limitations
+
+- Cannot restart the daemon process itself
+- Cannot modify compiled code
+- Cannot access external APIs without keys
+- Changes require user confirmation
+
+## Example Session
+
+**User**: "improve yourself"
+
+**Manta**:
+```
+🔄 Self-Improvement Analysis
+
+📊 System Health: Good
+
+📋 Summary:
+- 12 built-in skills active
+- 3 user skills loaded
+- Config file: OK
+- Memory usage: Normal
+
+💡 Recommendations:
+1. Found 3 skills with missing binaries (nano-pdf)
+   → Install pdftotext and pandoc for full PDF support
+
+2. Log files taking 50MB
+   → Run cleanup to remove logs older than 30 days?
+
+3. No API key configured for web search
+   → Add SEARCH_API_KEY to config for better results
+
+Would you like me to help with any of these?
+```
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1795,7 +2104,8 @@ mod tests {
         assert!(skills.contains_key("agent-browser"));
         assert!(skills.contains_key("api-gateway"));
         assert!(skills.contains_key("nano-pdf"));
-        assert_eq!(skills.len(), 11);
+        assert!(skills.contains_key("self-improving-agent"));
+        assert_eq!(skills.len(), 12);
     }
 
     #[test]
@@ -1928,5 +2238,17 @@ mod tests {
         assert!(!skill.triggers.is_empty());
         // Nano PDF requires pdftotext and pandoc
         assert!(skill.metadata.requires.bins.contains(&"pdftotext".to_string()));
+    }
+
+    #[test]
+    fn test_self_improving_agent_properties() {
+        let skills = get_builtin_skills();
+        let skill = skills.get("self-improving-agent").unwrap();
+
+        assert_eq!(skill.name, "self-improving-agent");
+        assert_eq!(skill.metadata.emoji, "🔄");
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert!(!skill.triggers.is_empty());
     }
 }
