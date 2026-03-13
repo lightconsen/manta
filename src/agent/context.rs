@@ -94,24 +94,73 @@ impl Context {
     }
 
     /// Prune messages to fit within token limit
+    /// Note: This preserves tool call pairs (assistant message with tool_use + tool result)
     fn prune_if_needed(&mut self) {
+        // Collect tool call IDs that have corresponding tool results
+        // These must not be pruned or the API will error
+        let pending_tool_call_ids: std::collections::HashSet<String> = self
+            .messages
+            .iter()
+            .filter(|m| m.role == crate::providers::Role::Tool)
+            .filter_map(|m| m.tool_call_id.clone())
+            .collect();
+
         // Keep pruning until we're under the limit
         while self.token_count() > self.max_tokens && self.messages.len() > 1 {
-            // Remove oldest non-system message (but keep the most recent user message)
-            if self.messages.len() > 2 {
-                let removed = self.messages.remove(0);
+            // Find the oldest message that can be safely pruned
+            let prune_index = self.find_prunable_message(&pending_tool_call_ids);
+
+            if let Some(index) = prune_index {
+                let removed = self.messages.remove(index);
                 self.token_count = self.token_count.saturating_sub(removed.content.len() / 4);
             } else {
-                // If only 1-2 messages, just clear all but the last
-                let last = self.messages.pop();
-                self.messages.clear();
-                if let Some(msg) = last {
-                    self.messages.push(msg);
-                }
-                self.recalculate_tokens();
+                // Can't prune anything safely, break to avoid infinite loop
                 break;
             }
         }
+    }
+
+    /// Find the index of a message that can be safely pruned
+    /// Returns None if no message can be pruned (all are protected)
+    fn find_prunable_message(
+        &self,
+        pending_tool_call_ids: &std::collections::HashSet<String>,
+    ) -> Option<usize> {
+        // Try to find the oldest message that is not a protected tool call pair
+        for (index, msg) in self.messages.iter().enumerate() {
+            // Never prune the last message
+            if index == self.messages.len() - 1 {
+                return None;
+            }
+
+            // Check if this is an assistant message with tool calls
+            if msg.role == crate::providers::Role::Assistant {
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    // Check if any of these tool calls have pending results
+                    let has_pending_results = tool_calls
+                        .iter()
+                        .any(|tc| pending_tool_call_ids.contains(&tc.id));
+
+                    if has_pending_results {
+                        // Can't prune this message - it has pending tool results
+                        continue;
+                    }
+                }
+            }
+
+            // Check if this is a tool result message
+            if msg.role == crate::providers::Role::Tool {
+                // Can't prune tool results without also pruning the assistant message
+                // that made the call (which we check above). For now, keep tool results.
+                // A more sophisticated approach would prune both together.
+                continue;
+            }
+
+            // This message can be pruned
+            return Some(index);
+        }
+
+        None
     }
 
     /// Recalculate token count from scratch
