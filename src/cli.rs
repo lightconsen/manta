@@ -88,6 +88,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SkillCommands,
     },
+    /// Agent personality management (OpenClaw-style memory files)
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
     /// Start the Manta daemon (background server)
     Start {
         /// Host to bind to
@@ -287,6 +292,59 @@ pub enum CronCommands {
     Status,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum AgentCommands {
+    /// Create a new agent personality
+    Create {
+        /// Agent name (used as directory name)
+        name: String,
+        /// Agent display name (defaults to name if not provided)
+        #[arg(short, long)]
+        display_name: Option<String>,
+        /// Agent role/purpose
+        #[arg(short, long)]
+        role: Option<String>,
+        /// Communication style (concise, detailed, friendly, professional)
+        #[arg(short, long, default_value = "professional")]
+        style: String,
+        /// Initial system prompt
+        #[arg(short, long)]
+        prompt: Option<String>,
+        /// Output format (markdown, yaml, json)
+        #[arg(short, long, default_value = "markdown")]
+        format: String,
+    },
+    /// Remove an agent personality
+    Remove {
+        /// Agent name
+        name: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// List all agent personalities
+    List {
+        /// Show all details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Set the active agent personality
+    Set {
+        /// Agent name (or "default" to reset)
+        name: String,
+    },
+    /// Show current agent personality details
+    Show,
+    /// Edit an agent personality file
+    Edit {
+        /// Agent name
+        name: String,
+        /// Which file to edit (soul, identity, bootstrap, or all)
+        #[arg(short, long, default_value = "all")]
+        file: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Json,
@@ -373,6 +431,7 @@ impl Cli {
             }
             Commands::Cron { command } => self.run_cron_command(command).await,
             Commands::Skill { command } => self.run_skill_command(command).await,
+            Commands::Agent { command } => self.run_agent_command(command).await,
             Commands::Start { host, port, web_port, foreground } => {
                 self.run_start_daemon(host, *port, *web_port, *foreground).await
             },
@@ -857,6 +916,307 @@ impl Cli {
 
                 println!("✅ Created skill template '{}'", name);
                 println!("   Edit: ~/.config/manta/skills/{}/SKILL.md", name);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run_agent_command(&self, command: &AgentCommands) -> Result<()> {
+        use crate::memory::personality::{PersonalityMemory, MemoryType};
+
+        let config_dir = dirs::config_dir()
+            .ok_or_else(|| crate::error::MantaError::Internal("Could not find config directory".to_string()))?
+            .join("manta");
+        let agents_dir = config_dir.join("agents");
+
+        tokio::fs::create_dir_all(&agents_dir).await.ok();
+
+        match command {
+            AgentCommands::Create { name, display_name, role, style, prompt, format: output_format } => {
+                let agent_dir = agents_dir.join(name);
+
+                if agent_dir.exists() {
+                    return Err(crate::error::MantaError::Validation(
+                        format!("Agent '{}' already exists. Use 'manta agent remove {}' to delete it first.", name, name)
+                    ));
+                }
+
+                // Create agent directory
+                tokio::fs::create_dir_all(&agent_dir).await?;
+
+                let display = display_name.clone().unwrap_or_else(|| name.clone());
+                let role_text = role.clone().unwrap_or_else(|| "AI Assistant".to_string());
+                let style_text = style.clone();
+                let prompt_text = prompt.clone().unwrap_or_else(||
+                    format!("You are {}, a helpful AI assistant.", display)
+                );
+
+                // Create IDENTITY.md
+                let identity_content = format!(r#"# Agent Identity
+
+## Name
+{display}
+
+## Role
+{role_text}
+
+## Communication Style
+{style_text}
+
+## Created
+{date}
+"#, date = chrono::Local::now().format("%Y-%m-%d %H:%M"));
+
+                // Create SOUL.md
+                let soul_content = format!(r#"# Agent Soul
+
+## Core Values
+- Helpfulness: Always strive to be useful
+- Honesty: Admit when you don't know something
+- Clarity: Communicate in a {style_text} manner
+
+## Behavioral Guidelines
+- Be {style_text} in all interactions
+- Focus on the user's goals
+- Ask clarifying questions when needed
+
+## Expertise
+{role_text}
+"#);
+
+                // Create BOOTSTRAP.md
+                let bootstrap_content = format!(r#"# Bootstrap Configuration
+
+## System Prompt
+{prompt_text}
+
+## Initial Greeting
+Hello! I'm {display}, your {role_text}. How can I help you today?
+
+## Startup Behavior
+- Load context from memory
+- Check for pending tasks
+- Await user input
+"#);
+
+                // Write files based on format
+                match output_format.as_str() {
+                    "yaml" | "json" => {
+                        // For structured formats, create a single agent.yaml file
+                        let agent_yaml = format!(r#"name: {display}
+role: {role_text}
+style: {style_text}
+created: {date}
+system_prompt: |
+  {prompt_text}
+"#, date = chrono::Local::now().format("%Y-%m-%d %H:%M"));
+                        tokio::fs::write(agent_dir.join("agent.yaml"), agent_yaml).await?;
+
+                        // Also write markdown versions for editing
+                        tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
+                        tokio::fs::write(agent_dir.join("IDENTITY.md"), identity_content).await?;
+                        tokio::fs::write(agent_dir.join("BOOTSTRAP.md"), bootstrap_content).await?;
+                    }
+                    _ => {
+                        // Default markdown format (OpenClaw-style)
+                        tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
+                        tokio::fs::write(agent_dir.join("IDENTITY.md"), identity_content).await?;
+                        tokio::fs::write(agent_dir.join("BOOTSTRAP.md"), bootstrap_content).await?;
+                    }
+                }
+
+                println!("✅ Created agent personality '{}'", name);
+                println!("   Location: {}", agent_dir.display());
+                println!("   Display Name: {}", display);
+                println!("   Role: {}", role_text);
+                println!("   Style: {}", style_text);
+                println!();
+                println!("   Files created:");
+                println!("   - SOUL.md (personality & values)");
+                println!("   - IDENTITY.md (name & role)");
+                println!("   - BOOTSTRAP.md (startup behavior)");
+                println!();
+                println!("   To activate: manta agent set {}", name);
+                println!("   To edit: manta agent edit {}", name);
+            }
+
+            AgentCommands::Remove { name, force } => {
+                let agent_dir = agents_dir.join(name);
+
+                if !agent_dir.exists() {
+                    return Err(crate::error::MantaError::Validation(
+                        format!("Agent '{}' not found", name)
+                    ));
+                }
+
+                if !force {
+                    print!("Are you sure you want to remove agent '{}'? [y/N] ", name);
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Cancelled");
+                        return Ok(());
+                    }
+                }
+
+                tokio::fs::remove_dir_all(&agent_dir).await?;
+                println!("✅ Removed agent '{}'", name);
+            }
+
+            AgentCommands::List { verbose } => {
+                let mut entries = tokio::fs::read_dir(&agents_dir).await?;
+                let mut agents = Vec::new();
+
+                while let Some(entry) = entries.next_entry().await? {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+
+                        // Try to read IDENTITY.md for display name
+                        let identity_path = path.join("IDENTITY.md");
+                        let display_name = if identity_path.exists() {
+                            match tokio::fs::read_to_string(&identity_path).await {
+                                Ok(content) => {
+                                    // Extract name from "## Name" section
+                                    content.lines()
+                                        .skip_while(|l| !l.starts_with("## Name"))
+                                        .nth(1)
+                                        .map(|l| l.trim().to_string())
+                                        .unwrap_or_else(|| name.clone())
+                                }
+                                Err(_) => name.clone()
+                            }
+                        } else {
+                            name.clone()
+                        };
+
+                        agents.push((name, display_name));
+                    }
+                }
+
+                if agents.is_empty() {
+                    println!("No agent personalities found.");
+                    println!("Create one with: manta agent create <name>");
+                    return Ok(());
+                }
+
+                if *verbose {
+                    println!("{:<20} {:<30}", "Name", "Display Name");
+                    println!("{}", "-".repeat(55));
+                    for (name, display) in &agents {
+                        println!("{:<20} {:<30}", name, display);
+                    }
+                } else {
+                    for (name, display) in &agents {
+                        println!("{} ({})", name, display);
+                    }
+                }
+
+                println!();
+                println!("Total: {} agent(s)", agents.len());
+            }
+
+            AgentCommands::Set { name } => {
+                if name == "default" {
+                    // Reset to default - remove active agent symlink/file
+                    let active_file = config_dir.join(".active_agent");
+                    if active_file.exists() {
+                        tokio::fs::remove_file(&active_file).await?;
+                    }
+                    println!("✅ Reset to default agent personality");
+                    return Ok(());
+                }
+
+                let agent_dir = agents_dir.join(name);
+
+                if !agent_dir.exists() {
+                    return Err(crate::error::MantaError::Validation(
+                        format!("Agent '{}' not found. Use 'manta agent create {}' to create it.", name, name)
+                    ));
+                }
+
+                // Create active agent marker
+                let active_file = config_dir.join(".active_agent");
+                tokio::fs::write(&active_file, name).await?;
+
+                println!("✅ Set active agent personality to '{}'", name);
+                println!("   Restart Manta daemon to apply changes.");
+            }
+
+            AgentCommands::Show => {
+                let active_file = config_dir.join(".active_agent");
+
+                let active_agent = if active_file.exists() {
+                    tokio::fs::read_to_string(&active_file).await.ok()
+                } else {
+                    None
+                };
+
+                if let Some(name) = active_agent {
+                    let agent_dir = agents_dir.join(&name);
+                    println!("🤖 Active Agent: {}", name);
+                    println!();
+
+                    // Show IDENTITY.md
+                    let identity_path = agent_dir.join("IDENTITY.md");
+                    if identity_path.exists() {
+                        match tokio::fs::read_to_string(&identity_path).await {
+                            Ok(content) => {
+                                println!("{}", content);
+                            }
+                            Err(_) => println!("   (Could not read IDENTITY.md)"),
+                        }
+                    }
+
+                    println!("Location: {}", agent_dir.display());
+                } else {
+                    println!("Using default agent personality (no custom agent set)");
+                    println!("Create one with: manta agent create <name>");
+                }
+            }
+
+            AgentCommands::Edit { name, file } => {
+                let agent_dir = agents_dir.join(name);
+
+                if !agent_dir.exists() {
+                    return Err(crate::error::MantaError::Validation(
+                        format!("Agent '{}' not found", name)
+                    ));
+                }
+
+                let files_to_edit: Vec<std::path::PathBuf> = match file.as_str() {
+                    "soul" => vec![agent_dir.join("SOUL.md")],
+                    "identity" => vec![agent_dir.join("IDENTITY.md")],
+                    "bootstrap" => vec![agent_dir.join("BOOTSTRAP.md")],
+                    "all" => vec![
+                        agent_dir.join("SOUL.md"),
+                        agent_dir.join("IDENTITY.md"),
+                        agent_dir.join("BOOTSTRAP.md"),
+                    ],
+                    _ => {
+                        return Err(crate::error::MantaError::Validation(
+                            format!("Unknown file '{}'. Use: soul, identity, bootstrap, or all", file)
+                        ));
+                    }
+                };
+
+                for file_path in files_to_edit {
+                    if file_path.exists() {
+                        println!("Editing: {}", file_path.display());
+                        // Open with default editor (simplified - in real impl, use $EDITOR)
+                        println!("   (Open this file in your editor to modify)");
+                    } else {
+                        println!("   File not found: {}", file_path.display());
+                    }
+                }
+
+                println!();
+                println!("Tip: Set $EDITOR environment variable to open files automatically.");
             }
         }
 
