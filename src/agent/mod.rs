@@ -58,6 +58,27 @@ impl AgentConfig {
             None => self.system_prompt.clone(),
         }
     }
+
+    /// Get the full system prompt including personality memory and skills
+    pub async fn full_system_prompt_with_personality(&self) -> String {
+        let base_prompt = self.full_system_prompt();
+
+        // Load personality memory
+        match crate::memory::PersonalityMemory::new().await {
+            Ok(memory) => {
+                // Initialize default files if they don't exist
+                let _ = memory.initialize_defaults().await;
+
+                let personality = memory.format_for_prompt().await.unwrap_or_default();
+                if personality.is_empty() {
+                    base_prompt
+                } else {
+                    format!("{}\n{}", base_prompt, personality)
+                }
+            }
+            Err(_) => base_prompt,
+        }
+    }
 }
 
 /// The main Agent struct
@@ -94,16 +115,26 @@ impl Agent {
     /// Get or create a context for a conversation
     pub async fn get_context(&self, conversation_id: &str) -> Context {
         let mut contexts = self.contexts.write().await;
-        contexts
-            .entry(conversation_id.to_string())
-            .or_insert_with(|| {
-                Context::new(
-                    conversation_id.to_string(),
-                    self.config.full_system_prompt(),
-                    self.config.max_context_tokens,
-                )
-            })
-            .clone()
+
+        // Check if context already exists
+        if let Some(context) = contexts.get(conversation_id) {
+            return context.clone();
+        }
+
+        // Create new context with personality-loaded system prompt
+        let system_prompt = self
+            .config
+            .full_system_prompt_with_personality()
+            .await;
+
+        let context = Context::new(
+            conversation_id.to_string(),
+            system_prompt,
+            self.config.max_context_tokens,
+        );
+
+        contexts.insert(conversation_id.to_string(), context.clone());
+        context
     }
 
     /// Process an incoming message
