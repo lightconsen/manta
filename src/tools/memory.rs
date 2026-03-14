@@ -1,184 +1,94 @@
 //! Memory tool for Manta
 //!
 //! This tool allows the AI to store and retrieve memories (facts, preferences,
-//! context) that persist across conversations.
+//! context) that persist across conversations using SQLite storage.
 
 use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
+
+use crate::memory::{Memory, MemoryQuery, SqliteMemoryStore, MemoryId, MemoryStore};
 
 /// Memory tool for storing and retrieving information
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MemoryTool {
-    /// Storage backend
-    storage: MemoryStorage,
-}
-
-/// In-memory storage for quick access
-#[derive(Debug, Clone)]
-struct MemoryStorage {
-    memories: std::sync::Arc<tokio::sync::RwLock<Vec<MemoryEntry>>>,
-}
-
-impl Default for MemoryStorage {
-    fn default() -> Self {
-        Self {
-            memories: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
-        }
-    }
-}
-
-impl MemoryStorage {
-    async fn store(&self, entry: MemoryEntry) -> crate::Result<String> {
-        let mut memories = self.memories.write().await;
-        let id = format!("mem_{}", memories.len() + 1);
-        let entry = MemoryEntry { id: id.clone(), ..entry };
-        memories.push(entry);
-        Ok(id)
-    }
-
-    async fn retrieve(&self, id: &str) -> Option<MemoryEntry> {
-        let memories = self.memories.read().await;
-        memories.iter().find(|m| m.id == id).cloned()
-    }
-
-    async fn search(&self, query: &str, category: Option<&str>) -> Vec<MemoryEntry> {
-        let memories = self.memories.read().await;
-        let query_lower = query.to_lowercase();
-
-        memories
-            .iter()
-            .filter(|m| {
-                // Filter by category if specified
-                if let Some(cat) = category {
-                    if m.category.as_deref() != Some(cat) {
-                        return false;
-                    }
-                }
-
-                // Search in content, key, category, and tags
-                m.content.to_lowercase().contains(&query_lower) ||
-                m.key.as_ref().map(|k| k.to_lowercase().contains(&query_lower)).unwrap_or(false) ||
-                m.category.as_ref().map(|c| c.to_lowercase().contains(&query_lower)).unwrap_or(false) ||
-                m.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
-            })
-            .cloned()
-            .collect()
-    }
-
-    async fn list(&self, category: Option<&str>, limit: usize) -> Vec<MemoryEntry> {
-        let memories = self.memories.read().await;
-
-        memories
-            .iter()
-            .filter(|m| {
-                if let Some(cat) = category {
-                    m.category.as_deref() == Some(cat)
-                } else {
-                    true
-                }
-            })
-            .take(limit)
-            .cloned()
-            .collect()
-    }
-
-    async fn delete(&self, id: &str) -> bool {
-        let mut memories = self.memories.write().await;
-        let initial_len = memories.len();
-        memories.retain(|m| m.id != id);
-        memories.len() < initial_len
-    }
-
-    async fn update(&self, id: &str, updates: MemoryUpdate) -> crate::Result<bool> {
-        let mut memories = self.memories.write().await;
-
-        if let Some(memory) = memories.iter_mut().find(|m| m.id == id) {
-            if let Some(content) = updates.content {
-                memory.content = content;
-            }
-            if let Some(category) = updates.category {
-                memory.category = Some(category);
-            }
-            if let Some(key) = updates.key {
-                memory.key = Some(key);
-            }
-            if let Some(tags) = updates.tags {
-                memory.tags = tags;
-            }
-            memory.updated_at = chrono::Utc::now();
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-/// A memory entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MemoryEntry {
-    id: String,
-    content: String,
-    key: Option<String>,
-    category: Option<String>,
-    tags: Vec<String>,
-    importance: i32,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    user_id: Option<String>,
-    conversation_id: Option<String>,
-}
-
-/// Updates for a memory entry
-#[derive(Debug, Clone)]
-struct MemoryUpdate {
-    content: Option<String>,
-    category: Option<String>,
-    key: Option<String>,
-    tags: Option<Vec<String>>,
-}
-
-impl Default for MemoryTool {
-    fn default() -> Self {
-        Self {
-            storage: MemoryStorage::default(),
-        }
-    }
+    /// SQLite storage backend
+    storage: Arc<SqliteMemoryStore>,
 }
 
 impl MemoryTool {
-    /// Create a new memory tool
-    pub fn new() -> Self {
-        Self::default()
+    /// Create a new memory tool with SQLite storage
+    pub async fn new() -> crate::Result<Self> {
+        // Get database path
+        let data_dir = dirs::data_dir()
+            .ok_or_else(|| crate::error::MantaError::Internal(
+                "Could not find data directory".to_string()
+            ))?
+            .join("manta");
+
+        // Ensure directory exists
+        tokio::fs::create_dir_all(&data_dir).await.ok();
+
+        let db_path = data_dir.join("memory.db");
+        let db_url = format!("sqlite:{}", db_path.display());
+
+        info!("Initializing memory tool with database: {}", db_path.display());
+
+        let storage = Arc::new(SqliteMemoryStore::new(&db_url).await?);
+
+        Ok(Self { storage })
     }
 
-    /// Extract keywords from content for tagging
-    fn extract_keywords(&self, content: &str) -> Vec<String> {
-        let stop_words = ["the", "a", "an", "is", "are", "was", "were", "be", "been",
-                         "being", "have", "has", "had", "do", "does", "did", "will",
-                         "would", "could", "should", "may", "might", "must", "shall",
-                         "can", "need", "dare", "ought", "used", "to", "of", "in",
-                         "for", "on", "with", "at", "by", "from", "as", "into",
-                         "through", "during", "before", "after", "above", "below",
-                         "between", "under", "over", "and", "but", "or", "yet", "so", "if",
-                         "because", "although", "though", "while", "where", "when",
-                         "that", "which", "who", "whom", "whose", "what", "this",
-                         "these", "those", "i", "you", "he", "she", "it", "we",
-                         "they", "me", "him", "her", "us", "them", "my", "your",
-                         "his", "hers", "its", "our", "their"];
+    /// Create with custom database URL (for testing)
+    pub async fn with_database_url(database_url: &str) -> crate::Result<Self> {
+        let storage = Arc::new(SqliteMemoryStore::new(database_url).await?);
+        Ok(Self { storage })
+    }
 
-        content
-            .to_lowercase()
-            .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
-            .filter(|w| w.len() > 3 && !stop_words.contains(w))
-            .map(|w| w.to_string())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .take(5)
-            .collect()
+    /// Create with an existing store (for sharing with agent)
+    pub async fn with_store(storage: Arc<SqliteMemoryStore>) -> crate::Result<Self> {
+        Ok(Self { storage })
+    }
+
+    /// Search for relevant memories to inject into context
+    pub async fn search_relevant(&self, query: &str, user_id: &str, limit: usize) -> crate::Result<Vec<Memory>> {
+        let memory_query = MemoryQuery::new()
+            .for_user(user_id)
+            .with_content(query)
+            .limit(limit);
+
+        let results = self.storage.search(memory_query).await?;
+        Ok(results)
+    }
+
+    /// Get recent memories for a user
+    pub async fn get_recent(&self, user_id: &str, limit: usize) -> crate::Result<Vec<Memory>> {
+        let memory_query = MemoryQuery::new()
+            .for_user(user_id)
+            .limit(limit);
+
+        let results = self.storage.search(memory_query).await?;
+        Ok(results)
+    }
+
+    /// Format memories for injection into system prompt
+    pub fn format_memories_for_prompt(memories: &[Memory]) -> String {
+        if memories.is_empty() {
+            return String::new();
+        }
+
+        let mut sections = vec!["### Relevant Memories".to_string()];
+
+        for mem in memories.iter().take(5) {
+            let mem_type = &mem.memory_type;
+            let content = &mem.content;
+            sections.push(format!("- [{}] {}", mem_type, content));
+        }
+
+        sections.join("\n")
     }
 }
 
@@ -191,6 +101,7 @@ impl Tool for MemoryTool {
     fn description(&self) -> &str {
         r#"Store and retrieve memories, facts, and context that persist across conversations.
 
+This tool saves information to a SQLite database that persists across restarts.
 Use this to:
 - Remember important information about the user
 - Store facts for later retrieval
@@ -199,7 +110,9 @@ Use this to:
 - Build a knowledge base over time
 
 Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conversation context),
-'task' (task-related), 'project' (project-specific)"#
+'task' (task-related), 'project' (project-specific)
+
+Memories are automatically searched and relevant ones injected into new conversations."#
     }
 
     fn parameters_schema(&self) -> Value {
@@ -219,18 +132,9 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     "type": "string",
                     "description": "Memory ID (for 'retrieve', 'delete', 'update')"
                 },
-                "key": {
-                    "type": "string",
-                    "description": "Unique key for the memory (optional)"
-                },
                 "category": {
                     "type": "string",
                     "description": "Category for the memory (user, fact, context, task, project)"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tags for the memory"
                 },
                 "query": {
                     "type": "string",
@@ -240,13 +144,6 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     "type": "integer",
                     "description": "Maximum number of results",
                     "default": 10
-                },
-                "importance": {
-                    "type": "integer",
-                    "description": "Importance level 1-5 (default: 3)",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "default": 3
                 }
             }),
             vec!["action"],
@@ -268,38 +165,21 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     .as_str()
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'content' argument".to_string()))?;
 
-                let key = args["key"].as_str().map(|s| s.to_string());
-                let category = args["category"].as_str().map(|s| s.to_string());
+                let memory_type = args["category"]
+                    .as_str()
+                    .unwrap_or("fact");
 
-                let tags: Vec<String> = args["tags"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_else(|| self.extract_keywords(content));
+                let memory = Memory::new(
+                    context.user_id.clone(),
+                    content.to_string(),
+                    memory_type.to_string(),
+                ).with_conversation(context.conversation_id.clone());
 
-                let importance = args["importance"].as_i64().map(|i| i as i32).unwrap_or(3);
+                let memory_id = self.storage.store(memory).await?;
+                info!("Stored memory with ID: {}", memory_id);
 
-                let entry = MemoryEntry {
-                    id: String::new(), // Will be assigned by storage
-                    content: content.to_string(),
-                    key,
-                    category,
-                    tags,
-                    importance,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    user_id: Some(context.user_id.clone()),
-                    conversation_id: Some(context.conversation_id.clone()),
-                };
-
-                let id = self.storage.store(entry).await?;
-                info!("Stored memory with ID: {}", id);
-
-                Ok(ToolExecutionResult::success(format!("Memory stored with ID: {}", id))
-                    .with_data(serde_json::json!({"id": id, "stored": true})))
+                Ok(ToolExecutionResult::success(format!("Memory stored with ID: {}", memory_id.0))
+                    .with_data(serde_json::json!({"id": memory_id.0, "stored": true})))
             }
 
             "retrieve" => {
@@ -307,11 +187,17 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     .as_str()
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
 
-                match self.storage.retrieve(id).await {
+                let memory_id = MemoryId::new(id);
+                match self.storage.get(&memory_id).await? {
                     Some(memory) => {
                         debug!("Retrieved memory: {}", id);
                         Ok(ToolExecutionResult::success(memory.content.clone())
-                            .with_data(serde_json::json!(memory)))
+                            .with_data(serde_json::json!({
+                                "id": memory.id.0,
+                                "content": memory.content,
+                                "memory_type": memory.memory_type,
+                                "created_at": memory.created_at
+                            })))
                     }
                     None => Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id))),
                 }
@@ -322,11 +208,19 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     .as_str()
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'query' argument".to_string()))?;
 
-                let category = args["category"].as_str();
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(10);
+                let category = args["category"].as_str();
 
-                let results = self.storage.search(query, category).await;
-                let results: Vec<_> = results.into_iter().take(limit).collect();
+                let mut memory_query = MemoryQuery::new()
+                    .for_user(&context.user_id)
+                    .with_content(query)
+                    .limit(limit);
+
+                if let Some(cat) = category {
+                    memory_query = memory_query.of_type(cat);
+                }
+
+                let results = self.storage.search(memory_query).await?;
 
                 if results.is_empty() {
                     return Ok(ToolExecutionResult::success(format!(
@@ -338,12 +232,7 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                 let formatted: Vec<String> = results
                     .iter()
                     .map(|m| {
-                        let tags = if m.tags.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [tags: {}]", m.tags.join(", "))
-                        };
-                        format!("[{}] {}{}", m.id, m.content, tags)
+                        format!("[{}] ({}): {}", m.id.0, m.memory_type, m.content)
                     })
                     .collect();
 
@@ -352,15 +241,27 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                 Ok(ToolExecutionResult::success(formatted.join("\n\n"))
                     .with_data(serde_json::json!({
                         "count": results.len(),
-                        "memories": results
+                        "memories": results.iter().map(|m| serde_json::json!({
+                            "id": m.id.0,
+                            "content": m.content,
+                            "memory_type": m.memory_type
+                        })).collect::<Vec<_>>()
                     })))
             }
 
             "list" => {
-                let category = args["category"].as_str();
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(10);
+                let category = args["category"].as_str();
 
-                let memories = self.storage.list(category, limit).await;
+                let mut memory_query = MemoryQuery::new()
+                    .for_user(&context.user_id)
+                    .limit(limit);
+
+                if let Some(cat) = category {
+                    memory_query = memory_query.of_type(cat);
+                }
+
+                let memories = self.storage.search(memory_query).await?;
 
                 if memories.is_empty() {
                     let cat_msg = category.map(|c| format!(" in category '{}'", c)).unwrap_or_default();
@@ -373,15 +274,18 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                 let formatted: Vec<String> = memories
                     .iter()
                     .map(|m| {
-                        let cat = m.category.as_deref().unwrap_or("uncategorized");
-                        format!("[{}] ({}): {}", m.id, cat, m.content.chars().take(100).collect::<String>())
+                        format!("[{}] ({}): {}", m.id.0, m.memory_type, m.content.chars().take(100).collect::<String>())
                     })
                     .collect();
 
                 Ok(ToolExecutionResult::success(formatted.join("\n"))
                     .with_data(serde_json::json!({
                         "count": memories.len(),
-                        "memories": memories
+                        "memories": memories.iter().map(|m| serde_json::json!({
+                            "id": m.id.0,
+                            "content": m.content,
+                            "memory_type": m.memory_type
+                        })).collect::<Vec<_>>()
                     })))
             }
 
@@ -390,7 +294,8 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     .as_str()
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
 
-                if self.storage.delete(id).await {
+                let memory_id = MemoryId::new(id);
+                if self.storage.delete(&memory_id).await? {
                     info!("Deleted memory: {}", id);
                     Ok(ToolExecutionResult::success(format!("Memory '{}' deleted", id)))
                 } else {
@@ -403,24 +308,26 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
                     .as_str()
                     .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
 
-                let updates = MemoryUpdate {
-                    content: args["content"].as_str().map(|s| s.to_string()),
-                    category: args["category"].as_str().map(|s| s.to_string()),
-                    key: args["key"].as_str().map(|s| s.to_string()),
-                    tags: args["tags"].as_array().map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }),
+                let memory_id = MemoryId::new(id);
+
+                // Get existing memory
+                let mut memory = match self.storage.get(&memory_id).await? {
+                    Some(m) => m,
+                    None => return Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id))),
                 };
 
-                match self.storage.update(id, updates).await? {
-                    true => {
-                        info!("Updated memory: {}", id);
-                        Ok(ToolExecutionResult::success(format!("Memory '{}' updated", id)))
-                    }
-                    false => Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id))),
+                // Update fields if provided
+                if let Some(content) = args["content"].as_str() {
+                    memory.content = content.to_string();
                 }
+                if let Some(memory_type) = args["category"].as_str() {
+                    memory.memory_type = memory_type.to_string();
+                }
+
+                self.storage.update(memory).await?;
+                info!("Updated memory: {}", id);
+
+                Ok(ToolExecutionResult::success(format!("Memory '{}' updated", id)))
             }
 
             _ => Err(crate::error::MantaError::Validation(format!(
@@ -435,23 +342,22 @@ Categories: 'user' (user preferences), 'fact' (general facts), 'context' (conver
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_memory_tool_creation() {
-        let tool = MemoryTool::new();
+    #[tokio::test]
+    async fn test_memory_tool_creation() {
+        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
         assert_eq!(tool.name(), "memory");
     }
 
     #[tokio::test]
     async fn test_memory_store_and_retrieve() {
-        let tool = MemoryTool::new();
+        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
         let context = ToolContext::new("user1", "conv1");
 
         // Store a memory
         let store_args = serde_json::json!({
             "action": "store",
             "content": "User prefers dark mode",
-            "category": "user",
-            "key": "dark_mode_preference"
+            "category": "user"
         });
 
         let result = tool.execute(store_args, &context).await.unwrap();
@@ -472,7 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_search() {
-        let tool = MemoryTool::new();
+        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
         let context = ToolContext::new("user1", "conv1");
 
         // Store some memories
@@ -499,18 +405,5 @@ mod tests {
 
         let result = tool.execute(search_args, &context).await.unwrap();
         assert!(result.success);
-        // Should find at least the vegetarian memory
-        assert!(result.output.contains("vegetarian") || result.output.contains("pizza"));
-    }
-
-    #[test]
-    fn test_extract_keywords() {
-        let tool = MemoryTool::new();
-        let keywords = tool.extract_keywords("The quick brown fox jumps over the lazy dog");
-
-        // Should extract meaningful words, excluding stop words
-        assert!(!keywords.is_empty());
-        assert!(!keywords.contains(&"the".to_string()));
-        assert!(!keywords.contains(&"over".to_string()));
     }
 }

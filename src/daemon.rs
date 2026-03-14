@@ -124,6 +124,9 @@ impl DaemonManager {
                 Arc::new(OpenAiProvider::with_base_url(api_key, base_url)?.with_model(model))
             };
 
+            // Initialize SQLite memory store for persistent memory
+            let memory_store = Arc::new(Self::init_memory_store().await?);
+
             // Create tool registry
             let mut tool_registry = ToolRegistry::new();
             tool_registry.register(Box::new(ShellTool::new()));
@@ -132,7 +135,17 @@ impl DaemonManager {
             tool_registry.register(Box::new(FileEditTool::new()));
             tool_registry.register(Box::new(GlobTool::new()));
             tool_registry.register(Box::new(TodoTool::new()));
-            tool_registry.register(Box::new(MemoryTool::new()));
+
+            // Initialize memory tool with shared SQLite storage
+            let memory_tool = MemoryTool::with_store(memory_store.clone()).await?;
+            tool_registry.register(Box::new(memory_tool));
+
+            // Initialize session search for conversation history search
+            let session_search = Arc::new(crate::memory::SessionSearch::new(memory_store.pool()));
+            session_search.initialize().await?;
+            let session_search_tool = crate::memory::session_search::tool::SessionSearchTool::new((*session_search).clone());
+            tool_registry.register(Box::new(session_search_tool));
+
             tool_registry.register(Box::new(CronTool::new()));
 
             // Add MCP tool
@@ -154,6 +167,9 @@ impl DaemonManager {
             let agent = builder
                 .provider(provider)
                 .tools(Arc::new(tool_registry))
+                .memory_store(memory_store.clone())
+                .chat_history(memory_store)
+                .session_search(session_search)
                 .build()?;
 
             println!("✅ AI agent ready");
@@ -335,7 +351,7 @@ impl DaemonManager {
     async fn is_process_running(&self, pid: u32) -> bool {
         #[cfg(unix)]
         {
-            
+
             use nix::unistd::Pid;
 
             // Send signal 0 to check if process exists
@@ -357,5 +373,24 @@ impl DaemonManager {
                 Err(_) => false,
             }
         }
+    }
+
+    /// Initialize the SQLite memory store
+    async fn init_memory_store() -> crate::Result<crate::memory::SqliteMemoryStore> {
+        let data_dir = dirs::data_dir()
+            .ok_or_else(|| crate::error::MantaError::Internal(
+                "Could not find data directory".to_string()
+            ))?
+            .join("manta");
+
+        // Ensure directory exists
+        tokio::fs::create_dir_all(&data_dir).await.ok();
+
+        let db_path = data_dir.join("memory.db");
+        let db_url = format!("sqlite:{}", db_path.display());
+
+        println!("💾 Memory store: {}", db_path.display());
+
+        crate::memory::SqliteMemoryStore::new(&db_url).await
     }
 }

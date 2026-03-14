@@ -475,8 +475,8 @@ impl Tool for CronTool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cron_tool_new() {
+    #[tokio::test]
+    async fn test_cron_tool_new() {
         let tool = CronTool::new();
         assert_eq!(tool.name(), "cron");
     }

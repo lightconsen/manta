@@ -230,6 +230,79 @@ pub trait MemoryStore: Send + Sync {
     async fn close(&self) -> crate::Result<()>;
 }
 
+/// A chat message for conversation history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    /// Unique identifier
+    pub id: String,
+    /// Conversation ID
+    pub conversation_id: String,
+    /// User ID
+    pub user_id: String,
+    /// Message role (user, assistant, system)
+    pub role: String,
+    /// Message content
+    pub content: String,
+    /// When the message was created
+    pub created_at: SystemTime,
+    /// Optional metadata (e.g., tool calls, tokens used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl ChatMessage {
+    /// Create a new chat message
+    pub fn new(
+        conversation_id: impl Into<String>,
+        user_id: impl Into<String>,
+        role: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation_id.into(),
+            user_id: user_id.into(),
+            role: role.into(),
+            content: content.into(),
+            created_at: SystemTime::now(),
+            metadata: None,
+        }
+    }
+
+    /// Set metadata
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
+/// Trait for chat history storage
+#[async_trait]
+pub trait ChatHistoryStore: Send + Sync {
+    /// Store a chat message
+    async fn store_message(&self, message: ChatMessage) -> crate::Result<()>;
+
+    /// Get chat history for a conversation
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<ChatMessage>>;
+
+    /// Get list of conversations for a user
+    async fn get_user_conversations(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<String>>;
+
+    /// Delete a conversation and all its messages
+    async fn delete_conversation(&self, conversation_id: &str) -> crate::Result<()>;
+
+    /// Get the most recent conversation ID for a user
+    async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>>;
+}
+
 /// Calculate cosine similarity between two vectors
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {

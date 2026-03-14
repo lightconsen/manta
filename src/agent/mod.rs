@@ -4,6 +4,7 @@
 //! manages context, calls tools, and interacts with LLM providers.
 
 use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::memory::MemoryStore;
 use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolRegistry};
 use std::sync::Arc;
@@ -94,6 +95,12 @@ pub struct Agent {
     contexts: Arc<RwLock<std::collections::HashMap<String, Context>>>,
     /// Shutdown signal
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
+    /// Memory store for persistence
+    memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    /// Chat history store for conversation persistence
+    chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    /// Session search for conversation history indexing
+    session_search: Option<Arc<crate::memory::SessionSearch>>,
 }
 
 impl Agent {
@@ -109,11 +116,56 @@ impl Agent {
             tools,
             contexts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             shutdown_tx: Arc::new(RwLock::new(None)),
+            memory_store: None,
+            chat_history: None,
+            session_search: None,
+        }
+    }
+
+    /// Set the memory store
+    pub fn with_memory_store(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+        self.memory_store = Some(store);
+        self
+    }
+
+    /// Set the chat history store
+    pub fn with_chat_history(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+        self.chat_history = Some(store);
+        self
+    }
+
+    /// Set the session search for conversation indexing
+    pub fn with_session_search(mut self, search: Arc<crate::memory::SessionSearch>) -> Self {
+        self.session_search = Some(search);
+        self
+    }
+
+    /// Get chat history for a conversation
+    pub async fn get_chat_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<crate::memory::ChatMessage>> {
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::ChatHistoryStore;
+            store.get_conversation_history(conversation_id, limit).await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get the last conversation ID for a user
+    pub async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::ChatHistoryStore;
+            store.get_last_conversation(user_id).await
+        } else {
+            Ok(None)
         }
     }
 
     /// Get or create a context for a conversation
-    pub async fn get_context(&self, conversation_id: &str) -> Context {
+    pub async fn get_context(&self, conversation_id: &str, user_id: &str) -> Context {
         let mut contexts = self.contexts.write().await;
 
         // Check if context already exists
@@ -122,10 +174,29 @@ impl Agent {
         }
 
         // Create new context with personality-loaded system prompt
-        let system_prompt = self
+        let mut system_prompt = self
             .config
             .full_system_prompt_with_personality()
             .await;
+
+        // Inject relevant memories if memory store is available
+        if let Some(ref store) = self.memory_store {
+            // Get recent memories for this user
+            let memory_query = crate::memory::MemoryQuery::new()
+                .for_user(user_id)
+                .limit(5);
+
+            match store.search(memory_query).await {
+                Ok(memories) if !memories.is_empty() => {
+                    let memory_section = crate::tools::MemoryTool::format_memories_for_prompt(&memories);
+                    if !memory_section.is_empty() {
+                        system_prompt.push_str("\n\n");
+                        system_prompt.push_str(&memory_section);
+                    }
+                }
+                _ => {}
+            }
+        }
 
         let context = Context::new(
             conversation_id.to_string(),
@@ -145,18 +216,77 @@ impl Agent {
     ) -> crate::Result<OutgoingMessage> {
         debug!("Processing message from user: {}", message.user_id);
 
+        let conversation_id = message.conversation_id.0.clone();
+        let user_id = message.user_id.0.clone();
+        let content = message.content.clone();
+
+        // Store user message in chat history and index for search
+        let message_id = uuid::Uuid::new_v4().to_string();
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::{ChatHistoryStore, ChatMessage};
+            let chat_msg = ChatMessage::new(
+                &conversation_id,
+                &user_id,
+                "user",
+                &content,
+            );
+            // Clone message_id before moving chat_msg
+            let msg_id = chat_msg.id.clone();
+            if let Err(e) = store.store_message(chat_msg).await {
+                error!("Failed to store user message: {}", e);
+            }
+            // Index for session search
+            if let Some(ref search) = self.session_search {
+                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &content, "user").await {
+                    error!("Failed to index user message for search: {}", e);
+                }
+            }
+        } else if let Some(ref search) = self.session_search {
+            // Even if chat history is not enabled, index for search
+            if let Err(e) = search.index_message(&message_id, &conversation_id, &user_id, &content, "user").await {
+                error!("Failed to index user message for search: {}", e);
+            }
+        }
+
         // Get or create context
-        let mut context = self.get_context(&message.conversation_id.0).await;
+        let mut context = self.get_context(&conversation_id, &user_id).await;
 
         // Add user message to context
-        context.add_message(Message::user(&message.content));
+        context.add_message(Message::user(&content));
 
         // Get response from LLM
         let response = self.get_completion(&mut context).await?;
 
+        // Store assistant response in chat history and index for search
+        let assistant_message_id = uuid::Uuid::new_v4().to_string();
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::{ChatHistoryStore, ChatMessage};
+            let chat_msg = ChatMessage::new(
+                &conversation_id,
+                &user_id,
+                "assistant",
+                &response.message.content,
+            );
+            let msg_id = chat_msg.id.clone();
+            if let Err(e) = store.store_message(chat_msg).await {
+                error!("Failed to store assistant message: {}", e);
+            }
+            // Index for session search
+            if let Some(ref search) = self.session_search {
+                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+                    error!("Failed to index assistant message for search: {}", e);
+                }
+            }
+        } else if let Some(ref search) = self.session_search {
+            // Even if chat history is not enabled, index for search
+            if let Err(e) = search.index_message(&assistant_message_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+                error!("Failed to index assistant message for search: {}", e);
+            }
+        }
+
         // Create outgoing message
         let outgoing = OutgoingMessage::new(
-            message.conversation_id,
+            crate::channels::ConversationId(conversation_id),
             response.message.content.clone(),
         );
 
@@ -292,6 +422,9 @@ pub struct AgentBuilder {
     config: Option<AgentConfig>,
     provider: Option<Arc<dyn Provider>>,
     tools: Option<Arc<ToolRegistry>>,
+    memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    session_search: Option<Arc<crate::memory::SessionSearch>>,
 }
 
 impl AgentBuilder {
@@ -326,14 +459,46 @@ impl AgentBuilder {
         self
     }
 
+    /// Set memory store for persistent memory
+    pub fn memory_store(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+        self.memory_store = Some(store);
+        self
+    }
+
+    /// Set chat history store for conversation persistence
+    pub fn chat_history(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+        self.chat_history = Some(store);
+        self
+    }
+
+    /// Set session search for conversation indexing
+    pub fn session_search(mut self, search: Arc<crate::memory::SessionSearch>) -> Self {
+        self.session_search = Some(search);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
-        Ok(Agent::new(
+        let mut agent = Agent::new(
             self.config.unwrap_or_default(),
             self.provider
                 .ok_or_else(|| crate::error::MantaError::Validation("Provider required".to_string()))?,
             self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
-        ))
+        );
+
+        if let Some(store) = self.memory_store {
+            agent = agent.with_memory_store(store);
+        }
+
+        if let Some(store) = self.chat_history {
+            agent = agent.with_chat_history(store);
+        }
+
+        if let Some(search) = self.session_search {
+            agent = agent.with_session_search(search);
+        }
+
+        Ok(agent)
     }
 }
 

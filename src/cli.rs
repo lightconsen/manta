@@ -1297,7 +1297,7 @@ system_prompt: |
         single_message: Option<String>,
     ) -> Result<()> {
         use crate::client::check_daemon;
-        
+        use crate::memory::ChatHistoryStore;
 
         println!("🤖 Manta AI Assistant");
         println!("=====================");
@@ -1315,11 +1315,41 @@ system_prompt: |
         println!("✅ Connected to daemon");
         println!();
 
-        // Generate or use provided conversation ID
-        let conversation_id = conversation_id.unwrap_or_else(|| {
-            crate::channels::ConversationId::generate().to_string()
-        });
-        println!("📱 Conversation ID: {}", conversation_id);
+        // Use provided conversation ID, or get last conversation, or generate new one
+        let conversation_id = match conversation_id {
+            Some(id) => id,
+            None => {
+                // Try to get the last conversation from the database
+                let data_dir = dirs::data_dir()
+                    .ok_or_else(|| crate::error::MantaError::Internal(
+                        "Could not find data directory".to_string()
+                    ))?
+                    .join("manta");
+                let db_path = data_dir.join("memory.db");
+                let db_url = format!("sqlite:{}", db_path.display());
+
+                match crate::memory::SqliteMemoryStore::new(&db_url).await {
+                    Ok(store) => {
+                        match store.get_last_conversation("user").await {
+                            Ok(Some(last_conv)) => {
+                                println!("📱 Resuming conversation: {}", last_conv);
+                                last_conv
+                            }
+                            _ => {
+                                let new_id = crate::channels::ConversationId::generate().to_string();
+                                println!("📱 Starting new conversation: {}", new_id);
+                                new_id
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        let new_id = crate::channels::ConversationId::generate().to_string();
+                        println!("📱 Starting new conversation: {}", new_id);
+                        new_id
+                    }
+                }
+            }
+        };
         println!();
 
         // Single message mode
@@ -1332,7 +1362,7 @@ system_prompt: |
         }
 
         // Interactive mode
-        println!("Type 'exit' to quit, 'help' for commands\n");
+        println!("Type 'exit' to quit, 'help' for commands, '/new' for new session\n");
 
         // Check if we're running in a TTY
         let is_tty = std::io::stdin().is_terminal();
@@ -1349,7 +1379,7 @@ system_prompt: |
     /// Run interactive chat with daemon (TTY mode)
     async fn run_interactive_daemon_chat(
         client: crate::client::DaemonClient,
-        conversation_id: String,
+        mut conversation_id: String,
     ) -> Result<()> {
         use std::io::{self, Write};
 
@@ -1381,7 +1411,17 @@ system_prompt: |
                     break;
                 }
                 "help" => {
-                    println!("📋 Commands: help, exit");
+                    println!("📋 Commands: /new, help, exit");
+                    println!("  /new - Start a new conversation");
+                    println!("  help - Show this help");
+                    println!("  exit - Exit the chat");
+                    print!("💬 You > ");
+                    io::stdout().flush()?;
+                    continue;
+                }
+                "/new" => {
+                    conversation_id = crate::channels::ConversationId::generate().to_string();
+                    println!("🆕 Started new conversation: {}", conversation_id);
                     print!("💬 You > ");
                     io::stdout().flush()?;
                     continue;
@@ -1413,12 +1453,12 @@ system_prompt: |
     /// Run simple chat with daemon (non-TTY mode)
     async fn run_simple_daemon_chat(
         client: crate::client::DaemonClient,
-        conversation_id: String,
+        mut conversation_id: String,
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, BufReader, stdin};
         use std::io::Write;
 
-        println!("🤖 Manta Terminal Chat - Type 'exit' to quit");
+        println!("🤖 Manta Terminal Chat - Type 'exit' to quit, '/new' for new session");
 
         let stdin = BufReader::new(stdin());
         let mut lines = stdin.lines();
@@ -1436,6 +1476,13 @@ system_prompt: |
                 "exit" | "quit" => {
                     println!("👋 Goodbye!");
                     break;
+                }
+                "/new" => {
+                    conversation_id = crate::channels::ConversationId::generate().to_string();
+                    println!("🆕 Started new conversation: {}", conversation_id);
+                    print!("💬 You > ");
+                    std::io::stdout().flush()?;
+                    continue;
                 }
                 _ => {}
             }

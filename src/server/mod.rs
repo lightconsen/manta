@@ -206,9 +206,16 @@ async fn chat(
     if let Some(agent) = &state.agent {
         use crate::channels::IncomingMessage;
 
-        let conversation_id = request.conversation_id.unwrap_or_else(|| {
-            crate::channels::ConversationId::generate().to_string()
-        });
+        // Use provided conversation ID or get last conversation
+        let conversation_id = match request.conversation_id {
+            Some(id) => id,
+            None => {
+                match agent.get_last_conversation("user").await {
+                    Ok(Some(last_conv)) => last_conv,
+                    _ => crate::channels::ConversationId::generate().to_string(),
+                }
+            }
+        };
 
         let incoming = IncomingMessage::new("user", &conversation_id, request.message);
 
@@ -258,6 +265,9 @@ async fn handle_chat_socket(
     // Subscribe to cron broadcasts
     let mut cron_rx = state.cron_tx.subscribe();
 
+    // Track conversation ID for this connection
+    let mut conversation_id: Option<String> = None;
+
     loop {
         tokio::select! {
             // Handle incoming WebSocket messages
@@ -279,17 +289,41 @@ async fn handle_chat_socket(
                         if let Some(agent) = &state.agent {
                             use crate::channels::IncomingMessage;
 
-                            let conversation_id = request.conversation_id.unwrap_or_else(|| {
-                                crate::channels::ConversationId::generate().to_string()
-                            });
+                            // Determine conversation ID
+                            let cid = match request.conversation_id {
+                                Some(id) => id,
+                                None => {
+                                    // Use existing conversation for this connection, or get last, or create new
+                                    match &conversation_id {
+                                        Some(id) => id.clone(),
+                                        None => {
+                                            // Try to get last conversation
+                                            match agent.get_last_conversation("user").await {
+                                                Ok(Some(last_conv)) => {
+                                                    info!("Resuming last conversation: {}", last_conv);
+                                                    last_conv
+                                                }
+                                                _ => {
+                                                    let new_id = crate::channels::ConversationId::generate().to_string();
+                                                    info!("Starting new conversation: {}", new_id);
+                                                    new_id
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            };
 
-                            let incoming = IncomingMessage::new("user", &conversation_id, request.message);
+                            // Store for this connection
+                            conversation_id = Some(cid.clone());
+
+                            let incoming = IncomingMessage::new("user", &cid, request.message);
 
                             match agent.process_message(incoming).await {
                                 Ok(response) => {
                                     let resp = ChatResponse {
                                         response: response.content,
-                                        conversation_id,
+                                        conversation_id: cid,
                                     };
                                     let _ = socket.send(Message::Text(
                                         serde_json::to_string(&resp).unwrap_or_default()

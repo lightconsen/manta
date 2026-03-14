@@ -6,14 +6,15 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     response::Html,
     routing::get,
     Router,
 };
+use serde::Deserialize;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
@@ -21,6 +22,15 @@ use crate::client::DaemonClient;
 use crate::server::init_cron_broadcast;
 
 // Re-export broadcast functions from server module
+
+/// Query parameters for WebSocket connection
+#[derive(Debug, Deserialize)]
+pub struct WsQuery {
+    /// Start a new conversation (true/false)
+    pub new: Option<bool>,
+    /// Specific conversation ID to resume
+    pub conversation: Option<String>,
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -81,24 +91,39 @@ pub async fn start_web_terminal_with_daemon(client: DaemonClient, port: u16) -> 
 async fn ws_handler_daemon(
     ws: WebSocketUpgrade,
     State(state): State<DaemonWebState>,
+    Query(query): Query<WsQuery>,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket_daemon(socket, state))
+    ws.on_upgrade(move |socket| handle_socket_daemon(socket, state, query))
 }
 
 /// Handle WebSocket connection with daemon
-async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
-    info!("New WebSocket connection (daemon mode)");
+async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, query: WsQuery) {
+    info!("New WebSocket connection (daemon mode), query: {:?}", query);
 
     // Subscribe to cron broadcasts
     let mut cron_rx = init_cron_broadcast().await;
 
-    // Generate conversation ID for this session
-    let conversation_id = uuid::Uuid::new_v4().to_string();
+    // Determine initial conversation ID based on query parameters
+    let mut conversation_id: Option<String> = if query.new == Some(true) {
+        // Force new conversation
+        Some(uuid::Uuid::new_v4().to_string())
+    } else if let Some(conv) = query.conversation {
+        // Use specified conversation
+        Some(conv)
+    } else {
+        // Let daemon handle last conversation lookup
+        None
+    };
 
     // Send welcome message
+    let welcome_msg = if conversation_id.is_some() {
+        format!("Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation.")
+    } else {
+        "Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation.".to_string()
+    };
     let welcome = serde_json::json!({
         "type": "system",
-        "content": "Connected to Manta AI Assistant (via daemon). Type your message below."
+        "content": welcome_msg
     });
     if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
         error!("Failed to send welcome: {}", e);
@@ -113,6 +138,20 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
                     Some(Ok(Message::Text(text))) => {
                         info!("Received message: {}", text);
 
+                        // Handle /new command to start a new session
+                        if text.trim() == "/new" {
+                            let new_id = uuid::Uuid::new_v4().to_string();
+                            conversation_id = Some(new_id.clone());
+                            let system_msg = serde_json::json!({
+                                "type": "system",
+                                "content": format!("🆕 Started new conversation: {}", new_id)
+                            });
+                            if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+
                         // Send typing indicator
                         let typing = serde_json::json!({
                             "type": "typing",
@@ -123,8 +162,12 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState) {
                         }
 
                         // Process message via daemon
-                        match state.client.chat(&text, Some(&conversation_id)).await {
+                        // Pass None on first message to let daemon pick last conversation
+                        match state.client.chat(&text, conversation_id.as_deref()).await {
                             Ok(response) => {
+                                // Store the conversation ID from the response
+                                conversation_id = Some(response.conversation_id.clone());
+
                                 let resp_json = serde_json::json!({
                                     "type": "message",
                                     "role": "assistant",
@@ -186,24 +229,66 @@ async fn index_handler() -> Html<String> {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<WebTerminalState>,
+    Query(query): Query<WsQuery>,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, state, query))
 }
 
 /// Handle WebSocket connection
-async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
-    info!("New WebSocket connection established");
+async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: WsQuery) {
+    info!("New WebSocket connection established, query: {:?}", query);
 
     // Subscribe to cron broadcasts
     let mut cron_rx = init_cron_broadcast().await;
 
-    // Generate conversation ID for this session
-    let conversation_id = uuid::Uuid::new_v4().to_string();
+    // Determine conversation ID based on query parameters
+    let mut conversation_id = if query.new == Some(true) {
+        // Force new conversation
+        let new_id = uuid::Uuid::new_v4().to_string();
+        info!("Starting new conversation (new=true): {}", new_id);
+        new_id
+    } else if let Some(conv) = query.conversation {
+        // Use specified conversation
+        info!("Using specified conversation: {}", conv);
+        conv
+    } else {
+        // Get last conversation or generate new one
+        match state.agent.get_last_conversation("user").await {
+            Ok(Some(last_conv)) => {
+                info!("Resuming last conversation: {}", last_conv);
+                last_conv
+            }
+            _ => {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                info!("Starting new conversation: {}", new_id);
+                new_id
+            }
+        }
+    };
+
+    // Load and send chat history if available
+    match state.agent.get_chat_history(&conversation_id, 100).await {
+        Ok(history) => {
+            if !history.is_empty() {
+                let history_json = serde_json::json!({
+                    "type": "history",
+                    "conversation_id": &conversation_id,
+                    "messages": history
+                });
+                if socket.send(Message::Text(history_json.to_string())).await.is_err() {
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            debug!("Could not load chat history: {}", e);
+        }
+    }
 
     // Send welcome message
     let welcome = serde_json::json!({
         "type": "system",
-        "content": "Connected to Manta AI Assistant. Type your message below."
+        "content": "Connected to Manta AI Assistant.\nType /new to start a fresh conversation."
     });
     if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
         error!("Failed to send welcome: {}", e);
@@ -218,6 +303,19 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState) {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         info!("Received message: {}", text);
+
+                        // Handle /new command to start a new session
+                        if text.trim() == "/new" {
+                            conversation_id = uuid::Uuid::new_v4().to_string();
+                            let system_msg = serde_json::json!({
+                                "type": "system",
+                                "content": format!("🆕 Started new conversation: {}", conversation_id)
+                            });
+                            if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
 
                         // Send typing indicator
                         let typing = serde_json::json!({
@@ -311,14 +409,14 @@ mod tests {
     #[test]
     fn test_terminal_html_contains_settings_button() {
         let html = terminal_html();
-        assert!(html.contains("settingsBtn"), "HTML should contain settings button");
+        assert!(html.contains("settings-btn"), "HTML should contain settings button class");
         assert!(html.contains("⚙️"), "HTML should contain settings icon");
     }
 
     #[test]
     fn test_terminal_html_contains_version_span() {
         let html = terminal_html();
-        assert!(html.contains("versionText"), "HTML should contain version span");
+        assert!(html.contains("version"), "HTML should contain version class");
         assert!(html.contains("header-center"), "HTML should contain header-center div");
     }
 }

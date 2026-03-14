@@ -1,6 +1,6 @@
 //! SQLite implementation of the MemoryStore trait
 
-use super::{Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, cosine_similarity};
+use super::{ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, cosine_similarity};
 use async_trait::async_trait;
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::collections::HashMap;
@@ -39,6 +39,11 @@ impl SqliteMemoryStore {
         Self::new("sqlite::memory:").await
     }
 
+    /// Get the database pool for use with other components (like SessionSearch)
+    pub fn pool(&self) -> Pool<Sqlite> {
+        self.pool.clone()
+    }
+
     /// Initialize the database schema
     async fn init(&self) -> crate::Result<()> {
         debug!("Creating database schema");
@@ -74,6 +79,46 @@ impl SqliteMemoryStore {
         ] {
             let sql = format!(
                 "CREATE INDEX IF NOT EXISTS {} ON memories({})",
+                idx_name, col
+            );
+            sqlx::query(&sql)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: format!("Failed to create index {}", idx_name),
+                    details: e.to_string(),
+                })?;
+        }
+
+        // Create chat_messages table for conversation history
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                metadata TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to create chat_messages table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // Create indexes for chat_messages
+        for (idx_name, col) in [
+            ("idx_chat_conv", "conversation_id"),
+            ("idx_chat_user", "user_id"),
+            ("idx_chat_created", "created_at"),
+        ] {
+            let sql = format!(
+                "CREATE INDEX IF NOT EXISTS {} ON chat_messages({})",
                 idx_name, col
             );
             sqlx::query(&sql)
@@ -485,6 +530,163 @@ impl MemoryStore for SqliteMemoryStore {
         debug!("Closing SQLite connection pool");
         self.pool.close().await;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ChatHistoryStore for SqliteMemoryStore {
+    async fn store_message(&self, message: ChatMessage) -> crate::Result<()> {
+        debug!("Storing chat message: {} in conversation: {}", message.id, message.conversation_id);
+
+        let created_at_secs = Self::system_time_to_secs(message.created_at);
+        let metadata_str = message.metadata.as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_messages
+            (id, conversation_id, user_id, role, content, created_at, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#
+        )
+        .bind(&message.id)
+        .bind(&message.conversation_id)
+        .bind(&message.user_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(created_at_secs)
+        .bind(metadata_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to store chat message".to_string(),
+            details: e.to_string(),
+        })?;
+
+        info!("Chat message stored: {} in conversation: {}", message.id, message.conversation_id);
+        Ok(())
+    }
+
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<ChatMessage>> {
+        debug!("Getting conversation history for: {}", conversation_id);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, conversation_id, user_id, role, content, created_at, metadata
+            FROM chat_messages
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            "#
+        )
+        .bind(conversation_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to get conversation history".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        for row in rows {
+            let created_at_secs: i64 = row.try_get("created_at")
+                .map_err(|e| storage_err("created_at", e))?;
+            let metadata_str: Option<String> = row.try_get("metadata")
+                .map_err(|e| storage_err("metadata", e))?;
+
+            let message = ChatMessage {
+                id: row.try_get("id").map_err(|e| storage_err("id", e))?,
+                conversation_id: row.try_get("conversation_id").map_err(|e| storage_err("conversation_id", e))?,
+                user_id: row.try_get("user_id").map_err(|e| storage_err("user_id", e))?,
+                role: row.try_get("role").map_err(|e| storage_err("role", e))?,
+                content: row.try_get("content").map_err(|e| storage_err("content", e))?,
+                created_at: Self::secs_to_system_time(created_at_secs)
+                    .unwrap_or_else(SystemTime::now),
+                metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+            };
+            messages.push(message);
+        }
+
+        debug!("Retrieved {} messages for conversation: {}", messages.len(), conversation_id);
+        Ok(messages)
+    }
+
+    async fn get_user_conversations(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<String>> {
+        debug!("Getting conversations for user: {}", user_id);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT conversation_id
+            FROM chat_messages
+            WHERE user_id = ?
+            ORDER BY MAX(created_at) DESC
+            LIMIT ?
+            "#
+        )
+        .bind(user_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to get user conversations".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let conversations: Vec<String> = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>("conversation_id"))
+            .filter_map(Result::ok)
+            .collect();
+
+        debug!("Retrieved {} conversations for user: {}", conversations.len(), user_id);
+        Ok(conversations)
+    }
+
+    async fn delete_conversation(&self, conversation_id: &str) -> crate::Result<()> {
+        debug!("Deleting conversation: {}", conversation_id);
+
+        sqlx::query("DELETE FROM chat_messages WHERE conversation_id = ?")
+            .bind(conversation_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to delete conversation".to_string(),
+                details: e.to_string(),
+            })?;
+
+        info!("Conversation deleted: {}", conversation_id);
+        Ok(())
+    }
+
+    async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
+        debug!("Getting last conversation for user: {}", user_id);
+
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id FROM chat_messages
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to get last conversation".to_string(),
+            details: e.to_string(),
+        })?;
+
+        Ok(row.map(|r| r.0))
     }
 }
 
