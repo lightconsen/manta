@@ -4,8 +4,7 @@
 //! Requires: Tencent developer account and bot registration.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// QQ Bot API base URL
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
@@ -120,6 +119,7 @@ struct QqTokenResponse {
     #[serde(rename = "access_token")]
     access_token: String,
     #[serde(rename = "expires_in")]
+    #[allow(dead_code)]
     expires_in: i64,
 }
 

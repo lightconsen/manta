@@ -390,10 +390,8 @@ impl AssistantSpawner {
 
     /// Create with default location
     pub async fn default() -> crate::Result<Self> {
-        let base_dir = dirs::data_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal("Could not find data directory".to_string()))?
-            .join("manta")
-            .join("assistants");
+        // Use centralized ~/.manta/agents directory
+        let base_dir = crate::dirs::agents_dir();
         Self::new(base_dir).await
     }
 

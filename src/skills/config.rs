@@ -156,10 +156,8 @@ impl SkillConfig {
 
     /// Get the configuration file path
     fn config_path() -> crate::Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal("Could not find config directory".to_string()))?;
-
-        Ok(config_dir.join("manta").join("skills.json"))
+        // Use centralized ~/.manta/config directory
+        Ok(crate::dirs::config_dir().join("skills.json"))
     }
 
     /// Check if a bundled skill is allowed

@@ -358,6 +358,7 @@ struct OpenAiFunctionCall {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiResponse {
     id: String,
     object: String,
@@ -368,6 +369,7 @@ struct OpenAiResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiChoice {
     index: u32,
     message: OpenAiMessage,
@@ -384,6 +386,7 @@ struct OpenAiUsage {
 // SSE Streaming types
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiStreamResponse {
     id: String,
     object: String,
@@ -393,6 +396,7 @@ struct OpenAiStreamResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiStreamChoice {
     index: u32,
     delta: OpenAiDelta,
@@ -400,6 +404,7 @@ struct OpenAiStreamChoice {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
 struct OpenAiDelta {
     role: Option<String>,
     content: Option<String>,
@@ -407,6 +412,7 @@ struct OpenAiDelta {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct OpenAiStreamToolCall {
     index: u32,
     id: Option<String>,

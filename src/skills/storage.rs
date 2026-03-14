@@ -108,14 +108,10 @@ impl SkillStorage {
             .filter(|p| p.exists())
     }
 
-    /// Get the user skills directory (~/.config/manta/skills/)
+    /// Get the user skills directory (~/.manta/skills/)
     fn user_skills_dir() -> crate::Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal(
-                "Could not find config directory".to_string()
-            ))?;
-
-        Ok(config_dir.join("manta").join("skills"))
+        // Use centralized ~/.manta/skills directory
+        Ok(crate::dirs::skills_dir())
     }
 
     /// Get the project skills directory (./.manta/skills/)
@@ -421,6 +417,7 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
 }
 
 /// Find the project root (directory containing .manta/)
+#[allow(dead_code)]
 pub fn find_project_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let mut current = cwd.as_path();
@@ -440,6 +437,7 @@ pub fn find_project_root() -> Option<PathBuf> {
 }
 
 /// Find the workspace root
+#[allow(dead_code)]
 pub fn find_workspace_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let mut current = cwd.as_path();

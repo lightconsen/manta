@@ -377,16 +377,8 @@ impl DaemonManager {
 
     /// Initialize the SQLite memory store
     async fn init_memory_store() -> crate::Result<crate::memory::SqliteMemoryStore> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal(
-                "Could not find data directory".to_string()
-            ))?
-            .join("manta");
-
-        // Ensure directory exists
-        tokio::fs::create_dir_all(&data_dir).await.ok();
-
-        let db_path = data_dir.join("memory.db");
+        // Use centralized ~/.manta/memory directory
+        let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:{}", db_path.display());
 
         println!("💾 Memory store: {}", db_path.display());

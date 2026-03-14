@@ -139,7 +139,7 @@ impl std::fmt::Debug for CronScheduler {
 
 /// Commands for the scheduler
 #[derive(Debug)]
-enum JobCommand {
+pub enum JobCommand {
     /// Add a new job
     Add(ScheduledJob),
     /// Remove a job

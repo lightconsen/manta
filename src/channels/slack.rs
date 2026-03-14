@@ -3,14 +3,13 @@
 //! This module implements the Channel trait for Slack using the Web API.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, MessageOptions, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent,
+    IncomingMessage, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]
@@ -75,6 +74,7 @@ impl SlackChannel {
     }
 
     /// Check if user is allowed
+    #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: &str) -> bool {
         if self.config.allowed_user_ids.is_empty() {
             return true;
@@ -93,13 +93,13 @@ impl SlackChannel {
         // Step 1: Protect bold patterns (**text** and __text__)
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
@@ -108,7 +108,7 @@ impl SlackChannel {
         // These become <<<ITALIC>>>text<<<ITALIC>>>
         result = regex::Regex::new(r"\*(.+?)\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
             })
             .to_string();
@@ -145,13 +145,13 @@ impl SlackChannel {
         // Protect bold patterns
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", bold_placeholder, &caps[1], bold_placeholder)
             })
             .to_string();
@@ -159,7 +159,7 @@ impl SlackChannel {
         // Protect italic patterns
         result = regex::Regex::new(r"\*(.+?)\*")
             .unwrap()
-            .replace_all(&result, |caps: &regex::Captures| {
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!("{}{}{}", italic_placeholder, &caps[1], italic_placeholder)
             })
             .to_string();

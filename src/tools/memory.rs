@@ -5,10 +5,9 @@
 
 use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::memory::{Memory, MemoryQuery, SqliteMemoryStore, MemoryId, MemoryStore};
 
@@ -22,17 +21,8 @@ pub struct MemoryTool {
 impl MemoryTool {
     /// Create a new memory tool with SQLite storage
     pub async fn new() -> crate::Result<Self> {
-        // Get database path
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal(
-                "Could not find data directory".to_string()
-            ))?
-            .join("manta");
-
-        // Ensure directory exists
-        tokio::fs::create_dir_all(&data_dir).await.ok();
-
-        let db_path = data_dir.join("memory.db");
+        // Use centralized ~/.manta/memory directory
+        let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:{}", db_path.display());
 
         info!("Initializing memory tool with database: {}", db_path.display());

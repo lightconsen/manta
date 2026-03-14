@@ -72,7 +72,7 @@ struct McpServerInfo {
 
 /// MCP tool definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct McpToolDefinition {
+pub struct McpToolDefinition {
     name: String,
     description: String,
     parameters: serde_json::Value,

@@ -20,7 +20,8 @@ use crate::agent::budget::IterationBudget;
 const MAX_CHILDREN: usize = 3;
 /// Maximum delegation depth
 const MAX_DEPTH: usize = 2;
-/// Tools blocked for child agents
+/// Tools blocked for child agents (for future use)
+#[allow(dead_code)]
 const BLOCKED_TOOLS: &[&str] = &["delegate", "clarify", "memory", "send_message", "execute_code"];
 
 /// Task specification for child agent

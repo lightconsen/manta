@@ -4,8 +4,7 @@
 //! Requires: ByteDance developer account and bot registration.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Lark API base URL
 const LARK_API_BASE: &str = "https://open.feishu.cn/open-apis";
@@ -93,6 +92,7 @@ struct LarkTokenResponse {
 /// Lark message content
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
+#[allow(dead_code)]
 enum LarkMessageContent {
     Text { text: String },
     Post { post: serde_json::Value },
@@ -311,7 +311,7 @@ impl LarkChannel {
     fn format_for_lark(text: &str) -> String {
         // Lark supports standard markdown in post messages
         // For text messages, it uses a simplified format
-        let mut result = text.to_string();
+        let result = text.to_string();
 
         // Bold: **text** is supported
         // Italic: *text* is supported
@@ -431,7 +431,7 @@ impl Channel for LarkChannel {
         let msg_id_str = message_id.to_string();
 
         // Look up the recipient
-        let receive_id = {
+        let _receive_id = {
             let map = self.message_map.read().await;
             map.get(&msg_id_str)
                 .cloned()

@@ -16,6 +16,7 @@ pub struct ApiClient {
     client: Client,
     base_url: String,
     api_key: Option<String>,
+    #[allow(dead_code)]
     timeout: Duration,
     retry_config: crate::config::RetryConfig,
 }
@@ -76,6 +77,7 @@ impl ApiClient {
         request: RequestBuilder,
     ) -> Result<Response> {
         let mut attempt = 0;
+        #[allow(unused_assignments)]
         let mut last_error = None;
 
         loop {

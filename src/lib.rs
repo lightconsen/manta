@@ -28,8 +28,10 @@
 //! # }
 //! ```
 
-#![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
+// Documentation warnings temporarily allowed due to large volume
+// TODO: Add documentation gradually as code stabilizes
+#![allow(missing_docs)]
 // Unsafe code is allowed only for platform-specific resource limits
 // All unsafe blocks are documented and justified
 
@@ -43,6 +45,7 @@ pub mod config;
 pub mod core;
 pub mod cron;
 pub mod daemon;
+pub mod dirs;
 pub mod error;
 pub mod logs;
 pub mod memory;

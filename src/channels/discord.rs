@@ -3,8 +3,8 @@
 //! This module implements the Channel trait for Discord using serenity.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, DiscordEmbed, EmbedField,
-    FormattedContent, IncomingMessage, MessageMetadata, MessageOptions, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, DiscordEmbed,
+    FormattedContent, IncomingMessage, MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
@@ -68,8 +68,9 @@ impl DiscordConfig {
 /// Discord channel implementation
 pub struct DiscordChannel {
     config: DiscordConfig,
+    /// Discord client (stored for future use)
     #[cfg(feature = "discord")]
-    client: Option<Arc<tokio::sync::Mutex<Client>>>,
+    _client: Option<Arc<tokio::sync::Mutex<Client>>>,
     #[cfg(feature = "discord")]
     http: Option<Arc<serenity::http::Http>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -96,7 +97,7 @@ impl DiscordChannel {
         Self {
             config,
             #[cfg(feature = "discord")]
-            client: None,
+            _client: None,
             #[cfg(feature = "discord")]
             http,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -120,6 +121,7 @@ impl DiscordChannel {
     }
 
     /// Check if user is allowed
+    #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: u64) -> bool {
         if self.config.allowed_user_ids.is_empty() {
             return true;
@@ -130,7 +132,7 @@ impl DiscordChannel {
     /// Convert markdown to Discord markdown (Discord uses standard markdown mostly)
     fn format_for_discord(text: &str) -> String {
         // Discord supports standard markdown well, but we need to handle some specifics
-        let mut result = text.to_string();
+        let result = text.to_string();
 
         // Discord uses triple backticks for code blocks with language
         // Already supported in standard markdown

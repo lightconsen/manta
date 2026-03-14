@@ -58,8 +58,8 @@ pub struct SkillWatcher {
     rx: mpsc::UnboundedReceiver<FileChange>,
     /// Set of watched paths
     watched_paths: Arc<RwLock<HashSet<PathBuf>>>,
-    /// Callback for file changes
-    callback: Arc<RwLock<Option<FileChangeCallback>>>,
+    /// Callback for file changes (stored for future use)
+    _callback: Arc<RwLock<Option<FileChangeCallback>>>,
 }
 
 impl SkillWatcher {
@@ -115,7 +115,7 @@ impl SkillWatcher {
             _watcher: watcher,
             rx,
             watched_paths,
-            callback: Arc::new(RwLock::new(None)),
+            _callback: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -190,6 +190,7 @@ impl SkillWatcher {
 }
 
 /// Simple polling-based watcher as fallback
+#[allow(dead_code)]
 pub struct PollingWatcher {
     /// Polling interval
     interval: std::time::Duration,
@@ -201,6 +202,7 @@ pub struct PollingWatcher {
     _shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
+#[allow(dead_code)]
 impl PollingWatcher {
     /// Create a new polling watcher
     pub fn new(interval: std::time::Duration) -> Self {
@@ -268,6 +270,7 @@ impl PollingWatcher {
 }
 
 /// Debounced change events
+#[allow(dead_code)]
 pub struct DebouncedWatcher {
     /// Inner watcher
     watcher: SkillWatcher,
@@ -277,6 +280,7 @@ pub struct DebouncedWatcher {
     pending: Arc<RwLock<Vec<FileChange>>>,
 }
 
+#[allow(dead_code)]
 impl DebouncedWatcher {
     /// Create a new debounced watcher
     pub fn new<F>(paths: Vec<(StorageLevel, PathBuf)>, debounce: std::time::Duration, callback: F) -> crate::Result<Self>
@@ -325,6 +329,7 @@ impl DebouncedWatcher {
 }
 
 /// Check if a file change is relevant for skill reloading
+#[allow(dead_code)]
 pub fn is_skill_file_change(change: &FileChange) -> bool {
     let path_str = change.path.to_string_lossy();
 
@@ -342,6 +347,7 @@ pub fn is_skill_file_change(change: &FileChange) -> bool {
 }
 
 /// Get the skill name from a file change path
+#[allow(dead_code)]
 pub fn skill_name_from_change(change: &FileChange) -> Option<String> {
     let path = &change.path;
 

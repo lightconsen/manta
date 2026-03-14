@@ -68,22 +68,23 @@ impl WebhookState {
 }
 
 /// Create the webhook router
-pub fn create_webhook_router(state: WebhookState) -> Router {
+pub fn create_webhook_router(_state: WebhookState) -> Router {
+    #[allow(unused_mut)]
     let mut router = Router::new().route("/", get(webhook_root));
 
     #[cfg(feature = "whatsapp")]
     {
-        router = router.nest("/whatsapp", whatsapp::whatsapp_webhook_router(state.clone()));
+        router = router.nest("/whatsapp", whatsapp::whatsapp_webhook_router(_state.clone()));
     }
 
     #[cfg(feature = "lark")]
     {
-        router = router.nest("/lark", lark::lark_webhook_router(state.clone()));
+        router = router.nest("/lark", lark::lark_webhook_router(_state.clone()));
     }
 
     #[cfg(feature = "qq")]
     {
-        router = router.nest("/qq", qq::qq_webhook_router(state));
+        router = router.nest("/qq", qq::qq_webhook_router(_state));
     }
 
     router

@@ -8,9 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader, SeekFrom};
 
 /// Get the default log file path
 pub fn log_file_path() -> PathBuf {
-    dirs::data_dir()
-        .map(|p| p.join("manta").join("daemon.log"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/manta.log"))
+    crate::dirs::default_log_file()
 }
 
 /// Show last N lines of logs

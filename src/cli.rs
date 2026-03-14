@@ -46,6 +46,7 @@ pub enum Commands {
     },
     /// Entity management commands
     Entity {
+        /// Entity subcommand
         #[command(subcommand)]
         command: EntityCommands,
     },
@@ -80,21 +81,25 @@ pub enum Commands {
     },
     /// Cron job management
     Cron {
+        /// Cron subcommand
         #[command(subcommand)]
         command: CronCommands,
     },
     /// Skill management commands
     Skill {
+        /// Skill subcommand
         #[command(subcommand)]
         command: SkillCommands,
     },
     /// Agent personality management (OpenClaw-style memory files)
     Agent {
+        /// Agent subcommand
         #[command(subcommand)]
         command: AgentCommands,
     },
     /// Channel management (Telegram, Discord, Slack)
     Channel {
+        /// Channel subcommand
         #[command(subcommand)]
         command: ChannelCommands,
     },
@@ -347,6 +352,12 @@ pub enum AgentCommands {
         /// Which file to edit (soul, identity, bootstrap, or all)
         #[arg(short, long, default_value = "all")]
         file: String,
+    },
+    /// Initialize workspace-level memory files (like OpenClaw)
+    InitWorkspace {
+        /// Force overwrite existing files
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -677,11 +688,8 @@ impl Cli {
         use crate::cron::ScheduledJob;
         use serde_json;
 
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal("Could not find data directory".to_string()))?
-            .join("manta");
-        tokio::fs::create_dir_all(&data_dir).await.ok();
-        let jobs_file = data_dir.join("cron_jobs.json");
+        // Use centralized ~/.manta/cron directory
+        let jobs_file = crate::dirs::cron_dir().join("cron_jobs.json");
 
         let mut jobs: Vec<ScheduledJob> = if jobs_file.exists() {
             let content = tokio::fs::read_to_string(&jobs_file).await.unwrap_or_default();
@@ -985,12 +993,10 @@ impl Cli {
     }
 
     async fn run_agent_command(&self, command: &AgentCommands) -> Result<()> {
-        use crate::memory::personality::{PersonalityMemory, MemoryType};
+        
 
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| crate::error::MantaError::Internal("Could not find config directory".to_string()))?
-            .join("manta");
-        let agents_dir = config_dir.join("agents");
+        // Use centralized ~/.manta/agents directory
+        let agents_dir = crate::dirs::agents_dir();
 
         tokio::fs::create_dir_all(&agents_dir).await.ok();
 
@@ -1186,7 +1192,7 @@ system_prompt: |
             AgentCommands::Set { name } => {
                 if name == "default" {
                     // Reset to default - remove active agent symlink/file
-                    let active_file = config_dir.join(".active_agent");
+                    let active_file = crate::dirs::config_dir().join(".active_agent");
                     if active_file.exists() {
                         tokio::fs::remove_file(&active_file).await?;
                     }
@@ -1203,7 +1209,7 @@ system_prompt: |
                 }
 
                 // Create active agent marker
-                let active_file = config_dir.join(".active_agent");
+                let active_file = crate::dirs::config_dir().join(".active_agent");
                 tokio::fs::write(&active_file, name).await?;
 
                 println!("✅ Set active agent personality to '{}'", name);
@@ -1211,7 +1217,7 @@ system_prompt: |
             }
 
             AgentCommands::Show => {
-                let active_file = config_dir.join(".active_agent");
+                let active_file = crate::dirs::config_dir().join(".active_agent");
 
                 let active_agent = if active_file.exists() {
                     tokio::fs::read_to_string(&active_file).await.ok()
@@ -1279,6 +1285,66 @@ system_prompt: |
 
                 println!();
                 println!("Tip: Set $EDITOR environment variable to open files automatically.");
+            }
+
+            AgentCommands::InitWorkspace { force } => {
+                // Find workspace root
+                let cwd = std::env::current_dir()?;
+                let mut current = cwd.as_path();
+                let mut workspace_root: Option<&std::path::Path> = None;
+
+                loop {
+                    let markers = [".manta-workspace", ".git", "manta.workspace.toml"];
+                    for marker in &markers {
+                        if current.join(marker).exists() {
+                            workspace_root = Some(current);
+                            break;
+                        }
+                    }
+                    if workspace_root.is_some() {
+                        break;
+                    }
+                    match current.parent() {
+                        Some(parent) => current = parent,
+                        None => break,
+                    }
+                }
+
+                let workspace_dir = match workspace_root {
+                    Some(root) => root.join(".manta").join("memory"),
+                    None => {
+                        // No workspace found, create in current directory
+                        println!("ℹ️ No workspace marker found (.git, .manta-workspace, or manta.workspace.toml)");
+                        println!("   Creating workspace-level memory in current directory: .manta/memory/");
+                        std::env::current_dir()?.join(".manta").join("memory")
+                    }
+                };
+
+                // Create directory
+                tokio::fs::create_dir_all(&workspace_dir).await?;
+
+                let files = [
+                    ("SOUL.md", "# SOUL\n\nCore personality for this workspace.\n\n## Values\n- Workspace-specific values\n- Project priorities\n\n## Communication Style\n- How the agent should communicate\n"),
+                    ("IDENTITY.md", "# IDENTITY\n\nAgent identity for this workspace.\n\n## Name\nManta\n\n## Role\nAI Assistant specialized for this project\n\n## Purpose\nHelp with this specific codebase and its needs.\n"),
+                    ("BOOTSTRAP.md", "# BOOTSTRAP\n\nInitial behavior for this workspace.\n\n## Context Awareness\n- Understand the project structure\n- Be familiar with the tech stack\n\n## Session Start\n- Check for existing project context\n- Review recent changes if applicable\n"),
+                ];
+
+                for (filename, default_content) in &files {
+                    let file_path = workspace_dir.join(filename);
+                    if file_path.exists() && !force {
+                        println!("ℹ️ Skipping {} (already exists, use --force to overwrite)", filename);
+                    } else {
+                        tokio::fs::write(&file_path, default_content).await?;
+                        println!("✅ Created {}", file_path.display());
+                    }
+                }
+
+                println!();
+                println!("📝 Workspace-level memory files initialized!");
+                println!("   Location: {}", workspace_dir.display());
+                println!();
+                println!("These files will be used when running manta in this workspace.");
+                println!("They override the global ~/.manta/memory-files/ settings.");
             }
         }
 
@@ -1382,12 +1448,7 @@ system_prompt: |
             Some(id) => id,
             None => {
                 // Try to get the last conversation from the database
-                let data_dir = dirs::data_dir()
-                    .ok_or_else(|| crate::error::MantaError::Internal(
-                        "Could not find data directory".to_string()
-                    ))?
-                    .join("manta");
-                let db_path = data_dir.join("memory.db");
+                let db_path = crate::dirs::default_memory_db();
                 let db_url = format!("sqlite:{}", db_path.display());
 
                 match crate::memory::SqliteMemoryStore::new(&db_url).await {
@@ -1596,13 +1657,14 @@ system_prompt: |
     async fn run_start_daemon(&self, host: &str, port: u16, web_port: u16, foreground: bool) -> Result<()> {
         use crate::daemon::{DaemonManager, DaemonConfig};
 
+        // Ensure directories exist
+        crate::dirs::init().await?;
+
         let config = DaemonConfig {
             host: host.to_string(),
             port,
             web_port,
-            pid_file: dirs::runtime_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                .join("manta.pid"),
+            pid_file: crate::dirs::pid_file(),
         };
 
         let daemon = DaemonManager::new(config)?;
@@ -1628,9 +1690,7 @@ system_prompt: |
             host: "127.0.0.1".to_string(),
             port: 3000,
             web_port: 8080,
-            pid_file: dirs::runtime_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                .join("manta.pid"),
+            pid_file: crate::dirs::pid_file(),
         };
 
         let daemon = DaemonManager::new(config)?;
@@ -1652,9 +1712,7 @@ system_prompt: |
             host: "127.0.0.1".to_string(),
             port: 3000,
             web_port: 8080,
-            pid_file: dirs::runtime_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                .join("manta.pid"),
+            pid_file: crate::dirs::pid_file(),
         };
 
         let daemon = DaemonManager::new(config)?;
@@ -1676,13 +1734,14 @@ system_prompt: |
     async fn run_daemon_internal(&self, host: &str, port: u16, web_port: u16) -> Result<()> {
         use crate::daemon::{DaemonManager, DaemonConfig};
 
+        // Ensure directories exist
+        crate::dirs::init().await?;
+
         let config = DaemonConfig {
             host: host.to_string(),
             port,
             web_port,
-            pid_file: dirs::runtime_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                .join("manta.pid"),
+            pid_file: crate::dirs::pid_file(),
         };
 
         let daemon = DaemonManager::new(config)?;
@@ -1749,7 +1808,7 @@ system_prompt: |
     async fn start_telegram_channel(&self, token: Option<String>, foreground: bool) -> Result<()> {
         use crate::channels::{Channel, TelegramChannel, TelegramConfig};
         use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool, WebSearchTool, WebFetchTool};
+        use crate::tools::ToolRegistry;
 
         // Get token from args or environment
         let token = match token {
@@ -1764,7 +1823,7 @@ system_prompt: |
 
         // Create agent with tools
         let tools = ToolRegistry::new();
-        let agent = Arc::new(AgentBuilder::new()
+        let _agent = Arc::new(AgentBuilder::new()
             .config(AgentConfig::default())
             .tools(Arc::new(tools))
             .build()?);

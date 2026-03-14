@@ -78,6 +78,7 @@ impl TelegramChannel {
     }
 
     /// Check if user is allowed
+    #[allow(dead_code)]
     fn is_user_allowed(&self, username: Option<&str>) -> bool {
         if self.config.allowed_usernames.is_empty() {
             return true;

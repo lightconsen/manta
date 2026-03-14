@@ -75,6 +75,7 @@ struct AnthropicTool {
 
 /// Anthropic API response
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AnthropicResponse {
     id: String,
     #[serde(rename = "type")]
@@ -95,6 +96,7 @@ struct AnthropicUsage {
 
 /// Anthropic error response
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AnthropicError {
     #[serde(rename = "type")]
     error_type: String,
@@ -103,6 +105,7 @@ struct AnthropicError {
 
 /// Anthropic streaming event
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct StreamEvent {
     #[serde(rename = "type")]
     event_type: String,
@@ -116,6 +119,7 @@ struct StreamEvent {
 
 /// Delta in streaming response
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct StreamDelta {
     #[serde(default)]
     text: Option<String>,
@@ -125,12 +129,14 @@ struct StreamDelta {
 
 /// Message start in streaming
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct StreamMessage {
     usage: Option<StreamUsage>,
 }
 
 /// Usage in streaming
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct StreamUsage {
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,

@@ -56,14 +56,50 @@ pub struct PersonalityMemory {
 }
 
 impl PersonalityMemory {
-    /// Create a new dual memory manager with default location
+    /// Create a new personality memory manager
+    ///
+    /// Uses tiered lookup like OpenClaw:
+    /// 1. Workspace level: <workspace>/.manta/memory/ (if in a workspace)
+    /// 2. User level: ~/.manta/memory-files/ (fallback)
     pub async fn new() -> crate::Result<Self> {
-        let base_dir = dirs::config_dir()
-            .ok_or_else(|| MantaError::Internal("Could not find config directory".to_string()))?
-            .join("manta")
-            .join("memory");
+        // Try workspace level first
+        if let Some(workspace_dir) = Self::find_workspace_memory_dir() {
+            if workspace_dir.exists() {
+                tracing::info!("Using workspace-level personality memory: {:?}", workspace_dir);
+                return Self::with_dir(workspace_dir).await;
+            }
+        }
 
+        // Fall back to user level
+        let base_dir = crate::dirs::memory_files_dir();
+        tracing::info!("Using user-level personality memory: {:?}", base_dir);
         Self::with_dir(base_dir).await
+    }
+
+    /// Find workspace-level memory directory
+    fn find_workspace_memory_dir() -> Option<PathBuf> {
+        // Look for workspace root marker
+        let cwd = std::env::current_dir().ok()?;
+        let mut current = cwd.as_path();
+
+        loop {
+            // Check for workspace markers
+            let markers = [".manta-workspace", ".git", "manta.workspace.toml"];
+            for marker in &markers {
+                if current.join(marker).exists() {
+                    let memory_dir = current.join(".manta").join("memory");
+                    return Some(memory_dir);
+                }
+            }
+
+            // Go up one level
+            match current.parent() {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+
+        None
     }
 
     /// Create a dual memory manager with specific directory

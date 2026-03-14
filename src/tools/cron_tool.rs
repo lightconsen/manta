@@ -53,9 +53,7 @@ impl CronTool {
 
     /// Get the jobs file path
     fn jobs_file() -> std::path::PathBuf {
-        dirs::data_dir()
-            .map(|p| p.join("manta").join("cron_jobs.json"))
-            .unwrap_or_else(|| std::path::PathBuf::from(".manta_cron_jobs.json"))
+        crate::dirs::cron_dir().join("cron_jobs.json")
     }
 
     /// Save jobs to file

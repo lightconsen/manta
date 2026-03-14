@@ -4,8 +4,7 @@
 //! Requires: WhatsApp Business Account, Phone Number ID, and Access Token.
 
 use crate::channels::{
-    Attachment, Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, MessageMetadata, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Meta Business API base URL for WhatsApp
 const META_API_BASE: &str = "https://graph.facebook.com/v18.0";
@@ -66,6 +65,7 @@ impl WhatsappConfig {
 
 /// WhatsApp API response
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct WhatsappResponse {
     #[serde(rename = "messaging_product")]
     messaging_product: String,
@@ -75,6 +75,7 @@ struct WhatsappResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct WhatsappContact {
     input: String,
     #[serde(rename = "wa_id")]
@@ -87,6 +88,7 @@ struct WhatsappMessageResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct WhatsappError {
     message: String,
     #[serde(rename = "type")]
@@ -262,22 +264,33 @@ impl WhatsappChannel {
     fn format_for_whatsapp(text: &str) -> String {
         let mut result = text.to_string();
 
-        // Step 1: Mark bold text with a placeholder
-        // First protect **text** by replacing with a placeholder
-        let bold_placeholder = " BOLD ";
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
-            .replace_all(&result, format!("{}$1{}", bold_placeholder, bold_placeholder))
+        // Step 1: Protect bold text (**text**) by extracting and replacing with numbered placeholders
+        let bold_re = regex::Regex::new(r"\*\*(.+?)\*\*").unwrap();
+        let mut bold_segments: Vec<String> = Vec::new();
+        let mut counter = 0;
+
+        // Extract bold segments and replace with placeholders
+        result = bold_re
+            .replace_all(&result, |caps: &regex::Captures<'_>| {
+                let content = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let placeholder = format!("\x00BOLD{}\x00", counter);
+                bold_segments.push(content.to_string());
+                counter += 1;
+                placeholder
+            })
             .to_string();
 
         // Step 2: Convert remaining *text* to _text_ (italic)
         result = regex::Regex::new(r"\*([^\*]+)\*")
             .unwrap()
-            .replace_all(&result, "_$1_")
+            .replace_all(&result, "_${1}_")
             .to_string();
 
-        // Step 3: Convert bold placeholders to *text*
-        result = result.replace(bold_placeholder, "*");
+        // Step 3: Restore bold segments with *text* format
+        for (i, segment) in bold_segments.iter().enumerate() {
+            let placeholder = format!("\x00BOLD{}\x00", i);
+            result = result.replace(&placeholder, &format!("*{}*", segment));
+        }
 
         // Strikethrough: ~~text~~ is the same in WhatsApp
 

@@ -360,7 +360,10 @@ impl Config {
     fn find_config_file() -> Option<PathBuf> {
         let candidates = [
             PathBuf::from(DEFAULT_CONFIG_FILE),
-            PathBuf::from(format!(".config/{}" , DEFAULT_CONFIG_FILE)),
+            PathBuf::from(format!(".config/{}", DEFAULT_CONFIG_FILE)),
+            // Centralized ~/.manta/config/manta.toml
+            crate::dirs::default_config_file(),
+            // Legacy location for backwards compatibility
             dirs::config_dir()
                 .map(|d| d.join("manta").join(DEFAULT_CONFIG_FILE))
                 .unwrap_or_default(),
@@ -477,7 +480,7 @@ pub type ConfigChangeCallback = Box<dyn Fn(&Config) + Send + Sync>;
 /// Configuration watcher for hot-reloading
 pub struct ConfigWatcher {
     _watcher: Box<dyn std::any::Any + Send + Sync>,
-    change_tx: tokio::sync::mpsc::Sender<()>,
+    _change_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl ConfigWatcher {
@@ -534,7 +537,7 @@ impl ConfigWatcher {
         Ok((
             ConfigWatcher {
                 _watcher: Box::new(watcher),
-                change_tx,
+                _change_tx: change_tx,
             },
             change_rx,
         ))

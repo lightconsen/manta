@@ -116,7 +116,7 @@ pub fn qq_webhook_router(state: WebhookState) -> Router {
 
 /// Get QQ bot info (GET)
 /// Returns information about QQ bot setup since it requires WebSocket
-async fn get_qq_info(State(state): State<WebhookState>) -> impl IntoResponse {
+async fn get_qq_info(State(_state): State<WebhookState>) -> impl IntoResponse {
     let info = QqBotInfo {
         status: "info".to_string(),
         message: "QQ Bot requires WebSocket Gateway connection".to_string(),
