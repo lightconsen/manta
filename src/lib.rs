@@ -52,6 +52,7 @@ pub mod server;
 pub mod skills;
 pub mod tools;
 pub mod web;
+pub mod webhook;
 pub mod utils;
 
 // Re-export commonly used types

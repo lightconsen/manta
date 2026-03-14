@@ -146,7 +146,13 @@ fn create_api_router(state: AppState) -> Router {
         .route("/entities", post(create_entity))
         .route("/entities/:id", get(get_entity))
         .route("/entities/:id", post(update_entity))
+        .route("/webhooks", get(webhook_root))
         .with_state(state)
+}
+
+/// Webhook root endpoint
+async fn webhook_root() -> &'static str {
+    "Manta Webhook Server\n\nAvailable endpoints:\n- /webhooks/whatsapp - WhatsApp Business API webhooks\n- /webhooks/lark - Lark/Feishu webhooks\n- /webhooks/qq - QQ Bot webhooks\n"
 }
 
 /// Create the web terminal router

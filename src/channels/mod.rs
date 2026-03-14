@@ -19,6 +19,15 @@ pub mod discord;
 #[cfg(feature = "slack")]
 pub mod slack;
 
+#[cfg(feature = "whatsapp")]
+pub mod whatsapp;
+
+#[cfg(feature = "qq")]
+pub mod qq;
+
+#[cfg(feature = "lark")]
+pub mod lark;
+
 pub use formatter::{
     MessageFormatter, TelegramHtmlFormatter, DiscordFormatter,
     SlackFormatter, PlainTextFormatter
@@ -605,6 +614,15 @@ pub use discord::{DiscordChannel, DiscordConfig};
 
 #[cfg(feature = "slack")]
 pub use slack::{SlackChannel, SlackConfig};
+
+#[cfg(feature = "whatsapp")]
+pub use whatsapp::{WhatsappChannel, WhatsappConfig};
+
+#[cfg(feature = "qq")]
+pub use qq::{QqChannel, QqConfig};
+
+#[cfg(feature = "lark")]
+pub use lark::{LarkChannel, LarkConfig};
 
 #[cfg(test)]
 mod tests {

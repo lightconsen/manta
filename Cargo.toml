@@ -80,6 +80,12 @@ regex = "1.10"
 # Shell expansion for paths
 shellexpand = "3.1"
 
+# Webhook signature verification
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -94,12 +100,19 @@ sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "mig
 # Channels (optional)
 teloxide = { version = "0.12", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
+
 [features]
 default = ["telegram"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
-all-channels = ["telegram", "discord", "slack"]
+whatsapp = []
+qq = []
+lark = []
+all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "lark"]
+
+# Note: Discord and Slack use reqwest for HTTP API calls
+# WhatsApp, QQ, Lark use reqwest with custom implementations
 
 [dev-dependencies]
 # Testing

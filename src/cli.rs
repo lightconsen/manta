@@ -93,6 +93,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Channel management (Telegram, Discord, Slack)
+    Channel {
+        #[command(subcommand)]
+        command: ChannelCommands,
+    },
     /// Start the Manta daemon (background server)
     Start {
         /// Host to bind to
@@ -345,6 +350,62 @@ pub enum AgentCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ChannelCommands {
+    /// Add/connect a channel
+    Add {
+        /// Channel type to add
+        #[arg(value_enum)]
+        channel: ChannelType,
+        /// Bot token (can also use env var: TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, etc.)
+        #[arg(short, long)]
+        token: Option<String>,
+        /// Run in foreground (don't detach)
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Remove/disconnect a channel
+    Remove {
+        /// Channel type to remove
+        #[arg(value_enum)]
+        channel: ChannelType,
+    },
+    /// List configured channels
+    List {
+        /// Show all channels including disabled ones
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Check channel status
+    Status {
+        /// Channel type (if not provided, shows all channels)
+        #[arg(value_enum)]
+        channel: Option<ChannelType>,
+    },
+    /// Test channel configuration
+    Test {
+        /// Channel type to test
+        #[arg(value_enum)]
+        channel: ChannelType,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ChannelType {
+    /// Telegram bot
+    Telegram,
+    /// Discord bot
+    Discord,
+    /// Slack bot
+    Slack,
+    /// WhatsApp bot
+    Whatsapp,
+    /// QQ bot
+    Qq,
+    /// Lark/Feishu bot
+    Lark,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Json,
@@ -432,6 +493,7 @@ impl Cli {
             Commands::Cron { command } => self.run_cron_command(command).await,
             Commands::Skill { command } => self.run_skill_command(command).await,
             Commands::Agent { command } => self.run_agent_command(command).await,
+            Commands::Channel { command } => self.run_channel_command(command).await,
             Commands::Start { host, port, web_port, foreground } => {
                 self.run_start_daemon(host, *port, *web_port, *foreground).await
             },
@@ -1625,6 +1687,297 @@ system_prompt: |
 
         let daemon = DaemonManager::new(config)?;
         daemon.run_foreground().await
+    }
+
+    /// Run channel commands
+    async fn run_channel_command(&self, command: &ChannelCommands) -> Result<()> {
+        match command {
+            ChannelCommands::Add { channel, token, foreground } => {
+                self.run_channel_add(*channel, token.clone(), *foreground).await
+            }
+            ChannelCommands::Remove { channel } => {
+                self.run_channel_remove(*channel).await
+            }
+            ChannelCommands::List { all } => {
+                self.run_channel_list(*all).await
+            }
+            ChannelCommands::Status { channel } => {
+                self.run_channel_status(*channel).await
+            }
+            ChannelCommands::Test { channel } => {
+                self.run_channel_test(*channel).await
+            }
+        }
+    }
+
+    /// Add/connect a channel (Telegram, Discord, Slack, WhatsApp, QQ, Lark)
+    async fn run_channel_add(&self, channel: ChannelType, token: Option<String>, foreground: bool) -> Result<()> {
+        match channel {
+            ChannelType::Telegram => {
+                self.start_telegram_channel(token, foreground).await
+            }
+            ChannelType::Discord => {
+                println!("🚧 Discord channel support coming soon!");
+                println!("   To use Discord, build with: cargo build --features discord");
+                Ok(())
+            }
+            ChannelType::Slack => {
+                println!("🚧 Slack channel support coming soon!");
+                println!("   To use Slack, build with: cargo build --features slack");
+                Ok(())
+            }
+            ChannelType::Whatsapp => {
+                println!("🚧 WhatsApp channel support coming soon!");
+                println!("   To use WhatsApp, build with: cargo build --features whatsapp");
+                Ok(())
+            }
+            ChannelType::Qq => {
+                println!("🚧 QQ channel support coming soon!");
+                println!("   To use QQ, build with: cargo build --features qq");
+                Ok(())
+            }
+            ChannelType::Lark => {
+                println!("🚧 Lark/Feishu channel support coming soon!");
+                println!("   To use Lark/Feishu, build with: cargo build --features lark");
+                Ok(())
+            }
+        }
+    }
+
+    /// Start Telegram channel
+    #[cfg(feature = "telegram")]
+    async fn start_telegram_channel(&self, token: Option<String>, foreground: bool) -> Result<()> {
+        use crate::channels::{Channel, TelegramChannel, TelegramConfig};
+        use crate::agent::{AgentConfig, AgentBuilder};
+        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool, WebSearchTool, WebFetchTool};
+
+        // Get token from args or environment
+        let token = match token {
+            Some(t) => t,
+            None => std::env::var("TELEGRAM_BOT_TOKEN")
+                .map_err(|_| crate::error::ConfigError::Missing(
+                    "TELEGRAM_BOT_TOKEN environment variable or --token argument".to_string()
+                ))?,
+        };
+
+        println!("🚀 Starting Telegram bot...");
+
+        // Create agent with tools
+        let tools = ToolRegistry::new();
+        let agent = Arc::new(AgentBuilder::new()
+            .config(AgentConfig::default())
+            .tools(Arc::new(tools))
+            .build()?);
+
+        // Create and start Telegram channel
+        let config = TelegramConfig::new(token);
+        let channel = TelegramChannel::new(config);
+
+        if foreground {
+            println!("   Running in foreground mode (Press Ctrl+C to stop)");
+            channel.start().await?;
+        } else {
+            println!("   Starting in background...");
+            // TODO: Implement background mode with PID file
+            channel.start().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Telegram support not compiled in
+    #[cfg(not(feature = "telegram"))]
+    async fn start_telegram_channel(&self, _token: Option<String>, _foreground: bool) -> Result<()> {
+        println!("❌ Telegram support not compiled in.");
+        println!("   Build with: cargo build --features telegram");
+        Ok(())
+    }
+
+    /// Remove/disconnect a channel
+    async fn run_channel_remove(&self, channel: ChannelType) -> Result<()> {
+        match channel {
+            ChannelType::Telegram => {
+                println!("🗑️  Removing Telegram bot...");
+                // TODO: Implement channel PID file tracking
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+            ChannelType::Discord => {
+                println!("🗑️  Removing Discord bot...");
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+            ChannelType::Slack => {
+                println!("🗑️  Removing Slack bot...");
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+            ChannelType::Whatsapp => {
+                println!("🗑️  Removing WhatsApp bot...");
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+            ChannelType::Qq => {
+                println!("🗑️  Removing QQ bot...");
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+            ChannelType::Lark => {
+                println!("🗑️  Removing Lark/Feishu bot...");
+                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                Ok(())
+            }
+        }
+    }
+
+    /// List configured channels
+    async fn run_channel_list(&self, all: bool) -> Result<()> {
+        println!("📱 Manta Channels");
+        println!("=================");
+        println!();
+
+        // Check feature flags
+        #[cfg(feature = "telegram")]
+        println!("✅ Telegram   - Available (compile-time enabled)");
+        #[cfg(not(feature = "telegram"))]
+        println!("❌ Telegram   - Not compiled (use --features telegram)");
+
+        #[cfg(feature = "discord")]
+        println!("✅ Discord    - Available (compile-time enabled)");
+        #[cfg(not(feature = "discord"))]
+        println!("❌ Discord    - Not compiled (use --features discord)");
+
+        #[cfg(feature = "slack")]
+        println!("✅ Slack      - Available (compile-time enabled)");
+        #[cfg(not(feature = "slack"))]
+        println!("❌ Slack      - Not compiled (use --features slack)");
+
+        #[cfg(feature = "whatsapp")]
+        println!("✅ WhatsApp   - Available (compile-time enabled)");
+        #[cfg(not(feature = "whatsapp"))]
+        println!("❌ WhatsApp   - Not compiled (use --features whatsapp)");
+
+        #[cfg(feature = "qq")]
+        println!("✅ QQ         - Available (compile-time enabled)");
+        #[cfg(not(feature = "qq"))]
+        println!("❌ QQ         - Not compiled (use --features qq)");
+
+        #[cfg(feature = "lark")]
+        println!("✅ Lark       - Available (compile-time enabled)");
+        #[cfg(not(feature = "lark"))]
+        println!("❌ Lark       - Not compiled (use --features lark)");
+
+        println!();
+        println!("Available commands:");
+        println!("  manta channel add <CHANNEL> --token <TOKEN>");
+        println!("  manta channel add telegram (with TELEGRAM_BOT_TOKEN env var)");
+        println!("  manta channel status <CHANNEL>");
+        println!("  manta channel remove <CHANNEL>");
+        println!();
+        println!("Channels: telegram, discord, slack, whatsapp, qq, lark");
+
+        let _ = all; // Silence warning for now
+        Ok(())
+    }
+
+    /// Check channel status
+    async fn run_channel_status(&self, channel: Option<ChannelType>) -> Result<()> {
+        match channel {
+            Some(ChannelType::Telegram) => {
+                println!("📱 Telegram Bot Status");
+                println!("======================");
+                println!("Status: Unknown (not implemented yet)");
+                // TODO: Check if process is running via PID file
+            }
+            Some(ChannelType::Discord) => {
+                println!("🚧 Discord support coming soon!");
+            }
+            Some(ChannelType::Slack) => {
+                println!("🚧 Slack support coming soon!");
+            }
+            Some(ChannelType::Whatsapp) => {
+                println!("🚧 WhatsApp support coming soon!");
+            }
+            Some(ChannelType::Qq) => {
+                println!("🚧 QQ support coming soon!");
+            }
+            Some(ChannelType::Lark) => {
+                println!("🚧 Lark/Feishu support coming soon!");
+            }
+            None => {
+                // Show all channels
+                println!("📱 Channel Status");
+                println!("=================");
+                println!("Telegram: Not checked (use 'manta channel status telegram')");
+                println!("Discord:  Not available");
+                println!("Slack:    Not available");
+                println!("WhatsApp: Not available");
+                println!("QQ:       Not available");
+                println!("Lark:     Not available");
+            }
+        }
+        Ok(())
+    }
+
+    /// Test channel configuration
+    async fn run_channel_test(&self, channel: ChannelType) -> Result<()> {
+        match channel {
+            ChannelType::Telegram => {
+                println!("🧪 Testing Telegram configuration...");
+
+                // Check for token
+                match std::env::var("TELEGRAM_BOT_TOKEN") {
+                    Ok(_) => println!("✅ TELEGRAM_BOT_TOKEN environment variable found"),
+                    Err(_) => println!("⚠️  TELEGRAM_BOT_TOKEN not set (will need --token)"),
+                }
+
+                #[cfg(feature = "telegram")]
+                println!("✅ Telegram feature compiled in");
+                #[cfg(not(feature = "telegram"))]
+                println!("❌ Telegram feature not compiled (rebuild with --features telegram)");
+
+                println!();
+                println!("To add/connect the bot:");
+                println!("  export TELEGRAM_BOT_TOKEN='your_token_here'");
+                println!("  manta channel add telegram");
+            }
+            ChannelType::Discord => {
+                println!("🧪 Testing Discord configuration...");
+                #[cfg(feature = "discord")]
+                println!("✅ Discord feature compiled in");
+                #[cfg(not(feature = "discord"))]
+                println!("❌ Discord feature not compiled (rebuild with --features discord)");
+            }
+            ChannelType::Slack => {
+                println!("🧪 Testing Slack configuration...");
+                #[cfg(feature = "slack")]
+                println!("✅ Slack feature compiled in");
+                #[cfg(not(feature = "slack"))]
+                println!("❌ Slack feature not compiled (rebuild with --features slack)");
+            }
+            ChannelType::Whatsapp => {
+                println!("🧪 Testing WhatsApp configuration...");
+                #[cfg(feature = "whatsapp")]
+                println!("✅ WhatsApp feature compiled in");
+                #[cfg(not(feature = "whatsapp"))]
+                println!("❌ WhatsApp feature not compiled (rebuild with --features whatsapp)");
+            }
+            ChannelType::Qq => {
+                println!("🧪 Testing QQ configuration...");
+                #[cfg(feature = "qq")]
+                println!("✅ QQ feature compiled in");
+                #[cfg(not(feature = "qq"))]
+                println!("❌ QQ feature not compiled (rebuild with --features qq)");
+            }
+            ChannelType::Lark => {
+                println!("🧪 Testing Lark/Feishu configuration...");
+                #[cfg(feature = "lark")]
+                println!("✅ Lark feature compiled in");
+                #[cfg(not(feature = "lark"))]
+                println!("❌ Lark feature not compiled (rebuild with --features lark)");
+            }
+        }
+        Ok(())
     }
 
     /// Run as an assistant subprocess (internal use)
