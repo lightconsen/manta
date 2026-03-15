@@ -45,57 +45,81 @@ pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use todo::{Task, TaskStatus, TodoStore};
 
-/// Determine if a prompt is time-sensitive and should not be cached
-fn is_time_sensitive(message: &str) -> bool {
+/// Fast check for obviously time-sensitive queries
+fn is_obviously_time_sensitive(message: &str) -> bool {
     let lower = message.to_lowercase();
 
-    // Time-sensitive keywords (English)
-    let time_keywords = [
-        "time", "date", "now", "today", "current", "clock",
-        "hour", "minute", "second", "moment",
+    // Only check for obvious time keywords that clearly indicate real-time needs
+    let obvious_time_queries = [
+        "what time is it", "current time", "what's the time",
+        "现在几点", "当前时间", "现在时间",
     ];
 
-    // Time-sensitive keywords (Chinese)
-    let chinese_time_keywords = [
-        "时间", "日期", "现在", "今天", "当前", "几点", "几号",
-        "小时", "分钟", "秒", "时刻", "timestamp",
-    ];
-
-    // Check if message is asking about time
-    for kw in &time_keywords {
-        if lower.contains(kw) {
-            // Additional check: is it actually asking about time?
-            if lower.contains("current time")
-                || lower.contains("what time")
-                || lower.contains("what's the time")
-                || lower.contains("now")
-            {
-                return true;
-            }
-        }
-    }
-
-    for kw in &chinese_time_keywords {
-        if lower.contains(kw) {
-            return true;
-        }
-    }
-
-    // Real-time data queries that change frequently
-    let real_time_queries = [
-        "stock price", "股价", "股票价格",
-        "weather now", "当前天气", "现在天气",
-        "bitcoin price", "btc", "eth", "crypto",
-        "temperature now", "当前温度",
-    ];
-
-    for query in &real_time_queries {
+    for query in &obvious_time_queries {
         if lower.contains(query) {
             return true;
         }
     }
 
     false
+}
+
+/// Check if a message should be cached using LLM classification
+/// Returns true if the response can be safely cached
+async fn should_use_cache_llm(
+    provider: &Arc<dyn Provider>,
+    message: &str,
+) -> bool {
+    // Skip LLM check for obviously time-sensitive queries (optimization)
+    if is_obviously_time_sensitive(message) {
+        return false;
+    }
+
+    // Skip LLM check for very short queries (likely conversational)
+    if message.len() < 20 {
+        return false;
+    }
+
+    let prompt = format!(
+        r#"Analyze this user query and determine if the response can be safely cached.
+
+A query SHOULD be cached if:
+- It's asking for general information, facts, summaries, or research
+- The answer won't change significantly in the next hour
+- Examples: "explain quantum computing", "summarize news", "how does X work"
+
+A query should NOT be cached if:
+- It asks for current time, date, or real-time data
+- It asks for stock prices, crypto prices, or financial data
+- It asks for current weather or temperature
+- It asks "what is happening now" or "latest updates"
+- The answer changes frequently (every minute/second)
+
+User query: "{}"
+
+Reply with ONLY "CACHE" or "NOCACHE"."#,
+        message.replace('"', "\"")
+    );
+
+    let request = CompletionRequest {
+        messages: vec![Message::user(&prompt)],
+        temperature: Some(0.0), // Deterministic
+        max_tokens: Some(10),
+        stream: false,
+        ..Default::default()
+    };
+
+    match provider.complete(request).await {
+        Ok(response) => {
+            let content = response.message.content.trim().to_uppercase();
+            // Default to not caching if LLM is uncertain
+            content == "CACHE"
+        }
+        Err(_) => {
+            // If LLM call fails, default to not caching for safety
+            false
+        }
+    }
 }
 
 /// Determine if tools used are cacheable
@@ -413,8 +437,8 @@ impl Agent {
             (content.contains("it") || content.contains("that") || content.contains("this") ||
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
-        // Skip cache for time-sensitive queries
-        let should_cache = !is_follow_up && !is_time_sensitive(&content);
+        // Use LLM to determine if query should be cached
+        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content).await;
 
         if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
@@ -561,8 +585,8 @@ impl Agent {
             (content.contains("it") || content.contains("that") || content.contains("this") ||
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
-        // Skip cache for time-sensitive queries
-        let should_cache = !is_follow_up && !is_time_sensitive(&content);
+        // Use LLM to determine if query should be cached
+        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content).await;
 
         if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
