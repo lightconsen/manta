@@ -743,6 +743,15 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             font-size: 12px;
         }
 
+        .message.progress {
+            align-self: flex-start;
+            background: #161b22;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            font-size: 13px;
+            max-width: 95%;
+        }
+
         .input-area {
             background: #161b22;
             border-top: 1px solid #30363d;
@@ -969,7 +978,7 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
                 case 'tool_calling':
                     if (!currentProgressDiv) {
                         currentProgressDiv = document.createElement('div');
-                        currentProgressDiv.className = 'message system progress-message';
+                        currentProgressDiv.className = 'message progress';
                         terminal.appendChild(currentProgressDiv);
                     }
                     // Try to parse and format arguments
