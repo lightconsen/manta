@@ -106,6 +106,25 @@ impl SessionSearch {
 
     /// Initialize the FTS5 tables
     pub async fn initialize(&self) -> crate::Result<()> {
+        // Create the conversations table first (referenced by messages)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to create conversations table".to_string(),
+            details: e.to_string(),
+        })?;
+
         // Create the main messages table if not exists
         sqlx::query(
             r#"
@@ -216,6 +235,23 @@ impl SessionSearch {
         let user_id = user_id.into();
         let content = content.into();
         let role = role.into();
+
+        // Insert conversation if it doesn't exist (for foreign key constraint)
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO conversations (id, user_id, title, updated_at)
+            VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+            "#,
+        )
+        .bind(&conversation_id)
+        .bind(&user_id)
+        .bind(&content[..content.len().min(50)]) // Use first 50 chars as title
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to insert conversation".to_string(),
+            details: e.to_string(),
+        })?;
 
         sqlx::query(
             r#"
