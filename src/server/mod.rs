@@ -325,8 +325,70 @@ async fn handle_chat_socket(
 
                             let incoming = IncomingMessage::new("user", &cid, request.message);
 
-                            match agent.process_message(incoming).await {
-                                Ok(response) => {
+                            // Process message with progress updates
+                            use tokio::sync::mpsc;
+                            let (progress_tx, mut progress_rx) = mpsc::channel::<crate::agent::ProgressEvent>(32);
+
+                            // Create progress callback
+                            let progress_cb: crate::agent::ProgressCallback = Arc::new(
+                                move |event: crate::agent::ProgressEvent| {
+                                    let tx = progress_tx.clone();
+                                    Box::pin(async move {
+                                        let _ = tx.send(event).await;
+                                    })
+                                }
+                            );
+
+                            // Process in a spawned task so we can concurrently receive progress
+                            let agent_clone = agent.clone();
+                            let process_handle = tokio::spawn(async move {
+                                agent_clone.process_message_with_progress(incoming, progress_cb).await
+                            });
+
+                            // Forward progress events to WebSocket
+                            while let Some(event) = progress_rx.recv().await {
+                                let msg = match &event {
+                                    crate::agent::ProgressEvent::Started => {
+                                        serde_json::json!({"type": "progress", "status": "started"})
+                                    }
+                                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                        serde_json::json!({
+                                            "type": "progress",
+                                            "status": "tool_calling",
+                                            "tool": name,
+                                            "arguments": arguments
+                                        })
+                                    }
+                                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                        serde_json::json!({
+                                            "type": "progress",
+                                            "status": "tool_result",
+                                            "tool": name,
+                                            "result": result
+                                        })
+                                    }
+                                    crate::agent::ProgressEvent::Generating => {
+                                        serde_json::json!({"type": "progress", "status": "generating"})
+                                    }
+                                    crate::agent::ProgressEvent::Completed { .. } => {
+                                        serde_json::json!({"type": "progress", "status": "completed"})
+                                    }
+                                    crate::agent::ProgressEvent::Error { message } => {
+                                        serde_json::json!({"type": "progress", "status": "error", "error": message})
+                                    }
+                                };
+                                if socket.send(Message::Text(msg.to_string())).await.is_err() {
+                                    break;
+                                }
+                                // Stop on completed/error
+                                if matches!(event, crate::agent::ProgressEvent::Completed { .. } | crate::agent::ProgressEvent::Error { .. }) {
+                                    break;
+                                }
+                            }
+
+                            // Get final result
+                            match process_handle.await {
+                                Ok(Ok(response)) => {
                                     let resp = ChatResponse {
                                         response: response.content,
                                         conversation_id: cid,
@@ -335,9 +397,14 @@ async fn handle_chat_socket(
                                         serde_json::to_string(&resp).unwrap_or_default()
                                     )).await;
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     let _ = socket.send(Message::Text(
                                         format!("{{\"error\": \"{}\"}}", e)
+                                    )).await;
+                                }
+                                Err(e) => {
+                                    let _ = socket.send(Message::Text(
+                                        format!("{{\"error\": \"Task failed: {}\"}}", e)
                                     )).await;
                                 }
                             }
@@ -781,20 +848,77 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
         };
 
         ws.onmessage = (event) => {
-            hideTyping();
             try {
                 const data = JSON.parse(event.data);
                 if (data.error) {
+                    hideTyping();
                     addMessage('Error: ' + data.error, 'error');
                 } else if (data.type === 'cron') {
                     addMessage(data.content, 'system');
+                } else if (data.type === 'progress') {
+                    handleProgress(data);
                 } else if (data.response) {
+                    hideTyping();
                     addMessage(data.response, 'assistant');
                 }
             } catch (e) {
+                hideTyping();
                 addMessage(event.data, 'assistant');
             }
         };
+
+        // Handle progress updates
+        let currentProgressDiv = null;
+
+        function handleProgress(data) {
+            switch(data.status) {
+                case 'started':
+                    showTyping();
+                    break;
+                case 'tool_calling':
+                    if (!currentProgressDiv) {
+                        currentProgressDiv = document.createElement('div');
+                        currentProgressDiv.className = 'message system progress-message';
+                        terminal.appendChild(currentProgressDiv);
+                    }
+                    // Try to parse and format arguments
+                    let argsStr = data.arguments || '{}';
+                    try {
+                        const argsObj = JSON.parse(argsStr);
+                        argsStr = JSON.stringify(argsObj, null, 2);
+                    } catch (e) {
+                        // Keep original if parse fails
+                    }
+                    const displayArgs = argsStr.substring(0, 200);
+                    currentProgressDiv.innerHTML = '<div class="content">🔧 Using tool: <strong>' + data.tool + '</strong><br/><pre style="margin: 4px 0; padding: 8px; background: #161b22; border-radius: 4px; overflow-x: auto;"><code>' + displayArgs + '</code></pre></div>';
+                    terminal.scrollTop = terminal.scrollHeight;
+                    break;
+                case 'tool_result':
+                    if (currentProgressDiv) {
+                        const result = data.result ? data.result.substring(0, 200) : 'done';
+                        currentProgressDiv.innerHTML += '<div class="content" style="margin-top: 4px; color: #58a6ff;">✓ Result: ' + result + '...</div>';
+                        terminal.scrollTop = terminal.scrollHeight;
+                    }
+                    break;
+                case 'generating':
+                    if (currentProgressDiv) {
+                        currentProgressDiv.innerHTML += '<div class="content" style="margin-top: 4px;">💭 Generating response...</div>';
+                        terminal.scrollTop = terminal.scrollHeight;
+                        currentProgressDiv = null;  // Don't update this one anymore
+                    }
+                    showTyping();
+                    break;
+                case 'completed':
+                    hideTyping();
+                    currentProgressDiv = null;
+                    break;
+                case 'error':
+                    hideTyping();
+                    addMessage('Error: ' + data.error, 'error');
+                    currentProgressDiv = null;
+                    break;
+            }
+        }
 
         function addMessage(content, type) {
             const div = document.createElement('div');
