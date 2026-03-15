@@ -4,12 +4,12 @@
 //! ~/.manta/
 //! ├── config/          # Configuration files (manta.toml)
 //! ├── memory/          # SQLite databases (memory.db, chat history)
-//! ├── memory-files/    # OpenClaw-style personality files (SOUL.md, IDENTITY.md, BOOTSTRAP.md)
 //! ├── logs/            # Log files (daemon.log)
 //! ├── skills/          # User-installed skills
 //! ├── agents/          # Agent configurations
 //! ├── cron/            # Cron job data
-//! └── workspace/       # Workspace-level data
+//! ├── todos/           # Task persistence
+//! └── workspace/       # Workspace-level data (SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
 
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -39,9 +39,17 @@ pub fn memory_dir() -> PathBuf {
     manta_dir().join("memory")
 }
 
-/// Get the memory files directory for OpenClaw-style files (~/.manta/memory-files)
+/// Get the workspace data directory for OpenClaw-style files (~/.manta/workspace)
+///
+/// This is where SOUL.md, IDENTITY.md, BOOTSTRAP.md, and USER.md are stored.
+pub fn workspace_memory_dir() -> PathBuf {
+    workspace_data_dir()
+}
+
+/// Deprecated: Use workspace_memory_dir() instead
+#[deprecated(since = "0.1.0", note = "Use workspace_memory_dir() instead")]
 pub fn memory_files_dir() -> PathBuf {
-    manta_dir().join("memory-files")
+    workspace_data_dir()
 }
 
 /// Get the logs directory (~/.manta/logs)
@@ -106,7 +114,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         &base,
         &config_dir(),
         &memory_dir(),
-        &memory_files_dir(),
+        &workspace_data_dir(),
         &logs_dir(),
         &skills_dir(),
         &agents_dir(),
@@ -140,7 +148,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         &base,
         &config_dir(),
         &memory_dir(),
-        &memory_files_dir(),
+        &workspace_data_dir(),
         &logs_dir(),
         &skills_dir(),
         &agents_dir(),
@@ -177,9 +185,10 @@ pub fn path_for(file_type: FileType) -> PathBuf {
         FileType::MemoryDb => default_memory_db(),
         FileType::Log => default_log_file(),
         FileType::Pid => pid_file(),
-        FileType::Soul => memory_files_dir().join("SOUL.md"),
-        FileType::Identity => memory_files_dir().join("IDENTITY.md"),
-        FileType::Bootstrap => memory_files_dir().join("BOOTSTRAP.md"),
+        FileType::Soul => workspace_data_dir().join("SOUL.md"),
+        FileType::Identity => workspace_data_dir().join("IDENTITY.md"),
+        FileType::Bootstrap => workspace_data_dir().join("BOOTSTRAP.md"),
+        FileType::User => workspace_data_dir().join("USER.md"),
     }
 }
 
@@ -200,6 +209,8 @@ pub enum FileType {
     Identity,
     /// BOOTSTRAP.md personality file
     Bootstrap,
+    /// USER.md user-specific memory file
+    User,
 }
 
 #[cfg(test)]

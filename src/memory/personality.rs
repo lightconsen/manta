@@ -4,6 +4,7 @@
 //! - SOUL.md: Core personality, values, behavioral guidelines
 //! - IDENTITY.md: Agent identity, name, role definition
 //! - BOOTSTRAP.md: Initial startup behavior, first-run logic
+//! - USER.md: User-specific memory, preferences, conversation history
 //!
 //! All stored as markdown files with bounded size (default 4KB each).
 
@@ -24,6 +25,8 @@ pub enum MemoryType {
     Identity,
     /// Bootstrap memory - initial startup behavior, first-run logic
     Bootstrap,
+    /// User memory - user-specific data, preferences, conversation history
+    User,
 }
 
 impl MemoryType {
@@ -33,6 +36,7 @@ impl MemoryType {
             MemoryType::Soul => "SOUL.md",
             MemoryType::Identity => "IDENTITY.md",
             MemoryType::Bootstrap => "BOOTSTRAP.md",
+            MemoryType::User => "USER.md",
         }
     }
 
@@ -42,6 +46,7 @@ impl MemoryType {
             MemoryType::Soul => "Core personality, values, behavioral guidelines, and character traits",
             MemoryType::Identity => "Agent identity, name, role definition, and self-concept",
             MemoryType::Bootstrap => "Initial startup behavior, first-run logic, and onboarding",
+            MemoryType::User => "User-specific memory, preferences, conversation history, and learned context",
         }
     }
 }
@@ -71,7 +76,7 @@ impl PersonalityMemory {
         }
 
         // Fall back to user level
-        let base_dir = crate::dirs::memory_files_dir();
+        let base_dir = crate::dirs::workspace_memory_dir();
         tracing::info!("Using user-level personality memory: {:?}", base_dir);
         Self::with_dir(base_dir).await
     }
@@ -160,8 +165,8 @@ impl PersonalityMemory {
                 content.len(),
                 self.max_size
             );
-            let truncated = &content[..self.max_size];
-            return self.write_unchecked(mem_type, truncated).await;
+            let truncated: String = content.chars().take(self.max_size).collect();
+            return self.write_unchecked(mem_type, &truncated).await;
         }
 
         // Security scan for injection patterns
@@ -220,6 +225,7 @@ impl PersonalityMemory {
         let identity = self.read(MemoryType::Identity).await?;
         let soul = self.read(MemoryType::Soul).await?;
         let bootstrap = self.read(MemoryType::Bootstrap).await?;
+        let user = self.read(MemoryType::User).await?;
 
         let mut sections = Vec::new();
 
@@ -233,6 +239,10 @@ impl PersonalityMemory {
 
         if !bootstrap.is_empty() {
             sections.push(format!("## Bootstrap\n{}\n", bootstrap.trim()));
+        }
+
+        if !user.is_empty() {
+            sections.push(format!("## User\n{}\n", user.trim()));
         }
 
         if sections.is_empty() {
