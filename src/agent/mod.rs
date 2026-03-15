@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Progress events during message processing
 #[derive(Debug, Clone)]
@@ -774,6 +774,26 @@ impl Agent {
         original_response: &crate::providers::CompletionResponse,
         tool_calls: &[ToolCall],
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        // Check iteration limit before processing
+        if !context.increment_tool_iteration() {
+            warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
+
+            // Return a response indicating the limit was reached
+            return Ok(crate::providers::CompletionResponse {
+                message: Message {
+                    role: Role::Assistant,
+                    content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    metadata: None,
+                },
+                usage: None,
+                model: "system".to_string(),
+                finish_reason: Some("tool_limit".to_string()),
+            });
+        }
+
         // Add assistant message with tool calls
         context.add_message(original_response.message.clone());
 
@@ -879,6 +899,31 @@ impl Agent {
         tool_calls: &[ToolCall],
         progress_cb: ProgressCallback,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        // Check iteration limit before processing
+        if !context.increment_tool_iteration() {
+            warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
+
+            // Notify user about the limit
+            (progress_cb)(ProgressEvent::Error {
+                message: format!("Tool iteration limit reached ({}) - the agent was taking too many steps. Please try a more specific request.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+            }).await;
+
+            // Return a response indicating the limit was reached
+            return Ok(crate::providers::CompletionResponse {
+                message: Message {
+                    role: Role::Assistant,
+                    content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    metadata: None,
+                },
+                usage: None,
+                model: "system".to_string(),
+                finish_reason: Some("tool_limit".to_string()),
+            });
+        }
+
         // Add assistant message with tool calls
         context.add_message(original_response.message.clone());
 

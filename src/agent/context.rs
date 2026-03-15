@@ -23,9 +23,16 @@ pub struct Context {
     created_at: SystemTime,
     /// When the context was last accessed
     last_accessed: SystemTime,
+    /// Tool call iteration counter (to prevent infinite loops)
+    tool_iterations: usize,
+    /// Maximum allowed tool iterations
+    max_tool_iterations: usize,
 }
 
 impl Context {
+    /// Default maximum tool iterations to prevent infinite loops
+    pub const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
+
     /// Create a new context
     pub fn new(id: impl Into<String>, system_prompt: impl Into<String>, max_tokens: usize) -> Self {
         let now = SystemTime::now();
@@ -37,7 +44,30 @@ impl Context {
             token_count: 0,
             created_at: now,
             last_accessed: now,
+            tool_iterations: 0,
+            max_tool_iterations: Self::DEFAULT_MAX_TOOL_ITERATIONS,
         }
+    }
+
+    /// Increment tool iteration counter
+    pub fn increment_tool_iteration(&mut self) -> bool {
+        self.tool_iterations += 1;
+        self.tool_iterations < self.max_tool_iterations
+    }
+
+    /// Get current tool iteration count
+    pub fn tool_iterations(&self) -> usize {
+        self.tool_iterations
+    }
+
+    /// Check if tool iteration limit is reached
+    pub fn is_tool_limit_reached(&self) -> bool {
+        self.tool_iterations >= self.max_tool_iterations
+    }
+
+    /// Set maximum tool iterations
+    pub fn set_max_tool_iterations(&mut self, max: usize) {
+        self.max_tool_iterations = max;
     }
 
     /// Get the context ID
