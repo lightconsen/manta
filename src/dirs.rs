@@ -189,6 +189,8 @@ pub fn path_for(file_type: FileType) -> PathBuf {
         FileType::Identity => workspace_data_dir().join("IDENTITY.md"),
         FileType::Bootstrap => workspace_data_dir().join("BOOTSTRAP.md"),
         FileType::User => workspace_data_dir().join("USER.md"),
+        FileType::Agents => workspace_data_dir().join("AGENTS.md"),
+        FileType::Tools => workspace_data_dir().join("TOOLS.md"),
     }
 }
 
@@ -211,6 +213,10 @@ pub enum FileType {
     Bootstrap,
     /// USER.md user-specific memory file
     User,
+    /// AGENTS.md operating instructions file
+    Agents,
+    /// TOOLS.md tool notes and conventions file
+    Tools,
 }
 
 #[cfg(test)]

@@ -10,6 +10,28 @@ use std::collections::HashMap;
 
 pub mod formatter;
 
+/// Channel types supported by Manta
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    /// WhatsApp via Meta Business API
+    Whatsapp,
+    /// Telegram Bot API
+    Telegram,
+    /// Feishu/Lark Open API
+    Feishu,
+    /// QQ via go-cqhttp
+    Qq,
+    /// Discord Gateway
+    Discord,
+    /// Slack Socket Mode
+    Slack,
+    /// Custom WebSocket endpoint
+    Websocket,
+    /// Web terminal (built-in)
+    WebTerminal,
+}
+
 #[cfg(feature = "telegram")]
 pub mod telegram;
 

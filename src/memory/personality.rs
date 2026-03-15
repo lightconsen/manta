@@ -5,6 +5,8 @@
 //! - IDENTITY.md: Agent identity, name, role definition
 //! - BOOTSTRAP.md: Initial startup behavior, first-run logic
 //! - USER.md: User-specific memory, preferences, conversation history
+//! - AGENTS.md: Operating instructions and agent "memory"
+//! - TOOLS.md: User-maintained tool notes and conventions
 //!
 //! All stored as markdown files with bounded size (default 4KB each).
 
@@ -27,6 +29,10 @@ pub enum MemoryType {
     Bootstrap,
     /// User memory - user-specific data, preferences, conversation history
     User,
+    /// Agents memory - operating instructions and agent "memory"
+    Agents,
+    /// Tools memory - user-maintained tool notes and conventions
+    Tools,
 }
 
 impl MemoryType {
@@ -37,6 +43,8 @@ impl MemoryType {
             MemoryType::Identity => "IDENTITY.md",
             MemoryType::Bootstrap => "BOOTSTRAP.md",
             MemoryType::User => "USER.md",
+            MemoryType::Agents => "AGENTS.md",
+            MemoryType::Tools => "TOOLS.md",
         }
     }
 
@@ -47,6 +55,8 @@ impl MemoryType {
             MemoryType::Identity => "Agent identity, name, role definition, and self-concept",
             MemoryType::Bootstrap => "Initial startup behavior, first-run logic, and onboarding",
             MemoryType::User => "User-specific memory, preferences, conversation history, and learned context",
+            MemoryType::Agents => "Operating instructions and agent memory for task execution",
+            MemoryType::Tools => "User-maintained tool notes, conventions, and usage patterns",
         }
     }
 }
@@ -222,12 +232,25 @@ impl PersonalityMemory {
     /// Get memory content formatted for system prompt
     pub async fn format_for_prompt(&self) -> crate::Result<String> {
         // OpenClaw-style personality files (loaded in priority order)
+        // AGENTS.md and TOOLS.md are loaded first as they provide operating instructions
+        let agents = self.read(MemoryType::Agents).await?;
+        let tools = self.read(MemoryType::Tools).await?;
         let identity = self.read(MemoryType::Identity).await?;
         let soul = self.read(MemoryType::Soul).await?;
         let bootstrap = self.read(MemoryType::Bootstrap).await?;
         let user = self.read(MemoryType::User).await?;
 
         let mut sections = Vec::new();
+
+        // AGENTS.md - Operating instructions (highest priority after system)
+        if !agents.is_empty() {
+            sections.push(format!("## Agents\n{}\n", agents.trim()));
+        }
+
+        // TOOLS.md - Tool conventions and notes
+        if !tools.is_empty() {
+            sections.push(format!("## Tools\n{}\n", tools.trim()));
+        }
 
         if !identity.is_empty() {
             sections.push(format!("## Identity\n{}\n", identity.trim()));

@@ -38,11 +38,15 @@ pub type ProgressCallback = Arc<dyn Fn(ProgressEvent) -> Pin<Box<dyn std::future
 pub mod budget;
 pub mod compressor;
 pub mod context;
+pub mod planner;
+pub mod prompt_builder;
 pub mod todo;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
+pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
+pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use todo::{Task, TaskStatus, TodoStore};
 
 /// Fast check for obviously time-sensitive queries
@@ -231,7 +235,7 @@ impl ResponseCache {
 }
 
 /// Configuration for the Agent
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentConfig {
     /// The system prompt to use
     pub system_prompt: String,
@@ -350,6 +354,10 @@ pub struct Agent {
     session_search: Option<Arc<crate::memory::SessionSearch>>,
     /// Response cache for identical prompts
     response_cache: Arc<ResponseCache>,
+    /// Task planner for automatic task decomposition
+    task_planner: Arc<TaskPlanner>,
+    /// Active plans per conversation
+    active_plans: Arc<RwLock<std::collections::HashMap<String, ActivePlan>>>,
 }
 
 impl Agent {
@@ -359,6 +367,8 @@ impl Agent {
         provider: Arc<dyn Provider>,
         tools: Arc<ToolRegistry>,
     ) -> Self {
+        let provider_clone = provider.clone();
+
         Self {
             config,
             provider,
@@ -369,6 +379,8 @@ impl Agent {
             chat_history: None,
             session_search: None,
             response_cache: Arc::new(ResponseCache::new(Duration::from_secs(3600))), // 1 hour TTL
+            task_planner: Arc::new(TaskPlanner::new(provider_clone)),
+            active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -414,39 +426,49 @@ impl Agent {
         }
     }
 
-    /// Get or create a context for a conversation
-    pub async fn get_context(&self, conversation_id: &str, user_id: &str) -> Context {
+    /// Get or create a context for a conversation with dynamic prompt building
+    pub async fn get_context(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+        user_message: &str,
+    ) -> Context {
         let mut contexts = self.contexts.write().await;
 
-        // Check if context already exists
-        if let Some(context) = contexts.get(conversation_id) {
-            return context.clone();
-        }
+        // Check if context already exists - if so, we may update it dynamically
+        let existing_context = contexts.get(conversation_id).cloned();
 
-        // Create new context with personality-loaded system prompt
-        let mut system_prompt = self
-            .config
-            .full_system_prompt_with_personality()
-            .await;
+        // Build dynamic prompt context
+        let mut prompt_ctx = PromptContext::new(user_message);
+        prompt_ctx.detect_task_type();
 
-        // Inject relevant memories if memory store is available
-        if let Some(ref store) = self.memory_store {
-            // Get recent memories for this user
-            let memory_query = crate::memory::MemoryQuery::new()
-                .for_user(user_id)
-                .limit(5);
+        // Set phase based on existing context or new conversation
+        let history_len = existing_context.as_ref().map(|c| c.history().len()).unwrap_or(0);
+        prompt_ctx = prompt_ctx.set_phase(history_len);
 
-            match store.search(memory_query).await {
-                Ok(memories) if !memories.is_empty() => {
-                    let memory_section = crate::tools::MemoryTool::format_memories_for_prompt(&memories);
-                    if !memory_section.is_empty() {
-                        system_prompt.push_str("\n\n");
-                        system_prompt.push_str(&memory_section);
-                    }
-                }
-                _ => {}
+        // Check for active plan
+        let active_plans = self.active_plans.read().await;
+        if let Some(active_plan) = active_plans.get(conversation_id) {
+            if let Some(task_prompt) = active_plan.current_task_prompt() {
+                prompt_ctx.task_context = Some(task_prompt);
             }
         }
+        drop(active_plans);
+
+        // Get available tools
+        let tool_context = crate::tools::ToolContext::new(user_id, conversation_id);
+        let tool_defs = self.tools.get_available(&tool_context);
+        prompt_ctx.available_tools = tool_defs;
+
+        // Get base prompt
+        let base_prompt = self.config.full_system_prompt_with_personality().await;
+
+        // Build dynamic system prompt
+        let system_prompt = PromptBuilder::build_from_context(
+            &base_prompt,
+            &prompt_ctx,
+            self.config.max_context_tokens / 4, // Rough token estimate
+        );
 
         let context = Context::new(
             conversation_id.to_string(),
@@ -547,11 +569,64 @@ impl Agent {
             }
         }
 
-        // Get or create context
-        let mut context = self.get_context(&conversation_id, &user_id).await;
+        // Check if we need task planning
+        let needs_planning = self.task_planner.needs_planning(&content).await;
+
+        if needs_planning {
+            info!("Complex task detected, creating plan for: {}", conversation_id);
+
+            // Create a plan
+            match self.task_planner.create_plan(&content).await {
+                Ok(plan) => {
+                    let summary = plan.format_summary();
+                    info!("Created plan with {} tasks", plan.tasks.len());
+
+                    // Convert to todos
+                    let todos = self.task_planner.plan_to_todos(&plan);
+
+                    // Store active plan
+                    let active_plan = ActivePlan {
+                        plan,
+                        todos,
+                        completed_tasks: Vec::new(),
+                    };
+
+                    let mut plans = self.active_plans.write().await;
+                    plans.insert(conversation_id.clone(), active_plan);
+                    drop(plans);
+
+                    // Return the plan to the user
+                    return Ok(OutgoingMessage::new(
+                        crate::channels::ConversationId(conversation_id),
+                        format!("I'll break this down into steps:\n\n{}", summary),
+                    ));
+                }
+                Err(e) => {
+                    warn!("Failed to create plan: {}, proceeding without planning", e);
+                }
+            }
+        }
+
+        // Get or create context with dynamic prompt building
+        let mut context = self.get_context(&conversation_id, &user_id, &content).await;
 
         // Add user message to context
         context.add_message(Message::user(&content));
+
+        // Check if we're executing an active plan
+        let active_plan_check = {
+            let plans = self.active_plans.read().await;
+            plans.get(&conversation_id).map(|p| {
+                (
+                    p.plan.progress_percent(),
+                    p.plan.current_task().map(|t| t.description.clone()),
+                )
+            })
+        };
+
+        if let Some((progress, Some(current_task))) = active_plan_check {
+            info!("Executing plan: {}% - Task: {}", progress, current_task);
+        }
 
         // Get response from LLM
         let response = self.get_completion(&mut context).await?;
@@ -701,8 +776,8 @@ impl Agent {
             }
         }
 
-        // Get or create context
-        let mut context = self.get_context(&conversation_id, &user_id).await;
+        // Get or create context with dynamic prompt building
+        let mut context = self.get_context(&conversation_id, &user_id, &content).await;
 
         // Add user message to context
         context.add_message(Message::user(&content));

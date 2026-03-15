@@ -38,6 +38,7 @@
 pub mod adapters;
 pub mod agent;
 pub mod assistants;
+pub mod canvas;
 pub mod channels;
 pub mod cli;
 pub mod client;
@@ -47,8 +48,10 @@ pub mod cron;
 pub mod daemon;
 pub mod dirs;
 pub mod error;
+pub mod gateway;
 pub mod logs;
 pub mod memory;
+pub mod model_router;
 pub mod providers;
 pub mod security;
 pub mod server;
@@ -57,6 +60,9 @@ pub mod tools;
 pub mod web;
 pub mod webhook;
 pub mod utils;
+
+#[cfg(feature = "tailscale")]
+pub mod tailscale;
 
 // Re-export commonly used types
 pub use crate::core::Engine;
