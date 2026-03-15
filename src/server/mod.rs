@@ -197,6 +197,13 @@ pub struct ChatRequest {
     pub conversation_id: Option<String>,
 }
 
+/// History request
+#[derive(Debug, Deserialize)]
+pub struct HistoryRequest {
+    pub conversation_id: String,
+    pub limit: Option<usize>,
+}
+
 /// Chat response
 #[derive(Debug, Serialize)]
 pub struct ChatResponse {
@@ -280,6 +287,48 @@ async fn handle_chat_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        // Try to parse as a generic JSON first to check message type
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+                            // Check if it's a history request
+                            if json_val.get("type").and_then(|v| v.as_str()) == Some("load_history") {
+                                if let Some(cid) = json_val.get("conversation_id").and_then(|v| v.as_str()) {
+                                    conversation_id = Some(cid.to_string());
+
+                                    // Load and send history
+                                    if let Some(agent) = &state.agent {
+                                        let limit = json_val.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                                        match agent.get_chat_history(cid, limit).await {
+                                            Ok(history) => {
+                                                let history_msg = serde_json::json!({
+                                                    "type": "history",
+                                                    "conversation_id": cid,
+                                                    "messages": history.iter().map(|msg| {
+                                                        let created_at_secs = msg.created_at
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap_or_default()
+                                                            .as_secs();
+                                                        serde_json::json!({
+                                                            "id": msg.id,
+                                                            "role": msg.role,
+                                                            "content": msg.content,
+                                                            "created_at": created_at_secs
+                                                        })
+                                                    }).collect::<Vec<_>>()
+                                                });
+                                                if socket.send(Message::Text(history_msg.to_string())).await.is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to load history: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
                         // Try to parse as chat request
                         let request: ChatRequest = match serde_json::from_str(&text) {
                             Ok(r) => r,
@@ -823,6 +872,9 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
 
+        // Restore conversation ID from localStorage
+        let conversationId = localStorage.getItem('manta_conversation_id');
+
         // Connect to WebSocket
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
@@ -832,7 +884,17 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             input.disabled = false;
             sendBtn.disabled = false;
             input.focus();
-            addMessage('Connected to Manta AI Assistant. Type your message below.', 'system');
+
+            // If we have a stored conversation, load its history
+            if (conversationId) {
+                ws.send(JSON.stringify({
+                    type: 'load_history',
+                    conversation_id: conversationId,
+                    limit: 50
+                }));
+            } else {
+                addMessage('Connected to Manta AI Assistant. Type your message below.', 'system');
+            }
         };
 
         ws.onclose = () => {
@@ -857,15 +919,44 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
                     addMessage(data.content, 'system');
                 } else if (data.type === 'progress') {
                     handleProgress(data);
+                } else if (data.type === 'history') {
+                    // Display history messages
+                    displayHistory(data.messages);
+                    // Store conversation ID
+                    conversationId = data.conversation_id;
+                    localStorage.setItem('manta_conversation_id', conversationId);
+                    addMessage('Loaded ' + data.messages.length + ' messages from previous conversation.', 'system');
                 } else if (data.response) {
                     hideTyping();
                     addMessage(data.response, 'assistant');
+                    // Store conversation ID from response
+                    if (data.conversation_id) {
+                        conversationId = data.conversation_id;
+                        localStorage.setItem('manta_conversation_id', conversationId);
+                    }
                 }
             } catch (e) {
                 hideTyping();
                 addMessage(event.data, 'assistant');
             }
         };
+
+        // Display history messages
+        function displayHistory(messages) {
+            // Clear existing messages first (except system messages)
+            const existingMessages = terminal.querySelectorAll('.message:not(.system)');
+            existingMessages.forEach(m => m.remove());
+
+            messages.forEach(msg => {
+                const role = msg.role;
+                const content = msg.content;
+                if (role === 'user') {
+                    addMessage(content, 'user');
+                } else if (role === 'assistant') {
+                    addMessage(content, 'assistant');
+                }
+            });
+        }
 
         // Handle progress updates
         let currentProgressDiv = null;
