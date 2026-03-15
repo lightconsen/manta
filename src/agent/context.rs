@@ -4,6 +4,7 @@
 //! to keep conversations within the context window.
 
 use crate::providers::Message;
+use std::collections::HashSet;
 use std::time::SystemTime;
 
 /// Conversation context
@@ -27,6 +28,8 @@ pub struct Context {
     tool_iterations: usize,
     /// Maximum allowed tool iterations
     max_tool_iterations: usize,
+    /// Track tool calls to prevent duplicates (tool_name + params_hash)
+    executed_tool_calls: HashSet<String>,
 }
 
 impl Context {
@@ -46,7 +49,20 @@ impl Context {
             last_accessed: now,
             tool_iterations: 0,
             max_tool_iterations: Self::DEFAULT_MAX_TOOL_ITERATIONS,
+            executed_tool_calls: HashSet::new(),
         }
+    }
+
+    /// Check if a tool call with these parameters was already executed
+    pub fn is_tool_call_duplicate(&self, tool_name: &str, params: &str) -> bool {
+        let key = format!("{}:{}", tool_name, params);
+        self.executed_tool_calls.contains(&key)
+    }
+
+    /// Record a tool call as executed
+    pub fn record_tool_call(&mut self, tool_name: &str, params: &str) {
+        let key = format!("{}:{}", tool_name, params);
+        self.executed_tool_calls.insert(key);
     }
 
     /// Increment tool iteration counter

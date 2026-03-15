@@ -804,7 +804,23 @@ impl Agent {
         let mut results = Vec::new();
 
         for tool_call in tool_calls.iter().take(self.config.max_concurrent_tools) {
-            debug!("Executing tool: {}", tool_call.function.name);
+            let tool_name = tool_call.function.name.clone();
+            let tool_args = tool_call.function.arguments.clone();
+
+            // Check for duplicate tool calls
+            if context.is_tool_call_duplicate(&tool_name, &tool_args) {
+                warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
+                results.push(ToolResult::error(
+                    &tool_call.id,
+                    "Error: This exact tool call was already executed. The previous result did not provide the expected data. Please try a different approach or acknowledge that the tool cannot fulfill this request."
+                ));
+                continue;
+            }
+
+            // Record this tool call before executing
+            context.record_tool_call(&tool_name, &tool_args);
+
+            debug!("Executing tool: {}", tool_name);
 
             let result = match self.tools.execute_call(&tool_call.function, &tool_context).await {
                 Ok(exec_result) => {
@@ -936,6 +952,27 @@ impl Agent {
         for tool_call in tool_calls.iter().take(self.config.max_concurrent_tools) {
             let tool_name = tool_call.function.name.clone();
             let tool_args = tool_call.function.arguments.clone();
+
+            // Check for duplicate tool calls
+            if context.is_tool_call_duplicate(&tool_name, &tool_args) {
+                warn!("Duplicate tool call detected: {} with same args, skipping", tool_name);
+
+                // Notify about duplicate
+                (progress_cb)(ProgressEvent::ToolResult {
+                    name: tool_name.clone(),
+                    result: "[Duplicate tool call skipped - already executed with same parameters]".to_string(),
+                }).await;
+
+                // Add error result so LLM knows this failed
+                results.push(ToolResult::error(
+                    &tool_call.id,
+                    "Error: This exact tool call was already executed. The previous result did not provide the expected data. Please try a different approach or acknowledge that the tool cannot fulfill this request."
+                ));
+                continue;
+            }
+
+            // Record this tool call before executing
+            context.record_tool_call(&tool_name, &tool_args);
 
             // Notify tool calling
             (progress_cb)(ProgressEvent::ToolCalling {
