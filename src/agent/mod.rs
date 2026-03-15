@@ -7,8 +7,11 @@ use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::memory::MemoryStore;
 use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolRegistry};
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, instrument};
 
@@ -41,6 +44,92 @@ pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use todo::{Task, TaskStatus, TodoStore};
+
+/// Cached response entry
+#[derive(Debug, Clone)]
+pub struct CachedResponse {
+    pub response: String,
+    pub created_at: SystemTime,
+    #[allow(dead_code)]
+    pub tools_used: Vec<String>,
+}
+
+/// Simple in-memory response cache with TTL
+#[derive(Debug, Clone)]
+pub struct ResponseCache {
+    cache: Arc<RwLock<HashMap<u64, CachedResponse>>>,
+    ttl: Duration,
+}
+
+impl ResponseCache {
+    /// Create a new response cache with specified TTL
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            ttl,
+        }
+    }
+
+    /// Generate a cache key from user message and context
+    fn generate_key(user_id: &str, conversation_id: &str, message: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        user_id.hash(&mut hasher);
+        conversation_id.hash(&mut hasher);
+        message.trim().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Get cached response if not expired
+    pub async fn get(&self, user_id: &str, conversation_id: &str, message: &str) -> Option<CachedResponse> {
+        let key = Self::generate_key(user_id, conversation_id, message);
+        let cache = self.cache.read().await;
+
+        if let Some(entry) = cache.get(&key) {
+            if let Ok(elapsed) = entry.created_at.elapsed() {
+                if elapsed < self.ttl {
+                    return Some(entry.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Store a response in cache
+    pub async fn set(&self, user_id: &str, conversation_id: &str, message: &str, response: String, tools_used: Vec<String>) {
+        let key = Self::generate_key(user_id, conversation_id, message);
+        let entry = CachedResponse {
+            response,
+            created_at: SystemTime::now(),
+            tools_used,
+        };
+
+        let mut cache = self.cache.write().await;
+        cache.insert(key, entry);
+
+        // Clean up old entries if cache is too large (> 1000 entries)
+        if cache.len() > 1000 {
+            let keys_to_remove: Vec<u64> = cache
+                .iter()
+                .filter(|(_, v)| {
+                    v.created_at.elapsed().unwrap_or(Duration::MAX) > self.ttl
+                })
+                .map(|(k, _)| *k)
+                .collect();
+
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
+        }
+    }
+
+    /// Clear expired entries
+    pub async fn cleanup(&self) {
+        let mut cache = self.cache.write().await;
+        cache.retain(|_, v| {
+            v.created_at.elapsed().unwrap_or(Duration::MAX) < self.ttl
+        });
+    }
+}
 
 /// Configuration for the Agent
 #[derive(Debug, Clone)]
@@ -122,6 +211,8 @@ pub struct Agent {
     chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
     /// Session search for conversation history indexing
     session_search: Option<Arc<crate::memory::SessionSearch>>,
+    /// Response cache for identical prompts
+    response_cache: Arc<ResponseCache>,
 }
 
 impl Agent {
@@ -140,6 +231,7 @@ impl Agent {
             memory_store: None,
             chat_history: None,
             session_search: None,
+            response_cache: Arc::new(ResponseCache::new(Duration::from_secs(3600))), // 1 hour TTL
         }
     }
 
@@ -241,6 +333,52 @@ impl Agent {
         let user_id = message.user_id.0.clone();
         let content = message.content.clone();
 
+        // Check cache for identical prompt (only for non-follow-up messages)
+        // Skip cache if this looks like a follow-up (short message referring to previous context)
+        let is_follow_up = content.len() < 50 &&
+            (content.contains("it") || content.contains("that") || content.contains("this") ||
+             content.contains("上面的") || content.contains("这个") || content.contains("那个"));
+
+        if !is_follow_up {
+            if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
+                info!("Cache hit for user {} - returning cached response", user_id);
+
+                // Store user message in chat history
+                if let Some(ref store) = self.chat_history {
+                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    let chat_msg = ChatMessage::new(
+                        &conversation_id,
+                        &user_id,
+                        "user",
+                        &content,
+                    );
+                    if let Err(e) = store.store_message(chat_msg).await {
+                        error!("Failed to store user message: {}", e);
+                    }
+                }
+
+                // Store cached assistant response in chat history
+                if let Some(ref store) = self.chat_history {
+                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    let chat_msg = ChatMessage::new(
+                        &conversation_id,
+                        &user_id,
+                        "assistant",
+                        &cached.response,
+                    );
+                    if let Err(e) = store.store_message(chat_msg).await {
+                        error!("Failed to store assistant message: {}", e);
+                    }
+                }
+
+                // Return cached response
+                return Ok(OutgoingMessage::new(
+                    crate::channels::ConversationId(conversation_id),
+                    cached.response.clone(),
+                ));
+            }
+        }
+
         // Store user message in chat history and index for search
         let message_id = uuid::Uuid::new_v4().to_string();
         if let Some(ref store) = self.chat_history {
@@ -305,6 +443,15 @@ impl Agent {
             }
         }
 
+        // Cache the response (we don't track tools in the basic version, so empty vec for now)
+        self.response_cache.set(
+            &user_id,
+            &conversation_id,
+            &content,
+            response.message.content.clone(),
+            vec![], // TODO: Track actual tools used
+        ).await;
+
         // Create outgoing message
         let outgoing = OutgoingMessage::new(
             crate::channels::ConversationId(conversation_id),
@@ -329,6 +476,60 @@ impl Agent {
 
         // Notify started
         (progress_cb)(ProgressEvent::Started).await;
+
+        // Check cache for identical prompt (only for non-follow-up messages)
+        let is_follow_up = content.len() < 50 &&
+            (content.contains("it") || content.contains("that") || content.contains("this") ||
+             content.contains("上面的") || content.contains("这个") || content.contains("那个"));
+
+        if !is_follow_up {
+            if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
+                info!("Cache hit for user {} - returning cached response", user_id);
+
+                // Notify cache hit
+                (progress_cb)(ProgressEvent::ToolCalling {
+                    name: "cache".to_string(),
+                    arguments: "{\"hit\": true}".to_string(),
+                }).await;
+
+                // Store user message in chat history
+                if let Some(ref store) = self.chat_history {
+                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    let chat_msg = ChatMessage::new(
+                        &conversation_id,
+                        &user_id,
+                        "user",
+                        &content,
+                    );
+                    if let Err(e) = store.store_message(chat_msg).await {
+                        error!("Failed to store user message: {}", e);
+                    }
+                }
+
+                // Store cached assistant response in chat history
+                if let Some(ref store) = self.chat_history {
+                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    let chat_msg = ChatMessage::new(
+                        &conversation_id,
+                        &user_id,
+                        "assistant",
+                        &cached.response,
+                    );
+                    if let Err(e) = store.store_message(chat_msg).await {
+                        error!("Failed to store assistant message: {}", e);
+                    }
+                }
+
+                // Notify completed with cached response
+                (progress_cb)(ProgressEvent::Completed { response: cached.response.clone() }).await;
+
+                // Return cached response
+                return Ok(OutgoingMessage::new(
+                    crate::channels::ConversationId(conversation_id),
+                    cached.response.clone(),
+                ));
+            }
+        }
 
         // Store user message in chat history and index for search
         let message_id = uuid::Uuid::new_v4().to_string();
@@ -388,6 +589,15 @@ impl Agent {
                 error!("Failed to index assistant message for search: {}", e);
             }
         }
+
+        // Cache the response
+        self.response_cache.set(
+            &user_id,
+            &conversation_id,
+            &content,
+            response.message.content.clone(),
+            vec![],
+        ).await;
 
         // Notify completed
         let response_content = response.message.content.clone();
