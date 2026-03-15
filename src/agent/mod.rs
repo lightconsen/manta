@@ -123,6 +123,7 @@ Reply with ONLY "CACHE" or "NOCACHE"."#,
 }
 
 /// Determine if tools used are cacheable
+#[allow(dead_code)]
 fn are_tools_cacheable(tool_names: &[String]) -> bool {
     // Non-cacheable tools that return time-sensitive or real-time data
     let non_cacheable = [
