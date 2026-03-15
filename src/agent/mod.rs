@@ -45,6 +45,80 @@ pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use todo::{Task, TaskStatus, TodoStore};
 
+/// Determine if a prompt is time-sensitive and should not be cached
+fn is_time_sensitive(message: &str) -> bool {
+    let lower = message.to_lowercase();
+
+    // Time-sensitive keywords (English)
+    let time_keywords = [
+        "time", "date", "now", "today", "current", "clock",
+        "hour", "minute", "second", "moment",
+    ];
+
+    // Time-sensitive keywords (Chinese)
+    let chinese_time_keywords = [
+        "时间", "日期", "现在", "今天", "当前", "几点", "几号",
+        "小时", "分钟", "秒", "时刻", "timestamp",
+    ];
+
+    // Check if message is asking about time
+    for kw in &time_keywords {
+        if lower.contains(kw) {
+            // Additional check: is it actually asking about time?
+            if lower.contains("current time")
+                || lower.contains("what time")
+                || lower.contains("what's the time")
+                || lower.contains("now")
+            {
+                return true;
+            }
+        }
+    }
+
+    for kw in &chinese_time_keywords {
+        if lower.contains(kw) {
+            return true;
+        }
+    }
+
+    // Real-time data queries that change frequently
+    let real_time_queries = [
+        "stock price", "股价", "股票价格",
+        "weather now", "当前天气", "现在天气",
+        "bitcoin price", "btc", "eth", "crypto",
+        "temperature now", "当前温度",
+    ];
+
+    for query in &real_time_queries {
+        if lower.contains(query) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Determine if tools used are cacheable
+fn are_tools_cacheable(tool_names: &[String]) -> bool {
+    // Non-cacheable tools that return time-sensitive or real-time data
+    let non_cacheable = [
+        "datetime", "time", "clock", "date",
+        "weather_current", "weather_now",
+        "stock_price", "crypto_price",
+    ];
+
+    for tool in tool_names {
+        let tool_lower = tool.to_lowercase();
+        for nc in &non_cacheable {
+            if tool_lower.contains(nc) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Cached response entry
 #[derive(Debug, Clone)]
 pub struct CachedResponse {
@@ -333,13 +407,16 @@ impl Agent {
         let user_id = message.user_id.0.clone();
         let content = message.content.clone();
 
-        // Check cache for identical prompt (only for non-follow-up messages)
+        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
         // Skip cache if this looks like a follow-up (short message referring to previous context)
         let is_follow_up = content.len() < 50 &&
             (content.contains("it") || content.contains("that") || content.contains("this") ||
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
-        if !is_follow_up {
+        // Skip cache for time-sensitive queries
+        let should_cache = !is_follow_up && !is_time_sensitive(&content);
+
+        if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
                 info!("Cache hit for user {} - returning cached response", user_id);
 
@@ -443,14 +520,16 @@ impl Agent {
             }
         }
 
-        // Cache the response (we don't track tools in the basic version, so empty vec for now)
-        self.response_cache.set(
-            &user_id,
-            &conversation_id,
-            &content,
-            response.message.content.clone(),
-            vec![], // TODO: Track actual tools used
-        ).await;
+        // Only cache the response if it should be cached
+        if should_cache {
+            self.response_cache.set(
+                &user_id,
+                &conversation_id,
+                &content,
+                response.message.content.clone(),
+                vec![], // TODO: Track actual tools used
+            ).await;
+        }
 
         // Create outgoing message
         let outgoing = OutgoingMessage::new(
@@ -477,12 +556,15 @@ impl Agent {
         // Notify started
         (progress_cb)(ProgressEvent::Started).await;
 
-        // Check cache for identical prompt (only for non-follow-up messages)
+        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
         let is_follow_up = content.len() < 50 &&
             (content.contains("it") || content.contains("that") || content.contains("this") ||
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
-        if !is_follow_up {
+        // Skip cache for time-sensitive queries
+        let should_cache = !is_follow_up && !is_time_sensitive(&content);
+
+        if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
                 info!("Cache hit for user {} - returning cached response", user_id);
 
@@ -590,14 +672,16 @@ impl Agent {
             }
         }
 
-        // Cache the response
-        self.response_cache.set(
-            &user_id,
-            &conversation_id,
-            &content,
-            response.message.content.clone(),
-            vec![],
-        ).await;
+        // Only cache the response if it should be cached
+        if should_cache {
+            self.response_cache.set(
+                &user_id,
+                &conversation_id,
+                &content,
+                response.message.content.clone(),
+                vec![],
+            ).await;
+        }
 
         // Notify completed
         let response_content = response.message.content.clone();
