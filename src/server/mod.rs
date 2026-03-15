@@ -851,11 +851,144 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
         .content pre code {
             color: #a5d6ff;
         }
+
+        /* Markdown Table Styling */
+        .content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 13px;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .content table th {
+            background: #21262d;
+            color: #58a6ff;
+            font-weight: 600;
+            text-align: left;
+            padding: 12px 16px;
+            border-bottom: 2px solid #30363d;
+        }
+
+        .content table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .content table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .content table tr:nth-child(even) {
+            background: #161b22;
+        }
+
+        .content table tr:hover {
+            background: #21262d;
+        }
+
+        /* Header Styling */
+        .content h1 {
+            color: #58a6ff;
+            font-size: 20px;
+            font-weight: 600;
+            margin: 20px 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #30363d;
+        }
+
+        .content h2 {
+            color: #79c0ff;
+            font-size: 17px;
+            font-weight: 600;
+            margin: 18px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .content h3 {
+            color: #a5d6ff;
+            font-size: 15px;
+            font-weight: 600;
+            margin: 14px 0 8px 0;
+        }
+
+        .content h4 {
+            color: #c9d1d9;
+            font-size: 14px;
+            font-weight: 600;
+            margin: 12px 0 6px 0;
+        }
+
+        /* List Styling */
+        .content ul, .content ol {
+            margin: 10px 0;
+            padding-left: 24px;
+        }
+
+        .content li {
+            margin: 6px 0;
+            line-height: 1.6;
+        }
+
+        .content li::marker {
+            color: #58a6ff;
+        }
+
+        /* Blockquote Styling */
+        .content blockquote {
+            border-left: 4px solid #58a6ff;
+            margin: 12px 0;
+            padding: 8px 16px;
+            background: #161b22;
+            border-radius: 0 6px 6px 0;
+            color: #b0b8c4;
+        }
+
+        /* Horizontal Rule */
+        .content hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #30363d, transparent);
+            margin: 20px 0;
+        }
+
+        /* Bold and Italic */
+        .content strong {
+            color: #f0f6fc;
+            font-weight: 600;
+        }
+
+        .content em {
+            color: #b0b8c4;
+            font-style: italic;
+        }
+
+        /* Links */
+        .content a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+
+        .content a:hover {
+            text-decoration: underline;
+        }
+
+        /* Time Display in Header */
+        .header-time {
+            font-size: 12px;
+            color: #8b949e;
+            font-family: inherit;
+        }
     </style>
+    <!-- Load marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="header">
         <h1>🌊 Manta AI Terminal</h1>
+        <div class="header-time" id="header-time"></div>
         <div class="status">
             <div class="status-dot" id="status-dot"></div>
             <span id="status-text">Connecting...</span>
@@ -880,6 +1013,26 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
         const sendBtn = document.getElementById('send');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
+        const headerTime = document.getElementById('header-time');
+
+        // Update time display
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+            if (headerTime) {
+                headerTime.textContent = '🕐 ' + timeStr;
+            }
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
 
         // Restore conversation ID from localStorage
         let conversationId = localStorage.getItem('manta_conversation_id');
@@ -1024,13 +1177,33 @@ const TERMINAL_HTML: &str = r##"<!DOCTYPE html>
             const div = document.createElement('div');
             div.className = 'message ' + type;
 
-            // Format code blocks
-            content = content.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-            content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
+            let formattedContent;
+            if (type === 'user') {
+                // User messages are plain text
+                formattedContent = escapeHtml(content);
+            } else if (typeof marked !== 'undefined') {
+                // Use marked.js for markdown parsing (assistant and system messages)
+                formattedContent = marked.parse(content, {
+                    breaks: true,
+                    gfm: true,
+                    headerIds: false
+                });
+            } else {
+                // Fallback if marked.js isn't loaded
+                formattedContent = escapeHtml(content)
+                    .replace(/\n/g, '<br>');
+            }
 
-            div.innerHTML = '<div class="content">' + content + '</div>';
+            div.innerHTML = '<div class="content">' + formattedContent + '</div>';
             terminal.appendChild(div);
             terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function showTyping() {
