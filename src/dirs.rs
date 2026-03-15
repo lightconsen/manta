@@ -69,6 +69,11 @@ pub fn workspace_data_dir() -> PathBuf {
     manta_dir().join("workspace")
 }
 
+/// Get the todos directory (~/.manta/todos)
+pub fn todos_dir() -> PathBuf {
+    manta_dir().join("todos")
+}
+
 /// Get the PID file path (~/.manta/daemon.pid)
 pub fn pid_file() -> PathBuf {
     manta_dir().join("daemon.pid")
@@ -107,6 +112,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         &agents_dir(),
         &cron_dir(),
         &workspace_data_dir(),
+        &todos_dir(),
     ];
 
     for dir in &dirs {
@@ -140,6 +146,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         &agents_dir(),
         &cron_dir(),
         &workspace_data_dir(),
+        &todos_dir(),
     ];
 
     for dir in &dirs {
