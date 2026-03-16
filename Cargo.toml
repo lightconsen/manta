@@ -62,6 +62,7 @@ serde_yaml = "0.9"
 async-trait = "0.1"
 
 # Futures for streaming
+futures = "0.3"
 futures-core = "0.3"
 async-stream = "0.3"
 
@@ -102,12 +103,25 @@ daemonize = "0.5"
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
 
+# Vector database (QMD/LanceDB-style)
+pgvector = { version = "0.4", optional = true }
+
+# Embeddings (using API-based providers for now)
+# fastembed has dependency issues with ort crate
+
+# Plugin system (WASM runtime)
+wasmtime = { version = "15.0", optional = true }
+wasmtime-wasi = { version = "15.0", optional = true }
+
+# Hot reload - file watching
+notify-debouncer-full = { version = "0.3", optional = true }
+
 # Channels (optional)
 teloxide = { version = "0.12", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
 [features]
-default = ["telegram"]
+default = ["telegram", "plugins", "hot-reload"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
@@ -117,6 +131,9 @@ lark = []
 all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "lark"]
 tailscale = []
 browser = ["chromiumoxide"]
+vector-db = []
+plugins = ["wasmtime", "wasmtime-wasi"]
+hot-reload = ["notify-debouncer-full"]
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations

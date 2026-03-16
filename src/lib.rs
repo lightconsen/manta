@@ -35,6 +35,7 @@
 // Unsafe code is allowed only for platform-specific resource limits
 // All unsafe blocks are documented and justified
 
+pub mod acp;
 pub mod adapters;
 pub mod agent;
 pub mod assistants;
@@ -52,6 +53,7 @@ pub mod gateway;
 pub mod logs;
 pub mod memory;
 pub mod model_router;
+pub mod plugins;
 pub mod providers;
 pub mod security;
 pub mod server;
@@ -68,6 +70,9 @@ pub mod tailscale;
 pub use crate::core::Engine;
 pub use config::{Config, ConfigWatcher, ReloadableConfig};
 pub use error::{MantaError, Result};
+
+// Re-export hot reload types
+pub use config::hot_reload::{ConfigChangeEvent, ConfigChangeType, ConfigFileType, HotReloadBuilder, HotReloadManager, WatchedConfig};
 
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

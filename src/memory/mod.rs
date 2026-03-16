@@ -11,11 +11,17 @@ pub mod db;
 pub mod personality;
 pub mod session_search;
 pub mod sqlite;
+pub mod vector;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 pub use personality::{PersonalityMemory, MemoryType};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
+pub use vector::{
+    ApiEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
+    EmbeddingProvider, MemoryVectorStore, TextChunker, VectorBackend, VectorMemoryService,
+    VectorStore, VectorStoreStats,
+};
 
 /// Unique identifier for a memory entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
