@@ -826,13 +826,14 @@ impl Gateway {
     }
 
     /// Start web terminal server
-    async fn start_web_terminal(port: u16, _state: Arc<GatewayState>) -> crate::Result<()> {
+    async fn start_web_terminal(port: u16, state: Arc<GatewayState>) -> crate::Result<()> {
         info!("Web terminal starting on port {}", port);
 
-        // Build web terminal router
+        // Build web terminal router with state
         let app = Router::new()
             .route("/", get(web_terminal_html_handler))
-            .route("/ws", get(web_terminal_ws_handler));
+            .route("/ws", get(web_terminal_ws_handler))
+            .with_state(state);
 
         let addr = format!("0.0.0.0:{}", port);
         let listener = TcpListener::bind(&addr).await.map_err(|e| {
@@ -863,14 +864,16 @@ async fn web_terminal_html_handler() -> Html<String> {
 async fn web_terminal_ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
+    State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_web_terminal_websocket(socket, query))
+    ws.on_upgrade(move |socket| handle_web_terminal_websocket(socket, query, state))
 }
 
 /// Handle WebSocket connection for web terminal
 async fn handle_web_terminal_websocket(
     mut socket: axum::extract::ws::WebSocket,
     query: WsQuery,
+    state: Arc<GatewayState>,
 ) {
     use axum::extract::ws::Message;
 
@@ -921,17 +924,84 @@ async fn handle_web_terminal_websocket(
                     break;
                 }
 
-                // NOTE: The web terminal WebSocket currently echoes messages back.
-                // To fully integrate with agents, this needs access to GatewayState.
-                // For now, we provide a helpful message directing users to use the /chat endpoint.
-                let response = serde_json::json!({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": format!("Echo: {}\n\n(Session: {})\n\nNote: Full AI integration via WebSocket requires Gateway state access. Use POST /chat API for AI responses.", text, session_id)
-                });
+                // Route message to AI agent via GatewayState
+                let agents = state.agents.read().await;
+                if let Some(agent_handle) = agents.get("default") {
+                    // Subscribe to events before sending the command
+                    let mut event_rx = state.event_tx.subscribe();
 
-                if socket.send(Message::Text(response.to_string())).await.is_err() {
-                    break;
+                    // Send ProcessMessage command to agent
+                    let cmd = AgentCommand::ProcessMessage {
+                        session_id: session_id.clone(),
+                        message: text.clone(),
+                        user_id: "web_user".to_string(),
+                        channel: "web".to_string(),
+                    };
+
+                    if let Err(e) = agent_handle.tx.send(cmd).await {
+                        error!("Failed to send message to agent: {}", e);
+                        let error_msg = serde_json::json!({
+                            "type": "error",
+                            "content": "Failed to process message"
+                        });
+                        let _ = socket.send(Message::Text(error_msg.to_string())).await;
+                    } else {
+                        // Drop the agents lock so we don't hold it while waiting
+                        drop(agents);
+
+                        // Wait for AI response with timeout
+                        let timeout = tokio::time::Duration::from_secs(120);
+                        let start = tokio::time::Instant::now();
+                        let mut ai_response = None;
+
+                        loop {
+                            if start.elapsed() > timeout {
+                                break;
+                            }
+
+                            match tokio::time::timeout(
+                                tokio::time::Duration::from_millis(100),
+                                event_rx.recv()
+                            ).await {
+                                Ok(Ok(GatewayEvent::AgentResponse { session_id: resp_session, content, .. })) => {
+                                    if resp_session == session_id {
+                                        ai_response = Some(content);
+                                        break;
+                                    }
+                                }
+                                Ok(Ok(_)) => continue,
+                                Ok(Err(_)) => break,
+                                Err(_) => continue,
+                            }
+                        }
+
+                        // Send AI response
+                        let response = if let Some(content) = ai_response {
+                            serde_json::json!({
+                                "type": "message",
+                                "role": "assistant",
+                                "content": content
+                            })
+                        } else {
+                            serde_json::json!({
+                                "type": "error",
+                                "content": "Request timeout or no response from AI"
+                            })
+                        };
+
+                        if socket.send(Message::Text(response.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                } else {
+                    // No default agent available
+                    let error_msg = serde_json::json!({
+                        "type": "error",
+                        "content": "No AI agent available"
+                    });
+                    if socket.send(Message::Text(error_msg.to_string())).await.is_err() {
+                        break;
+                    }
                 }
 
                 // Turn off typing indicator
