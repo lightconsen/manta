@@ -277,10 +277,17 @@ impl ModelRouter {
     ) -> crate::Result<Arc<dyn Provider + Send + Sync>> {
         match config.provider_type {
             ProviderType::Anthropic => {
-                // Create Anthropic provider
-                let provider = crate::providers::anthropic::AnthropicProvider::new(
-                    config.api_key.clone(),
-                )?;
+                // Create Anthropic provider (with optional custom base_url for Kimi, etc.)
+                let provider = if let Some(ref base_url) = config.base_url {
+                    crate::providers::anthropic::AnthropicProvider::with_base_url(
+                        config.api_key.clone(),
+                        base_url.clone(),
+                    )?
+                } else {
+                    crate::providers::anthropic::AnthropicProvider::new(
+                        config.api_key.clone(),
+                    )?
+                };
                 Ok(Arc::new(provider))
             }
             ProviderType::OpenAi => {

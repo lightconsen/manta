@@ -1141,6 +1141,7 @@ async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "healthy",
         "version": crate::VERSION,
+        "agent": "ready",
     }))
 }
 

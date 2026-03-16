@@ -249,7 +249,7 @@ impl DaemonClient {
 
     /// Get default client using standard daemon address
     pub fn default_client() -> Self {
-        Self::with_web_port("127.0.0.1", 3000, 8080)
+        Self::with_web_port("127.0.0.1", 18080, 18081)
     }
 
     // ==================== ADMIN API METHODS ====================

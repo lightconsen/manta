@@ -1475,7 +1475,7 @@ system_prompt: |
 
         // Single message mode
         if let Some(message) = single_message {
-            match client.chat_ws(&message, Some(&conversation_id)).await {
+            match client.chat(&message, Some(&conversation_id)).await {
                 Ok(response) => println!("🤖 {}", response.response),
                 Err(e) => println!("❌ Error: {}", e),
             }
@@ -1553,7 +1553,7 @@ system_prompt: |
             eprint!("🤖 Thinking...");
             io::stderr().flush()?;
 
-            match client.chat_ws(input, Some(&conversation_id)).await {
+            match client.chat(input, Some(&conversation_id)).await {
                 Ok(response) => {
                     eprint!("\r\x1B[2K");
                     println!("🤖 {}", response.response.trim().replace('\n', " "));
@@ -1608,7 +1608,7 @@ system_prompt: |
                 _ => {}
             }
 
-            match client.chat_ws(input, Some(&conversation_id)).await {
+            match client.chat(input, Some(&conversation_id)).await {
                 Ok(response) => {
                     println!("🤖 {}", response.response.trim().replace('\n', " "));
                     print!("💬 You > ");
