@@ -977,7 +977,10 @@ async fn list_providers_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
     let providers = state.model_router.list_providers().await;
-    Json(providers)
+    Json(serde_json::json!({
+        "providers": providers,
+        "count": providers.len(),
+    }))
 }
 
 async fn get_provider_health_handler(
@@ -985,8 +988,20 @@ async fn get_provider_health_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
     match state.model_router.get_provider_health(&id).await {
-        Some(health) => Json(health).into_response(),
-        None => (StatusCode::NOT_FOUND, format!("Provider '{}' not found", id)).into_response(),
+        Some(health) => {
+            let response = serde_json::json!({
+                "provider": id,
+                "health": health,
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Provider '{}' not found", id),
+                "provider": id,
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
     }
 }
 
