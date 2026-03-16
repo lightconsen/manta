@@ -377,6 +377,7 @@ pub trait Tool: Send + Sync {
 /// A boxed tool for storage
 pub type BoxedTool = Box<dyn Tool>;
 
+pub mod acp_tool;
 pub mod browser;
 pub mod code_exec;
 pub mod cron_tool;
@@ -390,6 +391,7 @@ pub mod time;
 pub mod todo_tool;
 pub mod web;
 
+pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use browser::BrowserTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;

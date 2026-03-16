@@ -514,6 +514,74 @@ impl VectorMemoryService {
     pub async fn stats(&self) -> crate::Result<VectorStoreStats> {
         self.vector_store.stats().await
     }
+
+    /// Search memories in a specific collection (simplified API for gateway)
+    pub async fn search_collection(
+        &self,
+        query: &str,
+        limit: usize,
+        _collection: &str,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let query_embedding = self.embedding_provider.embed(query).await?;
+        let results = self.vector_store.search_similar(&query_embedding, limit, 0.7).await?;
+
+        Ok(results
+            .into_iter()
+            .map(|(chunk, score)| SearchResult {
+                id: chunk.id,
+                content: chunk.text,
+                score,
+                metadata: chunk.metadata,
+            })
+            .collect())
+    }
+
+    /// Add content to a collection (simplified API for gateway)
+    pub async fn add_to_collection(
+        &self,
+        content: &str,
+        metadata: Option<serde_json::Value>,
+        collection: &str,
+    ) -> crate::Result<String> {
+        let doc_id = uuid::Uuid::new_v4().to_string();
+        let chunks = self.chunker.chunk(content);
+        let total = chunks.len();
+
+        let embeddings = self.embedding_provider.embed_batch(&chunks).await?;
+
+        let embedded_chunks: Vec<EmbeddedChunk> = chunks
+            .into_iter()
+            .zip(embeddings.into_iter())
+            .enumerate()
+            .map(|(pos, (text, embedding))| EmbeddedChunk {
+                id: format!("{}-{}-{}", doc_id, collection, pos),
+                source_id: doc_id.clone(),
+                text,
+                embedding,
+                position: pos,
+                total_chunks: total,
+                metadata: metadata.clone(),
+            })
+            .collect();
+
+        self.vector_store.store_chunks(embedded_chunks).await?;
+
+        Ok(doc_id)
+    }
+
+    /// List available collections
+    pub fn list_collections(&self) -> Vec<String> {
+        vec!["default".to_string()]
+    }
+}
+
+/// Search result for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub id: String,
+    pub content: String,
+    pub score: f32,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

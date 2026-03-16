@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     middleware::from_fn,
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -28,8 +28,8 @@ use crate::acp::AcpControlPlane;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
-use crate::config::hot_reload::HotReloadManager;
-use crate::memory::vector::VectorMemoryService;
+use crate::config::hot_reload::{HotReloadManager, ConfigFileType};
+use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::tools::ToolRegistry;
@@ -54,6 +54,114 @@ pub struct GatewayConfig {
     pub default_agent: AgentConfig,
     /// Channel configurations
     pub channels: HashMap<String, ChannelConfig>,
+    /// Vector memory configuration
+    #[serde(default)]
+    pub vector_memory: VectorMemoryConfig,
+    /// Plugin system configuration
+    #[serde(default)]
+    pub plugins: PluginConfig,
+    /// Hot reload configuration
+    #[serde(default)]
+    pub hot_reload: HotReloadConfig,
+    /// ACP (Agent Control Plane) configuration
+    #[serde(default)]
+    pub acp: AcpConfig,
+}
+
+/// Vector memory configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorMemoryConfig {
+    /// Enable vector memory / semantic search
+    pub enabled: bool,
+    /// Embedding provider API key (e.g., OpenAI)
+    pub embedding_api_key: Option<String>,
+    /// Embedding model to use
+    pub embedding_model: String,
+    /// Embedding dimension
+    pub embedding_dimension: usize,
+    /// API base URL (for Azure, etc.)
+    pub api_base_url: Option<String>,
+}
+
+impl Default for VectorMemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            embedding_api_key: None,
+            embedding_model: "text-embedding-3-small".to_string(),
+            embedding_dimension: 1536,
+            api_base_url: None,
+        }
+    }
+}
+
+/// Plugin system configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginConfig {
+    /// Enable plugin system
+    pub enabled: bool,
+    /// Auto-load plugins on startup
+    pub auto_load: bool,
+    /// Plugin directory path (None = default)
+    pub plugin_dir: Option<String>,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_load: true,
+            plugin_dir: None,
+        }
+    }
+}
+
+/// Hot reload configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotReloadConfig {
+    /// Enable hot reload for configuration
+    pub enabled: bool,
+    /// Watch config files for changes
+    pub watch_config: bool,
+    /// Watch agent files for changes
+    pub watch_agents: bool,
+    /// Watch plugin files for changes
+    pub watch_plugins: bool,
+    /// Debounce duration in seconds
+    pub debounce_seconds: u64,
+}
+
+impl Default for HotReloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            watch_config: true,
+            watch_agents: true,
+            watch_plugins: true,
+            debounce_seconds: 2,
+        }
+    }
+}
+
+/// ACP (Agent Control Plane) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpConfig {
+    /// Enable subagent spawning
+    pub enabled: bool,
+    /// Maximum concurrent subagents
+    pub max_subagents: usize,
+    /// Default subagent timeout in seconds
+    pub default_timeout_seconds: u64,
+}
+
+impl Default for AcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_subagents: 10,
+            default_timeout_seconds: 300,
+        }
+    }
 }
 
 impl Default for GatewayConfig {
@@ -66,6 +174,10 @@ impl Default for GatewayConfig {
             tailscale_domain: None,
             default_agent: AgentConfig::default(),
             channels: HashMap::new(),
+            vector_memory: VectorMemoryConfig::default(),
+            plugins: PluginConfig::default(),
+            hot_reload: HotReloadConfig::default(),
+            acp: AcpConfig::default(),
         }
     }
 }
@@ -113,10 +225,10 @@ pub struct GatewayState {
     pub plugin_manager: Arc<PluginManager>,
     /// ACP control plane for subagent spawning
     pub acp: Arc<AcpControlPlane>,
-    /// Vector memory service for semantic search
-    pub vector_memory: Option<Arc<VectorMemoryService>>,
-    /// Hot reload manager for config changes
-    pub hot_reload: Option<Arc<HotReloadManager>>,
+    /// Vector memory service for semantic search (RwLock for late initialization)
+    pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
+    /// Hot reload manager for config changes (RwLock for late initialization)
+    pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
 }
 
 /// Handle to a running agent
@@ -240,22 +352,18 @@ impl Gateway {
         let (event_tx, _) = broadcast::channel(1000);
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
 
-        // Create tool registry with built-in tools
-        let tool_registry = Arc::new(create_default_tool_registry()?);
+        // Create ACP control plane first (needed for tool registration)
+        let acp = Arc::new(AcpControlPlane::new());
+
+        // Create tool registry with built-in tools (including ACP tools if enabled)
+        let tool_registry = Arc::new(create_default_tool_registry(acp.clone())?);
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
         let plugin_manager = Arc::new(PluginManager::new(plugins_dir).await?);
 
-        // Initialize ACP control plane
-        let acp = Arc::new(AcpControlPlane::new());
-
-        // Initialize vector memory service (optional - requires embedding provider)
-        let vector_memory: Option<Arc<VectorMemoryService>> = None;
-
-        // Initialize hot reload manager (optional)
-        let hot_reload: Option<Arc<HotReloadManager>> = None;
-
+        // Create state with placeholder values for vector_memory and hot_reload
+        // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -268,9 +376,68 @@ impl Gateway {
             canvas_manager: Arc::new(CanvasManager::new()),
             plugin_manager,
             acp,
-            vector_memory,
-            hot_reload,
+            vector_memory: RwLock::new(None),
+            hot_reload: RwLock::new(None),
         });
+
+        // Initialize vector memory service if enabled
+        if config.vector_memory.enabled {
+            info!("Initializing vector memory service...");
+
+            if let Some(ref api_key) = config.vector_memory.embedding_api_key {
+                // Create API embedding provider with explicit parameters
+                let mut provider = ApiEmbeddingProvider::new(
+                    api_key.clone(),
+                    config.vector_memory.embedding_model.clone(),
+                    config.vector_memory.embedding_dimension,
+                );
+
+                // Set custom base URL if provided
+                if let Some(ref base_url) = config.vector_memory.api_base_url {
+                    provider = provider.with_base_url(base_url.clone());
+                }
+
+                let embedding_provider: Arc<dyn crate::memory::vector::EmbeddingProvider> = Arc::new(provider);
+                let vector_store = Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension));
+
+                // Create embedding config for the service
+                let embedding_config = EmbeddingConfig {
+                    model: config.vector_memory.embedding_model.clone(),
+                    chunk_size: 512,
+                    chunk_overlap: 50,
+                    batch_size: 32,
+                };
+
+                let service = Arc::new(VectorMemoryService::new(
+                    embedding_provider,
+                    vector_store,
+                    &embedding_config,
+                ));
+                info!("Vector memory service initialized");
+                *state.vector_memory.write().await = Some(service);
+            } else {
+                warn!("Vector memory enabled but no API key provided");
+            }
+        } else {
+            info!("Vector memory service disabled");
+        }
+
+        // Initialize hot reload manager if enabled
+        if config.hot_reload.enabled {
+            info!("Initializing hot reload manager...");
+            match HotReloadManager::new() {
+                Ok(manager) => {
+                    let manager = Arc::new(manager);
+                    info!("Hot reload manager initialized");
+                    *state.hot_reload.write().await = Some(manager);
+                }
+                Err(e) => {
+                    warn!("Failed to initialize hot reload manager: {}", e);
+                }
+            }
+        } else {
+            info!("Hot reload disabled");
+        }
 
         // Start message processing worker
         tokio::spawn(Self::process_message_queue(
@@ -285,15 +452,24 @@ impl Gateway {
     pub async fn start(&self) -> crate::Result<()> {
         info!("Starting Manta Gateway control plane...");
 
-        // Initialize plugins
-        if let Err(e) = self.state.plugin_manager.initialize().await {
-            warn!("Failed to initialize plugins: {}", e);
+        // Initialize plugins if enabled
+        if self.config.plugins.enabled {
+            if self.config.plugins.auto_load {
+                if let Err(e) = self.state.plugin_manager.initialize().await {
+                    warn!("Failed to initialize plugins: {}", e);
+                }
+            } else {
+                info!("Plugin auto-load disabled, skipping initialization");
+            }
+        } else {
+            info!("Plugin system disabled");
         }
 
-        // Initialize hot reload if configured
-        if let Some(ref hot_reload) = self.state.hot_reload {
+        // Initialize hot reload if enabled
+        let hot_reload = self.state.hot_reload.read().await.clone();
+        if let Some(ref hot_reload) = hot_reload {
             let config_path = crate::dirs::default_config_file();
-            if let Err(e) = hot_reload.watch_file(&config_path, crate::config::hot_reload::ConfigFileType::Main).await {
+            if let Err(e) = hot_reload.watch_file(&config_path, ConfigFileType::Main).await {
                 warn!("Failed to watch config file: {}", e);
             }
             // Start hot reload processing in background
@@ -395,6 +571,20 @@ impl Gateway {
             // Model aliases
             .route("/api/v1/models", get(list_models_handler))
             .route("/api/v1/models/default", get(get_default_model_handler))
+            // Vector Memory API
+            .route("/api/v1/memory/search", post(memory_search_handler))
+            .route("/api/v1/memory/add", post(memory_add_handler))
+            .route("/api/v1/memory/collections", get(list_memory_collections_handler))
+            // Plugin management API
+            .route("/api/v1/plugins", get(list_plugins_handler))
+            .route("/api/v1/plugins/:id/enable", post(enable_plugin_handler))
+            .route("/api/v1/plugins/:id/disable", post(disable_plugin_handler))
+            .route("/api/v1/plugins/:id/unload", delete(unload_plugin_handler))
+            // ACP (Agent Control Plane) API
+            .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
+            .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
+            .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
+            .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
             // Apply localhost/Tailscale restriction middleware
             .layer(from_fn(middleware::tailscale_only_middleware))
             .with_state(state.clone());
@@ -719,7 +909,7 @@ async fn handle_web_terminal_websocket(
 }
 
 /// Create default tool registry with all built-in tools
-fn create_default_tool_registry() -> crate::Result<ToolRegistry> {
+fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
     let mut registry = ToolRegistry::new();
@@ -751,6 +941,10 @@ fn create_default_tool_registry() -> crate::Result<ToolRegistry> {
     // Register browser tool (if browser feature enabled)
     #[cfg(feature = "browser")]
     registry.register(Box::new(BrowserTool::new()));
+
+    // Register ACP tools for subagent spawning
+    registry.register(Box::new(AcpSpawnTool::new(acp.clone())));
+    registry.register(Box::new(AcpSessionTool::new(acp.clone())));
 
     Ok(registry)
 }
@@ -1199,4 +1393,385 @@ async fn get_default_model_handler(
     Json(serde_json::json!({
         "default_model": default,
     }))
+}
+
+// Vector Memory API Handlers
+
+#[derive(Debug, Deserialize)]
+pub struct MemorySearchRequest {
+    query: String,
+    #[serde(default = "default_memory_limit")]
+    limit: usize,
+    #[serde(default)]
+    collection: String,
+}
+
+fn default_memory_limit() -> usize {
+    10
+}
+
+async fn memory_search_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<MemorySearchRequest>,
+) -> impl IntoResponse {
+    let vector_memory = state.vector_memory.read().await;
+    match vector_memory.as_ref() {
+        Some(vm) => {
+            match vm.search_collection(&body.query, body.limit, &body.collection).await {
+                Ok(results) => {
+                    let response = serde_json::json!({
+                        "query": body.query,
+                        "results": results,
+                        "count": results.len(),
+                    });
+                    (StatusCode::OK, Json(response)).into_response()
+                }
+                Err(e) => {
+                    let error = serde_json::json!({
+                        "error": format!("Search failed: {}", e),
+                    });
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+                }
+            }
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": "Vector memory service not enabled",
+            });
+            (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryAddRequest {
+    content: String,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    collection: String,
+}
+
+async fn memory_add_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<MemoryAddRequest>,
+) -> impl IntoResponse {
+    let vector_memory = state.vector_memory.read().await;
+    match vector_memory.as_ref() {
+        Some(vm) => {
+            match vm.add_to_collection(&body.content, body.metadata, &body.collection).await {
+                Ok(doc_id) => {
+                    let response = serde_json::json!({
+                        "document_id": doc_id,
+                        "status": "added",
+                    });
+                    (StatusCode::CREATED, Json(response)).into_response()
+                }
+                Err(e) => {
+                    let error = serde_json::json!({
+                        "error": format!("Failed to add document: {}", e),
+                    });
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+                }
+            }
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": "Vector memory service not enabled",
+            });
+            (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response()
+        }
+    }
+}
+
+async fn list_memory_collections_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let vector_memory = state.vector_memory.read().await;
+    match vector_memory.as_ref() {
+        Some(vm) => {
+            let collections = vm.list_collections();
+            Json(serde_json::json!({
+                "collections": collections,
+                "count": collections.len(),
+            }))
+            .into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": "Vector memory service not enabled",
+            });
+            (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response()
+        }
+    }
+}
+
+// Plugin Management API Handlers
+
+async fn list_plugins_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let plugins = state.plugin_manager.list_plugins().await;
+    let plugin_list: Vec<_> = plugins
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id(),
+                "name": p.name(),
+                "enabled": p.enabled,
+                "capabilities": p.manifest.capabilities,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "plugins": plugin_list,
+        "count": plugin_list.len(),
+    }))
+}
+
+async fn enable_plugin_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.plugin_manager.set_enabled(&id, true).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Plugin '{}' enabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to enable plugin: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+async fn disable_plugin_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.plugin_manager.set_enabled(&id, false).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Plugin '{}' disabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to disable plugin: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+async fn unload_plugin_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.plugin_manager.unload_plugin(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => {
+            let error = serde_json::json!({
+                "error": format!("Plugin '{}' not found", id),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to unload plugin: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+// ACP (Agent Control Plane) API Handlers
+
+async fn list_acp_sessions_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let subagents = state.acp.list_subagents().await;
+    let sessions: Vec<_> = subagents
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "subagent_id": s.id,
+                "session_id": s.session_id.to_string(),
+                "parent_id": s.parent_id,
+                "mode": format!("{:?}", s.mode),
+                "status": format!("{:?}", s.status),
+                "thread_id": s.thread_id,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "sessions": sessions,
+        "count": sessions.len(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpawnSubagentRequest {
+    task: String,
+    #[serde(default = "default_acp_mode")]
+    mode: String,
+    #[serde(default)]
+    agent_type: String,
+}
+
+fn default_acp_mode() -> String {
+    "run".to_string()
+}
+
+async fn spawn_subagent_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<SpawnSubagentRequest>,
+) -> impl IntoResponse {
+    use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
+    use crate::channels::IncomingMessage;
+
+    let session_id = AcpSessionId::new();
+    let parent_id = "gateway-api".to_string();
+
+    let mode = match body.mode.as_str() {
+        "session" => SpawnMode::Session,
+        _ => SpawnMode::Run,
+    };
+
+    let config = SubagentConfig {
+        agent_type: if body.agent_type.is_empty() {
+            "default".to_string()
+        } else {
+            body.agent_type
+        },
+        mode,
+        thread_binding: ThreadBinding::Auto,
+        system_prompt: None,
+        max_tokens: None,
+        temperature: None,
+        tools: vec![],
+        context: None,
+        timeout_seconds: Some(300),
+    };
+
+    match state.acp.spawn_subagent(session_id.clone(), parent_id, config).await {
+        Ok(handle) => {
+            let subagent_id = handle.id.clone();
+
+            // Send task to subagent
+            let message = IncomingMessage::new(
+                "api-user".to_string(),
+                session_id.to_string(),
+                body.task,
+            );
+
+            match state.acp.send_message(&subagent_id, message).await {
+                Ok(response) => {
+                    let resp = serde_json::json!({
+                        "subagent_id": subagent_id,
+                        "session_id": session_id.to_string(),
+                        "mode": format!("{:?}", handle.mode),
+                        "response": response,
+                    });
+                    (StatusCode::CREATED, Json(resp)).into_response()
+                }
+                Err(e) => {
+                    let _ = state.acp.shutdown_subagent(&subagent_id).await;
+                    let error = serde_json::json!({
+                        "error": format!("Subagent failed to process task: {}", e),
+                    });
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to spawn subagent: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+async fn terminate_acp_session_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    use crate::acp::AcpSessionId;
+
+    let session_id = AcpSessionId(id);
+    match state.acp.terminate_session(&session_id).await {
+        Ok(count) => {
+            let response = serde_json::json!({
+                "terminated_count": count,
+                "session_id": session_id.to_string(),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to terminate session: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcpMessageRequest {
+    message: String,
+}
+
+async fn acp_session_message_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<AcpMessageRequest>,
+) -> impl IntoResponse {
+    use crate::acp::AcpSessionId;
+    use crate::channels::IncomingMessage;
+
+    // Find a subagent in this session
+    let session_id = AcpSessionId(id);
+    let subagents = state.acp.list_session_subagents(&session_id).await;
+
+    if subagents.is_empty() {
+        let error = serde_json::json!({
+            "error": "No active subagents in session",
+        });
+        return (StatusCode::NOT_FOUND, Json(error)).into_response();
+    }
+
+    // Use the first active subagent
+    let subagent = &subagents[0];
+    let message = IncomingMessage::new(
+        "api-user".to_string(),
+        session_id.to_string(),
+        body.message,
+    );
+
+    match state.acp.send_message(&subagent.id, message).await {
+        Ok(response) => {
+            let resp = serde_json::json!({
+                "subagent_id": subagent.id,
+                "session_id": session_id.to_string(),
+                "response": response,
+            });
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to send message: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
 }
