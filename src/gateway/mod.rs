@@ -24,10 +24,14 @@ use futures_util::{StreamExt, SinkExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
+use crate::acp::AcpControlPlane;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
+use crate::config::hot_reload::HotReloadManager;
+use crate::memory::vector::VectorMemoryService;
 use crate::model_router::ModelRouter;
+use crate::plugins::PluginManager;
 use crate::tools::ToolRegistry;
 
 pub mod middleware;
@@ -105,6 +109,14 @@ pub struct GatewayState {
     pub message_queue: mpsc::Sender<QueuedMessage>,
     /// Canvas manager for dynamic UI
     pub canvas_manager: Arc<CanvasManager>,
+    /// Plugin manager for extensibility
+    pub plugin_manager: Arc<PluginManager>,
+    /// ACP control plane for subagent spawning
+    pub acp: Arc<AcpControlPlane>,
+    /// Vector memory service for semantic search
+    pub vector_memory: Option<Arc<VectorMemoryService>>,
+    /// Hot reload manager for config changes
+    pub hot_reload: Option<Arc<HotReloadManager>>,
 }
 
 /// Handle to a running agent
@@ -231,6 +243,19 @@ impl Gateway {
         // Create tool registry with built-in tools
         let tool_registry = Arc::new(create_default_tool_registry()?);
 
+        // Initialize plugin manager
+        let plugins_dir = crate::dirs::config_dir().join("plugins");
+        let plugin_manager = Arc::new(PluginManager::new(plugins_dir).await?);
+
+        // Initialize ACP control plane
+        let acp = Arc::new(AcpControlPlane::new());
+
+        // Initialize vector memory service (optional - requires embedding provider)
+        let vector_memory: Option<Arc<VectorMemoryService>> = None;
+
+        // Initialize hot reload manager (optional)
+        let hot_reload: Option<Arc<HotReloadManager>> = None;
+
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -241,6 +266,10 @@ impl Gateway {
             event_tx,
             message_queue: message_queue_tx,
             canvas_manager: Arc::new(CanvasManager::new()),
+            plugin_manager,
+            acp,
+            vector_memory,
+            hot_reload,
         });
 
         // Start message processing worker
@@ -255,6 +284,26 @@ impl Gateway {
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
         info!("Starting Manta Gateway control plane...");
+
+        // Initialize plugins
+        if let Err(e) = self.state.plugin_manager.initialize().await {
+            warn!("Failed to initialize plugins: {}", e);
+        }
+
+        // Initialize hot reload if configured
+        if let Some(ref hot_reload) = self.state.hot_reload {
+            let config_path = crate::dirs::default_config_file();
+            if let Err(e) = hot_reload.watch_file(&config_path, crate::config::hot_reload::ConfigFileType::Main).await {
+                warn!("Failed to watch config file: {}", e);
+            }
+            // Start hot reload processing in background
+            let hot_reload_clone = hot_reload.clone();
+            tokio::spawn(async move {
+                if let Err(e) = hot_reload_clone.run().await {
+                    error!("Hot reload error: {}", e);
+                }
+            });
+        }
 
         // Initialize default agent
         self.spawn_agent("default".to_string(), self.config.default_agent.clone())
