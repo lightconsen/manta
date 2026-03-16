@@ -41,9 +41,13 @@ impl OpenAiProvider {
     ) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        // Mimic curl's User-Agent to avoid API blocks
+        headers.insert("User-Agent", "curl/8.7.1".parse().unwrap());
+        headers.insert("Accept", "application/json".parse().unwrap());
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
+            .http1_only() // Force HTTP/1.1 to match curl behavior
             .default_headers(headers)
             .build()
             .map_err(|e| {
