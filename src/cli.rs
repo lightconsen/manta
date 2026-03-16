@@ -7,7 +7,6 @@ use crate::config::Config;
 use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use crate::core::Engine;
 use crate::error::Result;
-use crate::server::ServerConfig;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -35,15 +34,6 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Start the server
-    Server {
-        /// Host to bind to
-        #[arg(short, long)]
-        host: Option<String>,
-        /// Port to listen on
-        #[arg(short, long)]
-        port: Option<u16>,
-    },
     /// Entity management commands
     Entity {
         /// Entity subcommand
@@ -140,18 +130,6 @@ pub enum Commands {
         /// Follow/tail the logs (like tail -f)
         #[arg(short, long)]
         follow: bool,
-    },
-    /// Run as daemon (internal use - spawned by start command)
-    Daemon {
-        /// Host to bind to
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        /// API port to listen on
-        #[arg(long, default_value = "18080")]
-        port: u16,
-        /// Web terminal port
-        #[arg(long, default_value = "18081")]
-        web_port: u16,
     },
 }
 
@@ -544,9 +522,6 @@ impl Cli {
         info!("Manta starting up");
 
         match &self.command {
-            Commands::Server { host, port } => {
-                self.run_server(&config, host.clone(), *port).await
-            }
             Commands::Entity { command } => self.run_entity_command(command).await,
             Commands::Config { format } => self.show_config(&config, *format),
             Commands::Health => self.run_health_check(&config).await,
@@ -572,45 +547,7 @@ impl Cli {
             Commands::Stop { force } => self.run_stop_daemon(*force).await,
             Commands::Status => self.run_daemon_status().await,
             Commands::Logs { lines, follow } => self.run_logs(*lines, *follow).await,
-            Commands::Daemon { host, port, web_port } => {
-                self.run_daemon_internal(host, *port, *web_port).await
-            }
         }
-    }
-
-    async fn run_server(
-        &self,
-        config: &Config,
-        host: Option<String>,
-        port: Option<u16>,
-    ) -> Result<()> {
-        let host = host.as_ref().unwrap_or(&config.server.host).clone();
-        let port = port.unwrap_or(config.server.port);
-
-        info!("Starting server on {}:{}", host, port);
-        println!("🚀 Server starting on http://{}:{}", host, port);
-
-        // Create engine
-        let engine = Arc::new(Engine::new());
-
-        // Configure and start the server
-        let server_config = ServerConfig {
-            host: host.clone(),
-            port,
-            web_port: 18081, // Default web port
-        };
-
-        println!("Press Ctrl+C to stop");
-
-        // Start the server with agent (for full server mode)
-        // For simple server mode without AI, we still use the same function but without agent
-        let agent = crate::agent::AgentBuilder::new().build()?;
-        crate::server::start_server_with_agent(server_config, engine, Arc::new(agent)).await?;
-
-        info!("Shutting down server");
-        println!("\n👋 Server stopped");
-
-        Ok(())
     }
 
     async fn run_entity_command(&self, command: &EntityCommands) -> Result<()> {
@@ -1789,24 +1726,6 @@ system_prompt: |
         } else {
             show_logs(lines).await
         }
-    }
-
-    /// Run as daemon (internal use)
-    async fn run_daemon_internal(&self, host: &str, port: u16, web_port: u16) -> Result<()> {
-        use crate::daemon::{DaemonManager, DaemonConfig};
-
-        // Ensure directories exist
-        crate::dirs::init().await?;
-
-        let config = DaemonConfig {
-            host: host.to_string(),
-            port,
-            web_port,
-            pid_file: crate::dirs::pid_file(),
-        };
-
-        let daemon = DaemonManager::new(config)?;
-        daemon.run_foreground().await
     }
 
     /// Run channel commands

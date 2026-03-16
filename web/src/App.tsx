@@ -70,6 +70,26 @@ function App() {
       case 'typing':
         setIsTyping(data.content === true);
         break;
+      case 'tool_call':
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString(),
+          role: 'tool_call',
+          content: `🔧 Using tool: ${data.tool}`,
+          tool: data.tool,
+          arguments: data.arguments,
+          timestamp: Date.now(),
+        }]);
+        break;
+      case 'tool_result':
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString(),
+          role: 'tool_result',
+          content: `✓ Tool result: ${data.result?.substring(0, 200) || 'Done'}`,
+          tool: data.tool,
+          result: data.result,
+          timestamp: Date.now(),
+        }]);
+        break;
       case 'version':
         if (typeof data.content === 'string') {
           setVersion(data.content);

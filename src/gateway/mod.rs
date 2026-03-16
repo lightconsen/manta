@@ -309,6 +309,20 @@ pub enum GatewayEvent {
         channel: String,
         connected: bool,
     },
+    /// Tool execution started
+    ToolCalling {
+        session_id: String,
+        agent_id: String,
+        tool_name: String,
+        arguments: String,
+    },
+    /// Tool execution completed
+    ToolResult {
+        session_id: String,
+        agent_id: String,
+        tool_name: String,
+        result: String,
+    },
 }
 
 /// Agent status
@@ -703,8 +717,44 @@ impl Gateway {
                             message.clone(),
                         );
 
-                        // Process message through actual Agent runtime
-                        let response_content = match agent.process_message(incoming_msg).await {
+                        // Create progress callback that broadcasts tool events
+                        let progress_state = state.clone();
+                        let progress_session_id = session_id.clone();
+                        let progress_agent_id = agent_id.clone();
+                        let progress_cb: crate::agent::ProgressCallback = Arc::new(
+                            move |event: crate::agent::ProgressEvent| {
+                                let state = progress_state.clone();
+                                let session_id = progress_session_id.clone();
+                                let agent_id = progress_agent_id.clone();
+                                Box::pin(async move {
+                                    match event {
+                                        crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                            let _ = state.event_tx.send(GatewayEvent::ToolCalling {
+                                                session_id,
+                                                agent_id,
+                                                tool_name: name,
+                                                arguments,
+                                            });
+                                        }
+                                        crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                            let _ = state.event_tx.send(GatewayEvent::ToolResult {
+                                                session_id,
+                                                agent_id,
+                                                tool_name: name,
+                                                result,
+                                            });
+                                        }
+                                        _ => {} // Ignore other events for now
+                                    }
+                                })
+                            }
+                        );
+
+                        // Process message with progress callbacks
+                        let response_content = match agent
+                            .process_message_with_progress(incoming_msg, progress_cb)
+                            .await
+                        {
                             Ok(outgoing) => outgoing.content,
                             Err(e) => {
                                 error!("Agent {} failed to process message: {}", agent_id, e);
@@ -898,130 +948,137 @@ async fn handle_web_terminal_websocket(
         return;
     }
 
-    // Main message loop
-    while let Some(msg) = socket.recv().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                // Handle /new command
-                if text.trim() == "/new" {
-                    let new_id = uuid::Uuid::new_v4().to_string();
-                    let system_msg = serde_json::json!({
-                        "type": "system",
-                        "content": format!("🆕 Started new session: {}", new_id)
-                    });
-                    if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
-                        break;
-                    }
-                    continue;
-                }
+    // Create event subscription for this session
+    let mut event_rx = state.event_tx.subscribe();
 
-                // Send typing indicator
-                let typing = serde_json::json!({
-                    "type": "typing",
-                    "content": true
-                });
-                if socket.send(Message::Text(typing.to_string())).await.is_err() {
-                    break;
-                }
-
-                // Route message to AI agent via GatewayState
-                let agents = state.agents.read().await;
-                if let Some(agent_handle) = agents.get("default") {
-                    // Subscribe to events before sending the command
-                    let mut event_rx = state.event_tx.subscribe();
-
-                    // Send ProcessMessage command to agent
-                    let cmd = AgentCommand::ProcessMessage {
-                        session_id: session_id.clone(),
-                        message: text.clone(),
-                        user_id: "web_user".to_string(),
-                        channel: "web".to_string(),
-                    };
-
-                    if let Err(e) = agent_handle.tx.send(cmd).await {
-                        error!("Failed to send message to agent: {}", e);
-                        let error_msg = serde_json::json!({
-                            "type": "error",
-                            "content": "Failed to process message"
-                        });
-                        let _ = socket.send(Message::Text(error_msg.to_string())).await;
-                    } else {
-                        // Drop the agents lock so we don't hold it while waiting
-                        drop(agents);
-
-                        // Wait for AI response with timeout
-                        let timeout = tokio::time::Duration::from_secs(120);
-                        let start = tokio::time::Instant::now();
-                        let mut ai_response = None;
-
-                        loop {
-                            if start.elapsed() > timeout {
+    // Main message loop - use select! to handle both incoming messages and events
+    loop {
+        tokio::select! {
+            // Handle incoming WebSocket messages from client
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        // Handle /new command
+                        if text.trim() == "/new" {
+                            let new_id = uuid::Uuid::new_v4().to_string();
+                            let system_msg = serde_json::json!({
+                                "type": "system",
+                                "content": format!("🆕 Started new session: {}", new_id)
+                            });
+                            if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
                                 break;
                             }
-
-                            match tokio::time::timeout(
-                                tokio::time::Duration::from_millis(100),
-                                event_rx.recv()
-                            ).await {
-                                Ok(Ok(GatewayEvent::AgentResponse { session_id: resp_session, content, .. })) => {
-                                    if resp_session == session_id {
-                                        ai_response = Some(content);
-                                        break;
-                                    }
-                                }
-                                Ok(Ok(_)) => continue,
-                                Ok(Err(_)) => break,
-                                Err(_) => continue,
-                            }
+                            continue;
                         }
 
-                        // Send AI response
-                        let response = if let Some(content) = ai_response {
-                            serde_json::json!({
+                        // Send typing indicator
+                        let typing = serde_json::json!({
+                            "type": "typing",
+                            "content": true
+                        });
+                        if socket.send(Message::Text(typing.to_string())).await.is_err() {
+                            break;
+                        }
+
+                        // Route message to AI agent via GatewayState
+                        let agents = state.agents.read().await;
+                        if let Some(agent_handle) = agents.get("default") {
+                            // Send ProcessMessage command to agent
+                            let cmd = AgentCommand::ProcessMessage {
+                                session_id: session_id.clone(),
+                                message: text.clone(),
+                                user_id: "web_user".to_string(),
+                                channel: "web".to_string(),
+                            };
+
+                            if let Err(e) = agent_handle.tx.send(cmd).await {
+                                error!("Failed to send message to agent: {}", e);
+                                let error_msg = serde_json::json!({
+                                    "type": "error",
+                                    "content": "Failed to process message"
+                                });
+                                let _ = socket.send(Message::Text(error_msg.to_string())).await;
+                            }
+                            // Don't wait for response here - it will come through events
+                        } else {
+                            // No default agent available
+                            let error_msg = serde_json::json!({
+                                "type": "error",
+                                "content": "No AI agent available"
+                            });
+                            if socket.send(Message::Text(error_msg.to_string())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Ok(Message::Binary(_))) => {
+                        info!("Web terminal disconnected");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Handle gateway events (tool calls, responses, etc.)
+            event = event_rx.recv() => {
+                match event {
+                    Ok(GatewayEvent::ToolCalling { session_id: event_session, tool_name, arguments, .. }) => {
+                        if event_session == session_id {
+                            let tool_msg = serde_json::json!({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "arguments": arguments
+                            });
+                            if socket.send(Message::Text(tool_msg.to_string())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(GatewayEvent::ToolResult { session_id: event_session, tool_name, result, .. }) => {
+                        if event_session == session_id {
+                            let result_msg = serde_json::json!({
+                                "type": "tool_result",
+                                "tool": tool_name,
+                                "result": result
+                            });
+                            if socket.send(Message::Text(result_msg.to_string())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(GatewayEvent::AgentResponse { session_id: resp_session, content, .. }) => {
+                        if resp_session == session_id {
+                            // Turn off typing indicator
+                            let typing_off = serde_json::json!({
+                                "type": "typing",
+                                "content": false
+                            });
+                            let _ = socket.send(Message::Text(typing_off.to_string())).await;
+
+                            // Send AI response
+                            let response = serde_json::json!({
                                 "type": "message",
                                 "role": "assistant",
                                 "content": content
-                            })
-                        } else {
-                            serde_json::json!({
-                                "type": "error",
-                                "content": "Request timeout or no response from AI"
-                            })
-                        };
-
-                        if socket.send(Message::Text(response.to_string())).await.is_err() {
-                            break;
+                            });
+                            if socket.send(Message::Text(response.to_string())).await.is_err() {
+                                break;
+                            }
                         }
                     }
-                } else {
-                    // No default agent available
-                    let error_msg = serde_json::json!({
-                        "type": "error",
-                        "content": "No AI agent available"
-                    });
-                    if socket.send(Message::Text(error_msg.to_string())).await.is_err() {
-                        break;
+                    Ok(_) => {
+                        // Other events - ignore for now
+                    }
+                    Err(_) => {
+                        // Event channel closed or lagged
+                        continue;
                     }
                 }
-
-                // Turn off typing indicator
-                let typing_off = serde_json::json!({
-                    "type": "typing",
-                    "content": false
-                });
-                if socket.send(Message::Text(typing_off.to_string())).await.is_err() {
-                    break;
-                }
             }
-            Ok(Message::Close(_)) | Ok(Message::Binary(_)) => {
-                info!("Web terminal disconnected");
-                break;
-            }
-            Err(e) => {
-                error!("WebSocket error: {}", e);
-                break;
-            }
-            _ => {}
         }
     }
 }
