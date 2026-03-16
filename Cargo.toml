@@ -89,6 +89,7 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+subtle = "2.5"
 
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]

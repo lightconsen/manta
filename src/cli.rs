@@ -79,6 +79,12 @@ pub enum Commands {
         #[arg(short, long)]
         config: PathBuf,
     },
+    /// Admin commands for Gateway management (provider switching, status, etc.)
+    Admin {
+        /// Admin subcommand
+        #[command(subcommand)]
+        command: AdminCommands,
+    },
     /// Cron job management
     Cron {
         /// Cron subcommand
@@ -401,6 +407,58 @@ pub enum ChannelCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum AdminCommands {
+    /// Show Gateway status
+    Status,
+    /// List available LLM providers
+    Providers,
+    /// List available model aliases
+    Models,
+    /// Show current default model
+    Default,
+    /// Switch the default model alias
+    Switch {
+        /// Model alias to switch to (fast, smart, default)
+        model: String,
+    },
+    /// Enable a provider
+    Enable {
+        /// Provider name
+        provider: String,
+    },
+    /// Disable a provider
+    Disable {
+        /// Provider name
+        provider: String,
+    },
+    /// Check provider health
+    Health {
+        /// Provider name
+        provider: String,
+    },
+    /// Show fallback chain for an alias
+    Fallback {
+        /// Model alias
+        alias: String,
+    },
+    /// List all agents
+    Agents,
+    /// Send a message to a session (with optional provider override)
+    Send {
+        /// Session ID
+        session_id: String,
+        /// Message content
+        message: String,
+        /// Optional provider override
+        #[arg(short, long)]
+        provider: Option<String>,
+        /// Optional model alias override
+        #[arg(short, long)]
+        model: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ChannelType {
     /// Telegram bot
@@ -497,6 +555,9 @@ impl Cli {
             }
             Commands::AssistantRun { config: assistant_config } => {
                 self.run_assistant_process(assistant_config).await
+            }
+            Commands::Admin { command } => {
+                self.run_admin_command(command).await
             }
             Commands::Web { port } => {
                 self.run_web(&config, *port).await
@@ -2212,6 +2273,184 @@ system_prompt: |
         }
 
         eprintln!("👋 Assistant '{}' shutting down", assistant_name);
+        Ok(())
+    }
+
+    /// Run admin commands for Gateway management
+    async fn run_admin_command(&self, command: &AdminCommands) -> Result<()> {
+        use crate::client::check_daemon;
+
+        // Check if daemon is running
+        let client = match check_daemon().await {
+            Ok(client) => client,
+            Err(e) => {
+                println!("❌ {}", e);
+                return Ok(());
+            }
+        };
+
+        match command {
+            AdminCommands::Status => {
+                match client.get_status().await {
+                    Ok(status) => {
+                        println!("🌐 Manta Gateway Status");
+                        println!("======================");
+                        println!("Agents:      {}/{} busy", status.agents.busy, status.agents.total);
+                        println!("Channels:    {}", status.channels);
+                        println!("Version:     {}", status.version);
+                    }
+                    Err(e) => println!("❌ Failed to get status: {}", e),
+                }
+            }
+            AdminCommands::Providers => {
+                match client.get_providers().await {
+                    Ok(providers) => {
+                        println!("🔌 LLM Providers");
+                        println!("=================");
+                        if providers.is_empty() {
+                            println!("No providers configured");
+                        } else {
+                            println!("{:<20} {:<12} {:<10} {:<15}", "Name", "Type", "Status", "Health");
+                            println!("{}", "-".repeat(60));
+                            for p in providers {
+                                let status = if p.enabled { "✅ enabled" } else { "❌ disabled" };
+                                let health = format!("{} ({} failures)", p.health.state, p.health.failures);
+                                println!("{:<20} {:<12} {:<10} {:<15}",
+                                    truncate(&p.name, 20),
+                                    truncate(&p.provider_type, 12),
+                                    status,
+                                    truncate(&health, 15)
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to get providers: {}", e),
+                }
+            }
+            AdminCommands::Models => {
+                match client.get_models().await {
+                    Ok(models) => {
+                        println!("🤖 Model Aliases");
+                        println!("=================");
+                        if models.aliases.is_empty() {
+                            println!("No models configured");
+                        } else {
+                            for alias in &models.aliases {
+                                println!("  • {}", alias);
+                            }
+                            println!("\nTotal: {} alias(es)", models.aliases.len());
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to get models: {}", e),
+                }
+            }
+            AdminCommands::Default => {
+                match client.get_default_model().await {
+                    Ok(model) => {
+                        println!("📌 Current default model: {}", model.default_model);
+                    }
+                    Err(e) => println!("❌ Failed to get default model: {}", e),
+                }
+            }
+            AdminCommands::Switch { model } => {
+                match client.switch_model(model).await {
+                    Ok(result) => {
+                        if result.success {
+                            println!("✅ {}", result.message);
+                        } else {
+                            println!("❌ Failed: {}", result.error.unwrap_or_default());
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to switch model: {}", e),
+                }
+            }
+            AdminCommands::Enable { provider } => {
+                match client.enable_provider(provider).await {
+                    Ok(result) => {
+                        if result.success {
+                            println!("✅ {}", result.message);
+                        } else {
+                            println!("❌ Failed: {}", result.error.unwrap_or_default());
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to enable provider: {}", e),
+                }
+            }
+            AdminCommands::Disable { provider } => {
+                match client.disable_provider(provider).await {
+                    Ok(result) => {
+                        if result.success {
+                            println!("✅ {}", result.message);
+                        } else {
+                            println!("❌ Failed: {}", result.error.unwrap_or_default());
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to disable provider: {}", e),
+                }
+            }
+            AdminCommands::Health { provider } => {
+                match client.check_provider_health(provider).await {
+                    Ok(result) => {
+                        println!("🏥 Provider Health Check: {}", provider);
+                        println!("========================={}", "=".repeat(provider.len()));
+                        println!("Healthy: {}", if result.healthy { "✅ Yes" } else { "❌ No" });
+                        println!("Checked: {}", result.checked_at);
+                    }
+                    Err(e) => println!("❌ Failed to check health: {}", e),
+                }
+            }
+            AdminCommands::Fallback { alias } => {
+                match client.get_fallback_chain(alias).await {
+                    Ok(chain) => {
+                        println!("🔗 Fallback Chain for '{}'", alias);
+                        println!("========================={}", "=".repeat(alias.len()));
+                        if chain.fallback_chain.is_empty() {
+                            println!("No fallback chain configured");
+                        } else {
+                            for (i, provider) in chain.fallback_chain.iter().enumerate() {
+                                println!("  {}. {}", i + 1, provider);
+                            }
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to get fallback chain: {}", e),
+                }
+            }
+            AdminCommands::Agents => {
+                match client.get_agents().await {
+                    Ok(agents) => {
+                        println!("🤖 Active Agents");
+                        println!("=================");
+                        if agents.is_empty() {
+                            println!("No agents running");
+                        } else {
+                            println!("{:<20} {:<10}", "ID", "Status");
+                            println!("{}", "-".repeat(35));
+                            for agent in &agents {
+                                let status = if agent.busy { "🔄 busy" } else { "⏳ idle" };
+                                println!("{:<20} {:<10}", truncate(&agent.id, 20), status);
+                            }
+                            println!("\nTotal: {} agent(s)", agents.len());
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to get agents: {}", e),
+                }
+            }
+            AdminCommands::Send { session_id, message, provider, model } => {
+                match client.send_message_with_override(session_id, message, provider.clone(), model.clone()).await {
+                    Ok(result) => {
+                        if let Some(response) = result.response {
+                            println!("🤖 {}", response);
+                        } else if result.queued {
+                            println!("✅ Message queued (ID: {})", result.message_id);
+                        } else {
+                            println!("❌ Failed: {}", result.status);
+                        }
+                    }
+                    Err(e) => println!("❌ Failed to send message: {}", e),
+                }
+            }
+        }
+
         Ok(())
     }
 }

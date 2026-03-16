@@ -8,15 +8,16 @@
 //! - Authentication and security policies
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade, Query},
+    extract::{Path, State, WebSocketUpgrade, Query, ConnectInfo},
     http::StatusCode,
+    middleware::from_fn,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use futures_util::{StreamExt, SinkExt};
@@ -24,10 +25,13 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
 use crate::agent::{Agent, AgentConfig};
-use crate::canvas::{CanvasEvent, CanvasManager, CanvasWebSocketHandler};
+use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::model_router::ModelRouter;
 use crate::tools::ToolRegistry;
+
+pub mod middleware;
+pub mod webhooks;
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +196,26 @@ pub struct WsQuery {
     pub conversation: Option<String>,
 }
 
+/// Request body for switching default model
+#[derive(Debug, Deserialize)]
+pub struct SwitchModelRequest {
+    /// Model alias to switch to (e.g., "fast", "smart", "default")
+    pub model: String,
+}
+
+/// Request body for provider override in messages
+#[derive(Debug, Deserialize)]
+pub struct SendMessageRequest {
+    /// Message content
+    pub message: String,
+    /// Optional provider override (e.g., "anthropic", "openai")
+    pub provider_override: Option<String>,
+    /// Optional model alias override (e.g., "fast", "smart")
+    pub model_alias: Option<String>,
+    /// Optional specific model ID override
+    pub model_id: Option<String>,
+}
+
 /// Gateway control plane
 pub struct Gateway {
     state: Arc<GatewayState>,
@@ -284,21 +308,50 @@ impl Gateway {
 
     /// Build the HTTP router
     fn build_router(&self) -> Router {
-        Router::new()
+        let state = self.state.clone();
+
+        // Public tier: Webhooks (no authentication, signature verification per-channel)
+        let public_router = webhooks::create_webhook_router(state.clone());
+
+        // Admin tier: Protected APIs (localhost/Tailscale only)
+        let admin_router = Router::new()
+            // Health check (public)
             .route("/health", get(health_handler))
+            // WebSocket endpoints (localhost/Tailscale only)
             .route("/ws", get(ws_handler))
             .route("/ws/canvas/:id", get(canvas_ws_handler))
+            // Agent management
             .route("/api/v1/agents", get(list_agents_handler).post(create_agent_handler))
             .route(
                 "/api/v1/agents/:id",
                 get(get_agent_handler).delete(delete_agent_handler),
             )
+            // Channel management
             .route("/api/v1/channels", get(list_channels_handler))
+            // Session messaging with provider override
             .route("/api/v1/sessions/:id/messages", post(send_message_handler))
+            // Status
             .route("/api/v1/status", get(status_handler))
+            // Canvas/A2UI
             .route("/api/v1/canvas", post(create_canvas_handler))
             .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
-            .with_state(self.state.clone())
+            // Provider management (runtime switching)
+            .route("/api/v1/providers", get(list_providers_handler))
+            .route("/api/v1/providers/switch", post(switch_model_handler))
+            .route("/api/v1/providers/:id/health", get(get_provider_health_handler))
+            .route("/api/v1/providers/:id/enable", post(enable_provider_handler))
+            .route("/api/v1/providers/:id/disable", post(disable_provider_handler))
+            .route("/api/v1/providers/:id/check", post(check_provider_handler))
+            .route("/api/v1/providers/fallback/:alias", get(get_fallback_chain_handler).post(set_fallback_chain_handler))
+            // Model aliases
+            .route("/api/v1/models", get(list_models_handler))
+            .route("/api/v1/models/default", get(get_default_model_handler))
+            // Apply localhost/Tailscale restriction middleware
+            .layer(from_fn(middleware::tailscale_only_middleware))
+            .with_state(state.clone());
+
+        // Merge public and admin routers
+        public_router.merge(admin_router)
     }
 
     /// Spawn a new agent
@@ -735,11 +788,68 @@ async fn list_channels_handler(
 async fn send_message_handler(
     State(state): State<Arc<GatewayState>>,
     Path(session_id): Path<String>,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
-    // Queue message for processing
-    // TODO: Implement
-    (StatusCode::ACCEPTED, Json(serde_json::json!({"queued": true})))
+    // Check if provider override is specified
+    let provider_override = body.provider_override.clone();
+    let _model_alias = body.model_alias.clone();
+
+    // Queue message for processing with provider override
+    let message_id = uuid::Uuid::new_v4().to_string();
+
+    // If provider override is specified, we route through that provider
+    if let Some(provider_name) = provider_override {
+        match state.model_router.complete_with_provider(
+            &provider_name,
+            body.model_id,
+            vec![crate::providers::Message::user(body.message.clone())],
+        ).await {
+            Ok(response) => {
+                let resp = serde_json::json!({
+                    "message_id": message_id,
+                    "session_id": session_id,
+                    "provider_override": provider_name,
+                    "response": response.message.content,
+                    "status": "completed",
+                });
+                return (StatusCode::OK, Json(resp)).into_response();
+            }
+            Err(e) => {
+                let resp = serde_json::json!({
+                    "message_id": message_id,
+                    "session_id": session_id,
+                    "error": format!("Provider override failed: {}", e),
+                    "status": "failed",
+                });
+                return (StatusCode::BAD_REQUEST, Json(resp)).into_response();
+            }
+        }
+    }
+
+    // Otherwise, queue for normal agent processing
+    // TODO: Implement proper message queue processing with model_alias support
+    let queued_msg = QueuedMessage {
+        id: message_id.clone(),
+        channel: "api".to_string(),
+        user_id: "api_user".to_string(),
+        content: body.message,
+        session_id: session_id.clone(),
+        timestamp: chrono::Utc::now(),
+    };
+
+    if let Err(e) = state.message_queue.send(queued_msg).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "error": format!("Failed to queue message: {}", e),
+        }))).into_response();
+    }
+
+    let resp = serde_json::json!({
+        "message_id": message_id,
+        "session_id": session_id,
+        "queued": true,
+        "status": "processing",
+    });
+    (StatusCode::ACCEPTED, Json(resp)).into_response()
 }
 
 async fn status_handler(
@@ -859,4 +969,170 @@ async fn delete_canvas_handler(
     state.canvas_manager.remove_session(&canvas_id).await;
 
     StatusCode::NO_CONTENT
+}
+
+// Provider Management Handlers
+
+async fn list_providers_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let providers = state.model_router.list_providers().await;
+    Json(providers)
+}
+
+async fn get_provider_health_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.get_provider_health(&id).await {
+        Some(health) => Json(health).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("Provider '{}' not found", id)).into_response(),
+    }
+}
+
+async fn switch_model_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<SwitchModelRequest>,
+) -> impl IntoResponse {
+    match state.model_router.switch_default_model(&body.model).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Switched to model '{}'", body.model),
+                "current_model": body.model,
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("{}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
+        }
+    }
+}
+
+async fn enable_provider_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.enable_provider(&id).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Provider '{}' enabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("{}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
+        }
+    }
+}
+
+async fn disable_provider_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.disable_provider(&id).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Provider '{}' disabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("{}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
+        }
+    }
+}
+
+async fn check_provider_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.check_provider_health(&id).await {
+        Ok(healthy) => {
+            let response = serde_json::json!({
+                "provider": id,
+                "healthy": healthy,
+                "checked_at": chrono::Utc::now().to_rfc3339(),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("{}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
+        }
+    }
+}
+
+async fn get_fallback_chain_handler(
+    Path(alias): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let chain = state.model_router.get_fallback_chain(&alias).await;
+    Json(serde_json::json!({
+        "alias": alias,
+        "fallback_chain": chain,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetFallbackChainRequest {
+    providers: Vec<String>,
+}
+
+async fn set_fallback_chain_handler(
+    Path(alias): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<SetFallbackChainRequest>,
+) -> impl IntoResponse {
+    match state.model_router.set_fallback_chain(&alias, body.providers).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Fallback chain updated for '{}'", alias),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": format!("{}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
+        }
+    }
+}
+
+async fn list_models_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let aliases = state.model_router.list_aliases().await;
+    Json(serde_json::json!({
+        "aliases": aliases,
+    }))
+}
+
+async fn get_default_model_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let default = state.model_router.get_default_model().await;
+    Json(serde_json::json!({
+        "default_model": default,
+    }))
 }

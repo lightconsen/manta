@@ -150,15 +150,16 @@ impl Default for ModelRouterConfig {
 }
 
 /// Circuit breaker state
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CircuitState {
+    #[default]
     Closed,    // Normal operation
     Open,      // Failing, reject requests
     HalfOpen,  // Testing if recovered
 }
 
 /// Provider health tracking
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProviderHealth {
     /// Current circuit state
     pub state: CircuitState,
@@ -525,6 +526,308 @@ impl ModelRouter {
         let mut config = self.config.write().await;
         config.aliases.remove(name).is_some()
     }
+
+    // ==================== RUNTIME PROVIDER MANAGEMENT ====================
+
+    /// Switch the default model alias
+    pub async fn switch_default_model(&self, alias_name: &str) -> crate::Result<()> {
+        let config = self.config.read().await;
+        if !config.aliases.contains_key(alias_name) {
+            return Err(crate::error::ConfigError::InvalidValue {
+                key: "default_model".to_string(),
+                message: format!("Unknown model alias: {}", alias_name),
+            }.into());
+        }
+        drop(config);
+
+        let mut config = self.config.write().await;
+        info!("Switching default model from '{}' to '{}'", config.default_model, alias_name);
+        config.default_model = alias_name.to_string();
+        Ok(())
+    }
+
+    /// Get current default model alias
+    pub async fn get_default_model(&self) -> String {
+        let config = self.config.read().await;
+        config.default_model.clone()
+    }
+
+    /// List all available providers with their status
+    pub async fn list_providers(&self) -> Vec<ProviderInfo> {
+        let providers = self.providers.read().await;
+        let health = self.health.read().await;
+        let config = self.config.read().await;
+
+        providers
+            .iter()
+            .map(|(name, _)| {
+                let h = health.get(name).cloned().unwrap_or_default();
+                let provider_config = config.providers.get(name).cloned();
+
+                ProviderInfo {
+                    name: name.clone(),
+                    provider_type: provider_config.as_ref().map(|c| format!("{:?}", c.provider_type)).unwrap_or_default(),
+                    enabled: h.state != CircuitState::Open,
+                    health: ProviderHealthInfo {
+                        state: format!("{:?}", h.state),
+                        failures: h.failures,
+                        successes: h.successes,
+                        avg_latency_ms: h.avg_latency_ms,
+                        last_failure: h.last_failure,
+                        last_health_check: h.last_health_check,
+                    },
+                    circuit_state: h.state,
+                }
+            })
+            .collect()
+    }
+
+    /// Enable a provider (close circuit breaker if open)
+    pub async fn enable_provider(&self, name: &str) -> crate::Result<()> {
+        let mut health = self.health.write().await;
+        if let Some(h) = health.get_mut(name) {
+            h.state = CircuitState::Closed;
+            h.failures = 0;
+            info!("Provider {} enabled (circuit closed)", name);
+            Ok(())
+        } else {
+            Err(crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", name),
+            }.into())
+        }
+    }
+
+    /// Disable a provider (open circuit breaker)
+    pub async fn disable_provider(&self, name: &str) -> crate::Result<()> {
+        let mut health = self.health.write().await;
+        if let Some(h) = health.get_mut(name) {
+            h.state = CircuitState::Open;
+            info!("Provider {} disabled (circuit opened)", name);
+            Ok(())
+        } else {
+            Err(crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", name),
+            }.into())
+        }
+    }
+
+    /// Add a new provider at runtime
+    pub async fn add_provider(&self, name: &str, config: ProviderConfig) -> crate::Result<()> {
+        info!("Adding new provider at runtime: {}", name);
+
+        // Create provider instance
+        let provider = self.create_provider(&config).await?;
+
+        // Add to providers
+        let mut providers = self.providers.write().await;
+        providers.insert(name.to_string(), provider);
+        drop(providers);
+
+        // Add to health tracking
+        let mut health = self.health.write().await;
+        health.insert(name.to_string(), ProviderHealth::default());
+        drop(health);
+
+        // Add to config
+        let mut router_config = self.config.write().await;
+        router_config.providers.insert(name.to_string(), config);
+
+        Ok(())
+    }
+
+    /// Remove a provider at runtime
+    pub async fn remove_provider(&self, name: &str) -> crate::Result<()> {
+        info!("Removing provider at runtime: {}", name);
+
+        let mut providers = self.providers.write().await;
+        if providers.remove(name).is_none() {
+            return Err(crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", name),
+            }.into());
+        }
+        drop(providers);
+
+        let mut health = self.health.write().await;
+        health.remove(name);
+        drop(health);
+
+        let mut config = self.config.write().await;
+        config.providers.remove(name);
+
+        Ok(())
+    }
+
+    /// Get detailed health status for a specific provider
+    pub async fn get_provider_health(&self, name: &str) -> Option<ProviderHealthInfo> {
+        let health = self.health.read().await;
+        health.get(name).map(|h| ProviderHealthInfo {
+            state: format!("{:?}", h.state),
+            failures: h.failures,
+            successes: h.successes,
+            avg_latency_ms: h.avg_latency_ms,
+            last_failure: h.last_failure,
+            last_health_check: h.last_health_check,
+        })
+    }
+
+    /// Force a health check on a specific provider
+    pub async fn check_provider_health(&self, name: &str) -> crate::Result<bool> {
+        let providers = self.providers.read().await;
+        let provider = providers.get(name).cloned().ok_or_else(|| {
+            crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", name),
+            }
+        })?;
+        drop(providers);
+
+        // Perform lightweight health check
+        // For now, just check if provider responds
+        let request = CompletionRequest {
+            model: None,
+            messages: vec![Message::system("Health check")],
+            temperature: Some(0.0),
+            max_tokens: Some(1),
+            stream: false,
+            tools: None,
+            stop: None,
+        };
+
+        let start = std::time::Instant::now();
+        match provider.complete(request).await {
+            Ok(_) => {
+                self.record_success(name, start.elapsed()).await;
+                Ok(true)
+            }
+            Err(_) => {
+                self.record_failure(name).await;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Complete a request with a specific provider override (per-request override)
+    pub async fn complete_with_provider(
+        &self,
+        provider_name: &str,
+        model: Option<String>,
+        messages: Vec<Message>,
+    ) -> crate::Result<CompletionResponse> {
+        let providers = self.providers.read().await;
+        let provider = providers.get(provider_name).cloned().ok_or_else(|| {
+            crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", provider_name),
+            }
+        })?;
+        drop(providers);
+
+        // Check circuit breaker
+        if self.is_circuit_open(provider_name).await {
+            return Err(crate::error::MantaError::ExternalService {
+                source: format!("Provider {} circuit is open", provider_name),
+                cause: None,
+            });
+        }
+
+        let request = CompletionRequest {
+            model,
+            messages,
+            temperature: None,
+            max_tokens: None,
+            stream: false,
+            tools: None,
+            stop: None,
+        };
+
+        let start = std::time::Instant::now();
+        match provider.complete(request).await {
+            Ok(response) => {
+                self.record_success(provider_name, start.elapsed()).await;
+                Ok(response)
+            }
+            Err(e) => {
+                self.record_failure(provider_name).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Get fallback chain for an alias
+    pub async fn get_fallback_chain(&self, alias_name: &str) -> Vec<String> {
+        let chains = self.fallback_chains.read().await;
+        chains.get(alias_name)
+            .map(|entries| entries.iter().map(|e| e.provider.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Update fallback chain for an alias at runtime
+    pub async fn set_fallback_chain(&self, alias_name: &str, provider_chain: Vec<String>) -> crate::Result<()> {
+        let config = self.config.read().await;
+        if !config.aliases.contains_key(alias_name) {
+            return Err(crate::error::ConfigError::InvalidValue {
+                key: "alias".to_string(),
+                message: format!("Unknown alias: {}", alias_name),
+            }.into());
+        }
+        let model = config.aliases.get(alias_name).map(|a| a.model.clone()).unwrap_or_default();
+        drop(config);
+
+        let entries: Vec<FallbackEntry> = provider_chain
+            .iter()
+            .map(|p| FallbackEntry {
+                provider: p.clone(),
+                model: model.clone(),
+                enabled: true,
+                health_score: 100,
+            })
+            .collect();
+
+        let mut chains = self.fallback_chains.write().await;
+        chains.insert(alias_name.to_string(), entries);
+
+        // Also update config
+        let mut config = self.config.write().await;
+        config.fallback_chains.insert(alias_name.to_string(), provider_chain);
+
+        Ok(())
+    }
+}
+
+/// Provider information for API responses
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderInfo {
+    /// Provider name
+    pub name: String,
+    /// Provider type (anthropic, openai, etc.)
+    pub provider_type: String,
+    /// Whether provider is enabled
+    pub enabled: bool,
+    /// Health information
+    pub health: ProviderHealthInfo,
+    /// Circuit breaker state (internal use)
+    #[serde(skip)]
+    pub circuit_state: CircuitState,
+}
+
+/// Provider health information for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderHealthInfo {
+    /// Circuit state (Closed, Open, HalfOpen)
+    pub state: String,
+    /// Consecutive failures
+    pub failures: u32,
+    /// Successful requests
+    pub successes: u64,
+    /// Average latency in ms
+    pub avg_latency_ms: u64,
+    /// Last failure timestamp
+    pub last_failure: Option<chrono::DateTime<chrono::Utc>>,
+    /// Last health check timestamp
+    pub last_health_check: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Trait for LLM providers
