@@ -232,9 +232,10 @@ impl Provider for OpenAiProvider {
 
         // Retry logic for transient errors
         let mut retries = 0;
-        let max_retries = 2;
+        let max_retries = 3;
 
         loop {
+            info!("Sending HTTP request (attempt {})", retries + 1);
             match self
                 .client
                 .post(&request_url)
@@ -261,7 +262,7 @@ impl Provider for OpenAiProvider {
                         }
                     })?;
 
-                    debug!("Received completion from OpenAI");
+                    info!("Successfully received completion from OpenAI");
                     return self.from_openai_response(openai_resp);
                 }
                 Err(e) => {
@@ -272,12 +273,15 @@ impl Provider for OpenAiProvider {
                     let is_retryable = error_msg.contains("connection closed")
                         || error_msg.contains("timeout")
                         || error_msg.contains("reset")
-                        || error_msg.contains("broken pipe");
+                        || error_msg.contains("broken pipe")
+                        || error_msg.contains("Connection reset")
+                        || error_msg.contains("unexpected EOF");
 
                     if is_retryable && retries < max_retries {
                         retries += 1;
-                        let delay = std::time::Duration::from_millis(500 * retries as u64);
-                        warn!("Retrying after {:?}...", delay);
+                        // Exponential backoff: 1s, 2s, 4s
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        warn!("Retryable error detected, retrying after {:?}... (attempt {}/{})", delay, retries, max_retries);
                         tokio::time::sleep(delay).await;
                         continue;
                     }

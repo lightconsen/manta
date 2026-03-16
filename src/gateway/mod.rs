@@ -729,19 +729,21 @@ impl Gateway {
                                 Box::pin(async move {
                                     match event {
                                         crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                            info!("ToolCalling event: {} for session {}", name, session_id);
                                             let _ = state.event_tx.send(GatewayEvent::ToolCalling {
-                                                session_id,
-                                                agent_id,
+                                                session_id: session_id.clone(),
+                                                agent_id: agent_id.clone(),
                                                 tool_name: name,
-                                                arguments,
+                                                arguments: arguments.clone(),
                                             });
                                         }
                                         crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                            info!("ToolResult event: {} for session {}", name, session_id);
                                             let _ = state.event_tx.send(GatewayEvent::ToolResult {
-                                                session_id,
-                                                agent_id,
+                                                session_id: session_id.clone(),
+                                                agent_id: agent_id.clone(),
                                                 tool_name: name,
-                                                result,
+                                                result: result.clone(),
                                             });
                                         }
                                         _ => {} // Ignore other events for now
@@ -885,7 +887,7 @@ impl Gateway {
             .route("/ws", get(web_terminal_ws_handler))
             .with_state(state);
 
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("127.0.0.1:{}", port);
         let listener = TcpListener::bind(&addr).await.map_err(|e| {
             crate::error::MantaError::ExternalService {
                 source: "Failed to bind web terminal".to_string(),
@@ -1027,27 +1029,37 @@ async fn handle_web_terminal_websocket(
             event = event_rx.recv() => {
                 match event {
                     Ok(GatewayEvent::ToolCalling { session_id: event_session, tool_name, arguments, .. }) => {
+                        info!("WebSocket received ToolCalling event for session {}: {}", event_session, tool_name);
                         if event_session == session_id {
                             let tool_msg = serde_json::json!({
                                 "type": "tool_call",
                                 "tool": tool_name,
                                 "arguments": arguments
                             });
-                            if socket.send(Message::Text(tool_msg.to_string())).await.is_err() {
+                            let msg_text = tool_msg.to_string();
+                            info!("Sending tool_call message to WebSocket: {}", msg_text);
+                            if socket.send(Message::Text(msg_text)).await.is_err() {
                                 break;
                             }
+                        } else {
+                            tracing::debug!("ToolCalling event for different session: {} vs {}", event_session, session_id);
                         }
                     }
                     Ok(GatewayEvent::ToolResult { session_id: event_session, tool_name, result, .. }) => {
+                        info!("WebSocket received ToolResult event for session {}: {}", event_session, tool_name);
                         if event_session == session_id {
                             let result_msg = serde_json::json!({
                                 "type": "tool_result",
                                 "tool": tool_name,
                                 "result": result
                             });
-                            if socket.send(Message::Text(result_msg.to_string())).await.is_err() {
+                            let msg_text = result_msg.to_string();
+                            info!("Sending tool_result message to WebSocket: {}", msg_text);
+                            if socket.send(Message::Text(msg_text)).await.is_err() {
                                 break;
                             }
+                        } else {
+                            tracing::debug!("ToolResult event for different session: {} vs {}", event_session, session_id);
                         }
                     }
                     Ok(GatewayEvent::AgentResponse { session_id: resp_session, content, .. }) => {

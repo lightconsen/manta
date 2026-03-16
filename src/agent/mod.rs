@@ -73,6 +73,7 @@ fn is_obviously_time_sensitive(message: &str) -> bool {
 async fn should_use_cache_llm(
     provider: &Arc<dyn Provider>,
     message: &str,
+    model: Option<String>,
 ) -> bool {
     // Skip LLM check for obviously time-sensitive queries (optimization)
     if is_obviously_time_sensitive(message) {
@@ -106,6 +107,7 @@ Reply with ONLY "CACHE" or "NOCACHE"."#,
     );
 
     let request = CompletionRequest {
+        model,
         messages: vec![Message::user(&prompt)],
         temperature: Some(0.0), // Deterministic
         max_tokens: Some(10),
@@ -483,11 +485,16 @@ impl Agent {
             self.config.max_context_tokens / 4, // Rough token estimate
         );
 
-        let context = Context::new(
+        let mut context = Context::new(
             conversation_id.to_string(),
             system_prompt,
             self.config.max_context_tokens,
         );
+
+        // Set dynamic tool iteration limit based on message complexity
+        let dynamic_limit = Context::calculate_dynamic_limit(user_message);
+        context.set_max_tool_iterations(dynamic_limit);
+        info!("Set dynamic tool iteration limit: {} for conversation {}", dynamic_limit, conversation_id);
 
         contexts.insert(conversation_id.to_string(), context.clone());
         context
@@ -512,7 +519,7 @@ impl Agent {
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
         // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content).await;
+        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
 
         if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
@@ -713,7 +720,7 @@ impl Agent {
              content.contains("上面的") || content.contains("这个") || content.contains("那个"));
 
         // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content).await;
+        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
 
         if should_cache {
             if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {

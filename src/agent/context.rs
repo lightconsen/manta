@@ -66,9 +66,45 @@ impl Context {
     }
 
     /// Increment tool iteration counter
+    /// Returns false if limit reached
     pub fn increment_tool_iteration(&mut self) -> bool {
         self.tool_iterations += 1;
         self.tool_iterations < self.max_tool_iterations
+    }
+
+    /// Calculate dynamic tool limit based on task complexity
+    /// Can be overridden by MANTA_MAX_TOOL_ITERATIONS env var
+    pub fn calculate_dynamic_limit(message_content: &str) -> usize {
+        // Check for env var override first
+        if let Ok(limit) = std::env::var("MANTA_MAX_TOOL_ITERATIONS") {
+            if let Ok(parsed) = limit.parse::<usize>() {
+                return parsed;
+            }
+        }
+
+        // Base limit: 10
+        let base_limit = 10;
+
+        // Scale based on message complexity indicators
+        let mut complexity = 0;
+
+        // Longer queries may need more steps
+        if message_content.len() > 200 {
+            complexity += 5;
+        }
+
+        // Multi-part tasks (indicated by "and", "then", commas)
+        let parts = message_content.split(|c| c == ',' || c == ';').count();
+        complexity += parts.saturating_sub(1) * 2;
+
+        // Tasks with explicit multiple steps
+        if message_content.to_lowercase().contains("steps") ||
+           message_content.to_lowercase().contains("step by step") {
+            complexity += 5;
+        }
+
+        // Cap at reasonable maximum (30)
+        std::cmp::min(30, base_limit + complexity)
     }
 
     /// Get current tool iteration count

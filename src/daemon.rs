@@ -63,10 +63,11 @@ impl DaemonManager {
 
         // Spawn the daemon process with output redirected to log file
         let child = Command::new(&exe_path)
-            .arg("daemon")
+            .arg("start")
             .arg("--host").arg(&self.config.host)
             .arg("--port").arg(self.config.port.to_string())
             .arg("--web-port").arg(self.config.web_port.to_string())
+            .arg("--foreground")
             .stdin(std::process::Stdio::null())
             .stdout(log_file_std.try_clone().map_err(|e| crate::error::MantaError::Io(e))?)
             .stderr(log_file_std)
