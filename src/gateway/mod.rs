@@ -66,6 +66,23 @@ pub struct GatewayConfig {
     /// ACP (Agent Control Plane) configuration
     #[serde(default)]
     pub acp: AcpConfig,
+    /// LLM Provider configurations (provider name -> config)
+    #[serde(default)]
+    pub providers: HashMap<String, crate::model_router::ProviderConfig>,
+    /// Default model name (e.g., "claude-3-sonnet-20240229", "qwen3.5-plus")
+    #[serde(default = "default_model")]
+    pub model: String,
+    /// Model provider (e.g., "anthropic", "openai")
+    #[serde(default = "default_model_provider")]
+    pub model_provider: String,
+}
+
+fn default_model() -> String {
+    "claude-3-sonnet-20240229".to_string()
+}
+
+fn default_model_provider() -> String {
+    "anthropic".to_string()
 }
 
 /// Vector memory configuration
@@ -178,6 +195,9 @@ impl Default for GatewayConfig {
             plugins: PluginConfig::default(),
             hot_reload: HotReloadConfig::default(),
             acp: AcpConfig::default(),
+            providers: HashMap::new(),
+            model: default_model(),
+            model_provider: default_model_provider(),
         }
     }
 }
@@ -362,6 +382,15 @@ impl Gateway {
         let plugins_dir = crate::dirs::config_dir().join("plugins");
         let plugin_manager = Arc::new(PluginManager::new(plugins_dir).await?);
 
+        // Create model router config with custom model settings
+        let mut model_router_config = crate::model_router::ModelRouterConfig::default();
+        model_router_config.default_model = "default".to_string();
+        // Update the default alias to use the configured model and provider
+        if let Some(default_alias) = model_router_config.aliases.get_mut("default") {
+            default_alias.provider = config.model_provider.clone();
+            default_alias.model = config.model.clone();
+        }
+
         // Create state with placeholder values for vector_memory and hot_reload
         // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
@@ -369,7 +398,7 @@ impl Gateway {
             channels: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
-            model_router: Arc::new(ModelRouter::default()),
+            model_router: Arc::new(ModelRouter::new(model_router_config)),
             tool_registry,
             event_tx,
             message_queue: message_queue_tx,
@@ -379,6 +408,14 @@ impl Gateway {
             vector_memory: RwLock::new(None),
             hot_reload: RwLock::new(None),
         });
+
+        // Configure providers from config
+        for (name, provider_config) in &config.providers {
+            info!("Configuring provider: {}", name);
+            if let Err(e) = state.model_router.add_provider(name, provider_config.clone()).await {
+                warn!("Failed to add provider '{}': {}", name, e);
+            }
+        }
 
         // Initialize vector memory service if enabled
         if config.vector_memory.enabled {
@@ -481,9 +518,14 @@ impl Gateway {
             });
         }
 
-        // Initialize default agent
-        self.spawn_agent("default".to_string(), self.config.default_agent.clone())
-            .await?;
+        // Initialize default agent (optional - requires provider configuration)
+        match self.spawn_agent("default".to_string(), self.config.default_agent.clone()).await {
+            Ok(()) => info!("Default agent spawned successfully"),
+            Err(e) => {
+                warn!("Failed to spawn default agent: {}", e);
+                warn!("Gateway running without default agent - agents must be created via API");
+            }
+        }
 
         // Initialize configured channels
         self.init_channels().await?;
@@ -542,6 +584,8 @@ impl Gateway {
         let admin_router = Router::new()
             // Health check (public)
             .route("/health", get(health_handler))
+            // Simple chat endpoint (backwards compatibility with DaemonClient)
+            .route("/chat", post(chat_handler))
             // WebSocket endpoints (localhost/Tailscale only)
             .route("/ws", get(ws_handler))
             .route("/ws/canvas/:id", get(canvas_ws_handler))
@@ -605,8 +649,11 @@ impl Gateway {
         // Get tool registry from state
         let tools = self.state.tool_registry.clone();
 
-        // Create the actual Agent instance
-        let agent = Arc::new(Agent::new(config.clone(), provider, tools));
+        // Get the model from config for this agent
+        let model = self.state.config.read().await.model.clone();
+
+        // Create the actual Agent instance with model
+        let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
 
         let handle = AgentHandle {
             id: id.clone(),
@@ -874,12 +921,13 @@ async fn handle_web_terminal_websocket(
                     break;
                 }
 
-                // TODO: Route message through Gateway to agent
-                // For now, echo back with gateway info
+                // NOTE: The web terminal WebSocket currently echoes messages back.
+                // To fully integrate with agents, this needs access to GatewayState.
+                // For now, we provide a helpful message directing users to use the /chat endpoint.
                 let response = serde_json::json!({
                     "type": "message",
                     "role": "assistant",
-                    "content": format!("Received: {}\n(Session: {})", text, session_id)
+                    "content": format!("Echo: {}\n\n(Session: {})\n\nNote: Full AI integration via WebSocket requires Gateway state access. Use POST /chat API for AI responses.", text, session_id)
                 });
 
                 if socket.send(Message::Text(response.to_string())).await.is_err() {
@@ -955,6 +1003,92 @@ async fn health_handler() -> impl IntoResponse {
         "status": "healthy",
         "version": crate::VERSION,
     }))
+}
+
+/// Simple chat handler for backwards compatibility with DaemonClient
+#[derive(Debug, Deserialize)]
+struct ChatRequestCompat {
+    message: String,
+    conversation_id: Option<String>,
+}
+
+async fn chat_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<ChatRequestCompat>,
+) -> impl IntoResponse {
+    let conversation_id = body.conversation_id.unwrap_or_else(|| "default".to_string());
+
+    // Use the default agent to process the message
+    let agents = state.agents.read().await;
+    if let Some(agent_handle) = agents.get("default") {
+        // Subscribe to events before sending the command to avoid race condition
+        let mut event_rx = state.event_tx.subscribe();
+
+        // Send ProcessMessage command to agent
+        let cmd = AgentCommand::ProcessMessage {
+            session_id: conversation_id.clone(),
+            message: body.message.clone(),
+            user_id: "web_user".to_string(),
+            channel: "web".to_string(),
+        };
+
+        if let Err(e) = agent_handle.tx.send(cmd).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("Failed to send message to agent: {}", e),
+            })));
+        }
+
+        // Drop the agents lock so we don't hold it while waiting
+        drop(agents);
+
+        // Wait for response with timeout
+        let timeout = tokio::time::Duration::from_secs(120);
+        let start = tokio::time::Instant::now();
+
+        loop {
+            // Check for timeout
+            if start.elapsed() > timeout {
+                return (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({
+                    "error": "Request timeout",
+                })));
+            }
+
+            // Wait for event with a smaller timeout to allow checking
+            match tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                event_rx.recv()
+            ).await {
+                Ok(Ok(GatewayEvent::AgentResponse { session_id, agent_id: _, content })) => {
+                    if session_id == conversation_id {
+                        let resp = serde_json::json!({
+                            "response": content,
+                            "conversation_id": conversation_id,
+                        });
+                        return (StatusCode::OK, Json(resp));
+                    }
+                    // Not our session, continue waiting
+                }
+                Ok(Ok(_)) => {
+                    // Some other event, continue waiting
+                    continue;
+                }
+                Ok(Err(_)) => {
+                    // Event channel closed
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                        "error": "Event channel closed",
+                    })));
+                }
+                Err(_) => {
+                    // Timeout on recv, continue loop to check overall timeout
+                    continue;
+                }
+            }
+        }
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "error": "No default agent available",
+        })))
+    }
 }
 
 async fn ws_handler(

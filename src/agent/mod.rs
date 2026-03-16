@@ -340,6 +340,8 @@ pub struct Agent {
     config: AgentConfig,
     /// The LLM provider
     provider: Arc<dyn Provider>,
+    /// Model name to use (overrides provider default)
+    model: Option<String>,
     /// Tool registry
     tools: Arc<ToolRegistry>,
     /// Context storage
@@ -372,6 +374,7 @@ impl Agent {
         Self {
             config,
             provider,
+            model: None,
             tools,
             contexts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             shutdown_tx: Arc::new(RwLock::new(None)),
@@ -382,6 +385,16 @@ impl Agent {
             task_planner: Arc::new(TaskPlanner::new(provider_clone)),
             active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Set the model name to use for completions
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        let model = model.into();
+        self.model = Some(model.clone());
+        // Update task planner with the model
+        let provider = self.provider.clone();
+        self.task_planner = Arc::new(TaskPlanner::new(provider).with_model(model));
+        self
     }
 
     /// Set the memory store
@@ -844,6 +857,7 @@ impl Agent {
         let has_tools = !tool_defs.is_empty();
 
         let mut request = CompletionRequest {
+            model: self.model.clone(),
             messages,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
@@ -980,6 +994,7 @@ impl Agent {
         let has_tools = !tool_defs.is_empty();
 
         let mut request = CompletionRequest {
+            model: self.model.clone(),
             messages,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),

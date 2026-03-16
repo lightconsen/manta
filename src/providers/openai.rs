@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 /// OpenAI API client
 #[derive(Debug, Clone)]
@@ -73,6 +73,11 @@ impl OpenAiProvider {
         } else {
             format!("{}{}", self.base_url.trim_end_matches('/'), path)
         }
+    }
+
+    /// Get the base URL
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// Build headers with authorization
@@ -188,9 +193,8 @@ impl Provider for OpenAiProvider {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
-        debug!("Sending completion request to OpenAI");
-
-        let model = request.model.unwrap_or_else(|| self.default_model.clone());
+        let model = request.model.clone().unwrap_or_else(|| self.default_model.clone());
+        info!("OpenAI API request - model: {}, base_url: {}", model, self.base_url);
 
         let tools: Option<Vec<OpenAiTool>> = request.tools.map(|tools| {
             tools
@@ -212,9 +216,16 @@ impl Provider for OpenAiProvider {
             stop: request.stop,
         };
 
+        // Debug: print the actual request body
+        let body_json = serde_json::to_string(&body).unwrap_or_default();
+        info!("OpenAI API request body: {}", body_json);
+
+        let request_url = self.url("/chat/completions");
+        info!("OpenAI API full URL: {}", request_url);
+
         let response = self
             .client
-            .post(self.url("/chat/completions"))
+            .post(&request_url)
             .headers(self.headers())
             .json(&body)
             .send()

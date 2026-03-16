@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: manta
-  labels:
-    app.kubernetes.io/name: manta
-    app.kubernetes.io/component: namespace

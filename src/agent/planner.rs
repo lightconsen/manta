@@ -110,12 +110,22 @@ impl TaskPlan {
 /// Task planner using LLM for natural language decomposition
 pub struct TaskPlanner {
     provider: Arc<dyn Provider>,
+    model: Option<String>,
 }
 
 impl TaskPlanner {
     /// Create a new task planner
     pub fn new(provider: Arc<dyn Provider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            model: None,
+        }
+    }
+
+    /// Set the model to use for completions
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
     }
 
     /// Analyze if a request needs task planning (is it complex?)
@@ -183,6 +193,7 @@ Reply with ONLY "PLAN" if it needs multi-step planning, or "SIMPLE" if it's a si
         );
 
         let completion_req = CompletionRequest {
+            model: self.model.clone(),
             messages: vec![Message::user(&prompt)],
             temperature: Some(0.0),
             max_tokens: Some(10),
@@ -238,6 +249,7 @@ Ensure tasks are in logical execution order. Tasks with no dependencies should c
         );
 
         let completion_req = CompletionRequest {
+            model: self.model.clone(),
             messages: vec![Message::user(&prompt)],
             temperature: Some(0.3),
             max_tokens: Some(2000),
@@ -378,6 +390,7 @@ If changes are needed, provide a JSON object with:
         );
 
         let completion_req = CompletionRequest {
+            model: self.model.clone(),
             messages: vec![Message::user(&prompt)],
             temperature: Some(0.3),
             max_tokens: Some(1000),

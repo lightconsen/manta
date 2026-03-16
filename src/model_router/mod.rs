@@ -285,9 +285,14 @@ impl ModelRouter {
             }
             ProviderType::OpenAi => {
                 // Create OpenAI provider
-                Err(crate::error::ConfigError::Missing(
-                    "OpenAI provider not yet implemented".to_string(),
-                ).into())
+                let base_url = config.base_url.clone().unwrap_or_else(||
+                    "https://api.openai.com/v1".to_string()
+                );
+                let provider = crate::providers::OpenAiProvider::with_base_url(
+                    config.api_key.clone(),
+                    base_url,
+                )?;
+                Ok(Arc::new(provider))
             }
             _ => Err(crate::error::ConfigError::InvalidValue {
                 key: "provider_type".to_string(),

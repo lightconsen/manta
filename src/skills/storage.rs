@@ -2,7 +2,7 @@
 //!
 //! Manages skills at multiple levels:
 //! - Bundled: Built-in skills shipped with Manta
-//! - User: Skills in ~/.config/manta/skills/
+//! - User: Skills in ~/.manta/skills/
 //! - Project: Skills in ./.manta/skills/ (current project)
 //! - Workspace: Skills in workspace root
 
@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 pub enum StorageLevel {
     /// Built-in skills (highest priority for availability)
     Bundled,
-    /// User-level skills in ~/.config/manta/skills/
+    /// User-level skills in ~/.manta/skills/
     User,
     /// Workspace-level skills
     Workspace,

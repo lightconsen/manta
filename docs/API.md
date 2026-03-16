@@ -231,8 +231,8 @@ use manta::memory::DualMemory;
 
 // Initialize with paths
 let memory = DualMemory::load(
-    "~/.config/manta/memory/agent.md",
-    "~/.config/manta/memory/user.md",
+    "~/.manta/memory/agent.md",
+    "~/.manta/memory/user.md",
 ).await?;
 
 // Get memories for prompt injection
@@ -267,7 +267,7 @@ use manta::skills::SkillManager;
 let manager = SkillManager::new();
 
 // Load from directory
-manager.load_from_dir("~/.config/manta/skills").await?;
+manager.load_from_dir("~/.manta/skills").await?;
 
 // Get matching skill
 if let Some(skill) = manager.find_matching_skill("what's the weather?") {

@@ -83,7 +83,7 @@ See [plan.md](plan.md) for detailed architecture and roadmap.
 
 Manta can be configured via:
 
-1. **Configuration file**: `manta.toml` or `~/.config/manta/manta.toml`
+1. **Configuration file**: `manta.toml` or `~/.manta/manta.toml`
 2. **Environment variables**: `MANTA_SERVER_HOST`, `MANTA_LOG_LEVEL`, etc.
 3. **Command-line flags**: `--config`, `--log-level`
 

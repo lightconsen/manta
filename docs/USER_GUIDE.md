@@ -79,7 +79,7 @@ manta chat -m "Hello, Manta!"
 
 ### Config File
 
-Create `~/.config/manta/config.yaml`:
+Create `~/.manta/config.yaml`:
 
 ```yaml
 provider:
@@ -210,12 +210,12 @@ Manta comes with example skills:
 
 ### Loading Skills
 
-Skills are loaded from `~/.config/manta/skills/`.
+Skills are loaded from `~/.manta/skills/`.
 
 To install example skills:
 
 ```bash
-cp -r examples/skills/* ~/.config/manta/skills/
+cp -r examples/skills/* ~/.manta/skills/
 ```
 
 ### Creating Custom Skills
@@ -346,7 +346,7 @@ docker-compose logs -f manta
 ```bash
 # Clear data
 rm -rf ~/.local/share/manta/*
-rm -rf ~/.config/manta/memory/*
+rm -rf ~/.manta/memory/*
 ```
 
 ### Debug Mode

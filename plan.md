@@ -226,8 +226,8 @@ pub struct Task {
 
 | Memory Type | Storage | Purpose | Access |
 |-------------|---------|---------|--------|
-| **Procedural Memory** | `~/.config/manta/memory/agent.md` | Environment facts, tool quirks, conventions | Agent R/W |
-| **User Model** | `~/.config/manta/memory/user.md` | Preferences, communication style, habits | Agent R/W |
+| **Procedural Memory** | `~/.manta/memory/agent.md` | Environment facts, tool quirks, conventions | Agent R/W |
+| **User Model** | `~/.manta/memory/user.md` | Preferences, communication style, habits | Agent R/W |
 | **Ephemeral Memory** | SQLite | Session-specific context, temporary data | Tool-based |
 
 **Features:**
@@ -984,7 +984,7 @@ local-llm = ["ollama-rs"]
 
 ## Configuration
 
-### File: `~/.config/manta/config.yaml`
+### File: `~/.manta/config.yaml`
 ```yaml
 # LLM Configuration
 provider:

@@ -70,7 +70,7 @@ pub enum Commands {
     /// Start web terminal interface
     Web {
         /// Port to listen on
-        #[arg(short, long, default_value = "8080")]
+        #[arg(short, long, default_value = "18081")]
         port: u16,
     },
     /// Run as an assistant process (internal use)
@@ -115,10 +115,10 @@ pub enum Commands {
         #[arg(short, long, default_value = "127.0.0.1")]
         host: String,
         /// API port to listen on
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "18080")]
         port: u16,
         /// Web terminal port
-        #[arg(short = 'w', long, default_value = "8080")]
+        #[arg(short = 'w', long, default_value = "18081")]
         web_port: u16,
         /// Run in foreground (don't detach)
         #[arg(long)]
@@ -147,10 +147,10 @@ pub enum Commands {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
         /// API port to listen on
-        #[arg(long, default_value = "3000")]
+        #[arg(long, default_value = "18080")]
         port: u16,
         /// Web terminal port
-        #[arg(long, default_value = "8080")]
+        #[arg(long, default_value = "18081")]
         web_port: u16,
     },
 }
@@ -597,7 +597,7 @@ impl Cli {
         let server_config = ServerConfig {
             host: host.clone(),
             port,
-            web_port: 8080, // Default web port
+            web_port: 18081, // Default web port
         };
 
         println!("Press Ctrl+C to stop");
@@ -1046,7 +1046,7 @@ impl Cli {
                 manager.create_skill(&skill).await?;
 
                 println!("✅ Created skill template '{}'", name);
-                println!("   Edit: ~/.config/manta/skills/{}/SKILL.md", name);
+                println!("   Edit: ~/.manta/skills/{}/SKILL.md", name);
             }
         }
 
@@ -1749,8 +1749,8 @@ system_prompt: |
 
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
-            port: 3000,
-            web_port: 8080,
+            port: 18080,
+            web_port: 18081,
             pid_file: crate::dirs::pid_file(),
         };
 
@@ -1771,8 +1771,8 @@ system_prompt: |
 
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
-            port: 3000,
-            web_port: 8080,
+            port: 18080,
+            web_port: 18081,
             pid_file: crate::dirs::pid_file(),
         };
 

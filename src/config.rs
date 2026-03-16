@@ -361,7 +361,7 @@ impl Config {
         let candidates = [
             PathBuf::from(DEFAULT_CONFIG_FILE),
             PathBuf::from(format!(".config/{}", DEFAULT_CONFIG_FILE)),
-            // Centralized ~/.manta/config/manta.toml
+            // Centralized ~/.manta/manta.toml
             crate::dirs::default_config_file(),
             // Legacy location for backwards compatibility
             dirs::config_dir()

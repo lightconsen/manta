@@ -4,20 +4,7 @@ This directory contains deployment configurations for Manta AI Assistant.
 
 ## Quick Start
 
-### Docker (Recommended)
-
-```bash
-# Build and run
-docker-compose up -d
-
-# View logs
-docker-compose logs -f manta
-
-# Stop
-docker-compose down
-```
-
-### Systemd Service
+### Systemd Service (Recommended)
 
 ```bash
 # Install
@@ -35,7 +22,14 @@ sudo systemctl enable manta
 sudo journalctl -u manta -f
 ```
 
-## Docker Configuration
+## Systemd Configuration
+
+### Files
+
+- `/etc/systemd/system/manta.service` - Service definition
+- `/etc/manta/manta.env` - Environment variables
+- `/etc/manta/config.yaml` - Main configuration
+- `/var/lib/manta/` - Data directory
 
 ### Environment Variables
 
@@ -49,23 +43,6 @@ sudo journalctl -u manta -f
 | `MANTA_ALLOW_SHELL` | No | true | Allow shell commands |
 | `MANTA_SANDBOXED` | No | true | Enable sandboxing |
 
-### Volumes
-
-| Volume | Description |
-|--------|-------------|
-| `manta-data` | SQLite database, sessions, memory |
-| `manta-config` | Configuration and skills |
-| `./workspace` | Working directory for file operations |
-
-## Systemd Configuration
-
-### Files
-
-- `/etc/systemd/system/manta.service` - Service definition
-- `/etc/manta/manta.env` - Environment variables
-- `/etc/manta/config.yaml` - Main configuration
-- `/var/lib/manta/` - Data directory
-
 ### Security Features
 
 - Runs as unprivileged `manta` user
@@ -73,10 +50,6 @@ sudo journalctl -u manta -f
 - No new privileges
 - Resource limits
 - Capability dropping
-
-## Kubernetes
-
-See `kubernetes/` directory for K8s manifests (coming soon).
 
 ## Reverse Proxy
 
@@ -111,38 +84,27 @@ manta.example.com {
 
 ## Health Checks
 
-- Docker: Built-in healthcheck every 30s
 - Systemd: Service restart on failure
-- Kubernetes: HTTP health endpoint (coming soon)
+- HTTP health endpoint: `http://localhost:8080/health`
 
 ## Troubleshooting
 
 ### Check service status
-```bash
-# Docker
-docker-compose ps
-docker-compose logs manta
 
-# Systemd
+```bash
 sudo systemctl status manta
 sudo journalctl -u manta -n 100
 ```
 
 ### Verify configuration
-```bash
-# Docker
-docker-compose exec manta manta config validate
 
-# Systemd
+```bash
 sudo -u manta manta config validate
 ```
 
 ### Reset data
-```bash
-# Docker
-docker-compose down -v
 
-# Systemd
+```bash
 sudo systemctl stop manta
 sudo rm -rf /var/lib/manta/*
 sudo systemctl start manta

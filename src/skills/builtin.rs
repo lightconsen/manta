@@ -505,7 +505,7 @@ Detailed instructions for the AI on how to use this skill...
 ## Storage Locations
 
 Skills can be stored at different levels:
-- **User**: `~/.config/manta/skills/` - Available everywhere
+- **User**: `~/.manta/skills/` - Available everywhere
 - **Project**: `./.manta/skills/` - Project-specific
 - **Workspace**: Workspace root `.manta/skills/`
 
@@ -551,8 +551,8 @@ Run `git log --oneline --since="1 day ago"` and summarize the commits.
 
 ## Creation Steps
 
-1. Create directory: `mkdir -p ~/.config/manta/skills/{name}`
-2. Create SKILL.md: `touch ~/.config/manta/skills/{name}/SKILL.md`
+1. Create directory: `mkdir -p ~/.manta/skills/{name}`
+2. Create SKILL.md: `touch ~/.manta/skills/{name}/SKILL.md`
 3. Write the skill content
 4. Test by triggering one of the patterns
 
@@ -577,7 +577,7 @@ Skills exist at multiple levels (highest priority first):
 
 1. **Project** (`./.manta/skills/`) - Project-specific skills
 2. **Workspace** - Workspace-level skills
-3. **User** (`~/.config/manta/skills/`) - Your personal skills
+3. **User** (`~/.manta/skills/`) - Your personal skills
 4. **Bundled** - Built-in skills that come with Manta
 
 ## Search Commands
@@ -754,21 +754,21 @@ Examples:
 ### Install a Skill
 
 ```bash
-npx --yes clawhub@latest install <skill-slug> --workdir ~/.config/manta
+npx --yes clawhub@latest install <skill-slug> --workdir ~/.manta
 ```
 
-Important: Always include `--workdir ~/.config/manta` so skills install to the correct location.
+Important: Always include `--workdir ~/.manta` so skills install to the correct location.
 
 ### Update Installed Skills
 
 ```bash
-npx --yes clawhub@latest update --all --workdir ~/.config/manta
+npx --yes clawhub@latest update --all --workdir ~/.manta
 ```
 
 ### List Installed Skills
 
 ```bash
-npx --yes clawhub@latest list --workdir ~/.config/manta
+npx --yes clawhub@latest list --workdir ~/.manta
 ```
 
 ## Requirements
@@ -1880,8 +1880,8 @@ Use this skill when the user asks:
 ### 1. Configuration Analysis
 
 Check Manta's configuration files for issues:
-- `~/.config/manta/config.yaml` - Main config
-- `~/.config/manta/skills/` - User skills
+- `~/.manta/config.yaml` - Main config
+- `~/.manta/skills/` - User skills
 - `./.manta/skills/` - Project skills
 
 ### 2. Log Analysis
@@ -1900,10 +1900,10 @@ Check system resources:
 ps aux | grep manta
 
 # Disk space
-df -h ~/.config/manta
+df -h ~/.manta
 
 # Large files in manta directories
-find ~/.config/manta -type f -size +10M
+find ~/.manta -type f -size +10M
 ```
 
 ### 4. Skill Health Check
@@ -1971,7 +1971,7 @@ Ask user before making changes:
 find ~/.local/share/manta/logs -name "*.log" -mtime +30 -delete
 
 # Remove empty skill directories
-find ~/.config/manta/skills -type d -empty -delete
+find ~/.manta/skills -type d -empty -delete
 
 # Clear temporary files
 rm -rf /tmp/manta-*
@@ -2024,7 +2024,7 @@ Present findings clearly:
 
 📝 Config Suggestions:
 ```yaml
-# Add to ~/.config/manta/config.yaml
+# Add to ~/.manta/config.yaml
 setting: value
 ```
 
@@ -2046,10 +2046,10 @@ ps -o pid,rss,vsz,comm -p $(pgrep -f manta)
 lsof -p $(pgrep -f manta) 2>/dev/null | head -20
 
 # Config syntax check
-cat ~/.config/manta/config.yaml | head -20
+cat ~/.manta/config.yaml | head -20
 
 # Disk usage of manta directories
-du -sh ~/.config/manta ~/.local/share/manta ~/.cache/manta 2>/dev/null
+du -sh ~/.manta ~/.local/share/manta ~/.cache/manta 2>/dev/null
 ```
 
 ## Limitations
@@ -2164,7 +2164,7 @@ You extract information from the user's request and use the `file_write` tool to
 
 ## File Locations
 
-Agents are stored in: `~/.config/manta/agents/<agent-name>/`
+Agents are stored in: `~/.manta/agents/<agent-name>/`
 
 ## Required Files
 
@@ -2240,7 +2240,7 @@ From the user's request, extract:
 
 Use `shell` tool to create the agent directory:
 ```bash
-mkdir -p ~/.config/manta/agents/<agent-name>
+mkdir -p ~/.manta/agents/<agent-name>
 ```
 
 ### Step 3: Write Memory Files
@@ -2258,7 +2258,7 @@ Report what was created and how to use it.
 **User**: "Create an agent named 'codereview' that acts as a strict senior code reviewer"
 
 **Your Actions**:
-1. Create directory: `mkdir -p ~/.config/manta/agents/codereview`
+1. Create directory: `mkdir -p ~/.manta/agents/codereview`
 2. Write IDENTITY.md with name "Code Reviewer", role "Senior Code Reviewer"
 3. Write SOUL.md with values: thoroughness, security, performance
 4. Write BOOTSTRAP.md with strict code review prompt
@@ -2268,7 +2268,7 @@ Report what was created and how to use it.
 **User**: "Make an agent for creative writing with a friendly, encouraging style"
 
 **Your Actions**:
-1. Create directory: `mkdir -p ~/.config/manta/agents/creative`
+1. Create directory: `mkdir -p ~/.manta/agents/creative`
 2. Write IDENTITY.md with name "Creative Muse", style "friendly"
 3. Write SOUL.md emphasizing creativity, encouragement, brainstorming
 4. Write BOOTSTRAP.md with creative writing focus
@@ -2302,7 +2302,7 @@ After creating the agent, report:
    Style: <style>
 
 📁 Files Created:
-   ~/.config/manta/agents/<name>/
+   ~/.manta/agents/<name>/
    ├── SOUL.md
    ├── IDENTITY.md
    └── BOOTSTRAP.md
@@ -2323,7 +2323,7 @@ After creating the agent, report:
 ## Important Notes
 
 - Agent names should be lowercase with hyphens (not spaces)
-- Default location is ~/.config/manta/agents/
+- Default location is ~/.manta/agents/
 - Agent won't be active until user runs `manta agent set <name>`
 - Files follow OpenClaw specification
 "#;

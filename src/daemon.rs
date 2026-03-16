@@ -89,101 +89,105 @@ impl DaemonManager {
         Ok(())
     }
 
-    /// Run the daemon in the foreground with AI agent
+    /// Run the daemon in the foreground with Gateway (new architecture)
     pub async fn run_foreground(&self) -> crate::Result<()> {
-        println!("🚀 Manta daemon running...");
+        println!("🚀 Manta daemon running with Gateway...");
 
-        // Import server modules
-        use crate::server::{ServerConfig, start_server_with_agent};
-        use crate::core::Engine;
-        use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, MemoryTool, CronTool};
+        use crate::gateway::{Gateway, GatewayConfig};
+        use crate::agent::AgentConfig;
 
-        // Load environment variables for AI provider
-        let base_url = std::env::var("MANTA_BASE_URL");
-        let api_key = std::env::var("MANTA_API_KEY");
-        let model = std::env::var("MANTA_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        // Build GatewayConfig from daemon config and environment
+        let mut gateway_config = GatewayConfig {
+            host: self.config.host.clone(),
+            port: self.config.port,
+            web_port: self.config.web_port,
+            tailscale_enabled: false,
+            tailscale_domain: None,
+            default_agent: AgentConfig::default(),
+            channels: std::collections::HashMap::new(),
+            vector_memory: Default::default(),
+            plugins: Default::default(),
+            hot_reload: Default::default(),
+            acp: Default::default(),
+            providers: std::collections::HashMap::new(),
+            model: std::env::var("MANTA_MODEL").unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
+            model_provider: std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| "anthropic".to_string()),
+        };
 
-        // Create engine
-        let engine = Arc::new(Engine::new());
+        // Enable features based on environment variables
+        // Vector Memory
+        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED").map(|v| v == "true" || v == "1").unwrap_or(false) {
+            gateway_config.vector_memory.enabled = true;
+            gateway_config.vector_memory.embedding_api_key = std::env::var("MANTA_EMBEDDING_API_KEY").ok();
+            if let Ok(model) = std::env::var("MANTA_EMBEDDING_MODEL") {
+                gateway_config.vector_memory.embedding_model = model;
+            }
+        }
 
-        // Create agent if environment variables are set
-        let agent = if let (Ok(base_url), Ok(api_key)) = (base_url, api_key) {
-            println!("🤖 Initializing AI agent...");
+        // Plugins
+        if std::env::var("MANTA_PLUGINS_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+            gateway_config.plugins.enabled = false;
+        }
 
+        // Hot Reload
+        if std::env::var("MANTA_HOT_RELOAD_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+            gateway_config.hot_reload.enabled = false;
+        }
+
+        // ACP
+        if std::env::var("MANTA_ACP_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+            gateway_config.acp.enabled = false;
+        }
+
+        // Configure LLM Provider from environment variables (legacy support)
+        if let (Ok(base_url), Ok(api_key)) = (std::env::var("MANTA_BASE_URL"), std::env::var("MANTA_API_KEY")) {
             let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false);
 
-            // Create provider
-            let provider: Arc<dyn crate::providers::Provider> = if is_anthropic {
-                use crate::providers::anthropic::AnthropicProvider;
-                Arc::new(AnthropicProvider::with_base_url(api_key, base_url)?.with_model(model))
+            let provider_type = if is_anthropic {
+                crate::model_router::ProviderType::Anthropic
             } else {
-                use crate::providers::openai::OpenAiProvider;
-                Arc::new(OpenAiProvider::with_base_url(api_key, base_url)?.with_model(model))
+                crate::model_router::ProviderType::OpenAi
             };
 
-            // Initialize SQLite memory store for persistent memory
-            let memory_store = Arc::new(Self::init_memory_store().await?);
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type,
+                api_key,
+                base_url: Some(base_url),
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
 
-            // Create tool registry
-            let mut tool_registry = ToolRegistry::new();
-            tool_registry.register(Box::new(ShellTool::new()));
-            tool_registry.register(Box::new(FileReadTool::new()));
-            tool_registry.register(Box::new(FileWriteTool::new()));
-            tool_registry.register(Box::new(FileEditTool::new()));
-            tool_registry.register(Box::new(GlobTool::new()));
-            tool_registry.register(Box::new(TodoTool::new()));
-
-            // Initialize memory tool with shared SQLite storage
-            let memory_tool = MemoryTool::with_store(memory_store.clone()).await?;
-            tool_registry.register(Box::new(memory_tool));
-
-            // Initialize session search for conversation history search
-            let session_search = Arc::new(crate::memory::SessionSearch::new(memory_store.pool()));
-            session_search.initialize().await?;
-            let session_search_tool = crate::memory::session_search::tool::SessionSearchTool::new((*session_search).clone());
-            tool_registry.register(Box::new(session_search_tool));
-
-            tool_registry.register(Box::new(CronTool::new()));
-
-            // Add MCP tool
-            let mcp_tool = crate::tools::McpConnectionTool::new();
-            tool_registry.register(Box::new(mcp_tool));
-
-            // Load skills
-            let skills_prompt = crate::cli::Cli::load_skills_prompt().await.ok().flatten();
-
-            // Build agent
-            let agent_config = AgentConfig::default();
-            let mut builder = AgentBuilder::new()
-                .config(agent_config);
-
-            if let Some(prompt) = skills_prompt {
-                builder = builder.skills(prompt);
-            }
-
-            let agent = builder
-                .provider(provider)
-                .tools(Arc::new(tool_registry))
-                .memory_store(memory_store.clone())
-                .chat_history(memory_store)
-                .session_search(session_search)
-                .build()?;
-
-            println!("✅ AI agent ready");
-            Some(Arc::new(agent))
-        } else {
-            println!("⚠️ AI agent not configured (set MANTA_BASE_URL and MANTA_API_KEY)");
-            None
-        };
-
-        let server_config = ServerConfig {
-            host: self.config.host.clone(),
-            port: self.config.port,
-            web_port: self.config.web_port,
-        };
+            let provider_name = if is_anthropic { "anthropic" } else { "openai" };
+            gateway_config.providers.insert(provider_name.to_string(), provider_config);
+            println!("🤖 Configured {} provider from environment", provider_name);
+        } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+            // Also support direct ANTHROPIC_API_KEY
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::Anthropic,
+                api_key,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
+            gateway_config.providers.insert("anthropic".to_string(), provider_config);
+            println!("🤖 Configured Anthropic provider from ANTHROPIC_API_KEY");
+        } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            // Support OPENAI_API_KEY
+            let provider_config = crate::model_router::ProviderConfig {
+                provider_type: crate::model_router::ProviderType::OpenAi,
+                api_key,
+                base_url: None,
+                timeout: std::time::Duration::from_secs(60),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            };
+            gateway_config.providers.insert("openai".to_string(), provider_config);
+            println!("🤖 Configured OpenAI provider from OPENAI_API_KEY");
+        }
 
         // Write PID file
         let pid = std::process::id();
@@ -197,11 +201,14 @@ impl DaemonManager {
             println!("\n👋 Daemon stopped");
         });
 
-        // Start the server with agent
-        match agent {
-            Some(agent) => start_server_with_agent(server_config, engine, agent).await,
-            None => start_server_with_agent(server_config, engine, Arc::new(AgentBuilder::new().build()?)).await,
-        }
+        // Create and start the Gateway
+        let gateway = Gateway::new(gateway_config.clone()).await?;
+
+        println!("✅ Gateway ready");
+        println!("   API: http://{}:{}", gateway_config.host, gateway_config.port);
+        println!("   Web: http://{}:{}", gateway_config.host, gateway_config.web_port);
+
+        gateway.start().await
     }
 
     /// Stop the daemon gracefully

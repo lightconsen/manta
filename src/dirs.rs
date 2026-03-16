@@ -2,7 +2,7 @@
 //!
 //! All Manta data is stored in ~/.manta/ with the following structure:
 //! ~/.manta/
-//! ├── config/          # Configuration files (manta.toml)
+//! ├── manta.toml       # Configuration file
 //! ├── memory/          # SQLite databases (memory.db, chat history)
 //! ├── logs/            # Log files (daemon.log)
 //! ├── skills/          # User-installed skills
@@ -29,9 +29,9 @@ pub fn manta_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(MANTA_DIR))
 }
 
-/// Get the config directory (~/.manta/config)
+/// Get the config directory (~/.manta)
 pub fn config_dir() -> PathBuf {
-    manta_dir().join("config")
+    manta_dir()
 }
 
 /// Get the memory/database directory (~/.manta/memory)
@@ -87,7 +87,7 @@ pub fn pid_file() -> PathBuf {
     manta_dir().join("daemon.pid")
 }
 
-/// Get the default config file path (~/.manta/config/manta.toml)
+/// Get the default config file path (~/.manta/manta.toml)
 pub fn default_config_file() -> PathBuf {
     config_dir().join("manta.toml")
 }
@@ -112,7 +112,6 @@ pub async fn init() -> crate::Result<PathBuf> {
     // Create all subdirectories
     let dirs = [
         &base,
-        &config_dir(),
         &memory_dir(),
         &workspace_data_dir(),
         &logs_dir(),
@@ -146,7 +145,6 @@ pub fn init_sync() -> crate::Result<PathBuf> {
     // Create all subdirectories
     let dirs = [
         &base,
-        &config_dir(),
         &memory_dir(),
         &workspace_data_dir(),
         &logs_dir(),
@@ -229,7 +227,7 @@ mod tests {
         let base = manta_dir();
         assert!(base.to_string_lossy().contains(".manta"));
 
-        assert!(config_dir().to_string_lossy().contains("config"));
+        assert!(config_dir().to_string_lossy().contains(".manta"));
         assert!(memory_dir().to_string_lossy().contains("memory"));
         assert!(logs_dir().to_string_lossy().contains("logs"));
         assert!(skills_dir().to_string_lossy().contains("skills"));

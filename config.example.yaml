@@ -1,5 +1,5 @@
 # Manta - Personal AI Assistant Configuration Example
-# Copy this file to ~/.config/manta/config.yaml and customize for your setup
+# Copy this file to ~/.manta/config.yaml and customize for your setup
 
 # LLM Provider Configuration
 provider:
@@ -133,8 +133,8 @@ memory:
     wal_mode: true
 
   # Dual memory files
-  procedural_memory: "~/.config/manta/memory/agent.md"
-  user_model: "~/.config/manta/memory/user.md"
+  procedural_memory: "~/.manta/memory/agent.md"
+  user_model: "~/.manta/memory/user.md"
 
   # Memory size limits (bytes)
   max_procedural_memory_size: 4096

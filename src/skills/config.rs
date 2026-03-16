@@ -1,6 +1,6 @@
 //! Skill configuration management
 //!
-//! Handles user configuration for skills in ~/.config/manta/skills.json
+//! Handles user configuration for skills in ~/.manta/skills.json
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -156,7 +156,7 @@ impl SkillConfig {
 
     /// Get the configuration file path
     fn config_path() -> crate::Result<PathBuf> {
-        // Use centralized ~/.manta/config directory
+        // Use centralized ~/.manta directory
         Ok(crate::dirs::config_dir().join("skills.json"))
     }
 
