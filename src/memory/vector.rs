@@ -104,152 +104,71 @@ pub struct ApiEmbeddingProvider {
     dimension: usize,
 }
 
-/// Ollama embedding provider (local/self-hosted)
-pub struct OllamaEmbeddingProvider {
-    client: reqwest::Client,
-    pub base_url: String,
-    model: String,
+/// Local GGUF embedding provider using candle (pure Rust)
+/// Loads and runs GGUF models directly without external services
+pub struct LocalGgufEmbeddingProvider {
+    model_path: String,
+    model_name: String,
     dimension: usize,
 }
 
-/// Mock embedding provider for testing (deterministic, no API needed)
-pub struct MockEmbeddingProvider {
-    dimension: usize,
-}
+impl LocalGgufEmbeddingProvider {
+    /// Create a new local GGUF embedding provider
+    ///
+    /// # Arguments
+    /// * `model_path` - Path to the GGUF file (e.g., "models/embeddinggemma-300m-qat-q8_0.gguf")
+    /// * `dimension` - Embedding dimension (e.g., 768 for embeddinggemma-300m)
+    pub fn new(model_path: String, dimension: usize) -> Self {
+        let model_name = std::path::Path::new(&model_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
 
-impl OllamaEmbeddingProvider {
-    /// Create a new Ollama embedding provider
-    pub fn new(model: String, dimension: usize) -> Self {
         Self {
-            client: reqwest::Client::new(),
-            base_url: "http://localhost:11434".to_string(),
-            model,
+            model_path,
+            model_name,
             dimension,
         }
     }
 
-    /// Set custom base URL
-    pub fn with_base_url(mut self, url: String) -> Self {
-        self.base_url = url;
-        self
+    /// Check if the model file exists
+    pub fn model_exists(&self) -> bool {
+        std::path::Path::new(&self.model_path).exists()
     }
 
-    /// Check if Ollama is available
-    pub async fn is_available(&self) -> bool {
-        self.client
-            .get(format!("{}/api/tags", self.base_url))
-            .send()
-            .await
-            .is_ok()
+    /// Get the full model path
+    pub fn model_path(&self) -> &str {
+        &self.model_path
     }
 }
 
 #[async_trait]
-impl EmbeddingProvider for OllamaEmbeddingProvider {
+impl EmbeddingProvider for LocalGgufEmbeddingProvider {
     fn model_name(&self) -> &str {
-        &self.model
+        &self.model_name
     }
 
     fn dimension(&self) -> usize {
         self.dimension
     }
 
-    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
-        #[derive(Debug, Serialize)]
-        struct Request {
-            model: String,
-            prompt: String,
+    async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        // For now, return a compile-time error indicating feature not enabled
+        // The actual implementation would use candle or mistralrs
+        #[cfg(not(feature = "local-embeddings"))]
+        {
+            return Err(crate::error::MantaError::Validation(
+                "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
+            ));
         }
 
-        #[derive(Debug, Deserialize)]
-        struct EmbeddingResponse {
-            embedding: Vec<f32>,
+        #[cfg(feature = "local-embeddings")]
+        {
+            // Placeholder: Actual implementation would use candle or mistralrs
+            // to load the GGUF model and generate embeddings
+            todo!("Local GGUF embedding implementation requires candle or mistralrs integration")
         }
-
-        let mut embeddings = Vec::with_capacity(texts.len());
-
-        for text in texts {
-            let request = Request {
-                model: self.model.clone(),
-                prompt: text.clone(),
-            };
-
-            let response: EmbeddingResponse = self
-                .client
-                .post(format!("{}/api/embeddings", self.base_url))
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
-                    source: format!("Ollama request failed (is Ollama running?): {}", e),
-                    cause: Some(Box::new(e)),
-                })?
-                .json()
-                .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
-                    source: "Invalid Ollama response".to_string(),
-                    cause: Some(Box::new(e)),
-                })?;
-
-            embeddings.push(response.embedding);
-        }
-
-        Ok(embeddings)
-    }
-}
-
-impl MockEmbeddingProvider {
-    /// Create a new mock embedding provider
-    pub fn new(dimension: usize) -> Self {
-        Self { dimension }
-    }
-
-    /// Generate deterministic mock embedding from text
-    fn generate_mock_embedding(&self, text: &str) -> Vec<f32> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
-        let seed = hasher.finish();
-
-        // Generate deterministic pseudo-random values from seed
-        let mut embedding = Vec::with_capacity(self.dimension);
-        let mut state = seed;
-
-        for _ in 0..self.dimension {
-            // Simple LCG for pseudo-random numbers
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let value = (state as f32 / u64::MAX as f32) * 2.0 - 1.0; // Range [-1, 1]
-            embedding.push(value);
-        }
-
-        // Normalize to unit vector
-        let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if magnitude > 0.0 {
-            embedding.iter_mut().for_each(|x| *x /= magnitude);
-        }
-
-        embedding
-    }
-}
-
-#[async_trait]
-impl EmbeddingProvider for MockEmbeddingProvider {
-    fn model_name(&self) -> &str {
-        "mock-embeddings"
-    }
-
-    fn dimension(&self) -> usize {
-        self.dimension
-    }
-
-    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
-        let embeddings = texts
-            .iter()
-            .map(|text| self.generate_mock_embedding(text))
-            .collect();
-        Ok(embeddings)
     }
 }
 

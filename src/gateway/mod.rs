@@ -29,7 +29,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{HotReloadManager, ConfigFileType};
-use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, OllamaEmbeddingProvider, MockEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
+use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, LocalGgufEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::tools::ToolRegistry;
@@ -91,15 +91,13 @@ fn default_model_provider() -> String {
 pub enum EmbeddingProviderType {
     /// OpenAI API (requires API key)
     OpenAi,
-    /// Ollama local embeddings
-    Ollama,
-    /// Mock provider for testing (no API needed)
-    Mock,
+    /// Local GGUF model (direct loading, no external service)
+    LocalGguf,
 }
 
 impl Default for EmbeddingProviderType {
     fn default() -> Self {
-        EmbeddingProviderType::Mock
+        EmbeddingProviderType::OpenAi
     }
 }
 
@@ -112,14 +110,14 @@ pub struct VectorMemoryConfig {
     pub provider: EmbeddingProviderType,
     /// Embedding provider API key (e.g., OpenAI)
     pub embedding_api_key: Option<String>,
-    /// Embedding model to use
+    /// Embedding model to use (for API providers)
     pub embedding_model: String,
     /// Embedding dimension
     pub embedding_dimension: usize,
-    /// API base URL (for Azure, Ollama, etc.)
+    /// API base URL (for Azure, etc.)
     pub api_base_url: Option<String>,
-    /// Ollama base URL (defaults to http://localhost:11434)
-    pub ollama_url: Option<String>,
+    /// Local GGUF model path (for local-embeddings feature)
+    pub local_model_path: Option<String>,
 }
 
 impl Default for VectorMemoryConfig {
@@ -128,10 +126,10 @@ impl Default for VectorMemoryConfig {
             enabled: false,
             provider: EmbeddingProviderType::default(),
             embedding_api_key: None,
-            embedding_model: "nomic-embed-text".to_string(),
-            embedding_dimension: 768,
+            embedding_model: "text-embedding-3-small".to_string(),
+            embedding_dimension: 1536,
             api_base_url: None,
-            ollama_url: None,
+            local_model_path: None,
         }
     }
 }
@@ -477,29 +475,24 @@ impl Gateway {
                         None
                     }
                 }
-                EmbeddingProviderType::Ollama => {
-                    info!("Using Ollama embedding provider");
-                    let mut provider = OllamaEmbeddingProvider::new(
-                        config.vector_memory.embedding_model.clone(),
-                        config.vector_memory.embedding_dimension,
-                    );
-                    if let Some(ref ollama_url) = config.vector_memory.ollama_url {
-                        provider = provider.with_base_url(ollama_url.clone());
-                    }
-                    // Check if Ollama is available
-                    if provider.is_available().await {
-                        info!("Ollama is available at {}", provider.base_url);
-                        Some(Arc::new(provider))
+                EmbeddingProviderType::LocalGguf => {
+                    if let Some(ref model_path) = config.vector_memory.local_model_path {
+                        info!("Using local GGUF embedding provider");
+                        let provider = LocalGgufEmbeddingProvider::new(
+                            model_path.clone(),
+                            config.vector_memory.embedding_dimension,
+                        );
+                        if provider.model_exists() {
+                            info!("GGUF model found at {}", model_path);
+                            Some(Arc::new(provider))
+                        } else {
+                            warn!("GGUF model not found at {}. Please download the model first.", model_path);
+                            None
+                        }
                     } else {
-                        warn!("Ollama not available at {}. Is Ollama running?", provider.base_url);
+                        warn!("Local GGUF provider requires 'local_model_path' configuration");
                         None
                     }
-                }
-                EmbeddingProviderType::Mock => {
-                    info!("Using mock embedding provider (no API key required)");
-                    Some(Arc::new(MockEmbeddingProvider::new(
-                        config.vector_memory.embedding_dimension,
-                    )))
                 }
             };
 

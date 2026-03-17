@@ -18,7 +18,7 @@ pub use personality::{PersonalityMemory, MemoryType};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
 pub use vector::{
-    ApiEmbeddingProvider, OllamaEmbeddingProvider, MockEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
+    ApiEmbeddingProvider, LocalGgufEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
     EmbeddingProvider, MemoryVectorStore, TextChunker, VectorBackend, VectorMemoryService,
     VectorStore, VectorStoreStats,
 };
