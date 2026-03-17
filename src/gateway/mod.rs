@@ -672,9 +672,15 @@ impl Gateway {
             if let Some(embedding_provider) = embedding_provider {
                 // Use unified storage as the vector store (if it's SqliteStorage)
                 // For non-SQLite storage, fall back to in-memory vector store
-                let vector_store: Arc<dyn crate::memory::VectorStore> = {
-                    info!("Using in-memory vector store (unified storage requires 'sqlite' storage type)");
-                    Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension))
+                let vector_store: Arc<dyn crate::memory::VectorStore> = match unified_vector_store {
+                    Some(store) => {
+                        info!("Using unified SQLite storage for vector store");
+                        store
+                    }
+                    None => {
+                        info!("Using in-memory vector store (unified storage requires 'sqlite' storage type)");
+                        Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension))
+                    }
                 };
 
                 // Create embedding config for the service
