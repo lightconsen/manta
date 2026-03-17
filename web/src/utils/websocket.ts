@@ -6,14 +6,26 @@ export class WebSocketManager {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private conversationId: string | null = null;
 
   constructor(config: WebSocketConfig) {
     this.config = config;
   }
 
-  connect(): void {
+  setConversationId(id: string | null): void {
+    this.conversationId = id;
+  }
+
+  getConversationId(): string | null {
+    return this.conversationId;
+  }
+
+  connect(conversationId?: string): void {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws`;
+    let url = `${protocol}//${window.location.host}/ws`;
+    if (conversationId) {
+      url += `?conversation=${encodeURIComponent(conversationId)}`;
+    }
 
     this.ws = new WebSocket(url);
 
@@ -30,7 +42,7 @@ export class WebSocketManager {
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
         this.reconnectTimeout = setTimeout(() => {
-          this.connect();
+          this.connect(this.conversationId || undefined);
         }, 2000);
       }
     };

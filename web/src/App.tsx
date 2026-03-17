@@ -14,6 +14,7 @@ function App() {
   const [isTyping, setIsTyping] = useState(false);
   const [wsState, setWsState] = useState<WebSocketState>(WebSocketState.Connecting);
   const [version, setVersion] = useState('v0.1.0');
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
   const wsManagerRef = useRef<WebSocketManager | null>(null);
 
@@ -24,8 +25,11 @@ function App() {
     }
   }, [messages, isTyping]);
 
-  // Initialize WebSocket connection
+  // Initialize WebSocket connection with stored conversation ID
   useEffect(() => {
+    // Try to get stored conversation ID from localStorage
+    const storedConversationId = localStorage.getItem('manta_conversation_id');
+
     wsManagerRef.current = new WebSocketManager({
       onMessage: handleMessage,
       onStateChange: setWsState,
@@ -34,7 +38,12 @@ function App() {
       },
     });
 
-    wsManagerRef.current.connect();
+    // Connect with stored conversation ID if available
+    wsManagerRef.current.connect(storedConversationId || undefined);
+    if (storedConversationId) {
+      wsManagerRef.current.setConversationId(storedConversationId);
+      setConversationId(storedConversationId);
+    }
 
     return () => {
       wsManagerRef.current?.disconnect();
@@ -50,6 +59,29 @@ function App() {
           content: data.content,
           timestamp: Date.now(),
         }]);
+        // Extract conversation ID from system message if present
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+          wsManagerRef.current?.setConversationId(data.conversation_id);
+          localStorage.setItem('manta_conversation_id', data.conversation_id);
+        }
+        break;
+      case 'history':
+        // Handle history messages from server
+        if (data.messages && Array.isArray(data.messages)) {
+          const historyMessages = data.messages.map((msg) => ({
+            id: msg.id || Date.now().toString() + Math.random(),
+            role: msg.role as 'user' | 'assistant' | 'system' | 'cron' | 'tool_call' | 'tool_result',
+            content: msg.content,
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+          }));
+          setMessages(historyMessages);
+        }
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+          wsManagerRef.current?.setConversationId(data.conversation_id);
+          localStorage.setItem('manta_conversation_id', data.conversation_id);
+        }
         break;
       case 'message':
         setMessages((prev) => [...prev, {

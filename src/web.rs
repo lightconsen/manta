@@ -150,15 +150,16 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
         }
     }
 
-    // Send welcome message
-    let welcome_msg = if conversation_id.is_some() {
-        format!("Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation.")
+    // Send welcome message with conversation ID
+    let welcome_msg = if let Some(ref conv_id) = conversation_id {
+        format!("Connected to Manta AI Assistant (via daemon).\nSession: {}\nType /new to start a fresh conversation.", conv_id)
     } else {
         "Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation.".to_string()
     };
     let welcome = serde_json::json!({
         "type": "system",
-        "content": welcome_msg
+        "content": welcome_msg,
+        "conversation_id": conversation_id
     });
     if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
         error!("Failed to send welcome: {}", e);
@@ -179,7 +180,8 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
                             conversation_id = Some(new_id.clone());
                             let system_msg = serde_json::json!({
                                 "type": "system",
-                                "content": format!("🆕 Started new conversation: {}", new_id)
+                                "content": format!("🆕 Started new conversation: {}", new_id),
+                                "conversation_id": new_id
                             });
                             if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
                                 break;
@@ -206,7 +208,8 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
                                 let resp_json = serde_json::json!({
                                     "type": "message",
                                     "role": "assistant",
-                                    "content": response.response
+                                    "content": response.response,
+                                    "conversation_id": response.conversation_id
                                 });
                                 if socket.send(Message::Text(resp_json.to_string())).await.is_err() {
                                     break;
@@ -320,10 +323,11 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
         }
     }
 
-    // Send welcome message
+    // Send welcome message with conversation ID
     let welcome = serde_json::json!({
         "type": "system",
-        "content": "Connected to Manta AI Assistant.\nType /new to start a fresh conversation."
+        "content": format!("Connected to Manta AI Assistant.\nSession: {}\nType /new to start a fresh conversation.", conversation_id),
+        "conversation_id": &conversation_id
     });
     if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
         error!("Failed to send welcome: {}", e);
@@ -344,7 +348,8 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
                             conversation_id = uuid::Uuid::new_v4().to_string();
                             let system_msg = serde_json::json!({
                                 "type": "system",
-                                "content": format!("🆕 Started new conversation: {}", conversation_id)
+                                "content": format!("🆕 Started new conversation: {}", conversation_id),
+                                "conversation_id": &conversation_id
                             });
                             if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
                                 break;
@@ -373,7 +378,8 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
                                 let resp_json = serde_json::json!({
                                     "type": "message",
                                     "role": "assistant",
-                                    "content": response.content
+                                    "content": response.content,
+                                    "conversation_id": &conversation_id
                                 });
                                 if socket.send(Message::Text(resp_json.to_string())).await.is_err() {
                                     break;

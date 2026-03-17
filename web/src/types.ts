@@ -9,12 +9,19 @@ export interface MessageType {
 }
 
 export interface MessageData {
-  type: 'system' | 'message' | 'cron' | 'typing' | 'error' | 'version' | 'tool_call' | 'tool_result';
+  type: 'system' | 'message' | 'cron' | 'typing' | 'error' | 'version' | 'tool_call' | 'tool_result' | 'history';
   content: string | boolean;
   role?: 'user' | 'assistant';
   tool?: string;
   arguments?: string;
   result?: string;
+  conversation_id?: string;
+  messages?: Array<{
+    id: string;
+    role: string;
+    content: string;
+    timestamp?: string;
+  }>;
 }
 
 export enum WebSocketState {
