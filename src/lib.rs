@@ -39,6 +39,7 @@ pub mod acp;
 pub mod adapters;
 pub mod agent;
 pub mod assistants;
+pub mod team;
 pub mod canvas;
 pub mod channels;
 pub mod cli;

@@ -93,6 +93,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Agent team management (create teams, assign roles, define hierarchies)
+    Team {
+        /// Team subcommand
+        #[command(subcommand)]
+        command: TeamCommands,
+    },
     /// Channel management (Telegram, Discord, Slack)
     Channel {
         /// Channel subcommand
@@ -346,6 +352,137 @@ pub enum AgentCommands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum TeamCommands {
+    /// Create a new agent team
+    Create {
+        /// Team name (used as directory name)
+        name: String,
+        /// Team description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Team type: hierarchical, flat, or network
+        #[arg(short, long, default_value = "flat")]
+        team_type: TeamType,
+        /// Initial agents to add (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        agents: Vec<String>,
+    },
+    /// Delete a team
+    Delete {
+        /// Team name
+        name: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// List all teams
+    List {
+        /// Show all details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Show team details
+    Show {
+        /// Team name
+        name: String,
+    },
+    /// Add an agent to a team
+    AddMember {
+        /// Team name
+        team: String,
+        /// Agent name
+        agent: String,
+        /// Role in the team (e.g., lead, worker, reviewer)
+        #[arg(short, long, default_value = "worker")]
+        role: String,
+        /// Position in hierarchy (0 = top, higher = lower)
+        #[arg(short, long)]
+        level: Option<u8>,
+        /// Can delegate tasks to other agents
+        #[arg(long)]
+        can_delegate: bool,
+    },
+    /// Remove an agent from a team
+    RemoveMember {
+        /// Team name
+        team: String,
+        /// Agent name
+        agent: String,
+    },
+    /// Update team member role
+    SetRole {
+        /// Team name
+        team: String,
+        /// Agent name
+        agent: String,
+        /// New role
+        #[arg(short, long)]
+        role: String,
+    },
+    /// Define team hierarchy/reporting structure
+    SetHierarchy {
+        /// Team name
+        team: String,
+        /// Hierarchy definition in format "agent1:agent2,agent3" (agent1 manages agent2 and agent3)
+        #[arg(short, long)]
+        structure: String,
+    },
+    /// Set team-wide communication pattern
+    SetCommunication {
+        /// Team name
+        team: String,
+        /// Communication pattern: broadcast, chain, star, or mesh
+        #[arg(short, long)]
+        pattern: CommunicationPattern,
+        /// Shared memory/canvas name for team coordination
+        #[arg(short, long)]
+        shared_memory: Option<String>,
+    },
+    /// Clone a team configuration
+    Clone {
+        /// Source team name
+        source: String,
+        /// New team name
+        target: String,
+    },
+    /// Export team configuration
+    Export {
+        /// Team name
+        name: String,
+        /// Output format
+        #[arg(short, long, default_value = "yaml")]
+        format: String,
+        /// Output file (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Import team configuration
+    Import {
+        /// Input file
+        file: PathBuf,
+        /// New name for the team (optional)
+        #[arg(short, long)]
+        rename: Option<String>,
+    },
+    /// Activate a team (load into runtime)
+    Activate {
+        /// Team name
+        name: String,
+        /// Load into ACP
+        #[arg(long)]
+        acp: bool,
+    },
+    /// Deactivate a team
+    Deactivate {
+        /// Team name
+        name: String,
+    },
+}
+
+// Re-export team types for CLI use
+pub use crate::team::{TeamType, CommunicationPattern};
+
+#[derive(Debug, Subcommand)]
 pub enum ChannelCommands {
     /// Add/connect a channel
     Add {
@@ -540,6 +677,7 @@ impl Cli {
             Commands::Cron { command } => self.run_cron_command(command).await,
             Commands::Skill { command } => self.run_skill_command(command).await,
             Commands::Agent { command } => self.run_agent_command(command).await,
+            Commands::Team { command } => self.run_team_command(command).await,
             Commands::Channel { command } => self.run_channel_command(command).await,
             Commands::Start { host, port, web_port, foreground } => {
                 self.run_start_daemon(host, *port, *web_port, *foreground).await
@@ -1715,6 +1853,269 @@ system_prompt: |
 
         let daemon = DaemonManager::new(config)?;
         daemon.status().await
+    }
+
+    /// Run team management commands
+    async fn run_team_command(&self, command: &TeamCommands) -> Result<()> {
+        use crate::team::{Team, TeamType, CommunicationPattern};
+
+        match command {
+            TeamCommands::Create { name, description, team_type, agents } => {
+                let teams_dir = crate::dirs::teams_dir();
+                tokio::fs::create_dir_all(&teams_dir).await.ok();
+
+                let team_dir = teams_dir.join(name);
+                if team_dir.exists() {
+                    return Err(crate::error::MantaError::Validation(
+                        format!("Team '{}' already exists. Use 'manta team delete {}' to delete it first.", name, name)
+                    ));
+                }
+
+                let mut team = Team::new(name);
+                team.description = description.clone();
+                team.team_type = *team_type;
+
+                // Add initial agents
+                for agent_name in agents {
+                    // Check if agent exists
+                    let agent_dir = crate::dirs::agents_dir().join(&agent_name);
+                    if !agent_dir.exists() {
+                        println!("⚠️  Warning: Agent '{}' does not exist yet. Create it with 'manta agent create {}'", agent_name, agent_name);
+                    }
+                    team.add_member(agent_name, "worker");
+                }
+
+                team.save().await?;
+
+                println!("✅ Created team '{}'", name);
+                println!("   Type: {:?}", team.team_type);
+                println!("   Members: {}", team.members.len());
+                println!("   Location: {}", team_dir.display());
+            }
+
+            TeamCommands::Delete { name, force } => {
+                let team = Team::load(name).await?;
+
+                if !force {
+                    print!("Are you sure you want to delete team '{}'? [y/N] ", name);
+                    std::io::Write::flush(&mut std::io::stdout())?;
+
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Cancelled");
+                        return Ok(());
+                    }
+                }
+
+                team.delete().await?;
+                println!("✅ Deleted team '{}'", name);
+            }
+
+            TeamCommands::List { verbose } => {
+                let teams = Team::list_all().await?;
+
+                if teams.is_empty() {
+                    println!("No teams found.");
+                    println!("Create one with: manta team create <name>");
+                    return Ok(());
+                }
+
+                println!("Teams:");
+                for team_name in teams {
+                    if *verbose {
+                        match Team::load(&team_name).await {
+                            Ok(team) => {
+                                println!("\n  📁 {}", team.name);
+                                if let Some(desc) = &team.description {
+                                    println!("     Description: {}", desc);
+                                }
+                                println!("     Type: {}", team.team_type);
+                                println!("     Members: {}", team.members.len());
+                                println!("     Communication: {}", team.communication);
+                                println!("     Active: {}", if team.active { "✓" } else { "✗" });
+                                for (name, member) in &team.members {
+                                    println!("       - {} (role: {}, level: {}, delegate: {})",
+                                        name, member.role, member.level,
+                                        if member.can_delegate { "✓" } else { "✗" }
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                println!("  📁 {} (error loading: {})", team_name, e);
+                            }
+                        }
+                    } else {
+                        match Team::load(&team_name).await {
+                            Ok(team) => {
+                                let member_count = team.members.len();
+                                let active_str = if team.active { " [active]" } else { "" };
+                                println!("  📁 {} ({} members{}){}", team_name, member_count, active_str,
+                                    if let Some(desc) = &team.description {
+                                        format!(" - {}", desc)
+                                    } else {
+                                        String::new()
+                                    }
+                                );
+                            }
+                            Err(_) => {
+                                println!("  📁 {}", team_name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            TeamCommands::Show { name } => {
+                let team = Team::load(name).await?;
+
+                println!("Team: {}", team.name);
+                if let Some(desc) = &team.description {
+                    println!("Description: {}", desc);
+                }
+                println!("Type: {}", team.team_type);
+                println!("Communication: {}", team.communication);
+                if let Some(mem) = &team.shared_memory {
+                    println!("Shared Memory: {}", mem);
+                }
+                println!("Active: {}", if team.active { "✓" } else { "✗" });
+                println!("Created: {}", team.created_at);
+                println!("Updated: {}", team.updated_at);
+
+                if !team.members.is_empty() {
+                    println!("\nMembers:");
+                    for (name, member) in &team.members {
+                        let delegate_str = if member.can_delegate { " [can delegate]" } else { "" };
+                        println!("  👤 {} - {} (level: {}){}",
+                            name, member.role, member.level, delegate_str
+                        );
+                    }
+                }
+
+                if !team.hierarchy.is_empty() {
+                    println!("\nHierarchy:");
+                    for (manager, workers) in &team.hierarchy {
+                        println!("  {} manages: {}", manager, workers.join(", "));
+                    }
+                }
+            }
+
+            TeamCommands::AddMember { team, agent, role, level, can_delegate } => {
+                let mut team = Team::load(team).await?;
+
+                // Check if agent exists
+                let agent_dir = crate::dirs::agents_dir().join(&agent);
+                if !agent_dir.exists() {
+                    println!("⚠️  Warning: Agent '{}' does not exist. Create it with 'manta agent create {}'", agent, agent);
+                }
+
+                team.add_member(agent, role);
+
+                if let Some(lvl) = level {
+                    team.set_level(agent, *lvl)?;
+                }
+
+                if *can_delegate {
+                    team.set_can_delegate(agent, true)?;
+                }
+
+                team.save().await?;
+                println!("✅ Added '{}' to team '{}' as {}", agent, team.name, role);
+            }
+
+            TeamCommands::RemoveMember { team, agent } => {
+                let mut team = Team::load(team).await?;
+
+                if team.remove_member(agent).is_some() {
+                    team.save().await?;
+                    println!("✅ Removed '{}' from team '{}'", agent, team.name);
+                } else {
+                    println!("⚠️  Agent '{}' not found in team '{}'", agent, team.name);
+                }
+            }
+
+            TeamCommands::SetRole { team, agent, role } => {
+                let mut team = Team::load(team).await?;
+                team.set_role(agent, role)?;
+                team.save().await?;
+                println!("✅ Set role of '{}' to '{}' in team '{}'", agent, role, team.name);
+            }
+
+            TeamCommands::SetHierarchy { team, structure } => {
+                let mut team = Team::load(team).await?;
+                team.set_hierarchy(structure)?;
+                team.save().await?;
+                println!("✅ Updated hierarchy for team '{}'", team.name);
+                println!("   Structure: {}", structure);
+            }
+
+            TeamCommands::SetCommunication { team, pattern, shared_memory } => {
+                let mut team = Team::load(team).await?;
+                team.set_communication(*pattern, shared_memory.clone());
+                team.save().await?;
+                println!("✅ Set communication pattern to '{}' for team '{}'", pattern, team.name);
+                if let Some(mem) = shared_memory {
+                    println!("   Shared memory: {}", mem);
+                }
+            }
+
+            TeamCommands::Clone { source, target } => {
+                let source_team = Team::load(source).await?;
+                let mut new_team = source_team.clone();
+                new_team.name = target.clone();
+                new_team.active = false;
+                let now = chrono::Utc::now().to_rfc3339();
+                new_team.created_at = now.clone();
+                new_team.updated_at = now;
+                new_team.save().await?;
+                println!("✅ Cloned team '{}' to '{}'", source, target);
+            }
+
+            TeamCommands::Export { name, format, output } => {
+                let team = Team::load(name).await?;
+                let data = team.export(format)?;
+
+                if let Some(path) = output {
+                    tokio::fs::write(path, data).await?;
+                    println!("✅ Exported team '{}' to {:?}", name, path);
+                } else {
+                    println!("{}", data);
+                }
+            }
+
+            TeamCommands::Import { file, rename } => {
+                let data = tokio::fs::read_to_string(file).await?;
+                let format = if file.extension().map(|e| e == "json").unwrap_or(false) {
+                    "json"
+                } else {
+                    "yaml"
+                };
+                let team = Team::import(&data, format, rename.clone())?;
+                team.save().await?;
+                println!("✅ Imported team '{}'", team.name);
+                if rename.is_some() {
+                    println!("   Renamed to: {}", team.name);
+                }
+            }
+
+            TeamCommands::Activate { name, acp: _ } => {
+                let mut team = Team::load(name).await?;
+                team.active = true;
+                team.save().await?;
+                println!("✅ Activated team '{}'", name);
+                println!("   The team is now ready for use in the ACP runtime");
+            }
+
+            TeamCommands::Deactivate { name } => {
+                let mut team = Team::load(name).await?;
+                team.active = false;
+                team.save().await?;
+                println!("✅ Deactivated team '{}'", name);
+            }
+        }
+
+        Ok(())
     }
 
     /// Show daemon logs
