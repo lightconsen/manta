@@ -478,16 +478,18 @@ impl Gateway {
                 EmbeddingProviderType::LocalGguf => {
                     if let Some(ref model_path) = config.vector_memory.local_model_path {
                         info!("Using local GGUF embedding provider");
-                        let provider = LocalGgufEmbeddingProvider::new(
+                        match LocalGgufEmbeddingProvider::new(
                             model_path.clone(),
                             config.vector_memory.embedding_dimension,
-                        );
-                        if provider.model_exists() {
-                            info!("GGUF model found at {}", model_path);
-                            Some(Arc::new(provider))
-                        } else {
-                            warn!("GGUF model not found at {}. Please download the model first.", model_path);
-                            None
+                        ) {
+                            Ok(provider) => {
+                                info!("GGUF model loaded successfully from {}", model_path);
+                                Some(Arc::new(provider))
+                            }
+                            Err(e) => {
+                                warn!("Failed to load GGUF model from {}: {}", model_path, e);
+                                None
+                            }
                         }
                     } else {
                         warn!("Local GGUF provider requires 'local_model_path' configuration");

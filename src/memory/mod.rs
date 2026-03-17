@@ -13,6 +13,9 @@ pub mod session_search;
 pub mod sqlite;
 pub mod vector;
 
+#[cfg(feature = "local-embeddings")]
+pub mod local_embeddings;
+
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 pub use personality::{PersonalityMemory, MemoryType};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};

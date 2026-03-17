@@ -108,11 +108,11 @@ pgvector = { version = "0.4", optional = true }
 
 # Embeddings (using API-based providers for now)
 # fastembed has dependency issues with ort crate
-# mistralrs for local GGUF embedding support
-mistralrs-core = { version = "0.7", optional = true }
+# candle for local GGUF embedding support
 candle-core = { version = "0.8", optional = true }
 candle-nn = { version = "0.8", optional = true }
 candle-transformers = { version = "0.8", optional = true }
+tokenizers = { version = "0.21", optional = true, features = ["onig"] }
 
 # Plugin system (WASM runtime)
 wasmtime = { version = "15.0", optional = true }
@@ -137,7 +137,7 @@ all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "lark"]
 tailscale = []
 browser = ["chromiumoxide"]
 vector-db = []
-local-embeddings = ["mistralrs-core", "candle-core", "candle-nn", "candle-transformers"]
+local-embeddings = ["candle-core", "candle-nn", "candle-transformers", "tokenizers"]
 plugins = ["wasmtime", "wasmtime-wasi"]
 hot-reload = ["notify-debouncer-full"]
 

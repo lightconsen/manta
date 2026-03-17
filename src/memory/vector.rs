@@ -106,43 +106,50 @@ pub struct ApiEmbeddingProvider {
 
 /// Local GGUF embedding provider using candle (pure Rust)
 /// Loads and runs GGUF models directly without external services
+#[cfg(feature = "local-embeddings")]
 pub struct LocalGgufEmbeddingProvider {
-    model_path: String,
+    model: super::local_embeddings::LocalEmbeddingModel,
     model_name: String,
     dimension: usize,
 }
 
+#[cfg(feature = "local-embeddings")]
 impl LocalGgufEmbeddingProvider {
     /// Create a new local GGUF embedding provider
     ///
     /// # Arguments
-    /// * `model_path` - Path to the GGUF file (e.g., "models/embeddinggemma-300m-qat-q8_0.gguf")
-    /// * `dimension` - Embedding dimension (e.g., 768 for embeddinggemma-300m)
-    pub fn new(model_path: String, dimension: usize) -> Self {
+    /// * `model_path` - Path to the GGUF file or safetensors
+    /// * `dimension` - Embedding dimension (e.g., 768 for BERT-base)
+    pub fn new(model_path: String, _dimension: usize) -> crate::Result<Self> {
         let model_name = std::path::Path::new(&model_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
 
-        Self {
-            model_path,
+        let model = super::local_embeddings::LocalEmbeddingModel::load(
+            std::path::Path::new(&model_path),
+            None,
+            None,
+        )?;
+
+        let dimension = model.dimension();
+
+        Ok(Self {
+            model,
             model_name,
             dimension,
-        }
+        })
     }
 
     /// Check if the model file exists
     pub fn model_exists(&self) -> bool {
-        std::path::Path::new(&self.model_path).exists()
-    }
-
-    /// Get the full model path
-    pub fn model_path(&self) -> &str {
-        &self.model_path
+        // Model is already loaded, so it exists
+        true
     }
 }
 
+#[cfg(feature = "local-embeddings")]
 #[async_trait]
 impl EmbeddingProvider for LocalGgufEmbeddingProvider {
     fn model_name(&self) -> &str {
@@ -153,22 +160,32 @@ impl EmbeddingProvider for LocalGgufEmbeddingProvider {
         self.dimension
     }
 
-    async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
-        // For now, return a compile-time error indicating feature not enabled
-        // The actual implementation would use candle or mistralrs
-        #[cfg(not(feature = "local-embeddings"))]
-        {
-            return Err(crate::error::MantaError::Validation(
-                "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
-            ));
-        }
+    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        // Run embedding generation (CPU-bound, but kept async for API consistency)
+        self.model.embed_batch(texts)
+    }
+}
 
-        #[cfg(feature = "local-embeddings")]
-        {
-            // Placeholder: Actual implementation would use candle or mistralrs
-            // to load the GGUF model and generate embeddings
-            todo!("Local GGUF embedding implementation requires candle or mistralrs integration")
-        }
+/// Stub implementation when local-embeddings feature is disabled
+#[cfg(not(feature = "local-embeddings"))]
+pub struct LocalGgufEmbeddingProvider {
+    model_path: String,
+    model_name: String,
+    dimension: usize,
+}
+
+#[cfg(not(feature = "local-embeddings"))]
+impl LocalGgufEmbeddingProvider {
+    /// Create a new stub provider
+    pub fn new(model_path: String, dimension: usize) -> crate::Result<Self> {
+        Err(crate::error::MantaError::Validation(
+            "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
+        ))
+    }
+
+    /// Check if the model file exists
+    pub fn model_exists(&self) -> bool {
+        std::path::Path::new(&self.model_path).exists()
     }
 }
 
