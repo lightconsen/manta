@@ -29,7 +29,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{HotReloadManager, ConfigFileType};
-use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
+use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, OllamaEmbeddingProvider, MockEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::tools::ToolRegistry;
@@ -85,29 +85,53 @@ fn default_model_provider() -> String {
     "anthropic".to_string()
 }
 
+/// Embedding provider type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingProviderType {
+    /// OpenAI API (requires API key)
+    OpenAi,
+    /// Ollama local embeddings
+    Ollama,
+    /// Mock provider for testing (no API needed)
+    Mock,
+}
+
+impl Default for EmbeddingProviderType {
+    fn default() -> Self {
+        EmbeddingProviderType::Mock
+    }
+}
+
 /// Vector memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorMemoryConfig {
     /// Enable vector memory / semantic search
     pub enabled: bool,
+    /// Embedding provider type
+    pub provider: EmbeddingProviderType,
     /// Embedding provider API key (e.g., OpenAI)
     pub embedding_api_key: Option<String>,
     /// Embedding model to use
     pub embedding_model: String,
     /// Embedding dimension
     pub embedding_dimension: usize,
-    /// API base URL (for Azure, etc.)
+    /// API base URL (for Azure, Ollama, etc.)
     pub api_base_url: Option<String>,
+    /// Ollama base URL (defaults to http://localhost:11434)
+    pub ollama_url: Option<String>,
 }
 
 impl Default for VectorMemoryConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: EmbeddingProviderType::default(),
             embedding_api_key: None,
-            embedding_model: "text-embedding-3-small".to_string(),
-            embedding_dimension: 1536,
+            embedding_model: "nomic-embed-text".to_string(),
+            embedding_dimension: 768,
             api_base_url: None,
+            ollama_url: None,
         }
     }
 }
@@ -435,20 +459,51 @@ impl Gateway {
         if config.vector_memory.enabled {
             info!("Initializing vector memory service...");
 
-            if let Some(ref api_key) = config.vector_memory.embedding_api_key {
-                // Create API embedding provider with explicit parameters
-                let mut provider = ApiEmbeddingProvider::new(
-                    api_key.clone(),
-                    config.vector_memory.embedding_model.clone(),
-                    config.vector_memory.embedding_dimension,
-                );
-
-                // Set custom base URL if provided
-                if let Some(ref base_url) = config.vector_memory.api_base_url {
-                    provider = provider.with_base_url(base_url.clone());
+            let embedding_provider: Option<Arc<dyn crate::memory::vector::EmbeddingProvider>> = match config.vector_memory.provider {
+                EmbeddingProviderType::OpenAi => {
+                    if let Some(ref api_key) = config.vector_memory.embedding_api_key {
+                        info!("Using OpenAI embedding provider");
+                        let mut provider = ApiEmbeddingProvider::new(
+                            api_key.clone(),
+                            config.vector_memory.embedding_model.clone(),
+                            config.vector_memory.embedding_dimension,
+                        );
+                        if let Some(ref base_url) = config.vector_memory.api_base_url {
+                            provider = provider.with_base_url(base_url.clone());
+                        }
+                        Some(Arc::new(provider))
+                    } else {
+                        warn!("OpenAI embedding provider requires an API key");
+                        None
+                    }
                 }
+                EmbeddingProviderType::Ollama => {
+                    info!("Using Ollama embedding provider");
+                    let mut provider = OllamaEmbeddingProvider::new(
+                        config.vector_memory.embedding_model.clone(),
+                        config.vector_memory.embedding_dimension,
+                    );
+                    if let Some(ref ollama_url) = config.vector_memory.ollama_url {
+                        provider = provider.with_base_url(ollama_url.clone());
+                    }
+                    // Check if Ollama is available
+                    if provider.is_available().await {
+                        info!("Ollama is available at {}", provider.base_url);
+                        Some(Arc::new(provider))
+                    } else {
+                        warn!("Ollama not available at {}. Is Ollama running?", provider.base_url);
+                        None
+                    }
+                }
+                EmbeddingProviderType::Mock => {
+                    info!("Using mock embedding provider (no API key required)");
+                    Some(Arc::new(MockEmbeddingProvider::new(
+                        config.vector_memory.embedding_dimension,
+                    )))
+                }
+            };
 
-                let embedding_provider: Arc<dyn crate::memory::vector::EmbeddingProvider> = Arc::new(provider);
+            if let Some(embedding_provider) = embedding_provider {
                 let vector_store = Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension));
 
                 // Create embedding config for the service
@@ -464,10 +519,10 @@ impl Gateway {
                     vector_store,
                     &embedding_config,
                 ));
-                info!("Vector memory service initialized");
+                info!("✅ Vector memory service initialized with {:?} provider", config.vector_memory.provider);
                 *state.vector_memory.write().await = Some(service);
             } else {
-                warn!("Vector memory enabled but no API key provided");
+                warn!("Vector memory enabled but no suitable provider available");
             }
         } else {
             info!("Vector memory service disabled");

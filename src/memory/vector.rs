@@ -104,6 +104,155 @@ pub struct ApiEmbeddingProvider {
     dimension: usize,
 }
 
+/// Ollama embedding provider (local/self-hosted)
+pub struct OllamaEmbeddingProvider {
+    client: reqwest::Client,
+    pub base_url: String,
+    model: String,
+    dimension: usize,
+}
+
+/// Mock embedding provider for testing (deterministic, no API needed)
+pub struct MockEmbeddingProvider {
+    dimension: usize,
+}
+
+impl OllamaEmbeddingProvider {
+    /// Create a new Ollama embedding provider
+    pub fn new(model: String, dimension: usize) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: "http://localhost:11434".to_string(),
+            model,
+            dimension,
+        }
+    }
+
+    /// Set custom base URL
+    pub fn with_base_url(mut self, url: String) -> Self {
+        self.base_url = url;
+        self
+    }
+
+    /// Check if Ollama is available
+    pub async fn is_available(&self) -> bool {
+        self.client
+            .get(format!("{}/api/tags", self.base_url))
+            .send()
+            .await
+            .is_ok()
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for OllamaEmbeddingProvider {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        #[derive(Debug, Serialize)]
+        struct Request {
+            model: String,
+            prompt: String,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct EmbeddingResponse {
+            embedding: Vec<f32>,
+        }
+
+        let mut embeddings = Vec::with_capacity(texts.len());
+
+        for text in texts {
+            let request = Request {
+                model: self.model.clone(),
+                prompt: text.clone(),
+            };
+
+            let response: EmbeddingResponse = self
+                .client
+                .post(format!("{}/api/embeddings", self.base_url))
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Ollama request failed (is Ollama running?): {}", e),
+                    cause: Some(Box::new(e)),
+                })?
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: "Invalid Ollama response".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
+
+            embeddings.push(response.embedding);
+        }
+
+        Ok(embeddings)
+    }
+}
+
+impl MockEmbeddingProvider {
+    /// Create a new mock embedding provider
+    pub fn new(dimension: usize) -> Self {
+        Self { dimension }
+    }
+
+    /// Generate deterministic mock embedding from text
+    fn generate_mock_embedding(&self, text: &str) -> Vec<f32> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let seed = hasher.finish();
+
+        // Generate deterministic pseudo-random values from seed
+        let mut embedding = Vec::with_capacity(self.dimension);
+        let mut state = seed;
+
+        for _ in 0..self.dimension {
+            // Simple LCG for pseudo-random numbers
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let value = (state as f32 / u64::MAX as f32) * 2.0 - 1.0; // Range [-1, 1]
+            embedding.push(value);
+        }
+
+        // Normalize to unit vector
+        let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if magnitude > 0.0 {
+            embedding.iter_mut().for_each(|x| *x /= magnitude);
+        }
+
+        embedding
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for MockEmbeddingProvider {
+    fn model_name(&self) -> &str {
+        "mock-embeddings"
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        let embeddings = texts
+            .iter()
+            .map(|text| self.generate_mock_embedding(text))
+            .collect();
+        Ok(embeddings)
+    }
+}
+
 impl ApiEmbeddingProvider {
     /// Create a new API embedding provider
     pub fn new(api_key: String, model: String, dimension: usize) -> Self {
