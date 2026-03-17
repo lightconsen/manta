@@ -114,6 +114,8 @@ impl DaemonManager {
             providers: std::collections::HashMap::new(),
             model: std::env::var("MANTA_MODEL").unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
             model_provider: std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| "anthropic".to_string()),
+            security: Default::default(),
+            storage: Default::default(),
         };
 
         // Enable features based on environment variables

@@ -69,6 +69,12 @@ pub struct GatewayConfig {
     /// Cron scheduler configuration
     #[serde(default)]
     pub cron: CronConfig,
+    /// Security configuration
+    #[serde(default)]
+    pub security: SecurityConfig,
+    /// Storage adapter configuration
+    #[serde(default)]
+    pub storage: StorageConfig,
     /// LLM Provider configurations (provider name -> config)
     #[serde(default)]
     pub providers: HashMap<String, crate::model_router::ProviderConfig>,
@@ -226,6 +232,75 @@ impl Default for CronConfig {
     }
 }
 
+/// Security configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Enable security features (auth, rate limiting, security headers)
+    pub enabled: bool,
+    /// Require authentication for API access
+    pub auth_required: bool,
+    /// Require pairing for new users
+    pub pairing_required: bool,
+    /// Rate limiting configuration
+    pub rate_limit: RateLimitConfig,
+    /// Enable security headers
+    pub security_headers: bool,
+}
+
+/// Rate limiting configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    /// Enable rate limiting
+    pub enabled: bool,
+    /// Maximum requests per window
+    pub capacity: u32,
+    /// Refill rate (tokens per second)
+    pub refill_rate: f64,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auth_required: false,
+            pairing_required: false,
+            rate_limit: RateLimitConfig::default(),
+            security_headers: true,
+        }
+    }
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            capacity: 100,
+            refill_rate: 10.0,
+        }
+    }
+}
+
+/// Storage adapter configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Storage type: "memory", "file", "sqlite"
+    pub storage_type: String,
+    /// Base path for file/SQLite storage
+    pub base_path: Option<String>,
+    /// SQLite database URL (if using sqlite)
+    pub database_url: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            storage_type: "sqlite".to_string(),
+            base_path: None,
+            database_url: None,
+        }
+    }
+}
+
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -241,6 +316,8 @@ impl Default for GatewayConfig {
             hot_reload: HotReloadConfig::default(),
             acp: AcpConfig::default(),
             cron: CronConfig::default(),
+            security: SecurityConfig::default(),
+            storage: StorageConfig::default(),
             providers: HashMap::new(),
             model: default_model(),
             model_provider: default_model_provider(),
@@ -297,6 +374,12 @@ pub struct GatewayState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::CronScheduler>>>>,
+    /// Auth manager for authentication
+    pub auth_manager: Arc<crate::security::AuthManager>,
+    /// Rate limiter for API protection
+    pub rate_limiter: Arc<crate::security::RateLimiter>,
+    /// Storage adapter for persistence
+    pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
 }
 
 /// Handle to a running agent
@@ -453,6 +536,32 @@ impl Gateway {
             default_alias.model = config.model.clone();
         }
 
+        // Initialize security components
+        let auth_manager = Arc::new(crate::security::AuthManager::new()
+            .with_pairing_required(config.security.pairing_required));
+        let rate_limiter = Arc::new(crate::security::RateLimiter::new(
+            config.security.rate_limit.capacity,
+            config.security.rate_limit.refill_rate,
+        ));
+
+        // Initialize storage adapter
+        let storage: Arc<RwLock<dyn crate::adapters::Storage>> = match config.storage.storage_type.as_str() {
+            "sqlite" => {
+                let db_url = config.storage.database_url.as_deref()
+                    .unwrap_or("sqlite:manta.db");
+                Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(db_url).await?))
+            }
+            "file" => {
+                let base_path = config.storage.base_path.as_deref()
+                    .unwrap_or("./data");
+                Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?))
+            }
+            _ => {
+                // Default to memory storage
+                Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()))
+            }
+        };
+
         // Create state with placeholder values for vector_memory and hot_reload
         // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
@@ -470,6 +579,9 @@ impl Gateway {
             vector_memory: RwLock::new(None),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
+            auth_manager,
+            rate_limiter,
+            storage,
         });
 
         // Configure providers from config

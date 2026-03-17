@@ -9,9 +9,9 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::token::LlamaToken;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 /// HuggingFace model cache directory
 const HF_CACHE_DIR: &str = ".manta/models";
