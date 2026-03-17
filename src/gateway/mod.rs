@@ -1468,14 +1468,27 @@ async fn create_canvas_handler(
 }
 
 async fn get_canvas_handler(
-    Path(_id): Path<String>,
-    State(_state): State<Arc<GatewayState>>,
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    // TODO: Return canvas state
-    Json(serde_json::json!({
-        "canvas_id": _id,
-        "status": "active"
-    }))
+    let canvas_id = crate::canvas::CanvasId(id.clone());
+
+    match state.canvas_manager.get_session(&canvas_id).await {
+        Some(session) => {
+            Json(serde_json::json!({
+                "canvas_id": id,
+                "status": "active",
+                "session_id": session.id.0,
+            })).into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Canvas '{}' not found", id),
+                "canvas_id": id,
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
 }
 
 async fn delete_canvas_handler(

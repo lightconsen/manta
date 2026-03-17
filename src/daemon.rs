@@ -116,28 +116,38 @@ impl DaemonManager {
         };
 
         // Enable features based on environment variables
-        // Vector Memory
+        // Vector Memory - disabled by default (requires API key)
         if std::env::var("MANTA_VECTOR_MEMORY_ENABLED").map(|v| v == "true" || v == "1").unwrap_or(false) {
             gateway_config.vector_memory.enabled = true;
             gateway_config.vector_memory.embedding_api_key = std::env::var("MANTA_EMBEDDING_API_KEY").ok();
             if let Ok(model) = std::env::var("MANTA_EMBEDDING_MODEL") {
                 gateway_config.vector_memory.embedding_model = model;
             }
+            println!("📊 Vector memory enabled");
         }
 
-        // Plugins
+        // Plugins - enabled by default, disable if explicitly set to false
         if std::env::var("MANTA_PLUGINS_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
             gateway_config.plugins.enabled = false;
+            println!("🔌 Plugins disabled via environment");
+        } else {
+            println!("🔌 Plugins enabled (auto-load: {})", gateway_config.plugins.auto_load);
         }
 
-        // Hot Reload
+        // Hot Reload - enabled by default, disable if explicitly set to false
         if std::env::var("MANTA_HOT_RELOAD_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
             gateway_config.hot_reload.enabled = false;
+            println!("♻️  Hot reload disabled via environment");
+        } else {
+            println!("♻️  Hot reload enabled");
         }
 
-        // ACP
+        // ACP - enabled by default, disable if explicitly set to false
         if std::env::var("MANTA_ACP_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
             gateway_config.acp.enabled = false;
+            println!("🎛️  ACP disabled via environment");
+        } else {
+            println!("🎛️  ACP enabled");
         }
 
         // Configure LLM Provider from environment variables (legacy support)
