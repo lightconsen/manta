@@ -4,16 +4,21 @@
 //! - Localhost-only (127.0.0.1, ::1)
 //! - Tailscale network detection
 //! - API key authentication (optional)
+//! - Rate limiting
 
 use axum::{
     body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::StatusCode,
     middleware::Next,
     response::Response,
 };
 use std::net::IpAddr;
+use std::sync::Arc;
 use tracing::{debug, warn};
+
+use crate::gateway::GatewayState;
+use crate::security::{UserId, RateLimitHeaders};
 
 /// Allowed network origins for admin APIs
 #[derive(Debug, Clone)]
@@ -179,6 +184,147 @@ pub async fn private_only_middleware(req: Request, next: Next) -> Result<Respons
             Ok(next.run(req).await)
         }
     }
+}
+
+/// Middleware: Authentication check
+///
+/// Validates Bearer token from Authorization header.
+/// If security.auth_required is false, allows all requests.
+pub async fn auth_middleware(
+    State(state): State<Arc<GatewayState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    // Check if auth is required
+    let auth_required = {
+        let config = state.config.read().await;
+        config.security.auth_required
+    };
+
+    if !auth_required {
+        debug!("Auth not required, allowing request");
+        return Ok(next.run(req).await);
+    }
+
+    // Extract Authorization header
+    let auth_header = req.headers().get("authorization");
+
+    match auth_header {
+        Some(header_value) => {
+            if let Ok(header_str) = header_value.to_str() {
+                if header_str.starts_with("Bearer ") {
+                    let token = &header_str[7..];
+                    // Validate session
+                    if state.auth_manager.validate_session(token).await.is_some() {
+                        debug!("Valid auth token, allowing request");
+                        return Ok(next.run(req).await);
+                    }
+                }
+            }
+            warn!("Invalid or expired auth token");
+            Err(StatusCode::UNAUTHORIZED)
+        }
+        None => {
+            warn!("Missing Authorization header");
+            Err(StatusCode::UNAUTHORIZED)
+        }
+    }
+}
+
+/// Middleware: Rate limiting
+///
+/// Uses token bucket algorithm per user (identified by IP or user ID from auth).
+/// Adds X-RateLimit-* headers to responses.
+pub async fn rate_limit_middleware(
+    State(state): State<Arc<GatewayState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    // Check if rate limiting is enabled
+    let rate_limit_enabled = {
+        let config = state.config.read().await;
+        config.security.rate_limit.enabled
+    };
+
+    if !rate_limit_enabled {
+        return Ok(next.run(req).await);
+    }
+
+    // Get user identifier (from auth token if available, else IP)
+    let user_id = {
+        let auth_header = req.headers().get("authorization");
+        if let Some(header_value) = auth_header {
+            if let Ok(header_str) = header_value.to_str() {
+                if header_str.starts_with("Bearer ") {
+                    let token = &header_str[7..];
+                    if let Some(session) = state.auth_manager.validate_session(token).await {
+                        session.user_id
+                    } else {
+                        // Invalid token, use IP
+                        extract_client_ip(&req)
+                            .map(|ip| UserId::new(ip.to_string()))
+                            .unwrap_or_else(|| UserId::new("anonymous"))
+                    }
+                } else {
+                    extract_client_ip(&req)
+                        .map(|ip| UserId::new(ip.to_string()))
+                        .unwrap_or_else(|| UserId::new("anonymous"))
+                }
+            } else {
+                extract_client_ip(&req)
+                    .map(|ip| UserId::new(ip.to_string()))
+                    .unwrap_or_else(|| UserId::new("anonymous"))
+            }
+        } else {
+            extract_client_ip(&req)
+                .map(|ip| UserId::new(ip.to_string()))
+                .unwrap_or_else(|| UserId::new("anonymous"))
+        }
+    };
+
+    // Check rate limit
+    let result = state.rate_limiter.check(&user_id).await;
+
+    match result {
+        crate::security::RateLimitResult::Allowed { remaining, reset_after_secs } => {
+            let mut response = next.run(req).await;
+
+            // Add rate limit headers
+            let headers = response.headers_mut();
+            headers.insert("X-RateLimit-Limit", state.rate_limiter.get_state(&user_id).await.map(|s| s.capacity).unwrap_or(100).to_string().parse().unwrap());
+            headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
+            headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().unwrap());
+
+            Ok(response)
+        }
+        crate::security::RateLimitResult::Denied { retry_after_secs } => {
+            warn!("Rate limit exceeded for user: {}", user_id);
+            let mut response = Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body(Body::from(format!("Rate limit exceeded. Retry after {} seconds.", retry_after_secs)))
+                .unwrap();
+
+            // Add retry-after header
+            response.headers_mut().insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+
+            Ok(response)
+        }
+    }
+}
+
+/// Middleware: Security headers
+///
+/// Adds security headers to all responses
+pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+
+    let headers = response.headers_mut();
+    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
+    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
+    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
+    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+
+    response
 }
 
 #[cfg(test)]

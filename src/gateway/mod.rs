@@ -10,7 +10,7 @@
 use axum::{
     extract::{Path, State, WebSocketUpgrade, Query, ConnectInfo},
     http::StatusCode,
-    middleware::from_fn,
+    middleware::{from_fn, from_fn_with_state},
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post},
     Router,
@@ -380,6 +380,8 @@ pub struct GatewayState {
     pub rate_limiter: Arc<crate::security::RateLimiter>,
     /// Storage adapter for persistence
     pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
+    /// Skills manager for hot-reloadable skills
+    pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
 }
 
 /// Handle to a running agent
@@ -582,6 +584,7 @@ impl Gateway {
             auth_manager,
             rate_limiter,
             storage,
+            skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
         });
 
         // Configure providers from config
@@ -736,6 +739,15 @@ impl Gateway {
             info!("Plugin system disabled");
         }
 
+        // Initialize skills manager
+        {
+            let mut skills_manager = self.state.skills_manager.write().await;
+            match skills_manager.initialize().await {
+                Ok(count) => info!("✅ Skills manager initialized with {} skills", count),
+                Err(e) => warn!("Failed to initialize skills manager: {}", e),
+            }
+        }
+
         // Initialize hot reload if enabled
         let hot_reload = self.state.hot_reload.read().await.clone();
         if let Some(ref hot_reload) = hot_reload {
@@ -750,6 +762,9 @@ impl Gateway {
                     error!("Hot reload error: {}", e);
                 }
             });
+
+            // Register config change handlers
+            self.register_hot_reload_handlers(hot_reload).await;
         }
 
         // Initialize default agent (optional - requires provider configuration)
@@ -858,13 +873,22 @@ impl Gateway {
             .route("/api/v1/plugins/:id/enable", post(enable_plugin_handler))
             .route("/api/v1/plugins/:id/disable", post(disable_plugin_handler))
             .route("/api/v1/plugins/:id/unload", delete(unload_plugin_handler))
+            // Skills API
+            .route("/api/v1/skills", get(list_skills_handler))
+            .route("/api/v1/skills/:id", get(get_skill_handler))
+            .route("/api/v1/skills/:id/enable", post(enable_skill_handler))
+            .route("/api/v1/skills/:id/disable", post(disable_skill_handler))
+            .route("/api/v1/skills/:id/run", post(run_skill_handler))
             // ACP (Agent Control Plane) API
             .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
             .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
             .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
             .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
-            // Apply localhost/Tailscale restriction middleware
+            // Apply security middleware (order matters - applied in reverse)
+            .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
+            .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
             .layer(from_fn(middleware::tailscale_only_middleware))
+            .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
         // Merge public and admin routers
@@ -1136,6 +1160,62 @@ impl Gateway {
 
         Ok(())
     }
+
+    /// Register hot reload handlers for config changes
+    async fn register_hot_reload_handlers(&self, hot_reload: &HotReloadManager) {
+        use crate::config::hot_reload::ConfigFileType;
+
+        // Handler for main config changes
+        hot_reload
+            .register_handler(ConfigFileType::Main, |_event| async move {
+                info!("Main config file changed - reloading configuration");
+                // In a full implementation, this would:
+                // 1. Reload the config file
+                // 2. Update GatewayConfig
+                // 3. Notify components of changes
+                // 4. Possibly restart affected services
+                Ok(())
+            })
+            .await;
+
+        // Handler for agent config changes
+        hot_reload
+            .register_handler(ConfigFileType::Agent, |event| async move {
+                info!("Agent config changed: {:?} - reloading agent settings", event.path);
+                // Would update agent configurations dynamically
+                Ok(())
+            })
+            .await;
+
+        // Handler for channel config changes
+        hot_reload
+            .register_handler(ConfigFileType::Channel, |event| async move {
+                info!("Channel config changed: {:?} - updating channel settings", event.path);
+                // Would update channel configurations dynamically
+                Ok(())
+            })
+            .await;
+
+        // Handler for plugin config changes
+        hot_reload
+            .register_handler(ConfigFileType::Plugin, |event| async move {
+                info!("Plugin config changed: {:?} - reloading plugins", event.path);
+                // Would reload plugin configurations
+                Ok(())
+            })
+            .await;
+
+        // Handler for gateway config changes
+        hot_reload
+            .register_handler(ConfigFileType::Gateway, |event| async move {
+                info!("Gateway config changed: {:?} - updating gateway settings", event.path);
+                // Would update gateway routes, security settings, etc.
+                Ok(())
+            })
+            .await;
+
+        info!("Registered hot reload handlers for all config types");
+    }
 }
 
 /// HTML handler for web terminal
@@ -1363,6 +1443,15 @@ fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<Tool
     // Register ACP tools for subagent spawning
     registry.register(Box::new(AcpSpawnTool::new(acp.clone())));
     registry.register(Box::new(AcpSessionTool::new(acp.clone())));
+
+    // Note: MemoryTool requires async initialization - register separately
+    // after storage is available: MemoryTool::new().await
+
+    // Register delegation tool for agent-to-agent task delegation
+    registry.register(Box::new(DelegateTool::root()));
+
+    // Register MCP (Model Context Protocol) connection tool
+    registry.register(Box::new(McpConnectionTool::new()));
 
     Ok(registry)
 }
@@ -2272,6 +2361,160 @@ async fn unload_plugin_handler(
                 "error": format!("Failed to unload plugin: {}", e),
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+// Skills API Handlers
+
+async fn list_skills_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let skills_manager = state.skills_manager.read().await;
+    let skills = skills_manager.list_skills().await;
+
+    let skill_list: Vec<_> = skills
+        .iter()
+        .map(|skill| {
+            serde_json::json!({
+                "id": skill.name.clone(),
+                "name": skill.name.clone(),
+                "description": skill.description.clone(),
+                "enabled": skill.enabled,
+                "is_eligible": skill.is_eligible,
+                "triggers": skill.triggers.iter().map(|t| format!("{:?}", t.trigger_type)).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "skills": skill_list,
+        "count": skill_list.len(),
+    }))
+}
+
+async fn get_skill_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let skills_manager = state.skills_manager.read().await;
+    match skills_manager.get_skill(&id).await {
+        Some(skill) => {
+            let response = serde_json::json!({
+                "id": id,
+                "name": skill.name,
+                "description": skill.description,
+                "enabled": skill.enabled,
+                "is_eligible": skill.is_eligible,
+                "triggers": skill.triggers.iter().map(|t| format!("{:?}", t.trigger_type)).collect::<Vec<_>>(),
+                "eligibility_errors": skill.eligibility_errors,
+            });
+            Json(response).into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Skill '{}' not found", id),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
+async fn enable_skill_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let mut skills_manager = state.skills_manager.write().await;
+    match skills_manager.set_skill_enabled(&id, true).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Skill '{}' enabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to enable skill: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+async fn disable_skill_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let mut skills_manager = state.skills_manager.write().await;
+    match skills_manager.set_skill_enabled(&id, false).await {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Skill '{}' disabled", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to disable skill: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RunSkillRequest {
+    /// Input for the skill
+    input: String,
+    /// Additional context
+    #[serde(default)]
+    context: Option<serde_json::Value>,
+}
+
+async fn run_skill_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<RunSkillRequest>,
+) -> impl IntoResponse {
+    let skills_manager = state.skills_manager.read().await;
+
+    // Check if skill exists and is eligible
+    match skills_manager.get_skill(&id).await {
+        Some(skill) => {
+            if !skill.enabled {
+                let error = serde_json::json!({
+                    "error": format!("Skill '{}' is disabled", id),
+                });
+                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+            }
+
+            if !skill.is_eligible {
+                let error = serde_json::json!({
+                    "error": format!("Skill '{}' is not eligible to run", id),
+                    "reasons": skill.eligibility_errors,
+                });
+                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+            }
+
+            // Return the skill prompt that would be used
+            // In a full implementation, this would queue the skill for execution by an agent
+            let response = serde_json::json!({
+                "skill_id": id,
+                "status": "ready",
+                "prompt": skill.prompt,
+                "input": body.input,
+                "context": body.context.unwrap_or(serde_json::json!({})),
+                "note": "Skill is ready for execution. Send this prompt to an agent to execute.",
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Skill '{}' not found", id),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
         }
     }
 }
