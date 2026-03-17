@@ -132,7 +132,7 @@ pub struct VectorMemoryConfig {
 impl Default for VectorMemoryConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,  // Disabled by default to avoid blocking on model download
             provider: EmbeddingProviderType::LocalGguf,
             embedding_api_key: None,
             embedding_model: "text-embedding-3-small".to_string(),
