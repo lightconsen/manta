@@ -476,23 +476,34 @@ impl Gateway {
                     }
                 }
                 EmbeddingProviderType::LocalGguf => {
-                    if let Some(ref model_path) = config.vector_memory.local_model_path {
-                        info!("Using local GGUF embedding provider");
-                        match LocalGgufEmbeddingProvider::new(
-                            model_path.clone(),
-                            config.vector_memory.embedding_dimension,
-                        ) {
-                            Ok(provider) => {
-                                info!("GGUF model loaded successfully from {}", model_path);
-                                Some(Arc::new(provider))
+                    #[cfg(feature = "local-embeddings")]
+                    {
+                        if let Some(ref model_path) = config.vector_memory.local_model_path {
+                            info!("Using local GGUF embedding provider");
+                            use crate::memory::local_embeddings::ModelSource;
+                            let source = ModelSource::parse(model_path);
+                            let provider = LocalGgufEmbeddingProvider::create(
+                                source,
+                                config.vector_memory.embedding_dimension,
+                            ).await;
+                            if provider.is_fts_only() {
+                                if let Some(reason) = provider.fts_reason() {
+                                    warn!("Local GGUF provider in FTS-only mode: {}", reason);
+                                } else {
+                                    info!("Local GGUF provider initialized, will load model on first use");
+                                }
+                            } else {
+                                info!("GGUF model configured from {}", model_path);
                             }
-                            Err(e) => {
-                                warn!("Failed to load GGUF model from {}: {}", model_path, e);
-                                None
-                            }
+                            Some(Arc::new(provider))
+                        } else {
+                            warn!("Local GGUF provider requires 'local_model_path' configuration");
+                            None
                         }
-                    } else {
-                        warn!("Local GGUF provider requires 'local_model_path' configuration");
+                    }
+                    #[cfg(not(feature = "local-embeddings"))]
+                    {
+                        warn!("Local GGUF provider requires 'local-embeddings' feature. Build with: cargo build --features local-embeddings");
                         None
                     }
                 }

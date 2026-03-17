@@ -108,11 +108,10 @@ pgvector = { version = "0.4", optional = true }
 
 # Embeddings (using API-based providers for now)
 # fastembed has dependency issues with ort crate
-# candle for local GGUF embedding support
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-tokenizers = { version = "0.21", optional = true, features = ["onig"] }
+# llama-cpp-2 for full GGUF support
+llama-cpp-2 = { version = "0.1", optional = true }
+# HuggingFace Hub for model auto-download
+hf-hub = { version = "0.5", optional = true, features = ["tokio"] }
 
 # Plugin system (WASM runtime)
 wasmtime = { version = "15.0", optional = true }
@@ -137,7 +136,7 @@ all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "lark"]
 tailscale = []
 browser = ["chromiumoxide"]
 vector-db = []
-local-embeddings = ["candle-core", "candle-nn", "candle-transformers", "tokenizers"]
+local-embeddings = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]
 hot-reload = ["notify-debouncer-full"]
 

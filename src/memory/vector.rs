@@ -104,88 +104,67 @@ pub struct ApiEmbeddingProvider {
     dimension: usize,
 }
 
-/// Local GGUF embedding provider using candle (pure Rust)
-/// Loads and runs GGUF models directly without external services
+/// Re-export the LocalEmbeddingProvider from local_embeddings module
 #[cfg(feature = "local-embeddings")]
-pub struct LocalGgufEmbeddingProvider {
-    model: super::local_embeddings::LocalEmbeddingModel,
-    model_name: String,
-    dimension: usize,
-}
+pub use super::local_embeddings::LocalEmbeddingProvider as LocalGgufEmbeddingProvider;
 
-#[cfg(feature = "local-embeddings")]
+/// Stub when local-embeddings feature is disabled
+#[cfg(not(feature = "local-embeddings"))]
+pub struct LocalGgufEmbeddingProvider;
+
+#[cfg(not(feature = "local-embeddings"))]
 impl LocalGgufEmbeddingProvider {
-    /// Create a new local GGUF embedding provider
-    ///
-    /// # Arguments
-    /// * `model_path` - Path to the GGUF file or safetensors
-    /// * `dimension` - Embedding dimension (e.g., 768 for BERT-base)
-    pub fn new(model_path: String, _dimension: usize) -> crate::Result<Self> {
-        let model_name = std::path::Path::new(&model_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let model = super::local_embeddings::LocalEmbeddingModel::load(
-            std::path::Path::new(&model_path),
-            None,
-            None,
-        )?;
-
-        let dimension = model.dimension();
-
-        Ok(Self {
-            model,
-            model_name,
-            dimension,
-        })
+    /// Create stub
+    pub async fn create(_source: (), _dimension: usize) -> Self {
+        Self
     }
 
-    /// Check if the model file exists
-    pub fn model_exists(&self) -> bool {
-        // Model is already loaded, so it exists
+    /// FTS-only stub
+    pub fn fts_only(_reason: impl Into<String>) -> Self {
+        Self
+    }
+
+    /// Always returns true for stub
+    pub fn is_fts_only(&self) -> bool {
         true
     }
-}
 
-#[cfg(feature = "local-embeddings")]
-#[async_trait]
-impl EmbeddingProvider for LocalGgufEmbeddingProvider {
-    fn model_name(&self) -> &str {
-        &self.model_name
+    /// Returns the reason for FTS-only mode
+    pub fn fts_reason(&self) -> Option<&str> {
+        Some("'local-embeddings' feature not enabled")
     }
 
-    fn dimension(&self) -> usize {
-        self.dimension
-    }
-
-    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
-        // Run embedding generation (CPU-bound, but kept async for API consistency)
-        self.model.embed_batch(texts)
-    }
-}
-
-/// Stub implementation when local-embeddings feature is disabled
-#[cfg(not(feature = "local-embeddings"))]
-pub struct LocalGgufEmbeddingProvider {
-    model_path: String,
-    model_name: String,
-    dimension: usize,
-}
-
-#[cfg(not(feature = "local-embeddings"))]
-impl LocalGgufEmbeddingProvider {
-    /// Create a new stub provider
-    pub fn new(model_path: String, dimension: usize) -> crate::Result<Self> {
+    /// Always returns error
+    pub async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
         Err(crate::error::MantaError::Validation(
             "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
         ))
     }
 
-    /// Check if the model file exists
-    pub fn model_exists(&self) -> bool {
-        std::path::Path::new(&self.model_path).exists()
+    /// Returns stub name
+    pub fn model_name(&self) -> &str {
+        "disabled"
+    }
+
+    /// Returns 0
+    pub fn dimension(&self) -> usize {
+        0
+    }
+}
+
+#[cfg(not(feature = "local-embeddings"))]
+#[async_trait::async_trait]
+impl EmbeddingProvider for LocalGgufEmbeddingProvider {
+    fn model_name(&self) -> &str {
+        self.model_name()
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension()
+    }
+
+    async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        self.embed_batch(_texts).await
     }
 }
 
