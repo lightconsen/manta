@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use futures_util::{StreamExt, SinkExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
 use crate::agent::{Agent, AgentConfig};
@@ -890,8 +890,19 @@ impl Gateway {
                     }
                     AgentCommand::UpdateConfig(new_config) => {
                         info!("Agent {} updating configuration", agent_id);
-                        // TODO: Update agent configuration dynamically
-                        let _ = new_config;
+                        // Update agent configuration dynamically
+                        {
+                            let mut agents = state.agents.write().await;
+                            if let Some(handle) = agents.get_mut(&agent_id) {
+                                handle.config = new_config.clone();
+                                info!("Agent {} configuration updated", agent_id);
+                            }
+                        }
+                        // Send status update
+                        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                            agent_id: agent_id.clone(),
+                            status: AgentStatus::Idle,
+                        });
                     }
                     AgentCommand::Shutdown => {
                         info!("Agent {} shutting down", agent_id);
@@ -1350,8 +1361,52 @@ async fn handle_websocket(
     socket: axum::extract::ws::WebSocket,
     state: Arc<GatewayState>,
 ) {
-    // WebSocket handling for real-time events
-    // TODO: Implement full WebSocket protocol
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+
+    info!("Gateway events WebSocket connected");
+
+    // Subscribe to gateway events
+    let mut event_rx = state.event_tx.subscribe();
+
+    // Split socket for send/receive
+    let (mut sender, mut receiver) = socket.split();
+
+    // Task to receive gateway events and send to client
+    let event_task = tokio::spawn(async move {
+        while let Ok(event) = event_rx.recv().await {
+            let msg = Message::Text(serde_json::to_string(&event).unwrap_or_default());
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Task to receive client messages (ping/pong, commands)
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            match msg {
+                Message::Close(_) => break,
+                Message::Ping(data) => {
+                    // Pong is handled automatically by axum
+                    debug!("Received ping: {:?}", data);
+                }
+                Message::Text(text) => {
+                    // Client can send commands (optional)
+                    debug!("Received WebSocket message: {}", text);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Wait for either task to complete
+    tokio::select! {
+        _ = event_task => {}
+        _ = recv_task => {}
+    }
+
+    info!("Gateway events WebSocket disconnected");
 }
 
 async fn list_agents_handler(
@@ -1374,9 +1429,91 @@ async fn create_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Json(config): Json<AgentConfig>,
 ) -> impl IntoResponse {
-    // Create new agent
-    // TODO: Implement
-    (StatusCode::CREATED, Json(serde_json::json!({"id": "new-agent"})))
+    use tracing::info;
+    use crate::agent::Agent;
+
+    // Generate unique agent ID
+    let agent_id = format!("agent-{}", uuid::Uuid::new_v4());
+    info!("Creating new agent via API: {}", agent_id);
+
+    // Create communication channel
+    let (tx, mut rx) = mpsc::channel(100);
+
+    // Create provider from model router
+    let provider = match state.model_router.create_default_provider().await {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to create provider: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Get tools and model
+    let tools = state.tool_registry.clone();
+    let model = state.config.read().await.model.clone();
+
+    // Create agent instance
+    let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+
+    // Create agent handle
+    let handle = AgentHandle {
+        id: agent_id.clone(),
+        config: config.clone(),
+        tx: tx.clone(),
+        busy: false,
+        agent: agent.clone(),
+    };
+
+    // Insert into agents map
+    {
+        let mut agents = state.agents.write().await;
+        agents.insert(agent_id.clone(), handle);
+    }
+
+    // Start agent processing loop
+    let state_clone = state.clone();
+    let agent_id_clone = agent_id.clone();
+    tokio::spawn(async move {
+        info!("Agent {} processing loop started", agent_id_clone);
+        while let Some(cmd) = rx.recv().await {
+            match cmd {
+                AgentCommand::Shutdown => {
+                    info!("Agent {} shutting down", agent_id_clone);
+                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        agent_id: agent_id_clone.clone(),
+                        status: AgentStatus::Shutdown,
+                    });
+                    break;
+                }
+                _ => {
+                    // Handle other commands (simplified for API-created agents)
+                    info!("Agent {} received command: {:?}", agent_id_clone, cmd);
+                }
+            }
+        }
+        info!("Agent {} processing loop ended", agent_id_clone);
+    });
+
+    info!("✅ Agent {} created successfully", agent_id);
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": agent_id,
+            "status": "created",
+            "config": {
+                "max_context_tokens": config.max_context_tokens,
+                "max_concurrent_tools": config.max_concurrent_tools,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+            }
+        })),
+    )
+        .into_response()
 }
 
 async fn get_agent_handler(
@@ -1397,9 +1534,48 @@ async fn delete_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // Shutdown and remove agent
-    // TODO: Implement
-    (StatusCode::NO_CONTENT, ())
+    use tracing::{info, warn};
+
+    info!("Deleting agent via API: {}", id);
+
+    // Check if agent exists
+    let agent_exists = {
+        let agents = state.agents.read().await;
+        agents.contains_key(&id)
+    };
+
+    if !agent_exists {
+        warn!("Agent {} not found for deletion", id);
+        return StatusCode::NOT_FOUND;
+    }
+
+    // Get the agent's channel and send shutdown
+    let tx = {
+        let agents = state.agents.read().await;
+        agents.get(&id).map(|h| h.tx.clone())
+    };
+
+    if let Some(tx) = tx {
+        // Send shutdown command
+        if let Err(e) = tx.send(AgentCommand::Shutdown).await {
+            warn!("Failed to send shutdown to agent {}: {}", id, e);
+        }
+    }
+
+    // Remove from agents map
+    {
+        let mut agents = state.agents.write().await;
+        agents.remove(&id);
+    }
+
+    // Send event
+    let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+        agent_id: id.clone(),
+        status: AgentStatus::Shutdown,
+    });
+
+    info!("✅ Agent {} deleted successfully", id);
+    StatusCode::NO_CONTENT
 }
 
 async fn list_channels_handler(
