@@ -111,9 +111,44 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
         // Use specified conversation
         Some(conv)
     } else {
-        // Let daemon handle last conversation lookup
-        None
+        // Try to get last conversation from daemon
+        match state.client.get_last_conversation("web_user").await {
+            Ok(resp) => {
+                if let Some(conv_id) = resp.conversation_id {
+                    info!("Resuming last conversation: {}", conv_id);
+                    Some(conv_id)
+                } else {
+                    info!("No previous conversation found, starting new");
+                    None
+                }
+            }
+            Err(e) => {
+                debug!("Could not get last conversation: {}", e);
+                None
+            }
+        }
     };
+
+    // Load and send chat history if available
+    if let Some(ref conv_id) = conversation_id {
+        match state.client.get_chat_history(conv_id, 100).await {
+            Ok(history) => {
+                if !history.messages.is_empty() {
+                    let history_json = serde_json::json!({
+                        "type": "history",
+                        "conversation_id": conv_id,
+                        "messages": history.messages
+                    });
+                    if socket.send(Message::Text(history_json.to_string())).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Could not load chat history: {}", e);
+            }
+        }
+    }
 
     // Send welcome message
     let welcome_msg = if conversation_id.is_some() {

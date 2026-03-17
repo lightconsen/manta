@@ -891,6 +891,9 @@ impl Gateway {
             .route("/api/v1/channels", get(list_channels_handler))
             // Session messaging with provider override
             .route("/api/v1/sessions/:id/messages", post(send_message_handler))
+            // Conversation history
+            .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
+            .route("/api/v1/conversations/last", get(get_last_conversation_handler))
             // Status
             .route("/api/v1/status", get(status_handler))
             // Canvas/A2UI
@@ -2051,6 +2054,75 @@ async fn send_message_handler(
         "status": "processing",
     });
     (StatusCode::ACCEPTED, Json(resp)).into_response()
+}
+
+/// Get conversation history
+async fn get_conversation_history_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(conversation_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit: usize = params
+        .get("limit")
+        .and_then(|l| l.parse().ok())
+        .unwrap_or(100);
+
+    // Access storage directly to get chat history
+    let storage = state.storage.read().await;
+
+    match storage.get_conversation_history(&conversation_id, limit).await {
+        Ok(messages) => {
+            let messages_json: Vec<_> = messages.into_iter().map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "conversation_id": m.conversation_id,
+                    "user_id": m.user_id,
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": m.created_at,
+                })
+            }).collect();
+
+            let resp = serde_json::json!({
+                "conversation_id": conversation_id,
+                "messages": messages_json,
+            });
+            (StatusCode::OK, Json(resp))
+        }
+        Err(e) => {
+            error!("Failed to get conversation history: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("Failed to get conversation history: {}", e)
+            })))
+        }
+    }
+}
+
+/// Get last conversation for a user
+async fn get_last_conversation_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let user_id = params.get("user_id").cloned().unwrap_or_else(|| "web_user".to_string());
+
+    // Access storage directly to get last conversation
+    let storage = state.storage.read().await;
+
+    match storage.get_last_conversation(&user_id).await {
+        Ok(conversation_id) => {
+            let resp = serde_json::json!({
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+            });
+            (StatusCode::OK, Json(resp))
+        }
+        Err(e) => {
+            error!("Failed to get last conversation: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("Failed to get last conversation: {}", e)
+            })))
+        }
+    }
 }
 
 async fn status_handler(

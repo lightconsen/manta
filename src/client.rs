@@ -111,6 +111,30 @@ pub struct SendMessageResponse {
     pub status: String,
 }
 
+/// Chat message in conversation history
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub id: String,
+    pub conversation_id: String,
+    pub user_id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// Conversation history response
+#[derive(Debug, Deserialize)]
+pub struct ChatHistoryResponse {
+    pub messages: Vec<ChatMessage>,
+    pub conversation_id: String,
+}
+
+/// Last conversation response
+#[derive(Debug, Deserialize)]
+pub struct LastConversationResponse {
+    pub conversation_id: Option<String>,
+}
+
 /// Agent list item
 #[derive(Debug, Deserialize)]
 pub struct AgentInfo {
@@ -383,6 +407,42 @@ impl DaemonClient {
 
         let response = self.client.post(&url).json(&body).send().await
             .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+
+        let result = response.json().await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+        Ok(result)
+    }
+
+    /// Get chat history for a conversation
+    pub async fn get_chat_history(&self, conversation_id: &str, limit: usize) -> crate::Result<ChatHistoryResponse> {
+        let url = format!("{}/api/v1/conversations/{}/messages?limit={}", self.base_url, conversation_id, limit);
+        let response = self.client.get(&url).send().await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Failed to get chat history: {}",
+                response.status()
+            )));
+        }
+
+        let history = response.json().await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+        Ok(history)
+    }
+
+    /// Get last conversation ID for a user
+    pub async fn get_last_conversation(&self, user_id: &str) -> crate::Result<LastConversationResponse> {
+        let url = format!("{}/api/v1/conversations/last?user_id={}", self.base_url, user_id);
+        let response = self.client.get(&url).send().await
+            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Failed to get last conversation: {}",
+                response.status()
+            )));
+        }
 
         let result = response.json().await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;

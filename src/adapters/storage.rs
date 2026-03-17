@@ -73,6 +73,22 @@ pub trait Storage: Send + Sync {
 
     /// Check if storage is healthy
     async fn health_check(&self) -> Result<(), StorageError>;
+
+    /// Get conversation history for a session
+    /// Default implementation returns empty (for stores that don't support chat history)
+    async fn get_conversation_history(
+        &self,
+        _conversation_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<ChatMessage>, StorageError> {
+        Ok(Vec::new())
+    }
+
+    /// Get last conversation ID for a user
+    /// Default implementation returns None (for stores that don't support chat history)
+    async fn get_last_conversation(&self, _user_id: &str) -> Result<Option<String>, StorageError> {
+        Ok(None)
+    }
 }
 
 /// In-memory storage implementation
@@ -605,6 +621,26 @@ impl Storage for SqliteStorage {
             .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Override to provide actual chat history from SQLite
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ChatMessage>, StorageError> {
+        // Delegate to ChatHistoryStore implementation
+        ChatHistoryStore::get_conversation_history(self, conversation_id, limit)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    /// Override to provide actual last conversation lookup from SQLite
+    async fn get_last_conversation(&self, user_id: &str) -> Result<Option<String>, StorageError> {
+        // Delegate to ChatHistoryStore implementation
+        ChatHistoryStore::get_last_conversation(self, user_id)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))
     }
 }
 
