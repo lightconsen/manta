@@ -11,6 +11,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
+// Re-export memory types for unified storage
+pub use crate::memory::{
+    ChatHistoryStore, ChatMessage, EmbeddedChunk, Memory, MemoryId, MemoryQuery, MemoryStats,
+    MemoryStore, VectorStore, VectorStoreStats,
+};
+
 /// Errors that can occur during storage operations
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -312,6 +318,7 @@ impl SqliteStorage {
 
     /// Initialize the database schema
     async fn init(&self) -> Result<(), StorageError> {
+        // Core entities table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS entities (
@@ -328,7 +335,7 @@ impl SqliteStorage {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create table: {}", e)))?;
+        .map_err(|e| StorageError::Backend(format!("Failed to create entities table: {}", e)))?;
 
         // Create index on status for faster filtering
         sqlx::query(
@@ -337,6 +344,98 @@ impl SqliteStorage {
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Backend(format!("Failed to create index: {}", e)))?;
+
+        // Vector chunks table for semantic search
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS vector_chunks (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                embedding BLOB NOT NULL,  -- Serialized f32 array
+                position INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                metadata TEXT,  -- JSON
+                created_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create vector_chunks table: {}", e)))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_vector_chunks_source ON vector_chunks(source_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create vector index: {}", e)))?;
+
+        // Chat messages table for conversation history
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT  -- JSON
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create chat_messages table: {}", e)))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create chat index: {}", e)))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create user chat index: {}", e)))?;
+
+        // Memories table for agent memory
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                conversation_id TEXT,
+                content TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                embedding BLOB,  -- Serialized f32 array, optional
+                created_at TEXT NOT NULL,
+                expires_at TEXT,  -- NULL = never
+                metadata TEXT  -- JSON
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create memories table: {}", e)))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, memory_type)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create memory index: {}", e)))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("Failed to create memory expires index: {}", e)))?;
 
         Ok(())
     }
@@ -505,6 +604,555 @@ impl Storage for SqliteStorage {
             .await
             .map_err(|e| StorageError::Backend(e.to_string()))?;
 
+        Ok(())
+    }
+}
+
+// ============== UNIFIED STORAGE TRAIT IMPLEMENTATIONS ==============
+
+// Helper functions for serialization
+fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+fn system_time_to_rfc3339(time: std::time::SystemTime) -> String {
+    chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()
+}
+
+fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc).into())
+}
+
+#[async_trait]
+impl VectorStore for SqliteStorage {
+    async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
+        let metadata_json = chunk.metadata.as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .unwrap_or_default();
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO vector_chunks
+            (id, source_id, text, embedding, position, total_chunks, metadata, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+        )
+        .bind(&chunk.id)
+        .bind(&chunk.source_id)
+        .bind(&chunk.text)
+        .bind(serialize_embedding(&chunk.embedding))
+        .bind(chunk.position as i64)
+        .bind(chunk.total_chunks as i64)
+        .bind(metadata_json)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to store vector chunk".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        Ok(())
+    }
+
+    async fn search_similar(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        threshold: f32,
+    ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
+        // Load all chunks and compute similarity in Rust
+        // For large datasets, this should use sqlite-vec extension or similar
+        let rows = sqlx::query(
+            "SELECT id, source_id, text, embedding, position, total_chunks, metadata FROM vector_chunks"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to search vectors".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        let mut results: Vec<(EmbeddedChunk, f32)> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let embedding_bytes: Vec<u8> = row.get("embedding");
+                let chunk_embedding = deserialize_embedding(&embedding_bytes);
+                let similarity = crate::memory::cosine_similarity(query_embedding, &chunk_embedding);
+
+                if similarity >= threshold {
+                    let metadata: Option<String> = row.get("metadata");
+                    let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
+
+                    let chunk = EmbeddedChunk {
+                        id: row.get("id"),
+                        source_id: row.get("source_id"),
+                        text: row.get("text"),
+                        embedding: chunk_embedding,
+                        position: row.get::<i64, _>("position") as usize,
+                        total_chunks: row.get::<i64, _>("total_chunks") as usize,
+                        metadata,
+                    };
+                    Some((chunk, similarity))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by similarity descending
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize> {
+        let result = sqlx::query("DELETE FROM vector_chunks WHERE source_id = ?1")
+            .bind(source_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to delete vector chunks".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
+    async fn stats(&self) -> crate::Result<VectorStoreStats> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as total, COUNT(DISTINCT source_id) as sources FROM vector_chunks"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get vector stats".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        let total_vectors: i64 = row.get("total");
+        let total_sources: i64 = row.get("sources");
+
+        // Get dimension from first chunk
+        let first_chunk = sqlx::query("SELECT embedding FROM vector_chunks LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to get vector dimension".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+
+        let dimension = first_chunk
+            .map(|row| {
+                let bytes: Vec<u8> = row.get("embedding");
+                bytes.len() / 4  // 4 bytes per f32
+            })
+            .unwrap_or(0);
+
+        Ok(VectorStoreStats {
+            total_vectors: total_vectors as usize,
+            total_sources: total_sources as usize,
+            dimension,
+        })
+    }
+
+    async fn clear(&self) -> crate::Result<()> {
+        sqlx::query("DELETE FROM vector_chunks")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to clear vectors".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ChatHistoryStore for SqliteStorage {
+    async fn store_message(&self, message: ChatMessage) -> crate::Result<()> {
+        let metadata_json = message.metadata.as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .unwrap_or_default();
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_messages
+            (id, conversation_id, user_id, role, content, created_at, metadata)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+        )
+        .bind(&message.id)
+        .bind(&message.conversation_id)
+        .bind(&message.user_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(system_time_to_rfc3339(message.created_at))
+        .bind(metadata_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to store chat message".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<ChatMessage>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, conversation_id, user_id, role, content, created_at, metadata
+            FROM chat_messages
+            WHERE conversation_id = ?1
+            ORDER BY created_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get conversation history".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        let messages: Vec<ChatMessage> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let created_at_str: String = row.get("created_at");
+                let created_at = rfc3339_to_system_time(&created_at_str)?;
+
+                let metadata: Option<String> = row.get("metadata");
+                let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
+
+                Some(ChatMessage {
+                    id: row.get("id"),
+                    conversation_id: row.get("conversation_id"),
+                    user_id: row.get("user_id"),
+                    role: row.get("role"),
+                    content: row.get("content"),
+                    created_at,
+                    metadata,
+                })
+            })
+            .rev()  // Reverse to get chronological order
+            .collect();
+
+        Ok(messages)
+    }
+
+    async fn get_user_conversations(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<String>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT conversation_id
+            FROM chat_messages
+            WHERE user_id = ?1
+            ORDER BY created_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(user_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get user conversations".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        let conversations: Vec<String> = rows
+            .into_iter()
+            .map(|row| row.get("conversation_id"))
+            .collect();
+
+        Ok(conversations)
+    }
+
+    async fn delete_conversation(&self, conversation_id: &str) -> crate::Result<()> {
+        sqlx::query("DELETE FROM chat_messages WHERE conversation_id = ?1")
+            .bind(conversation_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to delete conversation".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+        Ok(())
+    }
+
+    async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
+        let row = sqlx::query(
+            r#"
+            SELECT conversation_id FROM chat_messages
+            WHERE user_id = ?1
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get last conversation".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        Ok(row.map(|r| r.get("conversation_id")))
+    }
+}
+
+#[async_trait]
+impl MemoryStore for SqliteStorage {
+    async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
+        let metadata_json = memory.metadata.as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .unwrap_or_default();
+
+        let embedding_bytes = memory.embedding.as_ref().map(|e| serialize_embedding(e));
+
+        let expires_at = memory.expires_at.map(|t| system_time_to_rfc3339(t));
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO memories
+            (id, user_id, conversation_id, content, memory_type, embedding, created_at, expires_at, metadata)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+        )
+        .bind(memory.id.to_string())
+        .bind(&memory.user_id)
+        .bind(&memory.conversation_id)
+        .bind(&memory.content)
+        .bind(&memory.memory_type)
+        .bind(embedding_bytes)
+        .bind(system_time_to_rfc3339(memory.created_at))
+        .bind(expires_at)
+        .bind(metadata_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to store memory".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        Ok(memory.id)
+    }
+
+    async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
+        let row = sqlx::query(
+            "SELECT * FROM memories WHERE id = ?1"
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get memory".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        match row {
+            Some(row) => {
+                let created_at_str: String = row.get("created_at");
+                let created_at = rfc3339_to_system_time(&created_at_str)
+                    .ok_or_else(|| crate::error::MantaError::Internal("Invalid created_at".to_string()))?;
+
+                let expires_at = row.get::<Option<String>, _>("expires_at")
+                    .and_then(|s| rfc3339_to_system_time(&s));
+
+                let embedding = row.get::<Option<Vec<u8>>, _>("embedding")
+                    .map(|b| deserialize_embedding(&b));
+
+                let metadata = row.get::<Option<String>, _>("metadata")
+                    .and_then(|m| serde_json::from_str(&m).ok());
+
+                Ok(Some(Memory {
+                    id: MemoryId::new(row.get::<String, _>("id")),
+                    user_id: row.get("user_id"),
+                    conversation_id: row.get("conversation_id"),
+                    content: row.get("content"),
+                    memory_type: row.get("memory_type"),
+                    embedding,
+                    created_at,
+                    expires_at,
+                    metadata,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn update(&self, memory: Memory) -> crate::Result<()> {
+        // Use store since it uses INSERT OR REPLACE
+        self.store(memory).await?;
+        Ok(())
+    }
+
+    async fn delete(&self, id: &MemoryId) -> crate::Result<bool> {
+        let result = sqlx::query("DELETE FROM memories WHERE id = ?1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to delete memory".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn search(&self, query: MemoryQuery) -> crate::Result<Vec<Memory>> {
+        let mut sql = "SELECT * FROM memories WHERE 1=1".to_string();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(user_id) = &query.user_id {
+            sql.push_str(&format!(" AND user_id = ?{}", params.len() + 1));
+            params.push(user_id.clone());
+        }
+
+        if let Some(conversation_id) = &query.conversation_id {
+            sql.push_str(&format!(" AND conversation_id = ?{}", params.len() + 1));
+            params.push(conversation_id.clone());
+        }
+
+        if let Some(memory_type) = &query.memory_type {
+            sql.push_str(&format!(" AND memory_type = ?{}", params.len() + 1));
+            params.push(memory_type.clone());
+        }
+
+        if let Some(content_query) = &query.content_query {
+            sql.push_str(&format!(" AND content LIKE ?{}", params.len() + 1));
+            params.push(format!("%{}%", content_query));
+        }
+
+        if !query.include_expired {
+            sql.push_str(" AND (expires_at IS NULL OR expires_at > datetime('now'))");
+        }
+
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", params.len() + 1));
+        params.push(query.limit.to_string());
+
+        let mut query_builder = sqlx::query(&sql);
+        for param in params {
+            query_builder = query_builder.bind(param);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to search memories".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+
+        let memories: Vec<Memory> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let created_at_str: String = row.get("created_at");
+                let created_at = rfc3339_to_system_time(&created_at_str)?;
+
+                let expires_at = row.get::<Option<String>, _>("expires_at")
+                    .and_then(|s| rfc3339_to_system_time(&s));
+
+                let embedding = row.get::<Option<Vec<u8>>, _>("embedding")
+                    .map(|b| deserialize_embedding(&b));
+
+                let metadata = row.get::<Option<String>, _>("metadata")
+                    .and_then(|m| serde_json::from_str(&m).ok());
+
+                Some(Memory {
+                    id: MemoryId::new(row.get::<String, _>("id")),
+                    user_id: row.get("user_id"),
+                    conversation_id: row.get("conversation_id"),
+                    content: row.get("content"),
+                    memory_type: row.get("memory_type"),
+                    embedding,
+                    created_at,
+                    expires_at,
+                    metadata,
+                })
+            })
+            .collect();
+
+        // If semantic search with embedding, sort by similarity
+        if let Some(query_embedding) = query.embedding {
+            let mut scored: Vec<(Memory, f32)> = memories
+                .into_iter()
+                .filter_map(|m| {
+                    m.embedding.clone().map(|e| {
+                        let similarity = crate::memory::cosine_similarity(&query_embedding, &e);
+                        (m, similarity)
+                    })
+                })
+                .collect();
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            return Ok(scored.into_iter().map(|(m, _)| m).collect());
+        }
+
+        Ok(memories)
+    }
+
+    async fn cleanup_expired(&self) -> crate::Result<usize> {
+        let result = sqlx::query(
+            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to cleanup expired memories".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
+    async fn stats(&self) -> crate::Result<MemoryStats> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 1 ELSE 0 END) as expired
+            FROM memories
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::ExternalService {
+            source: "Failed to get memory stats".to_string(),
+            cause: Some(Box::new(e)),
+        })?;
+
+        let total_count: i64 = row.get("total");
+        let expired_count: i64 = row.get("expired");
+
+        Ok(MemoryStats {
+            total_count: total_count as usize,
+            count_by_type: std::collections::HashMap::new(),
+            expired_count: expired_count as usize,
+        })
+    }
+
+    async fn close(&self) -> crate::Result<()> {
+        self.pool.close().await;
         Ok(())
     }
 }
