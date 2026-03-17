@@ -349,7 +349,7 @@ pub struct GatewayState {
     /// Configuration
     pub config: Arc<RwLock<GatewayConfig>>,
     /// Active channels
-    pub channels: Arc<RwLock<HashMap<String, Box<dyn Channel>>>>,
+    pub channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
     /// Active agents by ID
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
     /// Session routing table: session_id -> agent_id
@@ -523,7 +523,7 @@ impl Gateway {
         let acp = Arc::new(AcpControlPlane::new());
 
         // Create tool registry with built-in tools (including ACP tools if enabled)
-        let tool_registry = Arc::new(create_default_tool_registry(acp.clone())?);
+        let tool_registry = Arc::new(create_default_tool_registry(acp.clone()).await?);
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
@@ -1084,16 +1084,164 @@ impl Gateway {
     async fn init_channels(&self) -> crate::Result<()> {
         info!("Initializing {} configured channels", self.config.channels.len());
 
-        // Channels are now initialized separately via their own adapters
-        // Each adapter connects to the Gateway via WebSocket
         for (name, config) in &self.config.channels {
             if !config.enabled {
                 info!("Channel {} is disabled, skipping", name);
                 continue;
             }
 
-            info!("Channel {} ({:?}) will be initialized by adapter", name, config.channel_type);
+            info!("Initializing channel {} ({:?})", name, config.channel_type);
+
+            match config.channel_type {
+                ChannelType::Telegram => {
+                    #[cfg(feature = "telegram")]
+                    {
+                        if let Some(token) = config.credentials.get("token") {
+                            let telegram_config = crate::channels::telegram::TelegramConfig::new(token)
+                                .allow_usernames(config.allow_from.clone());
+
+                            let channel = Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
+                            let channel_name = name.clone();
+                            // Start the channel in a background task
+                            let channel_for_task = channel.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = channel_for_task.start().await {
+                                    error!("Telegram channel {} failed: {}", channel_name, e);
+                                }
+                            });
+                            self.state.channels.write().await.insert(name.clone(), channel);
+                            info!("✅ Telegram channel '{}' initialized", name);
+                        } else {
+                            warn!("Telegram channel '{}' missing 'token' in credentials", name);
+                        }
+                    }
+                    #[cfg(not(feature = "telegram"))]
+                    {
+                        warn!("Telegram feature not enabled, skipping channel '{}'", name);
+                    }
+                }
+                ChannelType::Discord => {
+                    #[cfg(feature = "discord")]
+                    {
+                        if let Some(token) = config.credentials.get("token") {
+                            let discord_config = crate::channels::discord::DiscordConfig::new(token);
+
+                            let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
+                            let channel_name = name.clone();
+                            let channel_for_task = channel.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = channel_for_task.start().await {
+                                    error!("Discord channel {} failed: {}", channel_name, e);
+                                }
+                            });
+                            self.state.channels.write().await.insert(name.clone(), channel);
+                            info!("✅ Discord channel '{}' initialized", name);
+                        } else {
+                            warn!("Discord channel '{}' missing 'token' in credentials", name);
+                        }
+                    }
+                    #[cfg(not(feature = "discord"))]
+                    {
+                        warn!("Discord feature not enabled, skipping channel '{}'", name);
+                    }
+                }
+                ChannelType::Slack => {
+                    #[cfg(feature = "slack")]
+                    {
+                        if let Some(token) = config.credentials.get("token") {
+                            let slack_config = crate::channels::slack::SlackConfig::new(token);
+
+                            let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
+                            let channel_name = name.clone();
+                            let channel_for_task = channel.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = channel_for_task.start().await {
+                                    error!("Slack channel {} failed: {}", channel_name, e);
+                                }
+                            });
+                            self.state.channels.write().await.insert(name.clone(), channel);
+                            info!("✅ Slack channel '{}' initialized", name);
+                        } else {
+                            warn!("Slack channel '{}' missing 'token' in credentials", name);
+                        }
+                    }
+                    #[cfg(not(feature = "slack"))]
+                    {
+                        warn!("Slack feature not enabled, skipping channel '{}'", name);
+                    }
+                }
+                ChannelType::Whatsapp => {
+                    #[cfg(feature = "whatsapp")]
+                    {
+                        // WhatsApp requires both phone_number_id and access_token
+                        if let (Some(phone_id), Some(token)) = (
+                            config.credentials.get("phone_number_id"),
+                            config.credentials.get("access_token")
+                        ) {
+                            let whatsapp_config = crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
+
+                            let channel = Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
+                            let channel_name = name.clone();
+                            let channel_for_task = channel.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = channel_for_task.start().await {
+                                    error!("WhatsApp channel {} failed: {}", channel_name, e);
+                                }
+                            });
+                            self.state.channels.write().await.insert(name.clone(), channel);
+                            info!("✅ WhatsApp channel '{}' initialized", name);
+                        } else {
+                            warn!("WhatsApp channel '{}' missing 'phone_number_id' or 'access_token' in credentials", name);
+                        }
+                    }
+                    #[cfg(not(feature = "whatsapp"))]
+                    {
+                        warn!("WhatsApp feature not enabled, skipping channel '{}'", name);
+                    }
+                }
+                ChannelType::Qq => {
+                    #[cfg(feature = "qq")]
+                    {
+                        // QQ requires app_id, app_secret, and bot_qq
+                        if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
+                            config.credentials.get("app_id"),
+                            config.credentials.get("app_secret"),
+                            config.credentials.get("bot_qq")
+                        ) {
+                            let qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
+
+                            let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
+                            let channel_name = name.clone();
+                            let channel_for_task = channel.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = channel_for_task.start().await {
+                                    error!("QQ channel {} failed: {}", channel_name, e);
+                                }
+                            });
+                            self.state.channels.write().await.insert(name.clone(), channel);
+                            info!("✅ QQ channel '{}' initialized", name);
+                        } else {
+                            warn!("QQ channel '{}' missing required credentials (app_id, app_secret, bot_qq)", name);
+                        }
+                    }
+                    #[cfg(not(feature = "qq"))]
+                    {
+                        warn!("QQ feature not enabled, skipping channel '{}'", name);
+                    }
+                }
+                ChannelType::Feishu | ChannelType::WebTerminal => {
+                    // Feishu/Lark and WebTerminal are handled via webhooks/SocketMode
+                    // They don't need a persistent connection here
+                    info!("Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn", name, config.channel_type);
+                }
+                ChannelType::Websocket => {
+                    info!("WebSocket channel '{}' requires external connection", name);
+                }
+            }
         }
+
+        let channel_count = self.state.channels.read().await.len();
+        info!("✅ Initialized {} active channel connections", channel_count);
 
         Ok(())
     }
@@ -1430,7 +1578,7 @@ async fn handle_web_terminal_websocket(
 }
 
 /// Create default tool registry with all built-in tools
-fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<ToolRegistry> {
+async fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
     let mut registry = ToolRegistry::new();
@@ -1467,8 +1615,16 @@ fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<Tool
     registry.register(Box::new(AcpSpawnTool::new(acp.clone())));
     registry.register(Box::new(AcpSessionTool::new(acp.clone())));
 
-    // Note: MemoryTool requires async initialization - register separately
-    // after storage is available: MemoryTool::new().await
+    // Register memory tool for persistent memory storage
+    match MemoryTool::new().await {
+        Ok(memory_tool) => {
+            registry.register(Box::new(memory_tool));
+            info!("MemoryTool registered successfully");
+        }
+        Err(e) => {
+            warn!("Failed to initialize MemoryTool: {}. Memory functionality will not be available.", e);
+        }
+    }
 
     // Register delegation tool for agent-to-agent task delegation
     registry.register(Box::new(DelegateTool::root()));
