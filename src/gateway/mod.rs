@@ -66,6 +66,9 @@ pub struct GatewayConfig {
     /// ACP (Agent Control Plane) configuration
     #[serde(default)]
     pub acp: AcpConfig,
+    /// Cron scheduler configuration
+    #[serde(default)]
+    pub cron: CronConfig,
     /// LLM Provider configurations (provider name -> config)
     #[serde(default)]
     pub providers: HashMap<String, crate::model_router::ProviderConfig>,
@@ -123,13 +126,15 @@ pub struct VectorMemoryConfig {
 impl Default for VectorMemoryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: EmbeddingProviderType::default(),
+            enabled: true,
+            provider: EmbeddingProviderType::LocalGguf,
             embedding_api_key: None,
             embedding_model: "text-embedding-3-small".to_string(),
             embedding_dimension: 1536,
             api_base_url: None,
-            local_model_path: None,
+            local_model_path: Some(
+                "hf:unsloth/embedding-gemma-2b-GGUF/embedding-gemma-2b-Q4_K_M.gguf".to_string(),
+            ),
         }
     }
 }
@@ -203,6 +208,24 @@ impl Default for AcpConfig {
     }
 }
 
+/// Cron scheduler configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronConfig {
+    /// Enable cron scheduler
+    pub enabled: bool,
+    /// Check interval in seconds
+    pub check_interval_seconds: u64,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_interval_seconds: 60,
+        }
+    }
+}
+
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -217,6 +240,7 @@ impl Default for GatewayConfig {
             plugins: PluginConfig::default(),
             hot_reload: HotReloadConfig::default(),
             acp: AcpConfig::default(),
+            cron: CronConfig::default(),
             providers: HashMap::new(),
             model: default_model(),
             model_provider: default_model_provider(),
@@ -271,6 +295,8 @@ pub struct GatewayState {
     pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
     /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
+    /// Cron scheduler for scheduled jobs (RwLock for late initialization)
+    pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::CronScheduler>>>>,
 }
 
 /// Handle to a running agent
@@ -443,6 +469,7 @@ impl Gateway {
             acp,
             vector_memory: RwLock::new(None),
             hot_reload: RwLock::new(None),
+            cron_scheduler: RwLock::new(None),
         });
 
         // Configure providers from config
@@ -549,6 +576,26 @@ impl Gateway {
             }
         } else {
             info!("Hot reload disabled");
+        }
+
+        // Initialize cron scheduler if enabled
+        if config.cron.enabled {
+            info!("Initializing cron scheduler...");
+            use crate::cron::CronScheduler;
+            let (cron_scheduler, command_rx) = CronScheduler::new();
+            let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
+            // Start the scheduler in a background task
+            let cron_scheduler_clone = Arc::clone(&cron_scheduler);
+            tokio::spawn(async move {
+                let mut scheduler = cron_scheduler_clone.lock().await;
+                if let Err(e) = scheduler.start(command_rx).await {
+                    warn!("Cron scheduler failed: {}", e);
+                }
+            });
+            *state.cron_scheduler.write().await = Some(cron_scheduler);
+            info!("✅ Cron scheduler initialized");
+        } else {
+            info!("Cron scheduler disabled");
         }
 
         // Start message processing worker

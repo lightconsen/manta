@@ -110,14 +110,15 @@ impl DaemonManager {
             plugins: Default::default(),
             hot_reload: Default::default(),
             acp: Default::default(),
+            cron: Default::default(),
             providers: std::collections::HashMap::new(),
             model: std::env::var("MANTA_MODEL").unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
             model_provider: std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| "anthropic".to_string()),
         };
 
         // Enable features based on environment variables
-        // Vector Memory - disabled by default (requires API key)
-        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED").map(|v| v == "true" || v == "1").unwrap_or(false) {
+        // Vector Memory - enabled by default with local GGUF embeddings
+        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED").map(|v| v == "true" || v == "1").unwrap_or(true) {
             gateway_config.vector_memory.enabled = true;
             gateway_config.vector_memory.embedding_api_key = std::env::var("MANTA_EMBEDDING_API_KEY").ok();
             if let Ok(model) = std::env::var("MANTA_EMBEDDING_MODEL") {
