@@ -553,16 +553,30 @@ impl Gateway {
             Option<Arc<dyn crate::memory::VectorStore>>,
         ) = match config.storage.storage_type.as_str() {
             "sqlite" => {
-                let db_url = config.storage.database_url.as_deref()
-                    .unwrap_or("sqlite:manta.db");
+                // Use absolute path for database to avoid working directory issues
+                let db_path = config.storage.database_url.as_ref()
+                    .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
+                    .unwrap_or_else(|| {
+                        crate::dirs::manta_dir().join("data").join("manta.db")
+                    });
+
+                // Ensure parent directory exists
+                if let Some(parent) = db_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.ok();
+                }
+
+                // SQLite URL format: sqlite:///absolute/path/to/db for absolute paths
+                let db_url = format!("sqlite:///{}", db_path.display());
+                info!("Connecting to SQLite storage at: {}", db_url);
+
                 let sqlite_storage = Arc::new(
-                    crate::adapters::SqliteStorage::connect(db_url).await?
+                    crate::adapters::SqliteStorage::connect(&db_url).await?
                 );
                 // Clone the Arc for use as VectorStore trait object
                 let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
                 // Wrap in RwLock for the generic storage interface
                 let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
-                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(db_url).await?));
+                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(&db_url).await?));
                 (storage, Some(vector_store))
             }
             "file" => {
