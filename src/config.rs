@@ -619,6 +619,11 @@ pub mod hot_reload {
     use tokio::sync::{mpsc, RwLock};
     use tracing::{debug, error, info, warn};
 
+    #[cfg(feature = "hot-reload")]
+    use notify_debouncer_full::{new_debouncer, DebouncedEvent, Debouncer, FileIdMap};
+    #[cfg(feature = "hot-reload")]
+    use notify::{RecursiveMode, RecommendedWatcher};
+
     /// Configuration file types that can be hot-reloaded
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum ConfigFileType {
@@ -687,6 +692,9 @@ pub mod hot_reload {
         /// Channel for change events
         change_tx: mpsc::Sender<ConfigChangeEvent>,
         change_rx: Arc<RwLock<mpsc::Receiver<ConfigChangeEvent>>>,
+        /// File watcher (only available with hot-reload feature)
+        #[cfg(feature = "hot-reload")]
+        watcher: Arc<RwLock<Option<Debouncer<RecommendedWatcher, FileIdMap>>>>,
     }
 
     impl HotReloadManager {
@@ -699,10 +707,83 @@ pub mod hot_reload {
                 handlers: Arc::new(RwLock::new(HashMap::new())),
                 change_tx,
                 change_rx: Arc::new(RwLock::new(change_rx)),
+                #[cfg(feature = "hot-reload")]
+                watcher: Arc::new(RwLock::new(None)),
             })
         }
 
         /// Start watching files
+        #[cfg(feature = "hot-reload")]
+        pub async fn start(&self) -> crate::Result<()> {
+            let change_tx = self.change_tx.clone();
+            let watched_files = self.watched_files.clone();
+
+            // Create debouncer with 500ms delay
+            let debouncer = new_debouncer(
+                Duration::from_millis(500),
+                None,
+                move |result: Result<Vec<DebouncedEvent>, Vec<notify::Error>>| {
+                    match result {
+                        Ok(events) => {
+                            for debounced_event in events {
+                                let notify_event = &debounced_event.event;
+                                let change_type = match notify_event.kind {
+                                    notify::EventKind::Create(_) => ConfigChangeType::Created,
+                                    notify::EventKind::Modify(_) => ConfigChangeType::Modified,
+                                    notify::EventKind::Remove(_) => ConfigChangeType::Deleted,
+                                    _ => continue,
+                                };
+
+                                // Process each path in the event
+                                for path in &notify_event.paths {
+                                    // Look up the config type for this path
+                                    let config_type = {
+                                        let files = futures::executor::block_on(async {
+                                            watched_files.read().await
+                                        });
+                                        files.get(path).map(|f| f.config_type)
+                                            .unwrap_or(ConfigFileType::Custom)
+                                    };
+
+                                    let event = ConfigChangeEvent {
+                                        path: path.clone(),
+                                        config_type,
+                                        change_type: change_type.clone(),
+                                    };
+
+                                    if let Err(e) = change_tx.try_send(event) {
+                                        warn!("Failed to send config change event: {}", e);
+                                    } else {
+                                        info!("Config file changed: {:?}", path);
+                                    }
+                                }
+                            }
+                        }
+                        Err(errors) => {
+                            for e in errors {
+                                error!("File watcher error: {}", e);
+                            }
+                        }
+                    }
+                },
+            )
+            .map_err(|e| crate::error::ConfigError::InvalidValue {
+                key: "hot_reload".to_string(),
+                message: format!("Failed to create file watcher: {}", e),
+            })?;
+
+            // Store the watcher
+            {
+                let mut watcher_guard = self.watcher.write().await;
+                *watcher_guard = Some(debouncer);
+            }
+
+            info!("Hot reload manager started with file watching enabled");
+            Ok(())
+        }
+
+        /// Start watching files (without hot-reload feature)
+        #[cfg(not(feature = "hot-reload"))]
         pub async fn start(&self) -> crate::Result<()> {
             info!("Hot reload manager started (file watching disabled without hot-reload feature)");
             Ok(())
@@ -736,6 +817,23 @@ pub mod hot_reload {
             {
                 let mut files = self.watched_files.write().await;
                 files.insert(path.clone(), watched_config);
+            }
+
+            // Register with file watcher if hot-reload feature is enabled
+            #[cfg(feature = "hot-reload")]
+            {
+                let mut watcher_guard = self.watcher.write().await;
+                if let Some(ref mut debouncer) = *watcher_guard {
+                    use notify::Watcher;
+                    if let Err(e) = debouncer
+                        .watcher()
+                        .watch(&path, RecursiveMode::NonRecursive)
+                    {
+                        warn!("Failed to add file to watcher: {:?} - {}", path, e);
+                    } else {
+                        debug!("Added file to notify watcher: {:?}", path);
+                    }
+                }
             }
 
             info!("Watching config file: {:?} ({:?})", path, config_type);
@@ -809,6 +907,12 @@ pub mod hot_reload {
         pub async fn stop(&self) -> crate::Result<()> {
             let mut files = self.watched_files.write().await;
             files.clear();
+
+            #[cfg(feature = "hot-reload")]
+            {
+                let mut watcher = self.watcher.write().await;
+                *watcher = None;
+            }
 
             info!("Hot reload manager stopped");
             Ok(())
