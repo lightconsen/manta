@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(feature = "whatsapp")]
 pub mod whatsapp;
 
-#[cfg(feature = "lark")]
+#[cfg(feature = "feishu")]
 pub mod lark;
 
 #[cfg(feature = "qq")]
@@ -24,7 +24,7 @@ pub struct WebhookState {
     #[cfg(feature = "whatsapp")]
     pub whatsapp_config: Option<crate::channels::WhatsappConfig>,
     /// Lark configuration
-    #[cfg(feature = "lark")]
+    #[cfg(feature = "feishu")]
     pub lark_config: Option<crate::channels::LarkConfig>,
     /// QQ configuration
     #[cfg(feature = "qq")]
@@ -38,7 +38,7 @@ impl WebhookState {
             agent,
             #[cfg(feature = "whatsapp")]
             whatsapp_config: None,
-            #[cfg(feature = "lark")]
+            #[cfg(feature = "feishu")]
             lark_config: None,
             #[cfg(feature = "qq")]
             qq_config: None,
@@ -53,7 +53,7 @@ impl WebhookState {
     }
 
     /// Set Lark configuration
-    #[cfg(feature = "lark")]
+    #[cfg(feature = "feishu")]
     pub fn with_lark_config(mut self, config: crate::channels::LarkConfig) -> Self {
         self.lark_config = Some(config);
         self
@@ -77,7 +77,7 @@ pub fn create_webhook_router(_state: WebhookState) -> Router {
         router = router.nest("/whatsapp", whatsapp::whatsapp_webhook_router(_state.clone()));
     }
 
-    #[cfg(feature = "lark")]
+    #[cfg(feature = "feishu")]
     {
         router = router.nest("/lark", lark::lark_webhook_router(_state.clone()));
     }
