@@ -208,6 +208,7 @@ pub struct StorageConfig {
 pub enum StorageType {
     Memory,
     File,
+    #[serde(alias = "sqlite")]
     Database,
 }
 
