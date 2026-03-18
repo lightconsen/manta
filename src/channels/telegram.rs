@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tokio::sync::{mpsc, Notify, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "telegram")]
 use teloxide::{
@@ -263,9 +263,13 @@ impl Channel for TelegramChannel {
                 })?
             };
 
+            let chat_id_str = &message.conversation_id.0;
+            info!("DEBUG: Telegram send - conversation_id='{}'", chat_id_str);
+
             let chat_id: i64 =
-                message.conversation_id.0.parse().map_err(|_| {
-                    crate::error::MantaError::Validation("Invalid chat ID".to_string())
+                chat_id_str.parse().map_err(|e| {
+                    error!("DEBUG: Failed to parse chat_id '{}': {:?}", chat_id_str, e);
+                    crate::error::MantaError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
                 })?;
 
             // Format content

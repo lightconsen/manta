@@ -435,6 +435,7 @@ pub enum GatewayEvent {
         session_id: String,
         agent_id: String,
         content: String,
+        channel: String,
     },
     /// Agent status changed
     AgentStatus {
@@ -995,8 +996,9 @@ impl Gateway {
                         session_id,
                         message,
                         user_id,
-                        channel: _,
+                        channel,
                     } => {
+                        let source_channel = channel;
                         info!("Agent {} processing message for session {}", agent_id, session_id);
 
                         // Update status to processing
@@ -1072,10 +1074,12 @@ impl Gateway {
                         };
 
                         // Send response event
+                        info!("DEBUG: Agent {} sending AgentResponse for session {}", agent_id, session_id);
                         let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                             session_id: session_id.clone(),
                             agent_id: agent_id.clone(),
                             content: response_content,
+                            channel: source_channel,
                         });
 
                         // Update status to idle
@@ -1296,10 +1300,16 @@ impl Gateway {
                         Ok(GatewayEvent::AgentResponse {
                             session_id,
                             content,
+                            channel: response_channel,
                             ..
                         }) => {
+                            // Only handle responses from Telegram messages
+                            if response_channel != "telegram" {
+                                debug!("Skipping non-Telegram response for channel: {}", response_channel);
+                                continue;
+                            }
                             info!(
-                                "DEBUG: Received AgentResponse event for session: {}",
+                                "DEBUG: Received AgentResponse event for Telegram session: {}",
                                 session_id
                             );
                             // Send response back to Telegram
@@ -2077,6 +2087,7 @@ async fn chat_handler(
                     session_id,
                     agent_id: _,
                     content,
+                    ..
                 })) => {
                     if session_id == conversation_id {
                         let resp = serde_json::json!({
