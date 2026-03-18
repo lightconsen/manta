@@ -1234,8 +1234,8 @@ impl Gateway {
             let (message_tx, mut message_rx) =
                 mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
 
-            // Set up the global message queue sender for Telegram channel
-            crate::channels::telegram::set_message_queue_sender(message_tx);
+            // Set up the message sender for this Telegram channel instance
+            channel.set_message_sender(message_tx).await;
 
             // Get agent for routing messages (use channel's agent_id or default)
             let agent_name = config.agent_id.as_deref().unwrap_or("default");
