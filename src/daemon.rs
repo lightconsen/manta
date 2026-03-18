@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::Command;
+use tracing::{info, warn};
 
 /// Daemon configuration
 #[derive(Debug, Clone)]
@@ -103,28 +104,48 @@ impl DaemonManager {
         use crate::agent::AgentConfig;
         use crate::gateway::{Gateway, GatewayConfig};
 
-        // Build GatewayConfig from daemon config and environment
-        let mut gateway_config = GatewayConfig {
-            host: self.config.host.clone(),
-            port: self.config.port,
-            web_port: self.config.web_port,
-            tailscale_enabled: false,
-            tailscale_domain: None,
-            default_agent: AgentConfig::default(),
-            channels: std::collections::HashMap::new(),
-            vector_memory: Default::default(),
-            plugins: Default::default(),
-            hot_reload: Default::default(),
-            acp: Default::default(),
-            cron: Default::default(),
-            providers: std::collections::HashMap::new(),
-            model: std::env::var("MANTA_MODEL")
-                .unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
-            model_provider: std::env::var("MANTA_MODEL_PROVIDER")
-                .unwrap_or_else(|_| "anthropic".to_string()),
-            security: Default::default(),
-            storage: Default::default(),
+        // Try to load existing Gateway config from manta.toml
+        let config_path = crate::dirs::manta_dir().join("manta.toml");
+        let mut gateway_config = if config_path.exists() {
+            match tokio::fs::read_to_string(&config_path).await {
+                Ok(content) => {
+                    match toml::from_str::<GatewayConfig>(&content) {
+                        Ok(mut config) => {
+                            // Override with daemon config for host/port
+                            config.host = self.config.host.clone();
+                            config.port = self.config.port;
+                            config.web_port = self.config.web_port;
+                            println!("📄 Loaded Gateway config from {:?}", config_path);
+                            println!("   Channels configured: {}", config.channels.len());
+                            for (name, ch) in &config.channels {
+                                println!("   - {}: enabled={}", name, ch.enabled);
+                            }
+                            config
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse manta.toml: {}, using defaults", e);
+                            GatewayConfig::default()
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to read manta.toml: {}, using defaults", e);
+                    GatewayConfig::default()
+                }
+            }
+        } else {
+            println!("📄 No manta.toml found, using default config");
+            GatewayConfig::default()
         };
+
+        // Apply environment overrides
+        gateway_config.host = self.config.host.clone();
+        gateway_config.port = self.config.port;
+        gateway_config.web_port = self.config.web_port;
+        gateway_config.model = std::env::var("MANTA_MODEL")
+            .unwrap_or_else(|_| gateway_config.model.clone());
+        gateway_config.model_provider = std::env::var("MANTA_MODEL_PROVIDER")
+            .unwrap_or_else(|_| gateway_config.model_provider.clone());
 
         // Enable features based on environment variables
         // Vector Memory - enabled by default with local GGUF embeddings

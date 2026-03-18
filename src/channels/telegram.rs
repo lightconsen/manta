@@ -64,7 +64,7 @@ impl TelegramConfig {
 #[derive(Clone)]
 pub struct TelegramChannel {
     config: TelegramConfig,
-    bot: Option<Bot>,
+    bot: Arc<RwLock<Option<Bot>>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Mapping from internal message ID to (chat_id, telegram_message_id)
     message_map: Arc<RwLock<HashMap<Id, (i64, i32)>>>,
@@ -76,7 +76,7 @@ impl std::fmt::Debug for TelegramChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TelegramChannel")
             .field("config", &self.config)
-            .field("bot", &self.bot.is_some())
+            .field("bot_initialized", &true) // Bot is always initialized after start()
             .field("running", &self.running)
             .field("message_map", &self.message_map)
             .field("shutdown_notify", &self.shutdown_notify)
@@ -90,7 +90,7 @@ impl TelegramChannel {
     pub fn new(config: TelegramConfig) -> Self {
         Self {
             config,
-            bot: None,
+            bot: Arc::new(RwLock::new(None)),
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             message_map: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notify: Arc::new(Notify::new()),
@@ -231,6 +231,13 @@ impl Channel for TelegramChannel {
             info!("Starting Telegram channel");
 
             let bot = Bot::new(&self.config.token);
+
+            // Store the bot in the shared lock
+            {
+                let mut bot_guard = self.bot.write().await;
+                *bot_guard = Some(bot.clone());
+            }
+
             let _allowed_usernames = self.config.allowed_usernames.clone();
             let running = self.running.clone();
             let shutdown_notify = self.shutdown_notify.clone();
@@ -275,9 +282,12 @@ impl Channel for TelegramChannel {
     async fn send(&self, message: OutgoingMessage) -> crate::Result<Id> {
         #[cfg(feature = "telegram")]
         {
-            let bot = self.bot.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("Bot not initialized".to_string())
-            })?;
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
 
             let chat_id: i64 =
                 message.conversation_id.0.parse().map_err(|_| {
@@ -335,9 +345,12 @@ impl Channel for TelegramChannel {
     async fn send_typing(&self, conversation_id: &ConversationId) -> crate::Result<()> {
         #[cfg(feature = "telegram")]
         {
-            let bot = self.bot.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("Bot not initialized".to_string())
-            })?;
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
 
             let chat_id: i64 = conversation_id
                 .0
@@ -363,9 +376,12 @@ impl Channel for TelegramChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         #[cfg(feature = "telegram")]
         {
-            let bot = self.bot.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("Bot not initialized".to_string())
-            })?;
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
 
             // Look up the chat_id and telegram message_id from our mapping
             let (chat_id, telegram_msg_id) = {
@@ -399,9 +415,12 @@ impl Channel for TelegramChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         #[cfg(feature = "telegram")]
         {
-            let bot = self.bot.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("Bot not initialized".to_string())
-            })?;
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
 
             // Look up the chat_id and telegram message_id from our mapping
             let (chat_id, telegram_msg_id) = {
@@ -441,7 +460,8 @@ impl Channel for TelegramChannel {
     async fn health_check(&self) -> crate::Result<bool> {
         #[cfg(feature = "telegram")]
         {
-            if let Some(bot) = &self.bot {
+            let bot_guard = self.bot.read().await;
+            if let Some(bot) = bot_guard.as_ref() {
                 match bot.get_me().await {
                     Ok(_) => Ok(true),
                     Err(_) => Ok(false),
@@ -463,6 +483,7 @@ async fn handle_message(
     bot: Bot,
     msg: Message,
 ) -> ResponseResult<()> {
+    info!("DEBUG: handle_message called");
     if let Some(text) = msg.text() {
         let user = msg.from();
         let username: String = user
@@ -470,12 +491,12 @@ async fn handle_message(
             .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
             .unwrap_or_else(|| "unknown".to_string());
         info!("📨 Received message from @{}: {}", username, text);
-        debug!("Full message details: from {:?}, text: {}", msg.from(), text);
+        info!("DEBUG: Message queue sender check...");
 
         // Create incoming message
         let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
-
         let chat_id = msg.chat.id.0.to_string();
+        info!("DEBUG: chat_id={}, user_id={}", chat_id, user_id);
 
         let incoming = IncomingMessage::new(&user_id, &chat_id, text).with_metadata(
             MessageMetadata::new()
@@ -484,25 +505,33 @@ async fn handle_message(
         );
 
         // Route to agent via global message queue if available
-        if let Some(tx) = get_message_queue_sender() {
+        let queue_sender = get_message_queue_sender();
+        info!("DEBUG: Queue sender is {}",
+            if queue_sender.is_some() { "SOME" } else { "NONE" }
+        );
+
+        if let Some(tx) = queue_sender {
+            info!("DEBUG: Sending message to queue...");
             if let Err(e) = tx.send(incoming) {
                 warn!("Failed to route message to agent: {}", e);
-                // Send error feedback to user
                 bot.send_message(
                     msg.chat.id,
                     "Sorry, I couldn't process your message. Please try again.",
                 )
                 .await?;
+            } else {
+                info!("DEBUG: Message sent to queue successfully");
             }
-            // Note: Response will be sent by the agent via the channel's send method
         } else {
             // No message handler configured, echo back for testing
-            info!("📤 Echoing message back to @{}: {}", username, text);
+            info!("📤 No message handler configured, echoing back to @{}: {}", username, text);
             let response = format!("Echo: {}", text);
             bot.send_message(msg.chat.id, &response)
                 .await?;
-            info!("📤 Response sent: {}", response);
+            info!("📤 Echo response sent: {}", response);
         }
+    } else {
+        info!("DEBUG: Message has no text");
     }
 
     Ok(())
