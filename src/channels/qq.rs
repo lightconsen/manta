@@ -331,6 +331,11 @@ impl Channel for QqChannel {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
+            chat_types: vec![
+                crate::channels::ChatType::Direct,
+                crate::channels::ChatType::Group,
+                crate::channels::ChatType::Channel,
+            ],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -339,6 +344,9 @@ impl Channel for QqChannel {
             supports_buttons: true,
             supports_commands: true,
             supports_reactions: true,
+            supports_edit: true,
+            supports_unsend: false,
+            supports_effects: false,
         }
     }
 

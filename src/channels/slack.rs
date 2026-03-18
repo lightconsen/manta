@@ -195,6 +195,11 @@ impl Channel for SlackChannel {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
+            chat_types: vec![
+                crate::channels::ChatType::Direct,
+                crate::channels::ChatType::Channel,
+                crate::channels::ChatType::Thread,
+            ],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -203,6 +208,9 @@ impl Channel for SlackChannel {
             supports_buttons: true,
             supports_commands: true,
             supports_reactions: true,
+            supports_edit: true,
+            supports_unsend: true,
+            supports_effects: false,
         }
     }
 

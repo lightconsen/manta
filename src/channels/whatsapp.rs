@@ -371,6 +371,7 @@ impl Channel for WhatsappChannel {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
+            chat_types: vec![crate::channels::ChatType::Direct, crate::channels::ChatType::Group],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -379,6 +380,9 @@ impl Channel for WhatsappChannel {
             supports_buttons: true,
             supports_commands: false,
             supports_reactions: false,
+            supports_edit: false,
+            supports_unsend: false,
+            supports_effects: false,
         }
     }
 

@@ -10,6 +10,7 @@ use crate::core::models::Id;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tokio::sync::{mpsc, Notify, RwLock};
 use tracing::{debug, info, warn};
 
@@ -21,19 +22,6 @@ use teloxide::{
     types::{Message, MessageId, ParseMode},
     Bot,
 };
-
-/// Static message queue for routing messages from Telegram to Agent
-static MESSAGE_QUEUE: tokio::sync::OnceCell<tokio::sync::mpsc::UnboundedSender<IncomingMessage>> = tokio::sync::OnceCell::const_new();
-
-/// Set the global message queue sender
-pub fn set_message_queue_sender(sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>) {
-    let _ = MESSAGE_QUEUE.set(sender);
-}
-
-/// Get the global message queue sender if initialized
-pub fn get_message_queue_sender() -> Option<&'static tokio::sync::mpsc::UnboundedSender<IncomingMessage>> {
-    MESSAGE_QUEUE.get()
-}
 
 /// Telegram channel configuration
 #[derive(Debug, Clone)]
@@ -70,6 +58,8 @@ pub struct TelegramChannel {
     message_map: Arc<RwLock<HashMap<Id, (i64, i32)>>>,
     /// Shutdown notifier
     shutdown_notify: Arc<Notify>,
+    /// Message sender for routing incoming messages to the gateway/agent
+    message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
 }
 
 impl std::fmt::Debug for TelegramChannel {
@@ -80,7 +70,7 @@ impl std::fmt::Debug for TelegramChannel {
             .field("running", &self.running)
             .field("message_map", &self.message_map)
             .field("shutdown_notify", &self.shutdown_notify)
-            .field("has_message_queue", &get_message_queue_sender().is_some())
+            .field("has_message_queue", &"<async>")
             .finish()
     }
 }
@@ -94,25 +84,33 @@ impl TelegramChannel {
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             message_map: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notify: Arc::new(Notify::new()),
+            message_tx: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Check if user is allowed
-    #[allow(dead_code)]
-    fn is_user_allowed(&self, username: Option<&str>) -> bool {
-        if self.config.allowed_usernames.is_empty() {
-            return true;
-        }
-        username
-            .map(|u| {
-                self.config
-                    .allowed_usernames
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(u))
-            })
-            .unwrap_or(false)
+    /// Set the message queue sender for routing incoming messages
+    pub async fn set_message_sender(&self, sender: mpsc::UnboundedSender<IncomingMessage>) {
+        let mut tx = self.message_tx.write().await;
+        *tx = Some(sender);
     }
 
+    /// Get the message sender if available
+    async fn get_message_sender(&self) -> Option<mpsc::UnboundedSender<IncomingMessage>> {
+        self.message_tx.read().await.clone()
+    }
+}
+
+/// Pre-compiled regex patterns for markdown parsing
+static RE_BOLD_DOUBLE_STAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static RE_BOLD_DOUBLE_UNDERSCORE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"__(.+?)__").unwrap());
+static RE_ITALIC_STAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
+static RE_ITALIC_UNDERSCORE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"_([^_]+)_").unwrap());
+static RE_CODE_INLINE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"`([^`]+)`").unwrap());
+static RE_CODE_BLOCK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap());
+static RE_STRIKETHROUGH: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"~~(.+?)~~").unwrap());
+static RE_LINK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+
+impl TelegramChannel {
     /// Convert markdown to Telegram HTML
     fn markdown_to_telegram_html(text: &str) -> String {
         let mut result = text.to_string();
@@ -123,21 +121,9 @@ impl TelegramChannel {
             .replace('<', "&lt;")
             .replace('>', "&gt;");
 
-        // Bold: **text** or __text__ -> <b>text</b>
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
-            .replace_all(&result, "<b>$1</b>")
-            .to_string();
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
-            .replace_all(&result, "<b>$1</b>")
-            .to_string();
-
-        // Italic: *text* or _text_ -> <i>text</i>
         // Use placeholders to protect bold from being converted to italic
         let bold_placeholder = "\x00BOLD\x00";
-        result = regex::Regex::new(r"\*\*(.+?)\*\*")
-            .unwrap()
+        result = RE_BOLD_DOUBLE_STAR
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -148,8 +134,7 @@ impl TelegramChannel {
             })
             .to_string();
 
-        result = regex::Regex::new(r"__(.+?)__")
-            .unwrap()
+        result = RE_BOLD_DOUBLE_UNDERSCORE
             .replace_all(&result, |caps: &regex::Captures<'_>| {
                 format!(
                     "{}{}{}",
@@ -160,43 +145,24 @@ impl TelegramChannel {
             })
             .to_string();
 
-        // Now process italic
-        result = regex::Regex::new(r"\*([^*]+)\*")
-            .unwrap()
-            .replace_all(&result, "<i>$1</i>")
-            .to_string();
+        // Process italic
+        result = RE_ITALIC_STAR.replace_all(&result, "<i>$1</i>").to_string();
+        result = RE_ITALIC_UNDERSCORE.replace_all(&result, "<i>$1</i>").to_string();
 
-        result = regex::Regex::new(r"_([^_]+)_")
-            .unwrap()
-            .replace_all(&result, "<i>$1</i>")
-            .to_string();
-
-        // Restore bold and apply formatting
+        // Restore bold placeholders with actual HTML tags
         result = result.replace(bold_placeholder, "<b>$1</b>");
 
         // Code: `text` -> <code>text</code>
-        result = regex::Regex::new(r"`([^`]+)`")
-            .unwrap()
-            .replace_all(&result, "<code>$1</code>")
-            .to_string();
+        result = RE_CODE_INLINE.replace_all(&result, "<code>$1</code>").to_string();
 
         // Code block: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
-        result = regex::Regex::new(r"```(\w+)?\n(.*?)```")
-            .unwrap()
-            .replace_all(&result, "<pre><code>$2</code></pre>")
-            .to_string();
+        result = RE_CODE_BLOCK.replace_all(&result, "<pre><code>$2</code></pre>").to_string();
 
         // Strikethrough: ~~text~~ -> <s>text</s>
-        result = regex::Regex::new(r"~~(.+?)~~")
-            .unwrap()
-            .replace_all(&result, "<s>$1</s>")
-            .to_string();
+        result = RE_STRIKETHROUGH.replace_all(&result, "<s>$1</s>").to_string();
 
         // Links: [text](url) -> <a href="url">text</a>
-        result = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)")
-            .unwrap()
-            .replace_all(&result, r#"<a href="$2">$1</a>"#)
-            .to_string();
+        result = RE_LINK.replace_all(&result, r#"<a href="$2">$1</a>"#).to_string();
 
         result
     }
@@ -238,16 +204,24 @@ impl Channel for TelegramChannel {
                 *bot_guard = Some(bot.clone());
             }
 
-            let _allowed_usernames = self.config.allowed_usernames.clone();
+            let allowed_usernames = self.config.allowed_usernames.clone();
             let running = self.running.clone();
             let shutdown_notify = self.shutdown_notify.clone();
+            let message_tx = self.get_message_sender().await;
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
-            // Spawn the update dispatcher
+            // Spawn the update dispatcher with captured message sender
             tokio::spawn(async move {
-                let handler =
-                    dptree::entry().branch(Update::filter_message().endpoint(handle_message));
+                let handler = dptree::entry().branch(
+                    Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
+                        let tx = message_tx.clone();
+                        let allowed = allowed_usernames.clone();
+                        async move {
+                            handle_message_with_sender(bot, msg, tx, allowed).await
+                        }
+                    }),
+                );
 
                 let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
                     .enable_ctrlc_handler()
@@ -314,10 +288,14 @@ impl Channel for TelegramChannel {
                 req = req.disable_notification(true);
             }
 
-            if let Some(_reply_id) = message.reply_to {
-                // Note: reply_to contains our internal UUID, not the Telegram message ID
-                // To properly implement replies, we'd need to map our UUID to Telegram's message ID
-                // For now, skipping reply functionality
+            // Handle reply_to by looking up the Telegram message ID from our mapping
+            if let Some(reply_id) = message.reply_to {
+                let map = self.message_map.read().await;
+                if let Some((_, telegram_msg_id)) = map.get(&reply_id) {
+                    req = req.reply_to_message_id(teloxide::types::MessageId(*telegram_msg_id));
+                } else {
+                    debug!("Reply message ID {} not found in mapping", reply_id);
+                }
             }
 
             let sent = req.await.map_err(|e| {
@@ -479,24 +457,44 @@ impl Channel for TelegramChannel {
 }
 
 #[cfg(feature = "telegram")]
-async fn handle_message(
+async fn handle_message_with_sender(
     bot: Bot,
     msg: Message,
+    message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
+    allowed_usernames: Vec<String>,
 ) -> ResponseResult<()> {
-    info!("DEBUG: handle_message called");
     if let Some(text) = msg.text() {
         let user = msg.from();
         let username: String = user
             .as_ref()
             .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
             .unwrap_or_else(|| "unknown".to_string());
+
+        // Check if user is allowed
+        if !allowed_usernames.is_empty() {
+            let is_allowed = user
+                .as_ref()
+                .map(|u| u.username.as_ref())
+                .flatten()
+                .map(|u| allowed_usernames.iter().any(|a| a.eq_ignore_ascii_case(u)))
+                .unwrap_or(false);
+
+            if !is_allowed {
+                warn!("User @{} is not in allowed usernames list", username);
+                bot.send_message(
+                    msg.chat.id,
+                    "Sorry, you're not authorized to use this bot.",
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
         info!("📨 Received message from @{}: {}", username, text);
-        info!("DEBUG: Message queue sender check...");
 
         // Create incoming message
         let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
         let chat_id = msg.chat.id.0.to_string();
-        info!("DEBUG: chat_id={}, user_id={}", chat_id, user_id);
 
         let incoming = IncomingMessage::new(&user_id, &chat_id, text).with_metadata(
             MessageMetadata::new()
@@ -504,14 +502,8 @@ async fn handle_message(
                 .with_extra("chat_type", format!("{:?}", msg.chat.kind)),
         );
 
-        // Route to agent via global message queue if available
-        let queue_sender = get_message_queue_sender();
-        info!("DEBUG: Queue sender is {}",
-            if queue_sender.is_some() { "SOME" } else { "NONE" }
-        );
-
-        if let Some(tx) = queue_sender {
-            info!("DEBUG: Sending message to queue...");
+        // Route to agent via message queue if available
+        if let Some(tx) = message_tx {
             if let Err(e) = tx.send(incoming) {
                 warn!("Failed to route message to agent: {}", e);
                 bot.send_message(
@@ -519,19 +511,13 @@ async fn handle_message(
                     "Sorry, I couldn't process your message. Please try again.",
                 )
                 .await?;
-            } else {
-                info!("DEBUG: Message sent to queue successfully");
             }
         } else {
             // No message handler configured, echo back for testing
             info!("📤 No message handler configured, echoing back to @{}: {}", username, text);
             let response = format!("Echo: {}", text);
-            bot.send_message(msg.chat.id, &response)
-                .await?;
-            info!("📤 Echo response sent: {}", response);
+            bot.send_message(msg.chat.id, &response).await?;
         }
-    } else {
-        info!("DEBUG: Message has no text");
     }
 
     Ok(())
