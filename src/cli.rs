@@ -10,8 +10,9 @@ use crate::error::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// Manta - Your AI assistant
 #[derive(Debug, Parser)]
@@ -556,7 +557,7 @@ pub enum PluginCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum ChannelCommands {
-    /// Add/connect a channel
+    /// Add/configure a channel in Gateway
     Add {
         /// Channel type to add
         #[arg(value_enum)]
@@ -564,9 +565,12 @@ pub enum ChannelCommands {
         /// Bot token (can also use env var: TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, etc.)
         #[arg(short, long)]
         token: Option<String>,
-        /// Run in foreground (don't detach)
-        #[arg(long)]
-        foreground: bool,
+    },
+    /// Stop a channel
+    Stop {
+        /// Channel type to stop
+        #[arg(value_enum)]
+        channel: ChannelType,
     },
     /// Remove/disconnect a channel
     Remove {
@@ -748,6 +752,7 @@ impl Cli {
             Commands::Agent { command } => self.run_agent_command(command).await,
             Commands::Team { command } => self.run_team_command(command).await,
             Commands::Channel { command } => self.run_channel_command(command).await,
+            Commands::Plugin { command } => self.run_plugin_command(command).await,
             Commands::Start {
                 host,
                 port,
@@ -2297,10 +2302,10 @@ system_prompt: |
     /// Run channel commands
     async fn run_channel_command(&self, command: &ChannelCommands) -> Result<()> {
         match command {
-            ChannelCommands::Add { channel, token, foreground } => {
-                self.run_channel_add(*channel, token.clone(), *foreground)
-                    .await
+            ChannelCommands::Add { channel, token } => {
+                self.run_channel_add(*channel, token.clone()).await
             }
+            ChannelCommands::Stop { channel } => self.run_channel_stop(*channel).await,
             ChannelCommands::Remove { channel } => self.run_channel_remove(*channel).await,
             ChannelCommands::List { all } => self.run_channel_list(*all).await,
             ChannelCommands::Status { channel } => self.run_channel_status(*channel).await,
@@ -2308,16 +2313,30 @@ system_prompt: |
         }
     }
 
-    /// Add/connect a channel (Telegram, Discord, Slack, WhatsApp, QQ, Lark)
+    /// Add/configure a channel in Gateway
     async fn run_channel_add(
         &self,
         channel: ChannelType,
         token: Option<String>,
-        foreground: bool,
     ) -> Result<()> {
         match channel {
-            ChannelType::Telegram => self.start_telegram_channel(token, foreground).await,
+            ChannelType::Telegram => self.add_telegram_channel(token).await,
             ChannelType::Discord => {
+                println!("🚧 Discord channel support coming soon!");
+                println!("   To use Discord, build with: cargo build --features discord");
+                Ok(())
+            }
+            ChannelType::Slack => {
+                println!("🚧 Slack channel support coming soon!");
+                println!("   To use Slack, build with: cargo build --features slack");
+                Ok(())
+            }
+            ChannelType::Whatsapp => {
+                println!("🚧 WhatsApp channel support coming soon!");
+                println!("   To use WhatsApp, build with: cargo build --features whatsapp");
+                Ok(())
+            }
+            ChannelType::Qq => {
                 println!("🚧 Discord channel support coming soon!");
                 println!("   To use Discord, build with: cargo build --features discord");
                 Ok(())
@@ -2345,12 +2364,38 @@ system_prompt: |
         }
     }
 
-    /// Start Telegram channel
+    /// Stop a channel
+    async fn run_channel_stop(&self, channel: ChannelType) -> Result<()> {
+        match channel {
+            ChannelType::Telegram => self.stop_telegram_channel().await,
+            ChannelType::Discord => {
+                println!("🚧 Discord channel support coming soon!");
+                Ok(())
+            }
+            ChannelType::Slack => {
+                println!("🚧 Slack channel support coming soon!");
+                Ok(())
+            }
+            ChannelType::Whatsapp => {
+                println!("🚧 WhatsApp channel support coming soon!");
+                Ok(())
+            }
+            ChannelType::Qq => {
+                println!("🚧 QQ channel support coming soon!");
+                Ok(())
+            }
+            ChannelType::Lark => {
+                println!("🚧 Lark/Feishu channel support coming soon!");
+                Ok(())
+            }
+        }
+    }
+
+    /// Add/configure Telegram channel in Gateway
     #[cfg(feature = "telegram")]
-    async fn start_telegram_channel(&self, token: Option<String>, foreground: bool) -> Result<()> {
-        use crate::agent::{AgentBuilder, AgentConfig};
-        use crate::channels::{Channel, TelegramChannel, TelegramConfig};
-        use crate::tools::ToolRegistry;
+    async fn add_telegram_channel(&self, token: Option<String>) -> Result<()> {
+        use crate::gateway::ChannelConfig;
+        use crate::channels::ChannelType;
 
         // Get token from args or environment
         let token = match token {
@@ -2362,77 +2407,136 @@ system_prompt: |
             })?,
         };
 
-        println!("🚀 Starting Telegram bot...");
+        println!("🚀 Adding Telegram channel to Gateway...");
 
-        // Create agent with tools
-        let tools = ToolRegistry::new();
-        let _agent = Arc::new(
-            AgentBuilder::new()
-                .config(AgentConfig::default())
-                .tools(Arc::new(tools))
-                .build()?,
-        );
-
-        // Create and start Telegram channel
-        let config = TelegramConfig::new(token);
-        let channel = TelegramChannel::new(config);
-
-        if foreground {
-            println!("   Running in foreground mode (Press Ctrl+C to stop)");
-            channel.start().await?;
+        // Load the Gateway config
+        let config_path = crate::dirs::manta_dir().join("manta.toml");
+        let mut config: crate::gateway::GatewayConfig = if config_path.exists() {
+            let content = tokio::fs::read_to_string(&config_path).await?;
+            toml::from_str(&content).unwrap_or_default()
         } else {
-            println!("   Starting in background...");
-            // TODO: Implement background mode with PID file
-            channel.start().await?;
-        }
+            crate::gateway::GatewayConfig::default()
+        };
+
+        // Add or update Telegram channel config
+        let channel_config = ChannelConfig {
+            enabled: true,
+            channel_type: ChannelType::Telegram,
+            credentials: {
+                let mut creds = std::collections::HashMap::new();
+                creds.insert("token".to_string(), token);
+                creds
+            },
+            dm_policy: "open".to_string(),
+            allow_from: vec![],
+            block_from: vec![],
+            agent_id: None,
+        };
+
+        config.channels.insert("telegram".to_string(), channel_config);
+
+        // Save the updated config
+        let config_str = toml::to_string_pretty(&config)?;
+        tokio::fs::write(&config_path, config_str).await?;
+
+        println!("✅ Telegram channel configured in Gateway");
+        println!("   The channel will be started when the Gateway starts.");
+        println!("   If Gateway is already running, it will hot-reload the configuration.");
 
         Ok(())
     }
 
     /// Telegram support not compiled in
     #[cfg(not(feature = "telegram"))]
-    async fn start_telegram_channel(
-        &self,
-        _token: Option<String>,
-        _foreground: bool,
-    ) -> Result<()> {
+    async fn add_telegram_channel(&self, _token: Option<String>) -> Result<()> {
         println!("❌ Telegram support not compiled in.");
         println!("   Build with: cargo build --features telegram");
         Ok(())
     }
 
-    /// Remove/disconnect a channel
+    /// Stop Telegram channel (disables in Gateway config)
+    #[cfg(feature = "telegram")]
+    async fn stop_telegram_channel(&self) -> Result<()> {
+        println!("🛑 Disabling Telegram channel...");
+
+        // Load the Gateway config
+        let config_path = crate::dirs::manta_dir().join("manta.toml");
+        if !config_path.exists() {
+            println!("⚠️  No Gateway configuration found");
+            return Ok(());
+        }
+
+        let content = tokio::fs::read_to_string(&config_path).await?;
+        let mut config: crate::gateway::GatewayConfig = toml::from_str(&content).unwrap_or_default();
+
+        // Disable Telegram channel if it exists
+        if let Some(channel_config) = config.channels.get_mut("telegram") {
+            channel_config.enabled = false;
+
+            // Save the updated config
+            let config_str = toml::to_string_pretty(&config)?;
+            tokio::fs::write(&config_path, config_str).await?;
+
+            println!("✅ Telegram channel disabled");
+            println!("   The channel will be stopped when the Gateway hot-reloads the configuration.");
+        } else {
+            println!("⚠️  Telegram channel not configured");
+        }
+
+        Ok(())
+    }
+
+    /// Stop Telegram channel (not compiled)
+    #[cfg(not(feature = "telegram"))]
+    async fn stop_telegram_channel(&self) -> Result<()> {
+        println!("❌ Telegram support not compiled in.");
+        Ok(())
+    }
+
+    /// Remove/disconnect a channel (removes from Gateway config)
     async fn run_channel_remove(&self, channel: ChannelType) -> Result<()> {
         match channel {
             ChannelType::Telegram => {
-                println!("🗑️  Removing Telegram bot...");
-                // TODO: Implement channel PID file tracking
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
+                println!("🗑️  Removing Telegram bot configuration...");
+
+                // Load the Gateway config
+                let config_path = crate::dirs::manta_dir().join("manta.toml");
+                if config_path.exists() {
+                    let content = tokio::fs::read_to_string(&config_path).await?;
+                    let mut config: crate::gateway::GatewayConfig = toml::from_str(&content).unwrap_or_default();
+
+                    // Remove Telegram channel from config
+                    if config.channels.remove("telegram").is_some() {
+                        // Save the updated config
+                        let config_str = toml::to_string_pretty(&config)?;
+                        tokio::fs::write(&config_path, config_str).await?;
+                        println!("✅ Telegram channel removed from Gateway configuration");
+                    } else {
+                        println!("⚠️  Telegram channel was not configured");
+                    }
+                } else {
+                    println!("⚠️  No Gateway configuration found");
+                }
                 Ok(())
             }
             ChannelType::Discord => {
                 println!("🗑️  Removing Discord bot...");
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
                 Ok(())
             }
             ChannelType::Slack => {
                 println!("🗑️  Removing Slack bot...");
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
                 Ok(())
             }
             ChannelType::Whatsapp => {
                 println!("🗑️  Removing WhatsApp bot...");
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
                 Ok(())
             }
             ChannelType::Qq => {
                 println!("🗑️  Removing QQ bot...");
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
                 Ok(())
             }
             ChannelType::Lark => {
                 println!("🗑️  Removing Lark/Feishu bot...");
-                println!("   Note: Use 'pkill manta' or Ctrl+C if running in foreground");
                 Ok(())
             }
         }
@@ -2477,10 +2581,11 @@ system_prompt: |
 
         println!();
         println!("Available commands:");
-        println!("  manta channel add <CHANNEL> --token <TOKEN>");
+        println!("  manta channel add telegram --token <TOKEN>");
         println!("  manta channel add telegram (with TELEGRAM_BOT_TOKEN env var)");
-        println!("  manta channel status <CHANNEL>");
-        println!("  manta channel remove <CHANNEL>");
+        println!("  manta channel stop telegram");
+        println!("  manta channel status telegram");
+        println!("  manta channel list");
         println!();
         println!("Channels: telegram, discord, slack, whatsapp, qq, lark");
 
@@ -2490,12 +2595,47 @@ system_prompt: |
 
     /// Check channel status
     async fn run_channel_status(&self, channel: Option<ChannelType>) -> Result<()> {
+        // Load the Gateway config
+        let config_path = crate::dirs::manta_dir().join("manta.toml");
+        let config: Option<crate::gateway::GatewayConfig> = if config_path.exists() {
+            match tokio::fs::read_to_string(&config_path).await {
+                Ok(content) => toml::from_str(&content).ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
         match channel {
             Some(ChannelType::Telegram) => {
                 println!("📱 Telegram Bot Status");
                 println!("======================");
-                println!("Status: Unknown (not implemented yet)");
-                // TODO: Check if process is running via PID file
+
+                if let Some(ref cfg) = config {
+                    if let Some(telegram_config) = cfg.channels.get("telegram") {
+                        if telegram_config.enabled {
+                            println!("Status: 🟢 Enabled in Gateway configuration");
+                        } else {
+                            println!("Status: 🟡 Disabled in Gateway configuration");
+                        }
+                        println!("\nTo {} the channel:",
+                            if telegram_config.enabled { "disable" } else { "enable" }
+                        );
+                        if telegram_config.enabled {
+                            println!("  manta channel stop telegram");
+                        } else {
+                            println!("  manta channel add telegram --token <TOKEN>");
+                        }
+                    } else {
+                        println!("Status: 🔴 Not configured");
+                        println!("\nTo configure:");
+                        println!("  manta channel add telegram --token <TOKEN>");
+                    }
+                } else {
+                    println!("Status: 🔴 No Gateway configuration found");
+                    println!("\nStart the Gateway first:");
+                    println!("  ./start-local-qwen.sh");
+                }
             }
             Some(ChannelType::Discord) => {
                 println!("🚧 Discord support coming soon!");
@@ -2516,7 +2656,15 @@ system_prompt: |
                 // Show all channels
                 println!("📱 Channel Status");
                 println!("=================");
-                println!("Telegram: Not checked (use 'manta channel status telegram')");
+
+                if let Some(ref cfg) = config {
+                    let telegram_status = cfg.channels.get("telegram")
+                        .map(|c| if c.enabled { "🟢 Enabled" } else { "🟡 Disabled" })
+                        .unwrap_or("🔴 Not configured");
+                    println!("Telegram: {}", telegram_status);
+                } else {
+                    println!("Telegram: 🔴 No Gateway configuration");
+                }
                 println!("Discord:  Not available");
                 println!("Slack:    Not available");
                 println!("WhatsApp: Not available");
@@ -2545,7 +2693,7 @@ system_prompt: |
                 println!("❌ Telegram feature not compiled (rebuild with --features telegram)");
 
                 println!();
-                println!("To add/connect the bot:");
+                println!("To start the bot:");
                 println!("  export TELEGRAM_BOT_TOKEN='your_token_here'");
                 println!("  manta channel add telegram");
             }
@@ -2586,6 +2734,38 @@ system_prompt: |
             }
         }
         Ok(())
+    }
+
+    /// Handle plugin commands
+    async fn run_plugin_command(&self, command: &PluginCommands) -> Result<()> {
+        match command {
+            PluginCommands::List { loaded: _, verbose: _ } => {
+                println!("🔌 WASM Channel Plugins");
+                println!("======================");
+                println!();
+                println!("Plugin support is available.");
+                println!();
+                println!("Available commands:");
+                println!("  manta plugin list");
+                println!("  manta plugin load <name>");
+                println!("  manta plugin unload <name>");
+                Ok(())
+            }
+            PluginCommands::Load { name, path: _, config: _ } => {
+                println!("🔌 Loading plugin: {}", name);
+                println!("   (Plugin loading requires daemon mode)");
+                Ok(())
+            }
+            PluginCommands::Unload { name } => {
+                println!("🔌 Unloading plugin: {}", name);
+                println!("   (Plugin unloading requires daemon mode)");
+                Ok(())
+            }
+            _ => {
+                println!("🔌 Plugin command not yet implemented");
+                Ok(())
+            }
+        }
     }
 
     /// Run as an assistant subprocess (internal use)

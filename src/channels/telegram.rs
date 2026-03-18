@@ -10,7 +10,7 @@ use crate::core::models::Id;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Notify, RwLock};
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "telegram")]
@@ -22,6 +22,19 @@ use teloxide::{
     Bot,
 };
 
+/// Static message queue for routing messages from Telegram to Agent
+static MESSAGE_QUEUE: tokio::sync::OnceCell<tokio::sync::mpsc::UnboundedSender<IncomingMessage>> = tokio::sync::OnceCell::const_new();
+
+/// Set the global message queue sender
+pub fn set_message_queue_sender(sender: tokio::sync::mpsc::UnboundedSender<IncomingMessage>) {
+    let _ = MESSAGE_QUEUE.set(sender);
+}
+
+/// Get the global message queue sender if initialized
+pub fn get_message_queue_sender() -> Option<&'static tokio::sync::mpsc::UnboundedSender<IncomingMessage>> {
+    MESSAGE_QUEUE.get()
+}
+
 /// Telegram channel configuration
 #[derive(Debug, Clone)]
 pub struct TelegramConfig {
@@ -29,8 +42,6 @@ pub struct TelegramConfig {
     pub token: String,
     /// Optional allowed usernames (empty = allow all)
     pub allowed_usernames: Vec<String>,
-    /// Message handler channel
-    pub message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
 }
 
 impl TelegramConfig {
@@ -39,7 +50,6 @@ impl TelegramConfig {
         Self {
             token: token.into(),
             allowed_usernames: Vec::new(),
-            message_tx: None,
         }
     }
 
@@ -48,22 +58,31 @@ impl TelegramConfig {
         self.allowed_usernames = usernames;
         self
     }
-
-    /// Set message handler
-    pub fn with_message_handler(mut self, tx: mpsc::UnboundedSender<IncomingMessage>) -> Self {
-        self.message_tx = Some(tx);
-        self
-    }
 }
 
 /// Telegram channel implementation
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct TelegramChannel {
     config: TelegramConfig,
     bot: Option<Bot>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Mapping from internal message ID to (chat_id, telegram_message_id)
     message_map: Arc<RwLock<HashMap<Id, (i64, i32)>>>,
+    /// Shutdown notifier
+    shutdown_notify: Arc<Notify>,
+}
+
+impl std::fmt::Debug for TelegramChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramChannel")
+            .field("config", &self.config)
+            .field("bot", &self.bot.is_some())
+            .field("running", &self.running)
+            .field("message_map", &self.message_map)
+            .field("shutdown_notify", &self.shutdown_notify)
+            .field("has_message_queue", &get_message_queue_sender().is_some())
+            .finish()
+    }
 }
 
 impl TelegramChannel {
@@ -74,6 +93,7 @@ impl TelegramChannel {
             bot: None,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             message_map: Arc::new(RwLock::new(HashMap::new())),
+            shutdown_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -190,6 +210,7 @@ impl Channel for TelegramChannel {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
+            chat_types: vec![crate::channels::ChatType::Direct, crate::channels::ChatType::Group, crate::channels::ChatType::Channel],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -198,6 +219,9 @@ impl Channel for TelegramChannel {
             supports_buttons: true,
             supports_commands: true,
             supports_reactions: true,
+            supports_edit: true,
+            supports_unsend: true,
+            supports_effects: false,
         }
     }
 
@@ -207,25 +231,30 @@ impl Channel for TelegramChannel {
             info!("Starting Telegram channel");
 
             let bot = Bot::new(&self.config.token);
-            let message_tx = self.config.message_tx.clone();
             let _allowed_usernames = self.config.allowed_usernames.clone();
             let running = self.running.clone();
+            let shutdown_notify = self.shutdown_notify.clone();
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
+            // Spawn the update dispatcher
             tokio::spawn(async move {
                 let handler =
                     dptree::entry().branch(Update::filter_message().endpoint(handle_message));
 
                 let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-                    .dependencies(dptree::deps![message_tx])
                     .enable_ctrlc_handler()
                     .build();
 
                 dispatcher.dispatch().await;
             });
 
-            info!("Telegram channel started");
+            info!("Telegram channel started, waiting for shutdown signal...");
+
+            // Wait for shutdown signal
+            shutdown_notify.notified().await;
+
+            info!("Telegram channel shutting down");
             Ok(())
         }
 
@@ -238,6 +267,7 @@ impl Channel for TelegramChannel {
     async fn stop(&self) -> crate::Result<()> {
         self.running
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown_notify.notify_one();
         info!("Telegram channel stopped");
         Ok(())
     }
@@ -432,10 +462,15 @@ impl Channel for TelegramChannel {
 async fn handle_message(
     bot: Bot,
     msg: Message,
-    message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
 ) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
-        debug!("Received message from {:?}: {}", msg.from(), text);
+        let user = msg.from();
+        let username: String = user
+            .as_ref()
+            .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
+            .unwrap_or_else(|| "unknown".to_string());
+        info!("📨 Received message from @{}: {}", username, text);
+        debug!("Full message details: from {:?}, text: {}", msg.from(), text);
 
         // Create incoming message
         let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
@@ -448,8 +483,8 @@ async fn handle_message(
                 .with_extra("chat_type", format!("{:?}", msg.chat.kind)),
         );
 
-        // Route to agent via message_tx if available
-        if let Some(tx) = message_tx {
+        // Route to agent via global message queue if available
+        if let Some(tx) = get_message_queue_sender() {
             if let Err(e) = tx.send(incoming) {
                 warn!("Failed to route message to agent: {}", e);
                 // Send error feedback to user
@@ -462,9 +497,11 @@ async fn handle_message(
             // Note: Response will be sent by the agent via the channel's send method
         } else {
             // No message handler configured, echo back for testing
-            debug!("No message_tx configured, echoing message back");
-            bot.send_message(msg.chat.id, format!("Echo: {}", text))
+            info!("📤 Echoing message back to @{}: {}", username, text);
+            let response = format!("Echo: {}", text);
+            bot.send_message(msg.chat.id, &response)
                 .await?;
+            info!("📤 Response sent: {}", response);
         }
     }
 

@@ -31,6 +31,8 @@ pub struct PluginChannel {
     name: String,
     /// Plugin ID
     id: String,
+    /// Cached capabilities (fetched during load)
+    capabilities: ChannelCapabilities,
     /// WASM store
     store: Arc<Mutex<Store<HostState>>>,
     /// Function pointers
@@ -63,7 +65,7 @@ fn write_string_to_memory(
     let len = bytes.len() as i32;
 
     // Allocate memory in the guest
-    let ptr = alloc_fn.call(store, len).map_err(|e| {
+    let ptr = alloc_fn.call(&mut *store, len).map_err(|e| {
         crate::error::MantaError::Plugin(format!("Failed to allocate memory: {}", e))
     })?;
 
@@ -131,9 +133,10 @@ impl PluginChannel {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+        let plugin_name_for_spawn = plugin_name.clone();
 
         // Use spawn_blocking for WASM operations
-        let (store, instance, memory, alloc_fn, free_fn) = tokio::task::spawn_blocking(move || {
+        let (mut store, instance, memory, alloc_fn, free_fn) = tokio::task::spawn_blocking(move || {
             let engine = Engine::default();
             let module = Module::new(&engine, &wasm_bytes).map_err(|e| {
                 crate::error::MantaError::Plugin(format!("Failed to compile WASM: {}", e))
@@ -219,7 +222,7 @@ impl PluginChannel {
             ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define get_config: {}", e)))?;
 
             let host_state = HostState {
-                name: plugin_name.clone(),
+                name: plugin_name_for_spawn,
                 config: config_str,
                 message_tx,
             };
@@ -248,54 +251,112 @@ impl PluginChannel {
 
         // Get function pointers
         let (init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn, send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn) = {
-            let mut locked_store = store.lock().await;
-
-            let init_fn = instance.get_typed_func::<(i32, i32), i64>(&mut *locked_store, "init"
+            let init_fn = instance.get_typed_func::<(i32, i32), i64>(&mut store, "init"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No init: {}", e)))?;
 
-            let start_fn = instance.get_typed_func::<(), i32>(&mut *locked_store, "start"
+            let start_fn = instance.get_typed_func::<(), i32>(&mut store, "start"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No start: {}", e)))?;
 
-            let stop_fn = instance.get_typed_func::<(), i32>(&mut *locked_store, "stop"
+            let stop_fn = instance.get_typed_func::<(), i32>(&mut store, "stop"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No stop: {}", e)))?;
 
-            let get_name_fn = instance.get_typed_func::<(), (i32, i32)>(&mut *locked_store, "get_name"
+            let get_name_fn = instance.get_typed_func::<(), (i32, i32)>(&mut store, "get_name"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No get_name: {}", e)))?;
 
             let get_capabilities_fn = instance.get_typed_func::<(), i64>(
-                &mut *locked_store, "get_capabilities"
+                &mut store, "get_capabilities"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No get_capabilities: {}", e)))?;
 
             let send_fn = instance.get_typed_func::<(i32, i32), i64>(
-                &mut *locked_store, "send"
+                &mut store, "send"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No send: {}", e)))?;
 
             let send_typing_fn = instance.get_typed_func::<(i32, i32), i32>(
-                &mut *locked_store, "send_typing"
+                &mut store, "send_typing"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No send_typing: {}", e)))?;
 
             let edit_message_fn = instance.get_typed_func::<(i32, i32, i32, i32), i32>(
-                &mut *locked_store, "edit_message"
+                &mut store, "edit_message"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No edit_message: {}", e)))?;
 
             let delete_message_fn = instance.get_typed_func::<(i32, i32), i32>(
-                &mut *locked_store, "delete_message"
+                &mut store, "delete_message"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No delete_message: {}", e)))?;
 
             let health_check_fn = instance.get_typed_func::<(), i32>(
-                &mut *locked_store, "health_check"
+                &mut store, "health_check"
             ).map_err(|e| crate::error::MantaError::Plugin(format!("No health_check: {}", e)))?;
 
             (init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn, send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn)
         };
 
+        // Fetch capabilities from the plugin
+        let capabilities = {
+            let result = get_capabilities_fn.call(&mut store, ()).map_err(|e| {
+                crate::error::MantaError::Plugin(format!("Get capabilities failed: {}", e))
+            })?;
+
+            // Decode result: high 32 bits = ptr, low 32 bits = len (or error indicator)
+            let result_ptr = (result >> 32) as i32;
+            let result_len = (result & 0xFFFFFFFF) as i32;
+
+            if result_ptr == 0 && result_len == 0 {
+                // No capabilities returned, use defaults
+                ChannelCapabilities {
+                    chat_types: vec![crate::channels::ChatType::Direct],
+                    supports_formatting: true,
+                    supports_attachments: false,
+                    supports_images: false,
+                    supports_threads: false,
+                    supports_typing: true,
+                    supports_buttons: false,
+                    supports_commands: false,
+                    supports_reactions: false,
+                    supports_edit: false,
+                    supports_unsend: false,
+                    supports_effects: false,
+                }
+            } else {
+                // Read capabilities JSON from memory
+                let caps_json = read_string_from_memory(&mut store, &memory, result_ptr, result_len)?;
+
+                // Free the memory
+                free_fn.call(&mut store, (result_ptr, result_len)).map_err(|e| {
+                    crate::error::MantaError::Plugin(format!("Free failed: {}", e))
+                })?;
+
+                // Parse JSON
+                match serde_json::from_str::<CapabilitiesJson>(&caps_json) {
+                    Ok(caps) => caps.to_capabilities(),
+                    Err(_) => ChannelCapabilities {
+                        chat_types: vec![crate::channels::ChatType::Direct],
+                        supports_formatting: true,
+                        supports_attachments: false,
+                        supports_images: false,
+                        supports_threads: false,
+                        supports_typing: true,
+                        supports_buttons: false,
+                        supports_commands: false,
+                        supports_reactions: false,
+                        supports_edit: false,
+                        supports_unsend: false,
+                        supports_effects: false,
+                    },
+                }
+            }
+        };
+
         let plugin_id = uuid::Uuid::new_v4().to_string();
 
-        info!("Loaded WASM plugin '{}' (ID: {})", plugin_name, plugin_id);
+        info!(
+            "Loaded WASM plugin '{}' (ID: {}) with capabilities: {:?}",
+            plugin_name, plugin_id, capabilities.chat_types
+        );
 
         Ok(Self {
             name: plugin_name,
             id: plugin_id,
+            capabilities,
             store: Arc::new(Mutex::new(store)),
             init_fn,
             start_fn,
@@ -341,6 +402,72 @@ impl PluginChannel {
     }
 }
 
+/// Helper struct for deserializing capabilities from JSON
+#[derive(serde::Deserialize)]
+struct CapabilitiesJson {
+    #[serde(rename = "chat_types", default)]
+    chat_types: Vec<String>,
+    #[serde(rename = "supports_formatting", default = "default_true")]
+    supports_formatting: bool,
+    #[serde(rename = "supports_attachments", default = "default_true")]
+    supports_attachments: bool,
+    #[serde(rename = "supports_images", default = "default_true")]
+    supports_images: bool,
+    #[serde(rename = "supports_threads", default)]
+    supports_threads: bool,
+    #[serde(rename = "supports_typing", default = "default_true")]
+    supports_typing: bool,
+    #[serde(rename = "supports_buttons", default)]
+    supports_buttons: bool,
+    #[serde(rename = "supports_commands", default)]
+    supports_commands: bool,
+    #[serde(rename = "supports_reactions", default)]
+    supports_reactions: bool,
+    #[serde(rename = "supports_edit", default)]
+    supports_edit: bool,
+    #[serde(rename = "supports_unsend", default)]
+    supports_unsend: bool,
+    #[serde(rename = "supports_effects", default)]
+    supports_effects: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl CapabilitiesJson {
+    fn to_capabilities(&self) -> ChannelCapabilities {
+        use crate::channels::ChatType;
+
+        let chat_types = self
+            .chat_types
+            .iter()
+            .filter_map(|s| match s.as_str() {
+                "direct" => Some(ChatType::Direct),
+                "group" => Some(ChatType::Group),
+                "channel" => Some(ChatType::Channel),
+                "thread" => Some(ChatType::Thread),
+                _ => None,
+            })
+            .collect();
+
+        ChannelCapabilities {
+            chat_types,
+            supports_formatting: self.supports_formatting,
+            supports_attachments: self.supports_attachments,
+            supports_images: self.supports_images,
+            supports_threads: self.supports_threads,
+            supports_typing: self.supports_typing,
+            supports_buttons: self.supports_buttons,
+            supports_commands: self.supports_commands,
+            supports_reactions: self.supports_reactions,
+            supports_edit: self.supports_edit,
+            supports_unsend: self.supports_unsend,
+            supports_effects: self.supports_effects,
+        }
+    }
+}
+
 #[async_trait]
 impl Channel for PluginChannel {
     fn name(&self) -> &str {
@@ -348,16 +475,8 @@ impl Channel for PluginChannel {
     }
 
     fn capabilities(&self) -> ChannelCapabilities {
-        ChannelCapabilities {
-            supports_formatting: true,
-            supports_attachments: true,
-            supports_images: true,
-            supports_threads: true,
-            supports_typing: true,
-            supports_buttons: false,
-            supports_commands: false,
-            supports_reactions: false,
-        }
+        // Return cached capabilities that were fetched during plugin load
+        self.capabilities.clone()
     }
 
     async fn start(&self) -> crate::Result<()> {
@@ -412,7 +531,7 @@ impl Channel for PluginChannel {
         })?;
 
         if result >= 0 {
-            Ok(Id(format!("msg-{}", result)))
+            Ok(Id::new())
         } else {
             Err(crate::error::MantaError::Plugin(format!("Send returned {}", result)))
         }

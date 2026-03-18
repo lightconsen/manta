@@ -1,83 +1,138 @@
 package manta:channel@0.1.0;
 
-/// Channel capabilities
-record capabilities {
-    supports-formatting: bool,
-    supports-attachments: bool,
-    supports-images: bool,
-    supports-threads: bool,
-    supports-typing: bool,
-    supports-buttons: bool,
-    supports-commands: bool,
-    supports-reactions: bool,
+/// Types interface - shared types for channel communication
+interface types {
+    /// Chat types supported by the channel
+    enum chat-type {
+        /// Direct/private message
+        direct,
+        /// Group chat
+        group,
+        /// Channel (broadcast)
+        channel,
+        /// Thread/reply
+        thread,
+    }
+
+    /// Channel capabilities
+    record capabilities {
+        /// Supported chat types (direct, group, channel, thread)
+        chat-types: list<chat-type>,
+        /// Supports formatted text (markdown, HTML, etc.)
+        supports-formatting: bool,
+        /// Supports file attachments
+        supports-attachments: bool,
+        /// Supports inline images
+        supports-images: bool,
+        /// Supports message threading/replies
+        supports-threads: bool,
+        /// Supports typing indicators
+        supports-typing: bool,
+        /// Supports reaction buttons
+        supports-buttons: bool,
+        /// Supports slash commands
+        supports-commands: bool,
+        /// Supports message reactions (emoji reactions)
+        supports-reactions: bool,
+        /// Supports editing messages
+        supports-edit: bool,
+        /// Supports deleting/unsending messages
+        supports-unsend: bool,
+        /// Supports special effects (confetti, etc.)
+        supports-effects: bool,
+    }
+
+    /// Message attachment
+    record attachment {
+        filename: string,
+        content-type: string,
+        size: u64,
+        /// Base64-encoded content
+        data: string,
+    }
+
+    /// Incoming message from a channel
+    record incoming-message {
+        id: string,
+        user-id: string,
+        conversation-id: string,
+        content: string,
+        attachments: list<attachment>,
+    }
+
+    /// Outgoing message to send
+    record outgoing-message {
+        conversation-id: string,
+        content: string,
+        formatted-content: option<string>,
+        reply-to: option<string>,
+    }
+
+    /// Message options
+    record message-options {
+        /// Whether to show typing indicator
+        show-typing: bool,
+        /// Whether to send silently
+        silent: bool,
+    }
+
+    /// Channel errors
+    variant channel-error {
+        /// Generic error with message
+        generic(string),
+        /// Not configured
+        not-configured,
+        /// Send failed
+        send-failed(string),
+        /// Invalid configuration
+        invalid-config(string),
+        /// Not supported
+        not-supported(string),
+        /// Rate limited
+        rate-limited(u64),
+    }
+
+    /// Result type for string operations
+    variant string-result {
+        ok(string),
+        err(channel-error),
+    }
+
+    /// Result type for unit operations
+    variant unit-result {
+        ok,
+        err(channel-error),
+    }
+
+    /// Result type for bool operations
+    variant bool-result {
+        ok(bool),
+        err(channel-error),
+    }
 }
 
-/// Message attachment
-record attachment {
-    filename: string,
-    content-type: string,
-    size: u64,
-    /// Base64-encoded content
-    data: string,
+/// Log levels
+interface logging {
+    enum log-level {
+        debug,
+        info,
+        warn,
+        error,
+    }
 }
 
-/// Incoming message from a channel
-record incoming-message {
-    id: string,
-    user-id: string,
-    conversation-id: string,
-    content: string,
-    attachments: list<attachment>,
-}
-
-/// Outgoing message to send
-record outgoing-message {
-    conversation-id: string,
-    content: string,
-    formatted-content: option<string>,
-    reply-to: option<string>,
-}
-
-/// Message options
-record message-options {
-    /// Whether to show typing indicator
-    show-typing: bool,
-    /// Whether to send silently
-    silent: bool,
-}
-
-/// Channel errors
-variant channel-error {
-    /// Generic error with message
-    generic(string),
-    /// Not configured
-    not-configured,
-    /// Send failed
-    send-failed(string),
-    /// Invalid configuration
-    invalid-config(string),
-    /// Not supported
-    not-supported(string),
-    /// Rate limited
-    rate-limited(u64),
-}
-
-/// Result type for channel operations
-variant result<T> {
-    ok(T),
-    err(channel-error),
-}
-
-/// Channel interface
+/// Channel interface - exported by plugins
 interface channel {
+    use types.{capabilities, outgoing-message, message-options, string-result, unit-result, bool-result};
+
     /// Initialize the channel with configuration (JSON string)
-    init: func(config: string) -> result<string>;
+    init: func(config: string) -> string-result;
 
     /// Start the channel (begin receiving messages)
-    start: func() -> result<tuple<>>;
+    start: func() -> unit-result;
 
     /// Stop the channel
-    stop: func() -> result<tuple<>>;
+    stop: func() -> unit-result;
 
     /// Get channel name
     get-name: func() -> string;
@@ -86,23 +141,26 @@ interface channel {
     get-capabilities: func() -> capabilities;
 
     /// Send a message
-    send: func(message: outgoing-message, options: message-options) -> result<string>;
+    send: func(message: outgoing-message, options: message-options) -> string-result;
 
     /// Send typing indicator
-    send-typing: func(conversation-id: string) -> result<tuple<>>;
+    send-typing: func(conversation-id: string) -> unit-result;
 
     /// Edit a message
-    edit-message: func(message-id: string, new-content: string) -> result<tuple<>>;
+    edit-message: func(message-id: string, new-content: string) -> unit-result;
 
     /// Delete a message
-    delete-message: func(message-id: string) -> result<tuple<>>;
+    delete-message: func(message-id: string) -> unit-result;
 
     /// Health check
-    health-check: func() -> result<bool>;
+    health-check: func() -> bool-result;
 }
 
 /// Host interface - callbacks the plugin can call into the host
 interface host {
+    use types.{incoming-message};
+    use logging.{log-level};
+
     /// Log a message
     log: func(level: log-level, message: string);
 
@@ -113,14 +171,6 @@ interface host {
     get-config: func() -> string;
 }
 
-/// Log levels
-enum log-level {
-    debug,
-    info,
-    warn,
-    error,
-}
-
 /// World definition - what the plugin exports and imports
 world channel-plugin {
     /// Plugin exports the channel interface
@@ -128,4 +178,10 @@ world channel-plugin {
 
     /// Plugin imports the host interface
     import host;
+
+    /// Import logging for log levels
+    import logging;
+
+    /// Import types for use in exports
+    import types;
 }

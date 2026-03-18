@@ -314,9 +314,25 @@ impl Attachment {
     }
 }
 
+/// Chat types supported by channels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatType {
+    /// Direct/private message
+    Direct,
+    /// Group chat
+    Group,
+    /// Channel (broadcast)
+    Channel,
+    /// Thread/reply
+    Thread,
+}
+
 /// Channel capabilities
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelCapabilities {
+    /// Supported chat types (direct, group, channel, thread)
+    pub chat_types: Vec<ChatType>,
     /// Supports formatted text (markdown, HTML, etc.)
     pub supports_formatting: bool,
     /// Supports file attachments
@@ -333,11 +349,18 @@ pub struct ChannelCapabilities {
     pub supports_commands: bool,
     /// Supports message reactions (emoji reactions)
     pub supports_reactions: bool,
+    /// Supports editing messages
+    pub supports_edit: bool,
+    /// Supports deleting/unsending messages
+    pub supports_unsend: bool,
+    /// Supports special effects (confetti, etc.)
+    pub supports_effects: bool,
 }
 
 impl Default for ChannelCapabilities {
     fn default() -> Self {
         Self {
+            chat_types: vec![ChatType::Direct],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -346,6 +369,9 @@ impl Default for ChannelCapabilities {
             supports_buttons: false,
             supports_commands: false,
             supports_reactions: false,
+            supports_edit: false,
+            supports_unsend: false,
+            supports_effects: false,
         }
     }
 }
@@ -682,11 +708,8 @@ impl ExtendedChannelRegistry {
         }
 
         // Check plugin channels
-        if let Some(ref plugins) = self.plugins {
-            if let Some(plugin) = plugins.get_plugin(name).await {
-                return Some(Box::new(plugin));
-            }
-        }
+        // Note: Plugin channels are accessed by ID, not name
+        // This would need to be implemented differently
 
         None
     }

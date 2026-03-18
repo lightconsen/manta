@@ -388,6 +388,7 @@ pub struct GatewayState {
 }
 
 /// Handle to a running agent
+#[derive(Clone)]
 pub struct AgentHandle {
     /// Agent ID
     pub id: String,
@@ -1143,6 +1144,69 @@ impl Gateway {
                             let channel = Arc::new(
                                 crate::channels::telegram::TelegramChannel::new(telegram_config),
                             );
+
+                            // Create message channel for routing Telegram -> Gateway agent
+                            let (message_tx, mut message_rx) = mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+
+                            // Set up the global message queue sender for Telegram channel
+                            crate::channels::telegram::set_message_queue_sender(message_tx);
+
+                            // Get default agent for routing messages (clone the handle)
+                            let agent_handle = self.state.agents.read().await.get("default").cloned();
+                            if agent_handle.is_none() {
+                                warn!("No default agent available for Telegram channel '{}'", name);
+                            }
+
+                            // Spawn task to process messages from Telegram and route to agent
+                            let agent_for_task = agent_handle.clone();
+                            tokio::spawn(async move {
+                                while let Some(message) = message_rx.recv().await {
+                                    if let Some(ref handle) = agent_for_task {
+                                        // Send to agent via its command channel
+                                        let cmd = AgentCommand::ProcessMessage {
+                                            session_id: message.conversation_id.0.clone(),
+                                            message: message.content.clone(),
+                                            user_id: message.user_id.0.clone(),
+                                            channel: "telegram".to_string(),
+                                        };
+                                        if let Err(e) = handle.tx.send(cmd).await {
+                                            error!("Failed to send message to agent: {}", e);
+                                        }
+                                    } else {
+                                        error!("No default agent available to process Telegram message");
+                                    }
+                                }
+                            });
+
+                            // Subscribe to agent responses and send back to Telegram
+                            let mut event_rx = self.state.event_tx.subscribe();
+                            let channel_for_telegram = channel.clone();
+                            let channel_name = name.clone();
+                            tokio::spawn(async move {
+                                loop {
+                                    match event_rx.recv().await {
+                                        Ok(GatewayEvent::AgentResponse { session_id, content, .. }) => {
+                                            // Send response back to Telegram
+                                            let conversation_id = crate::channels::ConversationId::new(session_id.clone());
+                                            let outgoing = crate::channels::OutgoingMessage::new(
+                                                conversation_id,
+                                                content.clone()
+                                            );
+                                            if let Err(e) = channel_for_telegram.send(outgoing).await {
+                                                error!("Failed to send response to Telegram channel '{}': {}", channel_name, e);
+                                            } else {
+                                                info!("Sent agent response to Telegram session {}", session_id);
+                                            }
+                                        }
+                                        Err(_) => {
+                                            // Event channel closed or lagged, break loop
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
+
                             let channel_name = name.clone();
                             // Start the channel in a background task
                             let channel_for_task = channel.clone();
