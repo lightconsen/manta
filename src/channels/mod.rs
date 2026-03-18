@@ -48,7 +48,7 @@ pub mod whatsapp;
 #[cfg(feature = "qq")]
 pub mod qq;
 
-#[cfg(feature = "lark")]
+#[cfg(feature = "feishu")]
 pub mod lark;
 
 #[cfg(feature = "plugins")]
@@ -667,7 +667,7 @@ pub use whatsapp::{WhatsappChannel, WhatsappConfig};
 #[cfg(feature = "qq")]
 pub use qq::{QqChannel, QqConfig};
 
-#[cfg(feature = "lark")]
+#[cfg(feature = "feishu")]
 pub use lark::{LarkChannel, LarkConfig};
 
 #[cfg(feature = "plugins")]

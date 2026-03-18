@@ -54,6 +54,9 @@ pub struct PluginChannel {
     free_fn: TypedFunc<(i32, i32), ()>,
 }
 
+/// Maximum allowed buffer size for WASM memory operations (1MB)
+const MAX_WASM_BUFFER_SIZE: usize = 1024 * 1024;
+
 /// Helper to write a string to WASM memory and return (ptr, len)
 fn write_string_to_memory(
     store: &mut Store<HostState>,
@@ -62,19 +65,44 @@ fn write_string_to_memory(
     s: &str,
 ) -> crate::Result<(i32, i32)> {
     let bytes = s.as_bytes();
-    let len = bytes.len() as i32;
+    let len = bytes.len();
+
+    // Check buffer size limit
+    if len > MAX_WASM_BUFFER_SIZE {
+        return Err(crate::error::MantaError::Plugin(format!(
+            "String too large: {} bytes (max: {})",
+            len, MAX_WASM_BUFFER_SIZE
+        )));
+    }
+
+    let len_i32 = len as i32;
 
     // Allocate memory in the guest
-    let ptr = alloc_fn.call(&mut *store, len).map_err(|e| {
+    let ptr = alloc_fn.call(&mut *store, len_i32).map_err(|e| {
         crate::error::MantaError::Plugin(format!("Failed to allocate memory: {}", e))
     })?;
+
+    // Validate pointer
+    if ptr < 0 {
+        return Err(crate::error::MantaError::Plugin(
+            "Allocator returned invalid pointer".to_string(),
+        ));
+    }
+
+    // Check memory bounds
+    let mem_size = memory.data_size(&*store);
+    if (ptr as usize + len) > mem_size {
+        return Err(crate::error::MantaError::Plugin(
+            "Allocated memory out of bounds".to_string(),
+        ));
+    }
 
     // Write the string
     memory.write(store, ptr as usize, bytes).map_err(|e| {
         crate::error::MantaError::Plugin(format!("Failed to write to memory: {}", e))
     })?;
 
-    Ok((ptr, len))
+    Ok((ptr, len_i32))
 }
 
 /// Helper to read a string from WASM memory
@@ -84,8 +112,33 @@ fn read_string_from_memory(
     ptr: i32,
     len: i32,
 ) -> crate::Result<String> {
-    let mut buffer = vec![0u8; len as usize];
-    memory.read(store, ptr as usize, &mut buffer).map_err(|e| {
+    // Validate parameters
+    if ptr < 0 || len < 0 {
+        return Err(crate::error::MantaError::Plugin(
+            "Invalid pointer or length".to_string(),
+        ));
+    }
+
+    let len = len as usize;
+
+    // Check buffer size limit
+    if len > MAX_WASM_BUFFER_SIZE {
+        return Err(crate::error::MantaError::Plugin(format!(
+            "Buffer too large: {} bytes (max: {})",
+            len, MAX_WASM_BUFFER_SIZE
+        )));
+    }
+
+    // Check memory bounds
+    let mem_size = memory.data_size(&*store);
+    if (ptr as usize + len) > mem_size {
+        return Err(crate::error::MantaError::Plugin(
+            "Read out of bounds".to_string(),
+        ));
+    }
+
+    let mut buffer = vec![0u8; len];
+    memory.read(&mut *store, ptr as usize, &mut buffer).map_err(|e| {
         crate::error::MantaError::Plugin(format!("Failed to read from memory: {}", e))
     })?;
 
@@ -150,20 +203,39 @@ impl PluginChannel {
                 "host",
                 "log",
                 |mut caller: wasmtime::Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
+                    // Validate parameters
+                    if ptr < 0 || len < 0 || len as usize > MAX_WASM_BUFFER_SIZE {
+                        eprintln!("[WARN] Plugin log: invalid parameters ptr={}, len={}", ptr, len);
+                        return;
+                    }
+
                     if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        let mut buffer = vec![0u8; len as usize];
-                        if memory.read(&caller, ptr as usize, &mut buffer).is_ok() {
-                            if let Ok(message) = String::from_utf8(buffer) {
-                                let level_str = match level {
-                                    0 => "DEBUG",
-                                    1 => "INFO",
-                                    2 => "WARN",
-                                    3 => "ERROR",
-                                    _ => "UNKNOWN",
-                                };
-                                println!("[{}] {}", level_str, message);
-                            }
+                        // Check bounds
+                        let mem_size = memory.data_size(&caller);
+                        if (ptr as usize + len as usize) > mem_size {
+                            eprintln!("[WARN] Plugin log: memory out of bounds");
+                            return;
                         }
+
+                        let mut buffer = vec![0u8; len as usize];
+                        match memory.read(&caller, ptr as usize, &mut buffer) {
+                            Ok(_) => match String::from_utf8(buffer) {
+                                Ok(message) => {
+                                    let level_str = match level {
+                                        0 => "DEBUG",
+                                        1 => "INFO",
+                                        2 => "WARN",
+                                        3 => "ERROR",
+                                        _ => "UNKNOWN",
+                                    };
+                                    println!("[{}] {}", level_str, message);
+                                }
+                                Err(e) => eprintln!("[WARN] Plugin log: invalid UTF-8: {}", e),
+                            },
+                            Err(e) => eprintln!("[WARN] Plugin log: memory read failed: {}", e),
+                        }
+                    } else {
+                        eprintln!("[WARN] Plugin log: no memory export");
                     }
                 },
             ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define log: {}", e)))?;
@@ -173,38 +245,61 @@ impl PluginChannel {
                 "host",
                 "receive-message",
                 |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| {
+                    // Validate parameters
+                    if ptr < 0 || len < 0 || len as usize > MAX_WASM_BUFFER_SIZE {
+                        eprintln!("[WARN] Plugin receive_message: invalid parameters ptr={}, len={}", ptr, len);
+                        return;
+                    }
+
                     if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        let mut buffer = vec![0u8; len as usize];
-                        if memory.read(&caller, ptr as usize, &mut buffer).is_ok() {
-                            if let Ok(json) = String::from_utf8(buffer) {
-                                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&json) {
-                                    // Send to host's message channel
-                                    if let Some(tx) = caller.data().message_tx.clone().into() {
-                                        // Parse incoming message from JSON
-                                        let _ = tx.send(IncomingMessage {
-                                            id: Id::new(),
-                                            user_id: UserId::new(
-                                                msg.get("user_id")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("unknown"),
-                                            ),
-                                            conversation_id: ConversationId::new(
-                                                msg.get("conversation_id")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("default"),
-                                            ),
-                                            content: msg
-                                                .get("content")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("")
-                                                .to_string(),
-                                            attachments: vec![],
-                                            metadata: MessageMetadata::new(),
-                                        });
-                                    }
-                                }
-                            }
+                        // Check bounds
+                        let mem_size = memory.data_size(&caller);
+                        if (ptr as usize + len as usize) > mem_size {
+                            eprintln!("[WARN] Plugin receive_message: memory out of bounds");
+                            return;
                         }
+
+                        let mut buffer = vec![0u8; len as usize];
+                        match memory.read(&caller, ptr as usize, &mut buffer) {
+                            Ok(_) => match String::from_utf8(buffer) {
+                                Ok(json) => match serde_json::from_str::<serde_json::Value>(&json) {
+                                    Ok(msg) => {
+                                        // Send to host's message channel
+                                        if let Some(tx) = caller.data().message_tx.clone().into() {
+                                            // Parse incoming message from JSON
+                                            let incoming = IncomingMessage {
+                                                id: Id::new(),
+                                                user_id: UserId::new(
+                                                    msg.get("user_id")
+                                                        .and_then(|v| v.as_str())
+                                                        .unwrap_or("unknown"),
+                                                ),
+                                                conversation_id: ConversationId::new(
+                                                    msg.get("conversation_id")
+                                                        .and_then(|v| v.as_str())
+                                                        .unwrap_or("default"),
+                                                ),
+                                                content: msg
+                                                    .get("content")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                                attachments: vec![],
+                                                metadata: MessageMetadata::new(),
+                                            };
+                                            if let Err(e) = tx.send(incoming) {
+                                                eprintln!("[WARN] Plugin receive_message: failed to send: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => eprintln!("[WARN] Plugin receive_message: invalid JSON: {}", e),
+                                },
+                                Err(e) => eprintln!("[WARN] Plugin receive_message: invalid UTF-8: {}", e),
+                            },
+                            Err(e) => eprintln!("[WARN] Plugin receive_message: memory read failed: {}", e),
+                        }
+                    } else {
+                        eprintln!("[WARN] Plugin receive_message: no memory export");
                     }
                 },
             ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define receive_message: {}", e)))?;

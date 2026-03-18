@@ -129,14 +129,14 @@ teloxide = { version = "0.12", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
 [features]
-default = ["telegram", "plugins", "hot-reload", "local-embeddings"]
+default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "plugins", "hot-reload", "local-embeddings"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
 whatsapp = []
 qq = []
-lark = []
-all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "lark"]
+feishu = []
+all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu"]
 tailscale = []
 browser = ["chromiumoxide"]
 vector-db = []
