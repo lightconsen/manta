@@ -1,0 +1,14 @@
+/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/deps/serde-58b619ec03ecfc02.d: /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/serde-57e3181ee9e10e8d/out/private.rs
+
+/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/deps/libserde-58b619ec03ecfc02.rlib: /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/serde-57e3181ee9e10e8d/out/private.rs
+
+/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/deps/libserde-58b619ec03ecfc02.rmeta: /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/serde-57e3181ee9e10e8d/out/private.rs
+
+/Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/lando/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/serde-57e3181ee9e10e8d/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/serde-57e3181ee9e10e8d/out

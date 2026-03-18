@@ -1,21 +1,33 @@
 //! Echo Channel - Example WASM Plugin for Manta
 //!
 //! This is a simple example channel that echoes back any messages it receives.
-//! It demonstrates the WASM plugin interface for Manta channels using the SDK.
+//! It demonstrates the WASM plugin interface for Manta channels.
 
-use manta_channel_sdk::{
-    export_channel, Capabilities, Channel, ChannelError, IncomingMessage, MessageOptions,
-    OutgoingMessage, log_debug, log_info, log_warn, emit_message, Result,
+mod bindings {
+    wit_bindgen::generate!({
+        path: "../../../wit/channel.wit",
+        world: "channel-plugin",
+    });
+}
+
+use bindings::exports::manta::channel::channel::{
+    Capabilities, Guest, MessageOptions, OutgoingMessage,
+    StringResult, UnitResult, BoolResult,
 };
+use bindings::manta::channel::types::{
+    ChatType, IncomingMessage, ChannelError,
+};
+use bindings::manta::channel::logging::LogLevel;
+use bindings::manta::channel::host::{log, receive_message};
+
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 
 /// Configuration for the echo channel
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct EchoConfig {
-    /// Prefix for echoed messages
     #[serde(default = "default_prefix")]
     pub prefix: String,
-    /// Include timestamp in echoed messages
     #[serde(default = "default_timestamp")]
     pub include_timestamp: bool,
 }
@@ -28,23 +40,86 @@ fn default_timestamp() -> bool {
     true
 }
 
-/// The Echo Channel implementation
-#[derive(Default)]
-pub struct EchoChannel {
+/// Channel state
+struct EchoChannel {
     config: EchoConfig,
     running: bool,
     message_count: u64,
 }
 
-impl Channel for EchoChannel {
-    type Config = EchoConfig;
+impl Default for EchoChannel {
+    fn default() -> Self {
+        Self {
+            config: EchoConfig::default(),
+            running: false,
+            message_count: 0,
+        }
+    }
+}
 
-    fn name(&self) -> &str {
-        "echo"
+thread_local! {
+    static CHANNEL: RefCell<EchoChannel> = RefCell::new(EchoChannel::default());
+}
+
+/// Log helper
+fn log_info(message: &str) {
+    log(LogLevel::Info, message);
+}
+
+fn log_debug(message: &str) {
+    log(LogLevel::Debug, message);
+}
+
+fn log_warn(message: &str) {
+    log(LogLevel::Warn, message);
+}
+
+/// Implement the Guest trait for our channel
+struct EchoGuest;
+
+impl Guest for EchoGuest {
+    fn init(config: String) -> StringResult {
+        CHANNEL.with(|ch| {
+            let mut channel = ch.borrow_mut();
+            channel.config = if config.is_empty() {
+                EchoConfig::default()
+            } else {
+                match serde_json::from_str(&config) {
+                    Ok(cfg) => cfg,
+                    Err(e) => return StringResult::Err(ChannelError::InvalidConfig(e.to_string())),
+                }
+            };
+            channel.running = false;
+            channel.message_count = 0;
+
+            log_info(&format!("EchoChannel initialized with prefix '{}'", channel.config.prefix));
+            StringResult::Ok("initialized".to_string())
+        })
     }
 
-    fn capabilities(&self) -> Capabilities {
+    fn start() -> UnitResult {
+        CHANNEL.with(|ch| {
+            ch.borrow_mut().running = true;
+        });
+        log_info("EchoChannel started");
+        UnitResult::Ok
+    }
+
+    fn stop() -> UnitResult {
+        CHANNEL.with(|ch| {
+            ch.borrow_mut().running = false;
+        });
+        log_info("EchoChannel stopped");
+        UnitResult::Ok
+    }
+
+    fn get_name() -> String {
+        "echo".to_string()
+    }
+
+    fn get_capabilities() -> Capabilities {
         Capabilities {
+            chat_types: vec![ChatType::Direct, ChatType::Group],
             supports_formatting: true,
             supports_attachments: false,
             supports_images: false,
@@ -53,85 +128,68 @@ impl Channel for EchoChannel {
             supports_buttons: false,
             supports_commands: true,
             supports_reactions: false,
+            supports_edit: false,
+            supports_unsend: false,
+            supports_effects: false,
         }
     }
 
-    fn init(&mut self, config: EchoConfig) -> Result<()> {
-        self.config = config;
-        self.running = false;
-        self.message_count = 0;
+    fn send(message: OutgoingMessage, _options: MessageOptions) -> StringResult {
+        CHANNEL.with(|ch| {
+            let mut channel = ch.borrow_mut();
+            channel.message_count += 1;
 
-        log_info(&format!(
-            "EchoChannel initialized with prefix '{}'",
-            self.config.prefix
-        ));
-        Ok(())
+            let timestamp = if channel.config.include_timestamp {
+                format!(" [{}]", channel.message_count)
+            } else {
+                String::new()
+            };
+
+            // Log the message
+            let log_msg = format!(
+                "{}:{} - {}: {}{}",
+                channel.config.prefix, channel.message_count,
+                message.conversation_id, message.content, timestamp
+            );
+            log_info(&log_msg);
+
+            // Echo the message back
+            let echo_content = format!("{}: {}", channel.config.prefix, message.content);
+
+            let incoming = IncomingMessage {
+                id: format!("echo-{}", channel.message_count),
+                user_id: "echo-bot".to_string(),
+                conversation_id: message.conversation_id,
+                content: echo_content,
+                attachments: vec![],
+            };
+
+            receive_message(&incoming);
+
+            StringResult::Ok(format!("msg-{}", channel.message_count))
+        })
     }
 
-    fn start(&mut self) -> Result<()> {
-        self.running = true;
-        log_info("EchoChannel started");
-        Ok(())
-    }
-
-    fn stop(&mut self) -> Result<()> {
-        self.running = false;
-        log_info("EchoChannel stopped");
-        Ok(())
-    }
-
-    fn send(&mut self, message: OutgoingMessage, _options: MessageOptions) -> Result<String> {
-        self.message_count += 1;
-
-        let timestamp = if self.config.include_timestamp {
-            format!(" [{}]", self.message_count)
-        } else {
-            String::new()
-        };
-
-        // Log the message
-        let log_msg = format!(
-            "{}:{} - {}: {}{}",
-            self.config.prefix, self.message_count,
-            message.conversation_id, message.content, timestamp
-        );
-        log_info(&log_msg);
-
-        // Echo the message back
-        let echo_content = format!("{}: {}", self.config.prefix, message.content);
-
-        let incoming = IncomingMessage {
-            id: format!("echo-{}", self.message_count),
-            user_id: "echo-bot".to_string(),
-            conversation_id: message.conversation_id,
-            content: echo_content,
-            attachments: vec![],
-        };
-
-        emit_message(incoming);
-
-        Ok(format!("msg-{}", self.message_count))
-    }
-
-    fn send_typing(&mut self, _conversation_id: String) -> Result<()> {
+    fn send_typing(_conversation_id: String) -> UnitResult {
         log_debug("Sending typing indicator");
-        Ok(())
+        UnitResult::Ok
     }
 
-    fn edit_message(&mut self, _message_id: String, _new_content: String) -> Result<()> {
+    fn edit_message(_message_id: String, _new_content: String) -> UnitResult {
         log_warn("Edit not supported in echo channel");
-        Err(ChannelError::NotSupported("Edit not supported".to_string()))
+        UnitResult::Err(ChannelError::NotSupported("Edit not supported".to_string()))
     }
 
-    fn delete_message(&mut self, _message_id: String) -> Result<()> {
+    fn delete_message(_message_id: String) -> UnitResult {
         log_warn("Delete not supported in echo channel");
-        Err(ChannelError::NotSupported("Delete not supported".to_string()))
+        UnitResult::Err(ChannelError::NotSupported("Delete not supported".to_string()))
     }
 
-    fn health_check(&self) -> Result<bool> {
-        Ok(self.running)
+    fn health_check() -> BoolResult {
+        let running = CHANNEL.with(|ch| ch.borrow().running);
+        BoolResult::Ok(running)
     }
 }
 
-// Export the channel
-export_channel!(EchoChannel);
+// Export the guest implementation
+bindings::export!(EchoGuest with_types_in bindings);

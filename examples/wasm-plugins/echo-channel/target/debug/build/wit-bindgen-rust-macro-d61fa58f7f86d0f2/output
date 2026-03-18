@@ -1,0 +1,2 @@
+cargo:rerun-if-changed=build.rs
+cargo:rustc-env=DEBUG_OUTPUT_DIR=/Users/lando/work/personal_ai/manta/examples/wasm-plugins/echo-channel/target/debug/build/wit-bindgen-rust-macro-d61fa58f7f86d0f2/out
