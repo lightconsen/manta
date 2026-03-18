@@ -1160,8 +1160,12 @@ impl Gateway {
                             // Spawn task to process messages from Telegram and route to agent
                             let agent_for_task = agent_handle.clone();
                             tokio::spawn(async move {
+                                info!("DEBUG: Telegram message processing task started");
                                 while let Some(message) = message_rx.recv().await {
+                                    info!("DEBUG: Received message from Telegram queue: session={}, user={}, content={}",
+                                        message.conversation_id.0, message.user_id.0, message.content);
                                     if let Some(ref handle) = agent_for_task {
+                                        info!("DEBUG: Sending to agent via command channel");
                                         // Send to agent via its command channel
                                         let cmd = AgentCommand::ProcessMessage {
                                             session_id: message.conversation_id.0.clone(),
@@ -1171,11 +1175,14 @@ impl Gateway {
                                         };
                                         if let Err(e) = handle.tx.send(cmd).await {
                                             error!("Failed to send message to agent: {}", e);
+                                        } else {
+                                            info!("DEBUG: Message sent to agent successfully");
                                         }
                                     } else {
                                         error!("No default agent available to process Telegram message");
                                     }
                                 }
+                                info!("DEBUG: Telegram message processing task ended");
                             });
 
                             // Subscribe to agent responses and send back to Telegram
@@ -1183,28 +1190,33 @@ impl Gateway {
                             let channel_for_telegram = channel.clone();
                             let channel_name = name.clone();
                             tokio::spawn(async move {
+                                info!("DEBUG: Telegram response handler task started");
                                 loop {
                                     match event_rx.recv().await {
                                         Ok(GatewayEvent::AgentResponse { session_id, content, .. }) => {
+                                            info!("DEBUG: Received AgentResponse event for session: {}", session_id);
                                             // Send response back to Telegram
                                             let conversation_id = crate::channels::ConversationId::new(session_id.clone());
                                             let outgoing = crate::channels::OutgoingMessage::new(
                                                 conversation_id,
                                                 content.clone()
                                             );
+                                            info!("DEBUG: Sending response back to Telegram: {}", content);
                                             if let Err(e) = channel_for_telegram.send(outgoing).await {
                                                 error!("Failed to send response to Telegram channel '{}': {}", channel_name, e);
                                             } else {
                                                 info!("Sent agent response to Telegram session {}", session_id);
                                             }
                                         }
-                                        Err(_) => {
+                                        Err(e) => {
+                                            info!("DEBUG: Event channel error: {:?}", e);
                                             // Event channel closed or lagged, break loop
                                             break;
                                         }
                                         _ => {}
                                     }
                                 }
+                                info!("DEBUG: Telegram response handler task ended");
                             });
 
                             let channel_name = name.clone();
