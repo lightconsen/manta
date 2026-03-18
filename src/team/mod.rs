@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 
 pub mod mesh;
 
-pub use mesh::{TeamMeshManager, TeamMeshSession, TeamMessageResult, get_team_mesh_manager};
+pub use mesh::{get_team_mesh_manager, TeamMeshManager, TeamMeshSession, TeamMessageResult};
 
 /// Team configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,20 +179,29 @@ impl Team {
     }
 
     /// Set hierarchy structure
-    /// Format: "manager:worker1,worker2"
+    /// Format: "manager:worker1,worker2;manager2:worker3,worker4"
     pub fn set_hierarchy(&mut self, structure: &str) -> crate::Result<()> {
         self.hierarchy.clear();
 
-        for part in structure.split(',') {
-            let parts: Vec<&str> = part.split(':').collect();
-            if parts.len() != 2 {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Invalid hierarchy format: '{}' (expected 'manager:worker1,worker2')", part)
-                ));
+        // Support multiple hierarchy definitions separated by semicolon
+        for part in structure.split(';') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
             }
 
-            let manager = parts[0].trim().to_string();
-            let workers: Vec<String> = parts[1]
+            // Find the colon separator (only split on first colon)
+            let colon_pos = part.find(':').ok_or_else(|| {
+                crate::error::MantaError::Validation(format!(
+                    "Invalid hierarchy format: '{}' (expected 'manager:worker1,worker2')",
+                    part
+                ))
+            })?;
+
+            let manager = part[..colon_pos].trim().to_string();
+            let workers_str = &part[colon_pos + 1..];
+
+            let workers: Vec<String> = workers_str
                 .split(',')
                 .map(|w| w.trim().to_string())
                 .filter(|w| !w.is_empty())
@@ -200,15 +209,17 @@ impl Team {
 
             // Validate that all agents exist
             if !self.members.contains_key(&manager) {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Manager '{}' is not a team member", manager)
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Manager '{}' is not a team member",
+                    manager
+                )));
             }
             for worker in &workers {
                 if !self.members.contains_key(worker) {
-                    return Err(crate::error::MantaError::Validation(
-                        format!("Worker '{}' is not a team member", worker)
-                    ));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Worker '{}' is not a team member",
+                        worker
+                    )));
                 }
             }
 
@@ -220,7 +231,11 @@ impl Team {
     }
 
     /// Set communication pattern
-    pub fn set_communication(&mut self, pattern: CommunicationPattern, shared_memory: Option<String>) {
+    pub fn set_communication(
+        &mut self,
+        pattern: CommunicationPattern,
+        shared_memory: Option<String>,
+    ) {
         self.communication = pattern;
         self.shared_memory = shared_memory;
         self.update_timestamp();
@@ -236,10 +251,7 @@ impl Team {
 
     /// Get agents who can delegate
     pub fn get_delegators(&self) -> Vec<&TeamMember> {
-        self.members
-            .values()
-            .filter(|m| m.can_delegate)
-            .collect()
+        self.members.values().filter(|m| m.can_delegate).collect()
     }
 
     /// Update timestamp
@@ -264,7 +276,10 @@ impl Team {
 
         let config_path = team_dir.join("team.yaml");
         let yaml = serde_yaml::to_string(self).map_err(|e| {
-            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!("YAML error: {}", e)))
+            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                "YAML error: {}",
+                e
+            )))
         })?;
 
         tokio::fs::write(&config_path, yaml).await.map_err(|e| {
@@ -290,7 +305,10 @@ impl Team {
         })?;
 
         let team: Team = serde_yaml::from_str(&yaml).map_err(|e| {
-            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!("YAML error: {}", e)))
+            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                "YAML error: {}",
+                e
+            )))
         })?;
 
         Ok(team)
@@ -329,12 +347,15 @@ impl Team {
             }
         })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            crate::error::MantaError::Storage {
-                context: format!("Failed to read directory entry"),
-                details: e.to_string(),
-            }
-        })? {
+        while let Some(entry) =
+            entries
+                .next_entry()
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: format!("Failed to read directory entry"),
+                    details: e.to_string(),
+                })?
+        {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -352,30 +373,38 @@ impl Team {
     /// Export team to string (YAML or JSON)
     pub fn export(&self, format: &str) -> crate::Result<String> {
         match format.to_lowercase().as_str() {
-            "json" => serde_json::to_string_pretty(self).map_err(|e| {
-                crate::error::MantaError::Serialization(e)
-            }),
+            "json" => serde_json::to_string_pretty(self)
+                .map_err(|e| crate::error::MantaError::Serialization(e)),
             "yaml" | "yml" => serde_yaml::to_string(self).map_err(|e| {
-                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!("YAML serialization error: {}", e)))
+                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                    "YAML serialization error: {}",
+                    e
+                )))
             }),
-            _ => Err(crate::error::MantaError::Validation(
-                format!("Unsupported export format: '{}' (use 'yaml' or 'json')", format)
-            )),
+            _ => Err(crate::error::MantaError::Validation(format!(
+                "Unsupported export format: '{}' (use 'yaml' or 'json')",
+                format
+            ))),
         }
     }
 
     /// Import team from string
     pub fn import(data: &str, format: &str, rename: Option<String>) -> crate::Result<Self> {
         let mut team: Team = match format.to_lowercase().as_str() {
-            "json" => serde_json::from_str(data).map_err(|e| {
-                crate::error::MantaError::Serialization(e)
-            })?,
+            "json" => serde_json::from_str(data)
+                .map_err(|e| crate::error::MantaError::Serialization(e))?,
             "yaml" | "yml" => serde_yaml::from_str(data).map_err(|e| {
-                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!("YAML deserialization error: {}", e)))
+                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                    "YAML deserialization error: {}",
+                    e
+                )))
             })?,
-            _ => return Err(crate::error::MantaError::Validation(
-                format!("Unsupported import format: '{}' (use 'yaml' or 'json')", format)
-            )),
+            _ => {
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Unsupported import format: '{}' (use 'yaml' or 'json')",
+                    format
+                )))
+            }
         };
 
         if let Some(new_name) = rename {
@@ -391,7 +420,6 @@ impl Team {
         Ok(team)
     }
 }
-
 
 impl std::fmt::Display for TeamType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
