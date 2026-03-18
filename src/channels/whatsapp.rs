@@ -175,9 +175,10 @@ impl WhatsappChannel {
         }
         // Normalize number format
         let normalized = number.trim_start_matches('+').to_string();
-        self.config.allowed_numbers.iter().any(|n| {
-            n.trim_start_matches('+') == normalized
-        })
+        self.config
+            .allowed_numbers
+            .iter()
+            .any(|n| n.trim_start_matches('+') == normalized)
     }
 
     /// Make authenticated API request
@@ -186,10 +187,7 @@ impl WhatsappChannel {
         method: &str,
         payload: Option<serde_json::Value>,
     ) -> crate::Result<T> {
-        let url = format!(
-            "{}/{}/{}",
-            META_API_BASE, self.config.phone_number_id, method
-        );
+        let url = format!("{}/{}/{}", META_API_BASE, self.config.phone_number_id, method);
 
         let mut request = self
             .http_client
@@ -201,31 +199,34 @@ impl WhatsappChannel {
             request = request.json(&payload);
         }
 
-        let response = request.send().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("WhatsApp API request failed: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let response =
+            request
+                .send()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("WhatsApp API request failed: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
-        let result: T = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse WhatsApp response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let result: T =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse WhatsApp response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         Ok(result)
     }
 
     /// Get business phone numbers
     async fn get_phone_numbers(&self) -> crate::Result<Vec<String>> {
-        let business_id = self.config.business_account_id.as_ref()
-            .ok_or_else(|| crate::error::MantaError::Config(
-                crate::error::ConfigError::Missing(
-                    "Business account ID required for listing phone numbers".to_string()
-                )
-            ))?;
+        let business_id = self.config.business_account_id.as_ref().ok_or_else(|| {
+            crate::error::MantaError::Config(crate::error::ConfigError::Missing(
+                "Business account ID required for listing phone numbers".to_string(),
+            ))
+        })?;
 
         let url = format!("{}/{}/phone_numbers", META_API_BASE, business_id);
 
@@ -240,12 +241,14 @@ impl WhatsappChannel {
                 cause: Some(Box::new(e)),
             })?;
 
-        let data: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse phone numbers: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let data: serde_json::Value =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse phone numbers: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let mut numbers = Vec::new();
         if let Some(data_array) = data.get("data").and_then(|v| v.as_array()) {
@@ -304,7 +307,12 @@ impl WhatsappChannel {
     }
 
     /// Build message payload
-    fn build_message_payload(&self, to: &str, content: &str, message_type: &str) -> WhatsappMessagePayload {
+    fn build_message_payload(
+        &self,
+        to: &str,
+        content: &str,
+        message_type: &str,
+    ) -> WhatsappMessagePayload {
         match message_type {
             "image" => WhatsappMessagePayload {
                 messaging_product: "whatsapp".to_string(),
@@ -386,14 +394,18 @@ impl Channel for WhatsappChannel {
             "text": { "body": "test" }
         });
 
-        match self.api_request::<WhatsappResponse>("messages", Some(test_payload)).await {
+        match self
+            .api_request::<WhatsappResponse>("messages", Some(test_payload))
+            .await
+        {
             Ok(_) | Err(_) => {
                 // We expect an error for invalid "to" field, but connection should work
                 // In production, you might want to use a different health check endpoint
             }
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         info!("WhatsApp channel started for phone number ID: {}", self.config.phone_number_id);
         info!("Note: Webhook configuration required for receiving messages");
@@ -409,7 +421,8 @@ impl Channel for WhatsappChannel {
 
     async fn stop(&self) -> crate::Result<()> {
         info!("Stopping WhatsApp channel...");
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -418,9 +431,10 @@ impl Channel for WhatsappChannel {
 
         // Check if number is allowed
         if !self.is_number_allowed(phone_number) {
-            return Err(crate::error::MantaError::Validation(
-                format!("Phone number {} is not in allow list", phone_number)
-            ));
+            return Err(crate::error::MantaError::Validation(format!(
+                "Phone number {} is not in allow list",
+                phone_number
+            )));
         }
 
         // Format phone number (ensure it has country code)
@@ -474,14 +488,14 @@ impl Channel for WhatsappChannel {
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
         // WhatsApp doesn't support editing messages
         Err(crate::error::MantaError::Validation(
-            "WhatsApp does not support message editing".to_string()
+            "WhatsApp does not support message editing".to_string(),
         ))
     }
 
     async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
         // WhatsApp doesn't support deleting messages via API
         Err(crate::error::MantaError::Validation(
-            "WhatsApp does not support message deletion via API".to_string()
+            "WhatsApp does not support message deletion via API".to_string(),
         ))
     }
 
@@ -541,8 +555,8 @@ mod tests {
 
     #[test]
     fn test_is_number_allowed() {
-        let config = WhatsappConfig::new("123", "token")
-            .allow_numbers(vec!["+1234567890".to_string()]);
+        let config =
+            WhatsappConfig::new("123", "token").allow_numbers(vec!["+1234567890".to_string()]);
         let channel = WhatsappChannel::new(config);
 
         assert!(channel.is_number_allowed("+1234567890"));

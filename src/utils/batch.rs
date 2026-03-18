@@ -104,10 +104,7 @@ where
 
         tokio::spawn(run_batcher(config.clone(), request_rx, processor));
 
-        Self {
-            config,
-            request_tx,
-        }
+        Self { config, request_tx }
     }
 
     /// Submit a request to be batched
@@ -430,12 +427,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_batcher() {
-        let processor = FunctionBatchProcessor::new(|inputs: Vec<i32>| {
-            inputs.iter().map(|x| x * 2).collect()
-        });
+        let processor =
+            FunctionBatchProcessor::new(|inputs: Vec<i32>| inputs.iter().map(|x| x * 2).collect());
 
         let batcher = Batcher::new(
-            BatchConfig::new().with_max_size(5).with_max_wait(Duration::from_millis(50)),
+            BatchConfig::new()
+                .with_max_size(5)
+                .with_max_wait(Duration::from_millis(50)),
             processor,
         );
 
@@ -466,9 +464,7 @@ mod tests {
 
         // Wait for result in background
         let dedup2 = dedup.clone();
-        let wait_handle = tokio::spawn(async move {
-            dedup2.wait_for("key1".to_string()).await
-        });
+        let wait_handle = tokio::spawn(async move { dedup2.wait_for("key1".to_string()).await });
 
         // Complete the first request
         tokio::time::sleep(Duration::from_millis(10)).await;

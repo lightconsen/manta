@@ -139,7 +139,11 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
                         "conversation_id": conv_id,
                         "messages": history.messages
                     });
-                    if socket.send(Message::Text(history_json.to_string())).await.is_err() {
+                    if socket
+                        .send(Message::Text(history_json.to_string()))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -154,7 +158,8 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
     let welcome_msg = if let Some(ref conv_id) = conversation_id {
         format!("Connected to Manta AI Assistant (via daemon).\nSession: {}\nType /new to start a fresh conversation.", conv_id)
     } else {
-        "Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation.".to_string()
+        "Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation."
+            .to_string()
     };
     let welcome = serde_json::json!({
         "type": "system",
@@ -313,7 +318,11 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
                     "conversation_id": &conversation_id,
                     "messages": history
                 });
-                if socket.send(Message::Text(history_json.to_string())).await.is_err() {
+                if socket
+                    .send(Message::Text(history_json.to_string()))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -443,8 +452,11 @@ mod tests {
     fn test_terminal_html_contains_version() {
         let html = terminal_html();
         let version = env!("CARGO_PKG_VERSION");
-        assert!(html.contains(&format!("v{}", version)),
-            "HTML should contain version v{}", version);
+        assert!(
+            html.contains(&format!("v{}", version)),
+            "HTML should contain version v{}",
+            version
+        );
     }
 
     #[test]

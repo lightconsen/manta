@@ -46,10 +46,7 @@ pub enum CanvasComponent {
         style: Option<TextStyle>,
     },
     /// Markdown content
-    Markdown {
-        id: String,
-        content: String,
-    },
+    Markdown { id: String, content: String },
     /// Input field
     Input {
         id: String,
@@ -102,10 +99,7 @@ pub enum CanvasComponent {
         label: Option<String>,
     },
     /// Spinner/loading indicator
-    Spinner {
-        id: String,
-        label: Option<String>,
-    },
+    Spinner { id: String, label: Option<String> },
     /// Image display
     Image {
         id: String,
@@ -125,9 +119,7 @@ pub enum CanvasComponent {
         rows: Vec<Vec<String>>,
     },
     /// Divider line
-    Divider {
-        id: String,
-    },
+    Divider { id: String },
     /// Alert/notification
     Alert {
         id: String,
@@ -175,7 +167,10 @@ pub enum CanvasEvent {
     /// Radio selection changed
     RadioChange { component_id: String, value: String },
     /// Form submitted
-    FormSubmit { component_id: String, values: HashMap<String, Value> },
+    FormSubmit {
+        component_id: String,
+        values: HashMap<String, Value>,
+    },
     /// Canvas closed by user
     Close,
 }
@@ -185,13 +180,22 @@ pub enum CanvasEvent {
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum CanvasUpdate {
     /// Initialize/replace entire canvas
-    Init { canvas_id: String, root: CanvasComponent },
+    Init {
+        canvas_id: String,
+        root: CanvasComponent,
+    },
     /// Update specific component
-    Update { component_id: String, component: CanvasComponent },
+    Update {
+        component_id: String,
+        component: CanvasComponent,
+    },
     /// Remove component
     Remove { component_id: String },
     /// Append child to container
-    Append { parent_id: String, component: CanvasComponent },
+    Append {
+        parent_id: String,
+        component: CanvasComponent,
+    },
     /// Show alert/notification
     Notify { level: String, message: String },
     /// Close canvas
@@ -236,18 +240,16 @@ impl CanvasSession {
 
     /// Update a specific component
     pub async fn update(&self, component_id: String, component: CanvasComponent) {
-        let _ = self.update_tx.send(CanvasUpdate::Update {
-            component_id,
-            component,
-        });
+        let _ = self
+            .update_tx
+            .send(CanvasUpdate::Update { component_id, component });
     }
 
     /// Append component to container
     pub async fn append(&self, parent_id: String, component: CanvasComponent) {
-        let _ = self.update_tx.send(CanvasUpdate::Append {
-            parent_id,
-            component,
-        });
+        let _ = self
+            .update_tx
+            .send(CanvasUpdate::Append { parent_id, component });
     }
 
     /// Show notification
@@ -319,11 +321,7 @@ impl CanvasWebSocketHandler {
         event_tx: mpsc::Sender<CanvasEvent>,
         update_rx: broadcast::Receiver<CanvasUpdate>,
     ) -> Self {
-        Self {
-            canvas_id,
-            event_tx,
-            update_rx,
-        }
+        Self { canvas_id, event_tx, update_rx }
     }
 
     /// Handle incoming WebSocket message
@@ -396,7 +394,11 @@ pub mod helpers {
     }
 
     /// Create a progress indicator
-    pub fn create_progress(id: impl Into<String>, value: f64, label: Option<String>) -> CanvasComponent {
+    pub fn create_progress(
+        id: impl Into<String>,
+        value: f64,
+        label: Option<String>,
+    ) -> CanvasComponent {
         CanvasComponent::Progress {
             id: id.into(),
             value,
@@ -406,7 +408,11 @@ pub mod helpers {
     }
 
     /// Create an alert
-    pub fn create_alert(id: impl Into<String>, level: impl Into<String>, message: impl Into<String>) -> CanvasComponent {
+    pub fn create_alert(
+        id: impl Into<String>,
+        level: impl Into<String>,
+        message: impl Into<String>,
+    ) -> CanvasComponent {
         CanvasComponent::Alert {
             id: id.into(),
             level: level.into(),
@@ -436,7 +442,11 @@ pub mod helpers {
     }
 
     /// Create a code display with copy button
-    pub fn create_code_block(id: impl Into<String>, content: impl Into<String>, language: Option<String>) -> CanvasComponent {
+    pub fn create_code_block(
+        id: impl Into<String>,
+        content: impl Into<String>,
+        language: Option<String>,
+    ) -> CanvasComponent {
         let id = id.into();
         CanvasComponent::Container {
             id: id.clone(),
@@ -496,10 +506,13 @@ mod tests {
 
     #[test]
     fn test_helper_create_form() {
-        let form = helpers::create_form("my_form", vec![
-            ("name".to_string(), "Name".to_string()),
-            ("email".to_string(), "Email".to_string()),
-        ]);
+        let form = helpers::create_form(
+            "my_form",
+            vec![
+                ("name".to_string(), "Name".to_string()),
+                ("email".to_string(), "Email".to_string()),
+            ],
+        );
 
         match form {
             CanvasComponent::Container { children, .. } => {

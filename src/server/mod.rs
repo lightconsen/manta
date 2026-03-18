@@ -181,7 +181,11 @@ async fn root(State(state): State<AppState>) -> impl IntoResponse {
 
 /// Health check endpoint
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
-    let agent_status = if state.agent.is_some() { "ready" } else { "disabled" };
+    let agent_status = if state.agent.is_some() {
+        "ready"
+    } else {
+        "disabled"
+    };
 
     Json(serde_json::json!({
         "status": "healthy",
@@ -222,12 +226,10 @@ async fn chat(
         // Use provided conversation ID or get last conversation
         let conversation_id = match request.conversation_id {
             Some(id) => id,
-            None => {
-                match agent.get_last_conversation("user").await {
-                    Ok(Some(last_conv)) => last_conv,
-                    _ => crate::channels::ConversationId::generate().to_string(),
-                }
-            }
+            None => match agent.get_last_conversation("user").await {
+                Ok(Some(last_conv)) => last_conv,
+                _ => crate::channels::ConversationId::generate().to_string(),
+            },
         };
 
         let incoming = IncomingMessage::new("user", &conversation_id, request.message);
@@ -257,10 +259,7 @@ async fn chat(
 }
 
 /// Chat stream endpoint (WebSocket)
-async fn chat_stream(
-    State(state): State<AppState>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+async fn chat_stream(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     if state.agent.is_none() {
         return (StatusCode::SERVICE_UNAVAILABLE, "AI agent not configured").into_response();
     }
@@ -269,10 +268,7 @@ async fn chat_stream(
 }
 
 /// Handle WebSocket chat (for CLI and Web)
-async fn handle_chat_socket(
-    mut socket: axum::extract::ws::WebSocket,
-    state: AppState,
-) {
+async fn handle_chat_socket(mut socket: axum::extract::ws::WebSocket, state: AppState) {
     use axum::extract::ws::Message;
 
     // Subscribe to cron broadcasts
@@ -539,10 +535,7 @@ async fn create_entity(
         }
         Err(e) => {
             error!("Failed to create entity: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()})))
         }
     }
 }
@@ -563,10 +556,7 @@ async fn get_entity(State(state): State<AppState>, Path(id): Path<String>) -> im
                 };
                 (StatusCode::OK, Json(serde_json::json!(response)))
             }
-            Err(e) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": e.to_string()})),
-            ),
+            Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e.to_string()}))),
         },
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -620,10 +610,9 @@ async fn update_entity(
                     };
                     (StatusCode::OK, Json(serde_json::json!(response)))
                 }
-                Err(e) => (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": e.to_string()})),
-                ),
+                Err(e) => {
+                    (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()})))
+                }
             }
         }
         Err(e) => (

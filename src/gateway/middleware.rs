@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::gateway::GatewayState;
-use crate::security::{UserId, RateLimitHeaders};
+use crate::security::{RateLimitHeaders, UserId};
 
 /// Allowed network origins for admin APIs
 #[derive(Debug, Clone)]
@@ -122,11 +122,7 @@ pub async fn localhost_only_middleware(req: Request, next: Next) -> Result<Respo
             Ok(next.run(req).await)
         }
         Some(ip) => {
-            warn!(
-                "Non-localhost access attempt to admin API from: {} - {:?}",
-                ip,
-                req.uri()
-            );
+            warn!("Non-localhost access attempt to admin API from: {} - {:?}", ip, req.uri());
             Err(StatusCode::FORBIDDEN)
         }
         None => {
@@ -148,11 +144,7 @@ pub async fn tailscale_only_middleware(req: Request, next: Next) -> Result<Respo
             Ok(next.run(req).await)
         }
         Some(ip) => {
-            warn!(
-                "Non-Tailscale access attempt to admin API from: {} - {:?}",
-                ip,
-                req.uri()
-            );
+            warn!("Non-Tailscale access attempt to admin API from: {} - {:?}", ip, req.uri());
             Err(StatusCode::FORBIDDEN)
         }
         None => {
@@ -172,11 +164,7 @@ pub async fn private_only_middleware(req: Request, next: Next) -> Result<Respons
             Ok(next.run(req).await)
         }
         Some(ip) => {
-            warn!(
-                "Public network access attempt to admin API from: {} - {:?}",
-                ip,
-                req.uri()
-            );
+            warn!("Public network access attempt to admin API from: {} - {:?}", ip, req.uri());
             Err(StatusCode::FORBIDDEN)
         }
         None => {
@@ -291,7 +279,18 @@ pub async fn rate_limit_middleware(
 
             // Add rate limit headers
             let headers = response.headers_mut();
-            headers.insert("X-RateLimit-Limit", state.rate_limiter.get_state(&user_id).await.map(|s| s.capacity).unwrap_or(100).to_string().parse().unwrap());
+            headers.insert(
+                "X-RateLimit-Limit",
+                state
+                    .rate_limiter
+                    .get_state(&user_id)
+                    .await
+                    .map(|s| s.capacity)
+                    .unwrap_or(100)
+                    .to_string()
+                    .parse()
+                    .unwrap(),
+            );
             headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
             headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().unwrap());
 
@@ -301,11 +300,16 @@ pub async fn rate_limit_middleware(
             warn!("Rate limit exceeded for user: {}", user_id);
             let mut response = Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
-                .body(Body::from(format!("Rate limit exceeded. Retry after {} seconds.", retry_after_secs)))
+                .body(Body::from(format!(
+                    "Rate limit exceeded. Retry after {} seconds.",
+                    retry_after_secs
+                )))
                 .unwrap();
 
             // Add retry-after header
-            response.headers_mut().insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+            response
+                .headers_mut()
+                .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
 
             Ok(response)
         }

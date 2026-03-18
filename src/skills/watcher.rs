@@ -82,10 +82,7 @@ impl SkillWatcher {
                     for path in event.paths {
                         // Only report SKILL.md files
                         if path.to_string_lossy().ends_with("SKILL.md") {
-                            if let Err(e) = tx_clone.send(FileChange {
-                                path: path.clone(),
-                                kind,
-                            }) {
+                            if let Err(e) = tx_clone.send(FileChange { path: path.clone(), kind }) {
                                 warn!("Failed to send file change event: {}", e);
                             }
                             // Also call the callback with the path
@@ -98,7 +95,9 @@ impl SkillWatcher {
                 }
             }
         })
-        .map_err(|e| crate::error::MantaError::Internal(format!("Failed to create file watcher: {}", e)))?;
+        .map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to create file watcher: {}", e))
+        })?;
 
         // Watch all provided paths
         for (_level, path) in paths {
@@ -283,7 +282,11 @@ pub struct DebouncedWatcher {
 #[allow(dead_code)]
 impl DebouncedWatcher {
     /// Create a new debounced watcher
-    pub fn new<F>(paths: Vec<(StorageLevel, PathBuf)>, debounce: std::time::Duration, callback: F) -> crate::Result<Self>
+    pub fn new<F>(
+        paths: Vec<(StorageLevel, PathBuf)>,
+        debounce: std::time::Duration,
+        callback: F,
+    ) -> crate::Result<Self>
     where
         F: Fn(String) + Send + Sync + 'static,
     {
@@ -308,10 +311,9 @@ impl DebouncedWatcher {
         let mut changes = Vec::new();
 
         while start.elapsed() < self.debounce {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(50),
-                self.watcher.recv()
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(50), self.watcher.recv())
+                .await
+            {
                 Ok(Some(change)) => {
                     changes.push(change);
                 }

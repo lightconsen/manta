@@ -33,7 +33,7 @@ impl Default for PoolConfig {
             min_idle: 2,
             timeout: Duration::from_secs(30),
             max_lifetime: Duration::from_secs(3600), // 1 hour
-            idle_timeout: Duration::from_secs(600),   // 10 minutes
+            idle_timeout: Duration::from_secs(600),  // 10 minutes
             validate: true,
         }
     }
@@ -135,10 +135,9 @@ impl HttpClientPool {
             .pool_idle_timeout(self.config.idle_timeout)
             .timeout(self.config.timeout)
             .build()
-            .map_err(|e| crate::error::MantaError::Internal(format!(
-                "Failed to create HTTP client: {}",
-                e
-            )))
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Failed to create HTTP client: {}", e))
+            })
     }
 
     /// Remove a client from the pool
@@ -219,10 +218,7 @@ pub struct DatabasePool {
 impl DatabasePool {
     /// Create a new database pool configuration
     pub fn new(name: impl Into<String>, config: PoolConfig) -> Self {
-        Self {
-            name: name.into(),
-            config,
-        }
+        Self { name: name.into(), config }
     }
 
     /// Get SQLx pool options
@@ -268,11 +264,7 @@ impl ConnectionPoolManager {
     }
 
     /// Register a database pool configuration
-    pub async fn register_database(
-        &self,
-        name: impl Into<String>,
-        config: PoolConfig,
-    ) {
+    pub async fn register_database(&self, name: impl Into<String>, config: PoolConfig) {
         let name = name.into();
         let pool = DatabasePool::new(name.clone(), config);
         let mut configs = self.db_configs.write().await;
@@ -363,10 +355,7 @@ mod tests {
         let client2 = pool.get_client("test-service").await.unwrap();
 
         // Should be the same client
-        assert!(Arc::ptr_eq(
-            &Arc::new(client1.clone()),
-            &Arc::new(client2.clone())
-        ) || true); // reqwest::Client uses Arc internally, so they're equivalent
+        assert!(Arc::ptr_eq(&Arc::new(client1.clone()), &Arc::new(client2.clone())) || true); // reqwest::Client uses Arc internally, so they're equivalent
 
         let stats = pool.stats().await;
         assert_eq!(stats.total_connections, 1);

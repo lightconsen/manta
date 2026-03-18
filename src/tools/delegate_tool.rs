@@ -22,7 +22,13 @@ const MAX_CHILDREN: usize = 3;
 const MAX_DEPTH: usize = 2;
 /// Tools blocked for child agents (for future use)
 #[allow(dead_code)]
-const BLOCKED_TOOLS: &[&str] = &["delegate", "clarify", "memory", "send_message", "execute_code"];
+const BLOCKED_TOOLS: &[&str] = &[
+    "delegate",
+    "clarify",
+    "memory",
+    "send_message",
+    "execute_code",
+];
 
 /// Task specification for child agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +219,7 @@ impl DelegateTool {
         // Check if we can delegate
         if !self.tracker.can_delegate().await {
             return Err(crate::error::MantaError::Validation(
-                "Maximum delegation depth reached or too many children".to_string()
+                "Maximum delegation depth reached or too many children".to_string(),
             ));
         }
 
@@ -236,7 +242,11 @@ impl DelegateTool {
         // Register the child
         self.tracker.register_child(child.clone()).await;
 
-        info!("Spawned child agent {} for task: {}", child_id, task.prompt.chars().take(50).collect::<String>());
+        info!(
+            "Spawned child agent {} for task: {}",
+            child_id,
+            task.prompt.chars().take(50).collect::<String>()
+        );
 
         // Start the child agent execution in the background
         let tracker = self.tracker.clone();
@@ -297,20 +307,20 @@ async fn execute_child_task(
             }
             Err(e) => {
                 error!("Child {} failed: {}", child_id, e);
-                tracker.set_error(&child_id, format!("Task execution failed: {}", e)).await;
+                tracker
+                    .set_error(&child_id, format!("Task execution failed: {}", e))
+                    .await;
             }
         }
     } else {
         // No agent configured - log warning and mark as failed
         warn!(
             "No agent configured for child {}. Task would execute with prompt: {}",
-            child_id,
-            task.prompt
+            child_id, task.prompt
         );
-        tracker.set_error(
-            &child_id,
-            "No agent configured for delegation".to_string(),
-        ).await;
+        tracker
+            .set_error(&child_id, "No agent configured for delegation".to_string())
+            .await;
     }
 
     debug!("Child {} execution completed", child_id);
@@ -387,11 +397,9 @@ Progress and results are relayed to the parent."#
         args: serde_json::Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation(
-                "action is required".to_string()
-            ))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("action is required".to_string())
+        })?;
 
         match action {
             "spawn" => {
@@ -405,11 +413,9 @@ Progress and results are relayed to the parent."#
                 }
 
                 let task_json = &args["task"];
-                let prompt = task_json["prompt"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "task.prompt is required".to_string()
-                    ))?;
+                let prompt = task_json["prompt"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("task.prompt is required".to_string())
+                })?;
 
                 let task = TaskSpec {
                     prompt: prompt.to_string(),
@@ -417,45 +423,48 @@ Progress and results are relayed to the parent."#
                     max_iterations: task_json["max_iterations"].as_u64().map(|v| v as usize),
                     allowed_tools: task_json["allowed_tools"]
                         .as_array()
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     context: HashMap::new(),
                 };
 
-                let child = self.spawn_child(task, None, context.conversation_id.clone()).await?;
+                let child = self
+                    .spawn_child(task, None, context.conversation_id.clone())
+                    .await?;
 
-                Ok(ToolExecutionResult::success(format!(
-                    "Spawned child agent: {}", child.id
-                )).with_data(json!({
-                    "child_id": child.id,
-                    "status": child.status,
-                    "depth": self.tracker.depth + 1,
-                    "max_depth": MAX_DEPTH,
-                })))
+                Ok(ToolExecutionResult::success(format!("Spawned child agent: {}", child.id))
+                    .with_data(json!({
+                        "child_id": child.id,
+                        "status": child.status,
+                        "depth": self.tracker.depth + 1,
+                        "max_depth": MAX_DEPTH,
+                    })))
             }
 
             "status" => {
-                let child_id = args["child_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "child_id is required for status".to_string()
-                    ))?;
+                let child_id = args["child_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "child_id is required for status".to_string(),
+                    )
+                })?;
 
                 match self.tracker.get_child(child_id).await {
-                    Some(child) => {
-                        Ok(ToolExecutionResult::success(format!(
-                            "Child {} status: {:?}", child_id, child.status
-                        )).with_data(json!({
-                            "child_id": child.id,
-                            "status": child.status,
-                            "result": child.result,
-                            "error": child.error,
-                            "created_at": child.created_at.to_rfc3339(),
-                        })))
-                    }
-                    None => Ok(ToolExecutionResult::error(format!(
-                        "Child {} not found", child_id
-                    ))),
+                    Some(child) => Ok(ToolExecutionResult::success(format!(
+                        "Child {} status: {:?}",
+                        child_id, child.status
+                    ))
+                    .with_data(json!({
+                        "child_id": child.id,
+                        "status": child.status,
+                        "result": child.result,
+                        "error": child.error,
+                        "created_at": child.created_at.to_rfc3339(),
+                    }))),
+                    None => Ok(ToolExecutionResult::error(format!("Child {} not found", child_id))),
                 }
             }
 
@@ -469,37 +478,30 @@ Progress and results are relayed to the parent."#
                     })
                 }).collect();
 
-                Ok(ToolExecutionResult::success(format!(
-                    "{} active children", children.len()
-                )).with_data(json!({
-                    "children": summary,
-                    "count": children.len(),
-                    "max_children": MAX_CHILDREN,
-                })))
+                Ok(ToolExecutionResult::success(format!("{} active children", children.len()))
+                    .with_data(json!({
+                        "children": summary,
+                        "count": children.len(),
+                        "max_children": MAX_CHILDREN,
+                    })))
             }
 
             "cancel" => {
-                let child_id = args["child_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "child_id is required for cancel".to_string()
-                    ))?;
+                let child_id = args["child_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "child_id is required for cancel".to_string(),
+                    )
+                })?;
 
                 if let Some(_child) = self.tracker.remove_child(child_id).await {
                     info!("Cancelled child agent: {}", child_id);
-                    Ok(ToolExecutionResult::success(format!(
-                        "Cancelled child {}", child_id
-                    )))
+                    Ok(ToolExecutionResult::success(format!("Cancelled child {}", child_id)))
                 } else {
-                    Ok(ToolExecutionResult::error(format!(
-                        "Child {} not found", child_id
-                    )))
+                    Ok(ToolExecutionResult::error(format!("Child {} not found", child_id)))
                 }
             }
 
-            _ => Err(crate::error::MantaError::Validation(
-                format!("Unknown action: {}", action)
-            )),
+            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }

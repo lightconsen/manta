@@ -42,7 +42,10 @@ pub fn init_logging(config: &Config) -> Result<()> {
 /// Initialize JSON format logging
 fn init_json_logging<S>(registry: S, config: &Config) -> Result<()>
 where
-    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    S: tracing::Subscriber
+        + Send
+        + Sync
+        + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     if config.logging.stdout {
         let stdout_layer = tracing_subscriber::fmt::layer()
@@ -77,7 +80,10 @@ where
 /// Initialize pretty format logging
 fn init_pretty_logging<S>(registry: S, config: &Config) -> Result<()>
 where
-    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    S: tracing::Subscriber
+        + Send
+        + Sync
+        + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     if config.logging.stdout {
         let stdout_layer = tracing_subscriber::fmt::layer()
@@ -102,7 +108,10 @@ where
 /// Initialize compact format logging
 fn init_compact_logging<S>(registry: S, config: &Config) -> Result<()>
 where
-    S: tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    S: tracing::Subscriber
+        + Send
+        + Sync
+        + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     if config.logging.stdout {
         let stdout_layer = tracing_subscriber::fmt::layer()
@@ -172,9 +181,10 @@ pub fn setup_panic_handler() {
             "Unknown panic".to_string()
         };
 
-        let location = info.location().map(|l| {
-            format!("{}:{}", l.file(), l.line())
-        }).unwrap_or_else(|| "unknown location".to_string());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown location".to_string());
 
         tracing::error!(
             target: "panic",

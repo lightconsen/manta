@@ -204,12 +204,14 @@ impl LarkChannel {
                 cause: Some(Box::new(e)),
             })?;
 
-        let token_resp: LarkTokenResponse = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse Lark token response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let token_resp: LarkTokenResponse =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse Lark token response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let mut token = self.current_token.write().await;
         *token = token_resp.tenant_access_token.clone();
@@ -217,9 +219,8 @@ impl LarkChannel {
         // Set expiry (with 5 minute buffer)
         let expiry_seconds = std::cmp::max(token_resp.expire - 300, 60);
         let mut expiry = self.token_expiry.write().await;
-        *expiry = Some(
-            std::time::Instant::now() + std::time::Duration::from_secs(expiry_seconds as u64),
-        );
+        *expiry =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(expiry_seconds as u64));
 
         Ok(token_resp.tenant_access_token)
     }
@@ -243,19 +244,23 @@ impl LarkChannel {
             request = request.json(&payload);
         }
 
-        let response = request.send().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Lark API request failed: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let response =
+            request
+                .send()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Lark API request failed: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
-        let result: T = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse Lark response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let result: T =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse Lark response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         Ok(result)
     }
@@ -372,7 +377,8 @@ impl Channel for LarkChannel {
             }
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         info!("Lark/Feishu channel started");
         info!("Note: Webhook configuration required for receiving messages");
@@ -388,7 +394,8 @@ impl Channel for LarkChannel {
 
     async fn stop(&self) -> crate::Result<()> {
         info!("Stopping Lark/Feishu channel...");
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 

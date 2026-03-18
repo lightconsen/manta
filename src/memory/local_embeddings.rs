@@ -22,12 +22,16 @@ static LLAMA_BACKEND: OnceLock<crate::Result<LlamaBackend>> = OnceLock::new();
 /// Get or initialize the llama.cpp backend
 fn get_backend() -> crate::Result<&'static LlamaBackend> {
     let result = LLAMA_BACKEND.get_or_init(|| {
-        LlamaBackend::init()
-            .map_err(|e| crate::error::MantaError::Validation(format!("Failed to init llama.cpp backend: {}", e)))
+        LlamaBackend::init().map_err(|e| {
+            crate::error::MantaError::Validation(format!("Failed to init llama.cpp backend: {}", e))
+        })
     });
     match result {
         Ok(ref backend) => Ok(backend),
-        Err(ref e) => Err(crate::error::MantaError::Validation(format!("Backend initialization failed: {}", e))),
+        Err(ref e) => Err(crate::error::MantaError::Validation(format!(
+            "Backend initialization failed: {}",
+            e
+        ))),
     }
 }
 
@@ -52,7 +56,9 @@ impl ModelSource {
             Self::parse_hf_format(parts)
         } else if source.starts_with("https://huggingface.co/") {
             // Parse full HF URL
-            let path = source.strip_prefix("https://huggingface.co/").unwrap_or(source);
+            let path = source
+                .strip_prefix("https://huggingface.co/")
+                .unwrap_or(source);
             Self::parse_hf_format(path)
         } else if source.contains('/') && !source.starts_with("./") && !source.starts_with("/") {
             // Likely HF format: org/model/filename.gguf
@@ -97,19 +103,18 @@ async fn download_from_hf(repo_id: &str, filename: &str) -> crate::Result<PathBu
         .map(|h| h.join(HF_CACHE_DIR))
         .unwrap_or_else(|| PathBuf::from(HF_CACHE_DIR));
 
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| crate::error::MantaError::Io(e))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| crate::error::MantaError::Io(e))?;
 
     // Use hf-hub for download
-    let api = hf_hub::api::tokio::Api::new()
-        .map_err(|e| crate::error::MantaError::Validation(format!("Failed to create HF API: {}", e)))?;
+    let api = hf_hub::api::tokio::Api::new().map_err(|e| {
+        crate::error::MantaError::Validation(format!("Failed to create HF API: {}", e))
+    })?;
 
     let repo = api.model(repo_id.to_string());
 
-    let local_path = repo
-        .get(filename)
-        .await
-        .map_err(|e| crate::error::MantaError::Validation(format!("Failed to download model: {}", e)))?;
+    let local_path = repo.get(filename).await.map_err(|e| {
+        crate::error::MantaError::Validation(format!("Failed to download model: {}", e))
+    })?;
 
     info!("Model downloaded to: {:?}", local_path);
     Ok(local_path)
@@ -135,7 +140,8 @@ impl LazyEmbeddingModel {
     /// Create a new lazy embedding model
     pub fn new(source: ModelSource, dimension: usize) -> Self {
         let model_name = match &source {
-            ModelSource::Local(path) => path.file_name()
+            ModelSource::Local(path) => path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string(),
@@ -163,22 +169,16 @@ impl LazyEmbeddingModel {
 
                 let model_params = LlamaModelParams::default();
 
-                let model = LlamaModel::load_from_file(
-                    backend,
-                    &path,
-                    &model_params,
-                ).map_err(|e| crate::error::MantaError::Validation(format!("Failed to load model: {}", e)))?;
+                let model =
+                    LlamaModel::load_from_file(backend, &path, &model_params).map_err(|e| {
+                        crate::error::MantaError::Validation(format!("Failed to load model: {}", e))
+                    })?;
 
-                let context_params = LlamaContextParams::default()
-                    .with_n_batch(512);
+                let context_params = LlamaContextParams::default().with_n_batch(512);
 
                 info!("GGUF model loaded successfully");
 
-                Ok(EmbeddingModelInner {
-                    model,
-                    context_params,
-                    backend,
-                })
+                Ok(EmbeddingModelInner { model, context_params, backend })
             })
             .await
     }
@@ -197,14 +197,21 @@ impl LazyEmbeddingModel {
         Ok(embeddings)
     }
 
-    async fn embed_single(&self, inner: &EmbeddingModelInner, text: &str) -> crate::Result<Vec<f32>> {
+    async fn embed_single(
+        &self,
+        inner: &EmbeddingModelInner,
+        text: &str,
+    ) -> crate::Result<Vec<f32>> {
         // Tokenize the input
         let tokens = self.tokenize(inner, text)?;
 
         // Create a context for inference
-        let mut ctx = inner.model
+        let mut ctx = inner
+            .model
             .new_context(inner.backend, inner.context_params.clone())
-            .map_err(|e| crate::error::MantaError::Validation(format!("Failed to create context: {}", e)))?;
+            .map_err(|e| {
+                crate::error::MantaError::Validation(format!("Failed to create context: {}", e))
+            })?;
 
         // Create batch
         let mut batch = LlamaBatch::new(512, 1);
@@ -212,8 +219,9 @@ impl LazyEmbeddingModel {
         // Add tokens to batch
         for (i, token) in tokens.iter().enumerate() {
             let is_last = i == tokens.len() - 1;
-            batch.add(*token, i as i32, &[0], is_last)
-                .map_err(|e| crate::error::MantaError::Validation(format!("Failed to add token: {}", e)))?;
+            batch.add(*token, i as i32, &[0], is_last).map_err(|e| {
+                crate::error::MantaError::Validation(format!("Failed to add token: {}", e))
+            })?;
         }
 
         // Decode
@@ -221,8 +229,9 @@ impl LazyEmbeddingModel {
             .map_err(|e| crate::error::MantaError::Validation(format!("Decode failed: {}", e)))?;
 
         // Extract embeddings from the last token
-        let embedding = ctx.embeddings_seq_ith(0)
-            .map_err(|e| crate::error::MantaError::Validation(format!("Failed to get embeddings: {}", e)))?;
+        let embedding = ctx.embeddings_seq_ith(0).map_err(|e| {
+            crate::error::MantaError::Validation(format!("Failed to get embeddings: {}", e))
+        })?;
 
         // Convert to Vec<f32> and normalize
         let mut vec: Vec<f32> = embedding.iter().map(|x| *x as f32).collect();
@@ -240,8 +249,12 @@ impl LazyEmbeddingModel {
         // Simple tokenization using the model's tokenizer
         // Use add_bos=true for embeddings (helps with sentence representation)
         use llama_cpp_2::model::AddBos;
-        let tokens = inner.model.str_to_token(text, AddBos::Always)
-            .map_err(|e| crate::error::MantaError::Validation(format!("Tokenization failed: {}", e)))?;
+        let tokens = inner
+            .model
+            .str_to_token(text, AddBos::Always)
+            .map_err(|e| {
+                crate::error::MantaError::Validation(format!("Tokenization failed: {}", e))
+            })?;
 
         Ok(tokens)
     }
@@ -293,9 +306,7 @@ impl LocalEmbeddingProvider {
 
     /// Create with explicit FTS-only mode
     pub fn fts_only(reason: impl Into<String>) -> Self {
-        LocalEmbeddingProvider::FtsOnly {
-            reason: reason.into(),
-        }
+        LocalEmbeddingProvider::FtsOnly { reason: reason.into() }
     }
 
     /// Check if this is FTS-only mode

@@ -2,7 +2,7 @@
 //!
 //! Tools for reading, writing, and editing files.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -88,9 +88,9 @@ impl Tool for FileReadTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let path_str = args["path"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'path' argument".to_string()))?;
+        let path_str = args["path"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+        })?;
 
         let path = expand_home(path_str);
 
@@ -112,16 +112,13 @@ impl Tool for FileReadTool {
 
         // Check it's a file, not a directory
         if !path.is_file() {
-            return Ok(ToolExecutionResult::error(format!(
-                "'{}' is not a file",
-                path.display()
-            )));
+            return Ok(ToolExecutionResult::error(format!("'{}' is not a file", path.display())));
         }
 
         // Check file size
-        let metadata = tokio_fs::metadata(&path).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        let metadata = tokio_fs::metadata(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
         if metadata.len() > MAX_FILE_SIZE {
             return Ok(ToolExecutionResult::error(format!(
@@ -135,9 +132,9 @@ impl Tool for FileReadTool {
         info!("Reading file: {}", path.display());
 
         // Read file
-        let data = tokio_fs::read(&path).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        let data = tokio_fs::read(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
         // Check if binary
         if Self::is_binary(&data) {
@@ -221,13 +218,13 @@ impl Tool for FileWriteTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let path_str = args["path"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'path' argument".to_string()))?;
+        let path_str = args["path"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+        })?;
 
-        let content = args["content"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'content' argument".to_string()))?;
+        let content = args["content"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'content' argument".to_string())
+        })?;
 
         let path = expand_home(path_str);
 
@@ -251,19 +248,19 @@ impl Tool for FileWriteTool {
 
         // Create parent directories
         if let Some(parent) = path.parent() {
-            tokio_fs::create_dir_all(parent).await.map_err(|e| {
-                crate::error::MantaError::Io(e)
-            })?;
+            tokio_fs::create_dir_all(parent)
+                .await
+                .map_err(|e| crate::error::MantaError::Io(e))?;
         }
 
         // Write file
-        let mut file = tokio_fs::File::create(&path).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        let mut file = tokio_fs::File::create(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
-        file.write_all(content.as_bytes()).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        file.write_all(content.as_bytes())
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
         info!("Wrote {} bytes to {}", content.len(), path.display());
 
@@ -322,17 +319,17 @@ impl Tool for FileEditTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let path_str = args["path"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'path' argument".to_string()))?;
+        let path_str = args["path"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+        })?;
 
-        let old_string = args["old_string"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'old_string' argument".to_string()))?;
+        let old_string = args["old_string"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'old_string' argument".to_string())
+        })?;
 
-        let new_string = args["new_string"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'new_string' argument".to_string()))?;
+        let new_string = args["new_string"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'new_string' argument".to_string())
+        })?;
 
         let path = expand_home(path_str);
 
@@ -353,9 +350,9 @@ impl Tool for FileEditTool {
         }
 
         // Read file
-        let content = tokio_fs::read_to_string(&path).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        let content = tokio_fs::read_to_string(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
         // Check if old_string exists
         if !content.contains(old_string) {
@@ -370,15 +367,11 @@ impl Tool for FileEditTool {
         let replacements = content.matches(old_string).count();
 
         // Write back
-        tokio_fs::write(&path, new_content).await.map_err(|e| {
-            crate::error::MantaError::Io(e)
-        })?;
+        tokio_fs::write(&path, new_content)
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
 
-        info!(
-            "Made {} replacement(s) in {}",
-            replacements,
-            path.display()
-        );
+        info!("Made {} replacement(s) in {}", replacements, path.display());
 
         Ok(ToolExecutionResult::success(format!(
             "Successfully made {} replacement(s) in '{}'",
@@ -431,9 +424,9 @@ impl Tool for GlobTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let pattern = args["pattern"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'pattern' argument".to_string()))?;
+        let pattern = args["pattern"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'pattern' argument".to_string())
+        })?;
 
         let base_path = args["path"]
             .as_str()
@@ -466,10 +459,7 @@ impl Tool for GlobTool {
                 }
             }
             Err(e) => {
-                return Ok(ToolExecutionResult::error(format!(
-                    "Invalid glob pattern: {}",
-                    e
-                )))
+                return Ok(ToolExecutionResult::error(format!("Invalid glob pattern: {}", e)))
             }
         }
 
@@ -518,8 +508,7 @@ mod tests {
 
         // Write
         let write_tool = FileWriteTool::new();
-        let context = ToolContext::new("user", "conv1")
-            .with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
 
         let write_args = serde_json::json!({
             "path": test_file.to_string_lossy(),

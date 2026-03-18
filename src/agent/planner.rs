@@ -72,7 +72,9 @@ impl TaskPlan {
 
     /// Check if all dependencies for a task are satisfied
     pub fn dependencies_met(&self, task: &PlannedTask, completed_tasks: &[String]) -> bool {
-        task.dependencies.iter().all(|dep| completed_tasks.contains(dep))
+        task.dependencies
+            .iter()
+            .all(|dep| completed_tasks.contains(dep))
     }
 
     /// Get progress as percentage
@@ -116,10 +118,7 @@ pub struct TaskPlanner {
 impl TaskPlanner {
     /// Create a new task planner
     pub fn new(provider: Arc<dyn Provider>) -> Self {
-        Self {
-            provider,
-            model: None,
-        }
+        Self { provider, model: None }
     }
 
     /// Set the model to use for completions
@@ -264,10 +263,9 @@ Ensure tasks are in logical execution order. Tasks with no dependencies should c
         let json_str = Self::extract_json(&content)?;
 
         // Parse the plan
-        let plan_data: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| crate::error::MantaError::Validation(
-                format!("Failed to parse task plan: {}", e)
-            ))?;
+        let plan_data: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+            crate::error::MantaError::Validation(format!("Failed to parse task plan: {}", e))
+        })?;
 
         let goal = plan_data["goal"]
             .as_str()
@@ -411,10 +409,9 @@ If changes are needed, provide a JSON object with:
                 // Apply updates
                 if let Some(updates) = changes["updates"].as_array() {
                     for update in updates {
-                        if let (Some(task_id), Some(new_desc)) = (
-                            update["task_id"].as_str(),
-                            update["new_description"].as_str(),
-                        ) {
+                        if let (Some(task_id), Some(new_desc)) =
+                            (update["task_id"].as_str(), update["new_description"].as_str())
+                        {
                             if let Some(task) = plan.tasks.iter_mut().find(|t| t.id == task_id) {
                                 task.description = new_desc.to_string();
                             }

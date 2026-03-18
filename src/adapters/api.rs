@@ -72,18 +72,15 @@ impl ApiClient {
     }
 
     /// Execute a request with retry logic
-    async fn execute_with_retry(
-        &self,
-        request: RequestBuilder,
-    ) -> Result<Response> {
+    async fn execute_with_retry(&self, request: RequestBuilder) -> Result<Response> {
         let mut attempt = 0;
         #[allow(unused_assignments)]
         let mut last_error = None;
 
         loop {
-            let req = request.try_clone().ok_or_else(|| {
-                MantaError::Internal("Failed to clone request".to_string())
-            })?;
+            let req = request
+                .try_clone()
+                .ok_or_else(|| MantaError::Internal("Failed to clone request".to_string()))?;
 
             match req.send().await {
                 Ok(response) => {
@@ -126,9 +123,8 @@ impl ApiClient {
             tokio::time::sleep(delay).await;
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            MantaError::Internal("Request failed after retries".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| MantaError::Internal("Request failed after retries".to_string())))
     }
 
     /// Make a GET request
@@ -142,12 +138,13 @@ impl ApiClient {
         let request = self.build_request(Method::GET, path);
         let response = self.execute_with_retry(request).await?;
 
-        response.json().await.map_err(|e| {
-            MantaError::ExternalService {
+        response
+            .json()
+            .await
+            .map_err(|e| MantaError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Make a POST request
@@ -163,12 +160,13 @@ impl ApiClient {
         let request = self.build_request(Method::POST, path).json(body);
         let response = self.execute_with_retry(request).await?;
 
-        response.json().await.map_err(|e| {
-            MantaError::ExternalService {
+        response
+            .json()
+            .await
+            .map_err(|e| MantaError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Make a PUT request
@@ -183,12 +181,13 @@ impl ApiClient {
         let request = self.build_request(Method::PUT, path).json(body);
         let response = self.execute_with_retry(request).await?;
 
-        response.json().await.map_err(|e| {
-            MantaError::ExternalService {
+        response
+            .json()
+            .await
+            .map_err(|e| MantaError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Make a DELETE request
@@ -204,7 +203,8 @@ impl ApiClient {
 
     /// Check if the API is healthy
     pub async fn health_check(&self) -> Result<bool> {
-        match self.client
+        match self
+            .client
             .get(format!("{}/health", self.base_url.trim_end_matches('/')))
             .timeout(Duration::from_secs(5))
             .send()
@@ -221,7 +221,9 @@ fn calculate_backoff(attempt: u32, config: &crate::config::RetryConfig) -> Durat
     use std::time::Duration;
 
     // Exponential backoff: base_delay * 2^attempt
-    let exponential = config.base_delay_ms.saturating_mul(2_u64.saturating_pow(attempt));
+    let exponential = config
+        .base_delay_ms
+        .saturating_mul(2_u64.saturating_pow(attempt));
     let delay = exponential.min(config.max_delay_ms);
 
     // Add jitter (±25%)

@@ -248,7 +248,9 @@ impl ToolContext {
         }
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         self.allowed_paths.iter().any(|allowed| {
-            allowed.canonicalize().map_or(false, |a| path.starts_with(&a))
+            allowed
+                .canonicalize()
+                .map_or(false, |a| path.starts_with(&a))
         })
     }
 
@@ -387,8 +389,8 @@ pub mod grep;
 pub mod mcp;
 pub mod memory;
 pub mod shell;
-pub mod time;
 pub mod team_communicate_tool;
+pub mod time;
 pub mod todo_tool;
 pub mod web;
 
@@ -397,12 +399,12 @@ pub use browser::BrowserTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
-pub use team_communicate_tool::TeamCommunicateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;
 pub use mcp::McpConnectionTool;
 pub use memory::MemoryTool;
 pub use shell::ShellTool;
+pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use web::{WebFetchTool, WebSearchTool};
@@ -512,10 +514,13 @@ impl ToolRegistry {
         }
 
         if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(key, CacheEntry {
-                result,
-                timestamp: std::time::Instant::now(),
-            });
+            cache.insert(
+                key,
+                CacheEntry {
+                    result,
+                    timestamp: std::time::Instant::now(),
+                },
+            );
         }
     }
 
@@ -599,12 +604,9 @@ impl ToolRegistry {
         call: &FunctionCall,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let tool = self
-            .get(&call.name)
-            .ok_or_else(|| crate::error::MantaError::Validation(format!(
-                "Unknown tool: {}",
-                call.name
-            )))?;
+        let tool = self.get(&call.name).ok_or_else(|| {
+            crate::error::MantaError::Validation(format!("Unknown tool: {}", call.name))
+        })?;
 
         let args: Value = serde_json::from_str(&call.arguments).map_err(|e| {
             crate::error::MantaError::Validation(format!(
@@ -668,13 +670,17 @@ impl ToolValidator for NameValidator {
 
         // Check length
         if name.len() < 2 || name.len() > 64 {
-            return Err(ToolValidationError::InvalidName(
-                format!("Tool name '{}' must be between 2 and 64 characters", name)
-            ));
+            return Err(ToolValidationError::InvalidName(format!(
+                "Tool name '{}' must be between 2 and 64 characters",
+                name
+            )));
         }
 
         // Check characters (alphanumeric, underscore, hyphen only)
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(ToolValidationError::InvalidName(
                 format!("Tool name '{}' contains invalid characters. Use alphanumeric, underscore, or hyphen only", name)
             ));
@@ -682,9 +688,10 @@ impl ToolValidator for NameValidator {
 
         // Check doesn't start with number
         if name.chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
-            return Err(ToolValidationError::InvalidName(
-                format!("Tool name '{}' cannot start with a number", name)
-            ));
+            return Err(ToolValidationError::InvalidName(format!(
+                "Tool name '{}' cannot start with a number",
+                name
+            )));
         }
 
         Ok(())
@@ -706,13 +713,13 @@ impl ToolValidator for SchemaValidator {
         // Check schema has required fields
         if !schema.get("type").map(|v| v == "object").unwrap_or(false) {
             return Err(ToolValidationError::InvalidSchema(
-                "Schema must have type 'object'".to_string()
+                "Schema must have type 'object'".to_string(),
             ));
         }
 
         if schema.get("properties").is_none() {
             return Err(ToolValidationError::InvalidSchema(
-                "Schema must have 'properties' field".to_string()
+                "Schema must have 'properties' field".to_string(),
             ));
         }
 
@@ -722,9 +729,10 @@ impl ToolValidator for SchemaValidator {
     fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
         // Basic JSON structure validation
         if !args.is_object() && !args.is_null() {
-            return Err(ToolValidationError::InvalidInput(
-                format!("Tool '{}' arguments must be a JSON object", tool_name)
-            ));
+            return Err(ToolValidationError::InvalidInput(format!(
+                "Tool '{}' arguments must be a JSON object",
+                tool_name
+            )));
         }
 
         Ok(())
@@ -742,16 +750,17 @@ impl SecurityValidator {
 
         for pattern in &dangerous_patterns {
             if value.contains(pattern) {
-                return Err(ToolValidationError::SecurityViolation(
-                    format!("Path traversal attempt detected: {}", pattern)
-                ));
+                return Err(ToolValidationError::SecurityViolation(format!(
+                    "Path traversal attempt detected: {}",
+                    pattern
+                )));
             }
         }
 
         // Check for double slashes (can be used in some path traversal attacks)
         if value.contains("//") || value.contains("\\\\") {
             return Err(ToolValidationError::SecurityViolation(
-                "Suspicious path pattern detected".to_string()
+                "Suspicious path pattern detected".to_string(),
             ));
         }
 
@@ -764,16 +773,17 @@ impl SecurityValidator {
 
         for ch in &dangerous_chars {
             if value.contains(*ch) {
-                return Err(ToolValidationError::SecurityViolation(
-                    format!("Command injection attempt detected: contains '{}'", ch)
-                ));
+                return Err(ToolValidationError::SecurityViolation(format!(
+                    "Command injection attempt detected: contains '{}'",
+                    ch
+                )));
             }
         }
 
         // Check for command substitution patterns
         if value.contains("$(") || value.contains("${") {
             return Err(ToolValidationError::SecurityViolation(
-                "Command substitution pattern detected".to_string()
+                "Command substitution pattern detected".to_string(),
             ));
         }
 
@@ -787,7 +797,7 @@ impl ToolValidator for SecurityValidator {
         let desc = tool.description();
         if desc.len() < 10 {
             return Err(ToolValidationError::InvalidSchema(
-                "Tool description must be at least 10 characters".to_string()
+                "Tool description must be at least 10 characters".to_string(),
             ));
         }
 
@@ -796,7 +806,10 @@ impl ToolValidator for SecurityValidator {
 
     fn validate_input(&self, _tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
         // Recursively check all string values for security issues
-        fn check_value(value: &Value, validator: &SecurityValidator) -> Result<(), ToolValidationError> {
+        fn check_value(
+            value: &Value,
+            validator: &SecurityValidator,
+        ) -> Result<(), ToolValidationError> {
             match value {
                 Value::String(s) => {
                     validator.check_path_traversal(s)?;
@@ -882,10 +895,12 @@ impl ToolRegistrar {
 
     /// Get tool descriptions
     pub fn get_descriptions(&self) -> HashMap<String, String> {
-        self.registry.list()
+        self.registry
+            .list()
             .into_iter()
             .filter_map(|name| {
-                self.registry.get(name)
+                self.registry
+                    .get(name)
                     .map(|t| (name.to_string(), t.description().to_string()))
             })
             .collect()
@@ -1020,7 +1035,11 @@ mod tests {
             fn parameters_schema(&self) -> Value {
                 create_schema("Test", serde_json::json!({}), Vec::<String>::new())
             }
-            async fn execute(&self, _args: Value, _ctx: &ToolContext) -> crate::Result<ToolExecutionResult> {
+            async fn execute(
+                &self,
+                _args: Value,
+                _ctx: &ToolContext,
+            ) -> crate::Result<ToolExecutionResult> {
                 Ok(ToolExecutionResult::success("ok"))
             }
         }
@@ -1044,7 +1063,11 @@ mod tests {
             fn parameters_schema(&self) -> Value {
                 create_schema("Test", serde_json::json!({}), Vec::<String>::new())
             }
-            async fn execute(&self, _args: Value, _ctx: &ToolContext) -> crate::Result<ToolExecutionResult> {
+            async fn execute(
+                &self,
+                _args: Value,
+                _ctx: &ToolContext,
+            ) -> crate::Result<ToolExecutionResult> {
                 Ok(ToolExecutionResult::success("ok"))
             }
         }
@@ -1060,12 +1083,16 @@ mod tests {
         let validator = SecurityValidator;
 
         // Valid paths
-        assert!(validator.check_path_traversal("/home/user/file.txt").is_ok());
+        assert!(validator
+            .check_path_traversal("/home/user/file.txt")
+            .is_ok());
         assert!(validator.check_path_traversal("./file.txt").is_ok());
 
         // Invalid paths with traversal
         assert!(validator.check_path_traversal("../etc/passwd").is_err());
-        assert!(validator.check_path_traversal("foo/../../../etc/passwd").is_err());
+        assert!(validator
+            .check_path_traversal("foo/../../../etc/passwd")
+            .is_err());
     }
 
     #[test]
@@ -1078,7 +1105,9 @@ mod tests {
 
         // Invalid commands with injection
         assert!(validator.check_command_injection("ls; rm -rf /").is_err());
-        assert!(validator.check_command_injection("cat file | grep test").is_err());
+        assert!(validator
+            .check_command_injection("cat file | grep test")
+            .is_err());
         assert!(validator.check_command_injection("echo $(whoami)").is_err());
     }
 

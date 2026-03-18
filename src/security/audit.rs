@@ -312,10 +312,7 @@ impl Default for AuditConfig {
             verify_sandbox: true,
             audit_tools: true,
             review_permissions: true,
-            paths_to_check: vec![
-                "src".to_string(),
-                "tests".to_string(),
-            ],
+            paths_to_check: vec!["src".to_string(), "tests".to_string()],
         }
     }
 }
@@ -323,9 +320,7 @@ impl Default for AuditConfig {
 impl SecurityAuditor {
     /// Create a new security auditor
     pub fn new() -> Self {
-        Self {
-            config: AuditConfig::default(),
-        }
+        Self { config: AuditConfig::default() }
     }
 
     /// Create with custom config
@@ -351,17 +346,21 @@ impl SecurityAuditor {
         // Collect issues from all audits
         self.collect_permission_issues(&permissions, &mut warnings, &mut recommendations);
         self.collect_tool_issues(&tools, &mut critical_issues, &mut warnings, &mut recommendations);
-        self.collect_leak_issues(&data_leaks, &mut critical_issues, &mut warnings, &mut recommendations);
-        self.collect_sandbox_issues(&sandbox, &mut critical_issues, &mut warnings, &mut recommendations);
+        self.collect_leak_issues(
+            &data_leaks,
+            &mut critical_issues,
+            &mut warnings,
+            &mut recommendations,
+        );
+        self.collect_sandbox_issues(
+            &sandbox,
+            &mut critical_issues,
+            &mut warnings,
+            &mut recommendations,
+        );
 
         // Calculate overall score
-        let score = self.calculate_score(
-            &permissions,
-            &tools,
-            &data_leaks,
-            &sandbox,
-            &boundaries,
-        );
+        let score = self.calculate_score(&permissions, &tools, &data_leaks, &sandbox, &boundaries);
 
         let report = SecurityAuditReport {
             timestamp: start,
@@ -405,7 +404,9 @@ impl SecurityAuditor {
             missing: vec![],
             excessive: vec![],
         };
-        audit.components.insert("file_tools".to_string(), file_perms);
+        audit
+            .components
+            .insert("file_tools".to_string(), file_perms);
         audit.passed += 1;
 
         // Check shell tool permissions
@@ -426,7 +427,9 @@ impl SecurityAuditor {
             missing: vec![],
             excessive: vec![],
         };
-        audit.components.insert("shell_tools".to_string(), shell_perms);
+        audit
+            .components
+            .insert("shell_tools".to_string(), shell_perms);
         audit.passed += 1;
 
         // Check code execution permissions
@@ -448,7 +451,9 @@ impl SecurityAuditor {
             missing: vec!["memory_limits".to_string()],
             excessive: vec![],
         };
-        audit.components.insert("code_execution".to_string(), code_perms);
+        audit
+            .components
+            .insert("code_execution".to_string(), code_perms);
         audit.passed += 1;
 
         // Check web tool permissions
@@ -508,7 +513,9 @@ impl SecurityAuditor {
             issues: vec![],
             risk_level: RiskLevel::Low,
         };
-        audit.tool_results.insert("file_read".to_string(), file_read);
+        audit
+            .tool_results
+            .insert("file_read".to_string(), file_read);
         audit.passing += 1;
 
         // Shell Tool
@@ -562,12 +569,15 @@ impl SecurityAuditor {
                 },
             ],
             issues: vec![
-                "Memory limits are not enforced (requires unsafe code or external sandbox)".to_string(),
+                "Memory limits are not enforced (requires unsafe code or external sandbox)"
+                    .to_string(),
                 "No filesystem restrictions within Python".to_string(),
             ],
             risk_level: RiskLevel::High,
         };
-        audit.tool_results.insert("code_execution".to_string(), code_exec);
+        audit
+            .tool_results
+            .insert("code_execution".to_string(), code_exec);
         audit.failing += 1;
 
         // Web Fetch Tool
@@ -597,7 +607,9 @@ impl SecurityAuditor {
             ],
             risk_level: RiskLevel::Medium,
         };
-        audit.tool_results.insert("web_fetch".to_string(), web_fetch);
+        audit
+            .tool_results
+            .insert("web_fetch".to_string(), web_fetch);
         audit.passing += 1;
 
         audit.total_tools = audit.tool_results.len();
@@ -638,9 +650,7 @@ impl SecurityAuditor {
 
             for entry in entries.flatten() {
                 let file_path = entry.path();
-                let file_name = file_path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                 // Skip hidden files and non-source files
                 if file_name.starts_with('.') {
@@ -652,9 +662,7 @@ impl SecurityAuditor {
                     continue;
                 }
 
-                let ext = file_path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
+                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                 if !source_extensions.contains(&ext) {
                     continue;
@@ -680,8 +688,12 @@ impl SecurityAuditor {
                 let findings = scanner.scan(&content);
                 for finding in findings {
                     let category = match finding.severity {
-                        crate::security::secrets::Severity::Critical => LeakCategory::CredentialExposure,
-                        crate::security::secrets::Severity::High => LeakCategory::UnencryptedStorage,
+                        crate::security::secrets::Severity::Critical => {
+                            LeakCategory::CredentialExposure
+                        }
+                        crate::security::secrets::Severity::High => {
+                            LeakCategory::UnencryptedStorage
+                        }
                         _ => LeakCategory::LogLeak,
                     };
 
@@ -711,8 +723,10 @@ impl SecurityAuditor {
             audit.leaks_found += 1;
         }
 
-        info!("Data leak scan complete: {} checks performed, {} potential leaks found",
-            audit.checks_performed, audit.leaks_found);
+        info!(
+            "Data leak scan complete: {} checks performed, {} potential leaks found",
+            audit.checks_performed, audit.leaks_found
+        );
 
         audit
     }
@@ -814,7 +828,8 @@ impl SecurityAuditor {
                 name: "memory_limits".to_string(),
                 enabled: false,
                 verified: false,
-                details: "Memory limits not implemented (requires unsafe or external sandbox)".to_string(),
+                details: "Memory limits not implemented (requires unsafe or external sandbox)"
+                    .to_string(),
             },
             SandboxFeatureCheck {
                 name: "network_isolation".to_string(),
@@ -961,7 +976,8 @@ impl SecurityAuditor {
             }
         }
 
-        recommendations.push("Add resource limits (cgroups/ulimit) for shell and code execution".to_string());
+        recommendations
+            .push("Add resource limits (cgroups/ulimit) for shell and code execution".to_string());
         recommendations.push("Implement URL allowlists for web tools to prevent SSRF".to_string());
     }
 

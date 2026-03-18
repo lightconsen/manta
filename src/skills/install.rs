@@ -25,10 +25,16 @@ pub async fn install_skill(spec: &InstallSpec) -> crate::Result<InstallResult> {
     let result = install_binary_internal(spec).await;
 
     match result {
-        InstallResultInternal::AlreadyPresent => Ok(InstallResult::AlreadyPresent { spec: spec.clone() }),
+        InstallResultInternal::AlreadyPresent => {
+            Ok(InstallResult::AlreadyPresent { spec: spec.clone() })
+        }
         InstallResultInternal::Installed => Ok(InstallResult::Installed { spec: spec.clone() }),
-        InstallResultInternal::Failed(e) => Ok(InstallResult::Failed { spec: spec.clone(), error: e }),
-        InstallResultInternal::Skipped(r) => Ok(InstallResult::Skipped { spec: spec.clone(), reason: r }),
+        InstallResultInternal::Failed(e) => {
+            Ok(InstallResult::Failed { spec: spec.clone(), error: e })
+        }
+        InstallResultInternal::Skipped(r) => {
+            Ok(InstallResult::Skipped { spec: spec.clone(), reason: r })
+        }
     }
 }
 
@@ -36,7 +42,10 @@ pub async fn install_skill(spec: &InstallSpec) -> crate::Result<InstallResult> {
 pub async fn install_binary(spec: &InstallSpec) -> InstallResult {
     match install_skill(spec).await {
         Ok(result) => result,
-        Err(e) => InstallResult::Failed { spec: spec.clone(), error: e.to_string() },
+        Err(e) => InstallResult::Failed {
+            spec: spec.clone(),
+            error: e.to_string(),
+        },
     }
 }
 
@@ -57,12 +66,8 @@ async fn install_binary_internal(spec: &InstallSpec) -> InstallResultInternal {
         InstallSpec::Npm { package, global, binary } => {
             install_with_npm(package, *global, binary.as_deref()).await
         }
-        InstallSpec::Go { package, binary } => {
-            install_with_go(package, binary.as_deref()).await
-        }
-        InstallSpec::Uv { package, binary } => {
-            install_with_uv(package, binary.as_deref()).await
-        }
+        InstallSpec::Go { package, binary } => install_with_go(package, binary.as_deref()).await,
+        InstallSpec::Uv { package, binary } => install_with_uv(package, binary.as_deref()).await,
         InstallSpec::Download { binary, from, extract } => {
             install_by_download(binary, from, extract.as_deref()).await
         }
@@ -150,7 +155,13 @@ async fn install_with_npm(
     binary: Option<&str>,
 ) -> InstallResultInternal {
     // Check if already installed
-    let bin_name = binary.unwrap_or_else(|| package.trim_start_matches('@').split('/').last().unwrap_or(package));
+    let bin_name = binary.unwrap_or_else(|| {
+        package
+            .trim_start_matches('@')
+            .split('/')
+            .last()
+            .unwrap_or(package)
+    });
     if is_binary_available(bin_name).await {
         return InstallResultInternal::AlreadyPresent;
     }
@@ -379,14 +390,19 @@ async fn extract_archive(
     match archive_type {
         "tar.gz" | "tgz" => {
             let output = tokio::process::Command::new("tar")
-                .args(["-xzf", archive.to_str().unwrap_or(""), "-C", dest_dir.to_str().unwrap_or("")])
+                .args([
+                    "-xzf",
+                    archive.to_str().unwrap_or(""),
+                    "-C",
+                    dest_dir.to_str().unwrap_or(""),
+                ])
                 .output()
                 .await
                 .map_err(|e| crate::error::MantaError::Io(e))?;
 
             if !output.status.success() {
                 return Err(crate::error::MantaError::Internal(
-                    "Failed to extract tar.gz".to_string()
+                    "Failed to extract tar.gz".to_string(),
                 ));
             }
 
@@ -395,22 +411,28 @@ async fn extract_archive(
         }
         "zip" => {
             let output = tokio::process::Command::new("unzip")
-                .args(["-o", archive.to_str().unwrap_or(""), "-d", dest_dir.to_str().unwrap_or("")])
+                .args([
+                    "-o",
+                    archive.to_str().unwrap_or(""),
+                    "-d",
+                    dest_dir.to_str().unwrap_or(""),
+                ])
                 .output()
                 .await
                 .map_err(|e| crate::error::MantaError::Io(e))?;
 
             if !output.status.success() {
                 return Err(crate::error::MantaError::Internal(
-                    "Failed to extract zip".to_string()
+                    "Failed to extract zip".to_string(),
                 ));
             }
 
             Ok(dest_dir.to_path_buf())
         }
-        _ => Err(crate::error::MantaError::Internal(
-            format!("Unsupported archive type: {}", archive_type)
-        )),
+        _ => Err(crate::error::MantaError::Internal(format!(
+            "Unsupported archive type: {}",
+            archive_type
+        ))),
     }
 }
 
@@ -508,10 +530,7 @@ async fn add_to_path_if_needed(dir: &str) {
         }
 
         // Append to config
-        let _ = tokio::fs::write(
-            &config,
-            format!("\n# Added by Manta\n{}\n", path_line),
-        ).await;
+        let _ = tokio::fs::write(&config, format!("\n# Added by Manta\n{}\n", path_line)).await;
 
         info!("Added {} to PATH in {:?}", dir, config);
     }
@@ -547,7 +566,8 @@ mod tests {
     #[test]
     fn test_is_binary_available_false() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(is_binary_available("this_binary_definitely_does_not_exist_12345"));
+        let result =
+            rt.block_on(is_binary_available("this_binary_definitely_does_not_exist_12345"));
         assert!(!result);
     }
 

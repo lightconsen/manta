@@ -3,13 +3,13 @@
 //! This tool allows the AI to store and retrieve memories (facts, preferences,
 //! context) that persist across conversations using SQLite storage.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::memory::{Memory, MemoryQuery, SqliteMemoryStore, MemoryId, MemoryStore};
+use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStore, SqliteMemoryStore};
 
 /// Memory tool for storing and retrieving information
 #[derive(Debug, Clone)]
@@ -44,7 +44,12 @@ impl MemoryTool {
     }
 
     /// Search for relevant memories to inject into context
-    pub async fn search_relevant(&self, query: &str, user_id: &str, limit: usize) -> crate::Result<Vec<Memory>> {
+    pub async fn search_relevant(
+        &self,
+        query: &str,
+        user_id: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<Memory>> {
         let memory_query = MemoryQuery::new()
             .for_user(user_id)
             .with_content(query)
@@ -56,9 +61,7 @@ impl MemoryTool {
 
     /// Get recent memories for a user
     pub async fn get_recent(&self, user_id: &str, limit: usize) -> crate::Result<Vec<Memory>> {
-        let memory_query = MemoryQuery::new()
-            .for_user(user_id)
-            .limit(limit);
+        let memory_query = MemoryQuery::new().for_user(user_id).limit(limit);
 
         let results = self.storage.search(memory_query).await?;
         Ok(results)
@@ -145,25 +148,24 @@ Memories are automatically searched and relevant ones injected into new conversa
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'action' argument".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'action' argument".to_string())
+        })?;
 
         match action {
             "store" => {
-                let content = args["content"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'content' argument".to_string()))?;
+                let content = args["content"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'content' argument".to_string())
+                })?;
 
-                let memory_type = args["category"]
-                    .as_str()
-                    .unwrap_or("fact");
+                let memory_type = args["category"].as_str().unwrap_or("fact");
 
                 let memory = Memory::new(
                     context.user_id.clone(),
                     content.to_string(),
                     memory_type.to_string(),
-                ).with_conversation(context.conversation_id.clone());
+                )
+                .with_conversation(context.conversation_id.clone());
 
                 let memory_id = self.storage.store(memory).await?;
                 info!("Stored memory with ID: {}", memory_id);
@@ -173,30 +175,31 @@ Memories are automatically searched and relevant ones injected into new conversa
             }
 
             "retrieve" => {
-                let id = args["id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
+                let id = args["id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                })?;
 
                 let memory_id = MemoryId::new(id);
                 match self.storage.get(&memory_id).await? {
                     Some(memory) => {
                         debug!("Retrieved memory: {}", id);
-                        Ok(ToolExecutionResult::success(memory.content.clone())
-                            .with_data(serde_json::json!({
+                        Ok(ToolExecutionResult::success(memory.content.clone()).with_data(
+                            serde_json::json!({
                                 "id": memory.id.0,
                                 "content": memory.content,
                                 "memory_type": memory.memory_type,
                                 "created_at": memory.created_at
-                            })))
+                            }),
+                        ))
                     }
                     None => Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id))),
                 }
             }
 
             "search" => {
-                let query = args["query"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'query' argument".to_string()))?;
+                let query = args["query"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'query' argument".to_string())
+                })?;
 
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(10);
                 let category = args["category"].as_str();
@@ -221,31 +224,28 @@ Memories are automatically searched and relevant ones injected into new conversa
 
                 let formatted: Vec<String> = results
                     .iter()
-                    .map(|m| {
-                        format!("[{}] ({}): {}", m.id.0, m.memory_type, m.content)
-                    })
+                    .map(|m| format!("[{}] ({}): {}", m.id.0, m.memory_type, m.content))
                     .collect();
 
                 info!("Found {} memories matching '{}'", results.len(), query);
 
-                Ok(ToolExecutionResult::success(formatted.join("\n\n"))
-                    .with_data(serde_json::json!({
+                Ok(ToolExecutionResult::success(formatted.join("\n\n")).with_data(
+                    serde_json::json!({
                         "count": results.len(),
                         "memories": results.iter().map(|m| serde_json::json!({
                             "id": m.id.0,
                             "content": m.content,
                             "memory_type": m.memory_type
                         })).collect::<Vec<_>>()
-                    })))
+                    }),
+                ))
             }
 
             "list" => {
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(10);
                 let category = args["category"].as_str();
 
-                let mut memory_query = MemoryQuery::new()
-                    .for_user(&context.user_id)
-                    .limit(limit);
+                let mut memory_query = MemoryQuery::new().for_user(&context.user_id).limit(limit);
 
                 if let Some(cat) = category {
                     memory_query = memory_query.of_type(cat);
@@ -254,7 +254,9 @@ Memories are automatically searched and relevant ones injected into new conversa
                 let memories = self.storage.search(memory_query).await?;
 
                 if memories.is_empty() {
-                    let cat_msg = category.map(|c| format!(" in category '{}'", c)).unwrap_or_default();
+                    let cat_msg = category
+                        .map(|c| format!(" in category '{}'", c))
+                        .unwrap_or_default();
                     return Ok(ToolExecutionResult::success(format!(
                         "No memories found{}",
                         cat_msg
@@ -264,25 +266,31 @@ Memories are automatically searched and relevant ones injected into new conversa
                 let formatted: Vec<String> = memories
                     .iter()
                     .map(|m| {
-                        format!("[{}] ({}): {}", m.id.0, m.memory_type, m.content.chars().take(100).collect::<String>())
+                        format!(
+                            "[{}] ({}): {}",
+                            m.id.0,
+                            m.memory_type,
+                            m.content.chars().take(100).collect::<String>()
+                        )
                     })
                     .collect();
 
-                Ok(ToolExecutionResult::success(formatted.join("\n"))
-                    .with_data(serde_json::json!({
+                Ok(ToolExecutionResult::success(formatted.join("\n")).with_data(
+                    serde_json::json!({
                         "count": memories.len(),
                         "memories": memories.iter().map(|m| serde_json::json!({
                             "id": m.id.0,
                             "content": m.content,
                             "memory_type": m.memory_type
                         })).collect::<Vec<_>>()
-                    })))
+                    }),
+                ))
             }
 
             "delete" => {
-                let id = args["id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
+                let id = args["id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                })?;
 
                 let memory_id = MemoryId::new(id);
                 if self.storage.delete(&memory_id).await? {
@@ -294,16 +302,18 @@ Memories are automatically searched and relevant ones injected into new conversa
             }
 
             "update" => {
-                let id = args["id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'id' argument".to_string()))?;
+                let id = args["id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                })?;
 
                 let memory_id = MemoryId::new(id);
 
                 // Get existing memory
                 let mut memory = match self.storage.get(&memory_id).await? {
                     Some(m) => m,
-                    None => return Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id))),
+                    None => {
+                        return Ok(ToolExecutionResult::error(format!("Memory '{}' not found", id)))
+                    }
                 };
 
                 // Update fields if provided
@@ -334,13 +344,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_tool_creation() {
-        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
+        let tool = MemoryTool::with_database_url("sqlite::memory:")
+            .await
+            .unwrap();
         assert_eq!(tool.name(), "memory");
     }
 
     #[tokio::test]
     async fn test_memory_store_and_retrieve() {
-        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
+        let tool = MemoryTool::with_database_url("sqlite::memory:")
+            .await
+            .unwrap();
         let context = ToolContext::new("user1", "conv1");
 
         // Store a memory
@@ -368,7 +382,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_search() {
-        let tool = MemoryTool::with_database_url("sqlite::memory:").await.unwrap();
+        let tool = MemoryTool::with_database_url("sqlite::memory:")
+            .await
+            .unwrap();
         let context = ToolContext::new("user1", "conv1");
 
         // Store some memories

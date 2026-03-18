@@ -148,10 +148,7 @@ impl ContextCompressor {
             return messages.to_vec();
         }
 
-        info!(
-            "Compressing context: {} -> ~{} tokens",
-            current_tokens, self.target_tokens
-        );
+        info!("Compressing context: {} -> ~{} tokens", current_tokens, self.target_tokens);
 
         match self.strategy {
             CompressionStrategy::OldestFirst => self.compress_oldest_first(messages),
@@ -182,7 +179,8 @@ impl ContextCompressor {
 
         for pm in prioritized {
             let tokens = pm.estimated_tokens();
-            if total_tokens + tokens <= self.target_tokens || pm.priority == MessagePriority::Critical
+            if total_tokens + tokens <= self.target_tokens
+                || pm.priority == MessagePriority::Critical
             {
                 result.push(pm);
                 total_tokens += tokens;
@@ -222,11 +220,7 @@ impl ContextCompressor {
             result.insert(1, summary);
         }
 
-        info!(
-            "Summarized {} messages into {} messages",
-            messages.len(),
-            result.len()
-        );
+        info!("Summarized {} messages into {} messages", messages.len(), result.len());
 
         result
     }
@@ -266,11 +260,7 @@ impl ContextCompressor {
         let mut result = system_messages;
         result.extend(recent);
 
-        info!(
-            "Sliding window: kept {} of {} messages",
-            result.len(),
-            messages.len()
-        );
+        info!("Sliding window: kept {} of {} messages", result.len(), messages.len());
 
         result
     }
@@ -375,7 +365,8 @@ mod tests {
 
     #[test]
     fn test_sliding_window() {
-        let compressor = ContextCompressor::new(100).with_strategy(CompressionStrategy::SlidingWindow);
+        let compressor =
+            ContextCompressor::new(100).with_strategy(CompressionStrategy::SlidingWindow);
         let messages = create_test_messages(20);
         let compressed = compressor.compress(&messages);
 
@@ -386,7 +377,8 @@ mod tests {
 
     #[test]
     fn test_oldest_first() {
-        let compressor = ContextCompressor::new(150).with_strategy(CompressionStrategy::OldestFirst);
+        let compressor =
+            ContextCompressor::new(150).with_strategy(CompressionStrategy::OldestFirst);
         let messages = create_test_messages(20);
         let compressed = compressor.compress(&messages);
 

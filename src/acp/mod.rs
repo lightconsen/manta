@@ -254,10 +254,7 @@ impl AcpControlPlane {
     }
 
     /// Create a new ACP session
-    pub async fn create_session(
-        &self,
-        parent_agent_id: String,
-    ) -> AcpSessionId {
+    pub async fn create_session(&self, parent_agent_id: String) -> AcpSessionId {
         let session_id = AcpSessionId::new();
         let session = AcpSession {
             id: session_id.clone(),
@@ -281,7 +278,9 @@ impl AcpControlPlane {
         config: SubagentConfig,
     ) -> crate::Result<SubagentHandle> {
         let subagent_id = format!("subagent-{}", Uuid::new_v4());
-        let thread_id = self.resolve_thread_id(&config.thread_binding, &parent_id).await;
+        let thread_id = self
+            .resolve_thread_id(&config.thread_binding, &parent_id)
+            .await;
 
         info!(
             "Spawning subagent {} (mode: {:?}, thread: {})",
@@ -306,7 +305,7 @@ impl AcpControlPlane {
             builder()?
         } else {
             return Err(crate::error::MantaError::Internal(
-                "No agent builder configured".to_string()
+                "No agent builder configured".to_string(),
             ));
         };
 
@@ -328,8 +327,9 @@ impl AcpControlPlane {
                             async {
                                 // Process the message through the agent
                                 agent.process_message(message).await
-                            }
-                        ).await;
+                            },
+                        )
+                        .await;
 
                         let response = match result {
                             Ok(Ok(response)) => Ok(response.content),
@@ -337,9 +337,8 @@ impl AcpControlPlane {
                             Err(_) => Err("Timeout".to_string()),
                         };
 
-                        let _ = response_tx.send(response.map_err(|e| {
-                            crate::error::MantaError::Internal(e)
-                        }));
+                        let _ = response_tx
+                            .send(response.map_err(|e| crate::error::MantaError::Internal(e)));
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -402,11 +401,7 @@ impl AcpControlPlane {
     }
 
     /// Resolve thread ID based on binding mode
-    async fn resolve_thread_id(
-        &self,
-        binding: &ThreadBinding,
-        parent_id: &str,
-    ) -> String {
+    async fn resolve_thread_id(&self, binding: &ThreadBinding, parent_id: &str) -> String {
         match binding {
             ThreadBinding::New => format!("thread-{}", Uuid::new_v4()),
             ThreadBinding::Parent => format!("thread-{}", parent_id),
@@ -430,41 +425,32 @@ impl AcpControlPlane {
         message: IncomingMessage,
     ) -> crate::Result<String> {
         let subagents = self.subagents.read().await;
-        let subagent = subagents.get(subagent_id).ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Subagent '{}'", subagent_id),
-            }
-        })?;
+        let subagent =
+            subagents
+                .get(subagent_id)
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                })?;
 
         let (response_tx, response_rx) = oneshot::channel();
 
         subagent
             .command_tx
-            .send(SubagentCommand::ProcessMessage {
-                message,
-                response_tx,
-            })
+            .send(SubagentCommand::ProcessMessage { message, response_tx })
             .await
             .map_err(|_| {
-                crate::error::MantaError::Internal(
-                    "Subagent command channel closed".to_string()
-                )
+                crate::error::MantaError::Internal("Subagent command channel closed".to_string())
             })?;
 
         let result = response_rx.await.map_err(|_| {
-            crate::error::MantaError::Internal(
-                "Subagent response channel closed".to_string()
-            )
+            crate::error::MantaError::Internal("Subagent response channel closed".to_string())
         })??;
 
         Ok(result)
     }
 
     /// Shutdown a subagent
-    pub async fn shutdown_subagent(
-        &self,
-        subagent_id: &str,
-    ) -> crate::Result<bool> {
+    pub async fn shutdown_subagent(&self, subagent_id: &str) -> crate::Result<bool> {
         let subagents = self.subagents.read().await;
 
         if let Some(subagent) = subagents.get(subagent_id) {
@@ -476,16 +462,14 @@ impl AcpControlPlane {
     }
 
     /// Terminate all subagents in a session
-    pub async fn terminate_session(
-        &self,
-        session_id: &AcpSessionId,
-    ) -> crate::Result<usize> {
+    pub async fn terminate_session(&self, session_id: &AcpSessionId) -> crate::Result<usize> {
         let sessions = self.sessions.read().await;
-        let session = sessions.get(session_id).ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Session '{}'", session_id),
-            }
-        })?;
+        let session =
+            sessions
+                .get(session_id)
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Session '{}'", session_id),
+                })?;
 
         let subagent_ids: Vec<String> = session.subagents.clone();
         drop(sessions);
@@ -506,10 +490,7 @@ impl AcpControlPlane {
     }
 
     /// Get subagent status
-    pub async fn get_subagent_status(
-        &self,
-        subagent_id: &str,
-    ) -> Option<SubagentStatus> {
+    pub async fn get_subagent_status(&self, subagent_id: &str) -> Option<SubagentStatus> {
         let subagents = self.subagents.read().await;
         subagents.get(subagent_id).map(|s| s.status)
     }
@@ -521,10 +502,7 @@ impl AcpControlPlane {
     }
 
     /// List subagents in a session
-    pub async fn list_session_subagents(
-        &self,
-        session_id: &AcpSessionId,
-    ) -> Vec<SubagentHandle> {
+    pub async fn list_session_subagents(&self, session_id: &AcpSessionId) -> Vec<SubagentHandle> {
         let sessions = self.sessions.read().await;
         let subagents = self.subagents.read().await;
 
@@ -540,10 +518,7 @@ impl AcpControlPlane {
     }
 
     /// Get session info
-    pub async fn get_session_info(
-        &self,
-        session_id: &AcpSessionId,
-    ) -> Option<AcpSessionInfo> {
+    pub async fn get_session_info(&self, session_id: &AcpSessionId) -> Option<AcpSessionInfo> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).map(|s| AcpSessionInfo {
             id: s.id.clone(),
@@ -588,6 +563,7 @@ impl AcpAgentExt for AgentHandle {
         config: SubagentConfig,
     ) -> crate::Result<SubagentHandle> {
         let session_id = AcpSessionId::new();
-        acp.spawn_subagent(session_id, self.id.clone(), config).await
+        acp.spawn_subagent(session_id, self.id.clone(), config)
+            .await
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! Tools for fetching web content and searching the web.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, error, info};
@@ -104,7 +104,10 @@ impl WebFetchTool {
 
         let mut result = html.to_string();
         while let Some(start) = result.to_lowercase().find(&pattern_start.to_lowercase()) {
-            if let Some(end) = result[start..].to_lowercase().find(&pattern_end.to_lowercase()) {
+            if let Some(end) = result[start..]
+                .to_lowercase()
+                .find(&pattern_end.to_lowercase())
+            {
                 let end_pos = start + end + pattern_end.len();
                 result.replace_range(start..end_pos, "");
             } else {
@@ -155,7 +158,9 @@ impl WebFetchTool {
                     let url = &result[href_pos..href_pos + href_end];
                     if let Some(tag_end) = result[actual_start..].find(">") {
                         let content_start = actual_start + tag_end + 1;
-                        if let Some(content_end) = result[content_start..].to_lowercase().find("</a>") {
+                        if let Some(content_end) =
+                            result[content_start..].to_lowercase().find("</a>")
+                        {
                             let text = &result[content_start..content_start + content_end];
                             let replacement = format!("[{}]({})", text.trim(), url);
                             let full_end = content_start + content_end + 4;
@@ -231,9 +236,9 @@ impl Tool for WebFetchTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let url = args["url"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'url' argument".to_string()))?;
+        let url = args["url"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'url' argument".to_string())
+        })?;
 
         info!("Fetching URL: {}", url);
 
@@ -254,19 +259,13 @@ impl Tool for WebFetchTool {
             Ok(resp) => resp,
             Err(e) => {
                 error!("Failed to fetch URL: {}", e);
-                return Ok(ToolExecutionResult::error(format!(
-                    "Failed to fetch URL: {}",
-                    e
-                )));
+                return Ok(ToolExecutionResult::error(format!("Failed to fetch URL: {}", e)));
             }
         };
 
         // Check status
         if !response.status().is_success() {
-            return Ok(ToolExecutionResult::error(format!(
-                "HTTP error: {}",
-                response.status()
-            )));
+            return Ok(ToolExecutionResult::error(format!("HTTP error: {}", response.status())));
         }
 
         // Get content type (clone to avoid borrow issues)
@@ -283,10 +282,7 @@ impl Tool for WebFetchTool {
             Ok(b) => b,
             Err(e) => {
                 error!("Failed to read response body: {}", e);
-                return Ok(ToolExecutionResult::error(format!(
-                    "Failed to read response: {}",
-                    e
-                )));
+                return Ok(ToolExecutionResult::error(format!("Failed to read response: {}", e)));
             }
         };
 
@@ -304,18 +300,13 @@ impl Tool for WebFetchTool {
         // Truncate if needed
         let truncated = Self::truncate_content(final_content);
 
-        info!(
-            "Successfully fetched {} bytes from {}",
-            truncated.len(),
-            url
-        );
+        info!("Successfully fetched {} bytes from {}", truncated.len(), url);
 
-        Ok(ToolExecutionResult::success(truncated)
-            .with_data(serde_json::json!({
-                "url": url,
-                "content_type": content_type,
-                "size": bytes.len()
-            })))
+        Ok(ToolExecutionResult::success(truncated).with_data(serde_json::json!({
+            "url": url,
+            "content_type": content_type,
+            "size": bytes.len()
+        })))
     }
 }
 
@@ -385,12 +376,13 @@ impl WebSearchTool {
     }
 
     /// Search using DuckDuckGo
-    async fn search_duckduckgo(&self, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+    async fn search_duckduckgo(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
         // DuckDuckGo HTML interface
-        let url = format!(
-            "https://html.duckduckgo.com/html/?q={}",
-            urlencoding::encode(query)
-        );
+        let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding::encode(query));
 
         let response = self
             .client
@@ -398,7 +390,9 @@ impl WebSearchTool {
             .header("Accept", "text/html")
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Search request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Search request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -407,10 +401,9 @@ impl WebSearchTool {
             )));
         }
 
-        let html = response
-            .text()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to read response: {}", e)))?;
+        let html = response.text().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to read response: {}", e))
+        })?;
 
         // Parse results from HTML
         let results = Self::parse_duckduckgo_results(&html, limit);
@@ -469,27 +462,26 @@ impl WebSearchTool {
                 };
 
                 // Extract snippet
-                let snippet = if let Some(snippet_start) = chunk.find("<a class=\"result__snippet\"") {
-                    let snippet_area = &chunk[snippet_start..];
-                    if let Some(tag_end) = snippet_area.find(">") {
-                        let content_start = tag_end + 1;
-                        if let Some(content_end) = snippet_area[content_start..].find("</a>") {
-                            Self::clean_html(&snippet_area[content_start..content_start + content_end])
+                let snippet =
+                    if let Some(snippet_start) = chunk.find("<a class=\"result__snippet\"") {
+                        let snippet_area = &chunk[snippet_start..];
+                        if let Some(tag_end) = snippet_area.find(">") {
+                            let content_start = tag_end + 1;
+                            if let Some(content_end) = snippet_area[content_start..].find("</a>") {
+                                Self::clean_html(
+                                    &snippet_area[content_start..content_start + content_end],
+                                )
+                            } else {
+                                String::new()
+                            }
                         } else {
                             String::new()
                         }
                     } else {
                         String::new()
-                    }
-                } else {
-                    String::new()
-                };
+                    };
 
-                results.push(SearchResult {
-                    title,
-                    url,
-                    snippet,
-                });
+                results.push(SearchResult { title, url, snippet });
             }
         }
 
@@ -497,8 +489,19 @@ impl WebSearchTool {
     }
 
     /// Search using Bing Web Search API
-    async fn search_bing(&self, api_key: &str, endpoint: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
-        let url = format!("{}/v7.0/search?q={}&count={}", endpoint.trim_end_matches('/'), urlencoding::encode(query), limit.min(50));
+    async fn search_bing(
+        &self,
+        api_key: &str,
+        endpoint: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let url = format!(
+            "{}/v7.0/search?q={}&count={}",
+            endpoint.trim_end_matches('/'),
+            urlencoding::encode(query),
+            limit.min(50)
+        );
 
         let response = self
             .client
@@ -507,7 +510,9 @@ impl WebSearchTool {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Bing search request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Bing search request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -516,10 +521,9 @@ impl WebSearchTool {
             )));
         }
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Bing response: {}", e)))?;
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to parse Bing response: {}", e))
+        })?;
 
         let mut results = Vec::new();
 
@@ -527,15 +531,18 @@ impl WebSearchTool {
         if let Some(web_pages) = json.get("webPages").and_then(|wp| wp.get("value")) {
             if let Some(items) = web_pages.as_array() {
                 for item in items.iter().take(limit) {
-                    let title = item.get("name")
+                    let title = item
+                        .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let url = item.get("url")
+                    let url = item
+                        .get("url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let snippet = item.get("snippet")
+                    let snippet = item
+                        .get("snippet")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -551,10 +558,19 @@ impl WebSearchTool {
     }
 
     /// Search using Google Custom Search JSON API
-    async fn search_google(&self, api_key: &str, cx: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+    async fn search_google(
+        &self,
+        api_key: &str,
+        cx: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
         let url = format!(
             "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
-            api_key, cx, urlencoding::encode(query), limit.min(10)
+            api_key,
+            cx,
+            urlencoding::encode(query),
+            limit.min(10)
         );
 
         let response = self
@@ -563,7 +579,9 @@ impl WebSearchTool {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Google search request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Google search request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -573,25 +591,27 @@ impl WebSearchTool {
             )));
         }
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Google response: {}", e)))?;
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to parse Google response: {}", e))
+        })?;
 
         let mut results = Vec::new();
 
         // Parse Google Custom Search response
         if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
             for item in items.iter().take(limit) {
-                let title = item.get("title")
+                let title = item
+                    .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let url = item.get("link")
+                let url = item
+                    .get("link")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let snippet = item.get("snippet")
+                let snippet = item
+                    .get("snippet")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -606,7 +626,12 @@ impl WebSearchTool {
     }
 
     /// Search using Brave Search API
-    async fn search_brave(&self, api_key: &str, query: &str, limit: usize) -> crate::Result<Vec<SearchResult>> {
+    async fn search_brave(
+        &self,
+        api_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
         let url = format!(
             "https://api.search.brave.com/res/v1/web/search?q={}&count={}&offset=0",
             urlencoding::encode(query),
@@ -620,7 +645,9 @@ impl WebSearchTool {
             .header("X-Subscription-Token", api_key)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Brave search request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Brave search request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -630,10 +657,9 @@ impl WebSearchTool {
             )));
         }
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to parse Brave response: {}", e)))?;
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to parse Brave response: {}", e))
+        })?;
 
         let mut results = Vec::new();
 
@@ -641,15 +667,18 @@ impl WebSearchTool {
         if let Some(web) = json.get("web").and_then(|w| w.get("results")) {
             if let Some(items) = web.as_array() {
                 for item in items.iter().take(limit) {
-                    let title = item.get("title")
+                    let title = item
+                        .get("title")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let url = item.get("url")
+                    let url = item
+                        .get("url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let snippet = item.get("description")
+                    let snippet = item
+                        .get("description")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -692,10 +721,9 @@ impl WebSearchTool {
             }
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Custom search request failed: {}", e)))?;
+        let response = request.send().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Custom search request failed: {}", e))
+        })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -704,10 +732,9 @@ impl WebSearchTool {
             )));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to read response: {}", e)))?;
+        let body = response.text().await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to read response: {}", e))
+        })?;
 
         // Use custom parser if provided, otherwise try to parse as JSON
         let results = if let Some(parser_fn) = parser {
@@ -726,25 +753,29 @@ impl WebSearchTool {
 
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
             // Try common result paths
-            let results_array = value.get("results")
+            let results_array = value
+                .get("results")
                 .and_then(|v| v.as_array())
                 .or_else(|| value.get("items").and_then(|v| v.as_array()))
                 .or_else(|| value.get("data").and_then(|v| v.as_array()));
 
             if let Some(items) = results_array {
                 for item in items.iter().take(limit) {
-                    let title = item.get("title")
+                    let title = item
+                        .get("title")
                         .or_else(|| item.get("name"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let url = item.get("url")
+                    let url = item
+                        .get("url")
                         .or_else(|| item.get("link"))
                         .or_else(|| item.get("href"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let snippet = item.get("snippet")
+                    let snippet = item
+                        .get("snippet")
                         .or_else(|| item.get("description"))
                         .or_else(|| item.get("summary"))
                         .and_then(|v| v.as_str())
@@ -831,9 +862,9 @@ impl Tool for WebSearchTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let query = args["query"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'query' argument".to_string()))?;
+        let query = args["query"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'query' argument".to_string())
+        })?;
 
         let limit = args["limit"]
             .as_u64()
@@ -843,7 +874,7 @@ impl Tool for WebSearchTool {
 
         if query.len() > 500 {
             return Ok(ToolExecutionResult::error(
-                "Query too long (max 500 characters)".to_string()
+                "Query too long (max 500 characters)".to_string(),
             ));
         }
 
@@ -857,51 +888,44 @@ impl Tool for WebSearchTool {
             SearchProvider::Google { api_key, cx } => {
                 self.search_google(api_key, cx, query, limit).await
             }
-            SearchProvider::Brave { api_key } => {
-                self.search_brave(api_key, query, limit).await
-            }
-            SearchProvider::Custom { url, api_key, headers, result_parser } => {
-                self.search_custom(url, api_key, headers, result_parser, query, limit).await
+            SearchProvider::Brave { api_key } => self.search_brave(api_key, query, limit).await,
+            SearchProvider::Custom {
+                url,
+                api_key,
+                headers,
+                result_parser,
+            } => {
+                self.search_custom(url, api_key, headers, result_parser, query, limit)
+                    .await
             }
         }?;
 
         if results.is_empty() {
-            return Ok(ToolExecutionResult::success(
-                "No results found for the query.".to_string()
-            ));
+            return Ok(ToolExecutionResult::success("No results found for the query.".to_string()));
         }
 
         // Format results
         let formatted: Vec<String> = results
             .iter()
             .enumerate()
-            .map(|(i, r)| {
-                format!(
-                    "{}. {}\n   URL: {}\n   {}",
-                    i + 1,
-                    r.title,
-                    r.url,
-                    r.snippet
-                )
-            })
+            .map(|(i, r)| format!("{}. {}\n   URL: {}\n   {}", i + 1, r.title, r.url, r.snippet))
             .collect();
 
         let output = formatted.join("\n\n");
 
         info!("Found {} results for query", results.len());
 
-        Ok(ToolExecutionResult::success(output)
-            .with_data(serde_json::json!({
-                "query": query,
-                "result_count": results.len(),
-                "results": results.iter().map(|r| {
-                    serde_json::json!({
-                        "title": r.title,
-                        "url": r.url,
-                        "snippet": r.snippet
-                    })
-                }).collect::<Vec<_>>()
-            })))
+        Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
+            "query": query,
+            "result_count": results.len(),
+            "results": results.iter().map(|r| {
+                serde_json::json!({
+                    "title": r.title,
+                    "url": r.url,
+                    "snippet": r.snippet
+                })
+            }).collect::<Vec<_>>()
+        })))
     }
 }
 

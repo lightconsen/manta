@@ -68,9 +68,10 @@ impl TeamMeshManager {
         {
             let sessions = self.team_sessions.read().await;
             if sessions.contains_key(&team_id) {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Team '{}' is already active", team_id)
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Team '{}' is already active",
+                    team_id
+                )));
             }
         }
 
@@ -105,17 +106,16 @@ impl TeamMeshManager {
 
         // Register all agents with the mesh
         for agent_name in &session.agents {
-            let rx = self.mesh.register(format!("{}:{}", team_id, agent_name)).await;
+            let rx = self
+                .mesh
+                .register(format!("{}:{}", team_id, agent_name))
+                .await;
 
             // Spawn message receiver for this agent
             let team_id_clone = team_id.clone();
             let agent_name_clone = agent_name.clone();
             tokio::spawn(async move {
-                Self::agent_message_receiver(
-                    team_id_clone,
-                    agent_name_clone,
-                    rx,
-                ).await;
+                Self::agent_message_receiver(team_id_clone, agent_name_clone, rx).await;
             });
 
             info!("Registered agent '{}' with team '{}' mesh", agent_name, team_id);
@@ -187,7 +187,8 @@ impl TeamMeshManager {
         match session.pattern {
             CommunicationPattern::Mesh => {
                 // Full mesh - direct messages allowed to anyone
-                self.send_direct_or_broadcast(&session, from_agent, to_agent, content).await
+                self.send_direct_or_broadcast(&session, from_agent, to_agent, content)
+                    .await
             }
             CommunicationPattern::Broadcast => {
                 // Broadcast only - all messages go to everyone
@@ -195,7 +196,8 @@ impl TeamMeshManager {
             }
             CommunicationPattern::Star => {
                 // Star pattern - messages must go through leads
-                self.send_star_pattern(&session, from_agent, to_agent, content).await
+                self.send_star_pattern(&session, from_agent, to_agent, content)
+                    .await
             }
             CommunicationPattern::Chain => {
                 // Chain pattern - messages only to next in chain
@@ -348,15 +350,17 @@ impl TeamMeshManager {
             .chain_order
             .iter()
             .position(|a| a == from)
-            .ok_or_else(|| crate::error::MantaError::Validation(format!(
-                "Agent '{}' not found in team '{}'",
-                from, session.team_id
-            )))?;
+            .ok_or_else(|| {
+                crate::error::MantaError::Validation(format!(
+                    "Agent '{}' not found in team '{}'",
+                    from, session.team_id
+                ))
+            })?;
 
         // Can only send to next in chain
         if sender_pos + 1 >= session.chain_order.len() {
             return Err(crate::error::MantaError::Validation(
-                "You are at the end of the chain - no one to send to".to_string()
+                "You are at the end of the chain - no one to send to".to_string(),
             ));
         }
 
@@ -405,7 +409,10 @@ impl TeamMeshManager {
             .into_iter()
             .filter(|m| {
                 m.from.starts_with(&format!("{}:", team_id))
-                    || m.to.as_ref().map(|t| t.starts_with(&format!("{}:", team_id))).unwrap_or(false)
+                    || m.to
+                        .as_ref()
+                        .map(|t| t.starts_with(&format!("{}:", team_id)))
+                        .unwrap_or(false)
             })
             .collect()
     }
@@ -447,11 +454,14 @@ impl Default for TeamMeshManager {
 }
 
 /// Global team mesh manager instance
-static TEAM_MESH_MANAGER: tokio::sync::OnceCell<TeamMeshManager> = tokio::sync::OnceCell::const_new();
+static TEAM_MESH_MANAGER: tokio::sync::OnceCell<TeamMeshManager> =
+    tokio::sync::OnceCell::const_new();
 
 /// Get or initialize the global team mesh manager
 pub async fn get_team_mesh_manager() -> &'static TeamMeshManager {
-    TEAM_MESH_MANAGER.get_or_init(|| async { TeamMeshManager::new() }).await
+    TEAM_MESH_MANAGER
+        .get_or_init(|| async { TeamMeshManager::new() })
+        .await
 }
 
 #[cfg(test)]

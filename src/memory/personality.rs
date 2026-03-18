@@ -51,10 +51,14 @@ impl MemoryType {
     /// Get the description of this memory type
     pub fn description(&self) -> &'static str {
         match self {
-            MemoryType::Soul => "Core personality, values, behavioral guidelines, and character traits",
+            MemoryType::Soul => {
+                "Core personality, values, behavioral guidelines, and character traits"
+            }
             MemoryType::Identity => "Agent identity, name, role definition, and self-concept",
             MemoryType::Bootstrap => "Initial startup behavior, first-run logic, and onboarding",
-            MemoryType::User => "User-specific memory, preferences, conversation history, and learned context",
+            MemoryType::User => {
+                "User-specific memory, preferences, conversation history, and learned context"
+            }
             MemoryType::Agents => "Operating instructions and agent memory for task execution",
             MemoryType::Tools => "User-maintained tool notes, conventions, and usage patterns",
         }
@@ -120,12 +124,12 @@ impl PersonalityMemory {
     /// Create a dual memory manager with specific directory
     pub async fn with_dir(base_dir: PathBuf) -> crate::Result<Self> {
         // Ensure directory exists
-        fs::create_dir_all(&base_dir).await.map_err(|e| {
-            MantaError::Storage {
+        fs::create_dir_all(&base_dir)
+            .await
+            .map_err(|e| MantaError::Storage {
                 context: format!("Failed to create directory: {:?}", base_dir),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(Self {
             base_dir,
@@ -153,12 +157,12 @@ impl PersonalityMemory {
             return Ok(String::new());
         }
 
-        let content = fs::read_to_string(&path).await.map_err(|e| {
-            MantaError::Storage {
+        let content = fs::read_to_string(&path)
+            .await
+            .map_err(|e| MantaError::Storage {
                 context: format!("Failed to read memory file: {:?}", path),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
         debug!("Read {} bytes from {:?}", content.len(), mem_type);
         Ok(content)
@@ -195,12 +199,12 @@ impl PersonalityMemory {
     async fn write_unchecked(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         let path = self.memory_path(mem_type);
 
-        fs::write(&path, content).await.map_err(|e| {
-            MantaError::Storage {
+        fs::write(&path, content)
+            .await
+            .map_err(|e| MantaError::Storage {
                 context: format!("Failed to write memory file: {:?}", path),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
         info!("Wrote {} bytes to {:?}", content.len(), mem_type);
         Ok(())
@@ -280,7 +284,7 @@ impl PersonalityMemory {
         // List of suspicious patterns
         let patterns = [
             ("system_prompt_injection", r"(?i)(system|assistant|user)\s*:\s*"),
-            ("command_injection", r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+",),
+            ("command_injection", r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+"),
             ("path_traversal", r"\.\./|\.\.\\"),
             ("exfiltration", r"(?i)(curl|wget|fetch)\s+.*http"),
         ];
@@ -470,23 +474,18 @@ These files are loaded into the system prompt at startup."#
             match action {
                 "read" => {
                     let content = self.memory.read(mem_type).await?;
-                    Ok(ToolExecutionResult::success(format!(
-                        "Memory content:\n{}",
-                        content
-                    ))
-                    .with_data(json!({
-                        "memory_type": mem_type_str,
-                        "content": content,
-                        "size": content.len()
-                    })))
+                    Ok(ToolExecutionResult::success(format!("Memory content:\n{}", content))
+                        .with_data(json!({
+                            "memory_type": mem_type_str,
+                            "content": content,
+                            "size": content.len()
+                        })))
                 }
 
                 "write" => {
-                    let content = args["content"]
-                        .as_str()
-                        .ok_or_else(|| MantaError::Validation(
-                            "content is required for write action".to_string()
-                        ))?;
+                    let content = args["content"].as_str().ok_or_else(|| {
+                        MantaError::Validation("content is required for write action".to_string())
+                    })?;
 
                     self.memory.write(mem_type, content).await?;
                     Ok(ToolExecutionResult::success(format!(
@@ -501,33 +500,22 @@ These files are loaded into the system prompt at startup."#
                 }
 
                 "append" => {
-                    let content = args["content"]
-                        .as_str()
-                        .ok_or_else(|| MantaError::Validation(
-                            "content is required for append action".to_string()
-                        ))?;
+                    let content = args["content"].as_str().ok_or_else(|| {
+                        MantaError::Validation("content is required for append action".to_string())
+                    })?;
 
                     self.memory.append(mem_type, content).await?;
-                    Ok(ToolExecutionResult::success(format!(
-                        "Appended to {:?}",
-                        mem_type
-                    ))
-                    .with_data(json!({"memory_type": mem_type_str})))
+                    Ok(ToolExecutionResult::success(format!("Appended to {:?}", mem_type))
+                        .with_data(json!({"memory_type": mem_type_str})))
                 }
 
                 "clear" => {
                     self.memory.clear(mem_type).await?;
-                    Ok(ToolExecutionResult::success(format!(
-                        "Cleared {:?}",
-                        mem_type
-                    ))
-                    .with_data(json!({"memory_type": mem_type_str})))
+                    Ok(ToolExecutionResult::success(format!("Cleared {:?}", mem_type))
+                        .with_data(json!({"memory_type": mem_type_str})))
                 }
 
-                _ => Err(MantaError::Validation(format!(
-                    "Unknown action: {}",
-                    action
-                ))),
+                _ => Err(MantaError::Validation(format!("Unknown action: {}", action))),
             }
         }
     }
@@ -541,9 +529,7 @@ mod tests {
     async fn test_personality_memory_read_write() {
         let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let memory = PersonalityMemory::with_dir(temp_dir.clone())
-            .await
-            .unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
         // Write to identity memory
         memory
@@ -580,9 +566,7 @@ mod tests {
     async fn test_personality_memory_exists() {
         let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let memory = PersonalityMemory::with_dir(temp_dir.clone())
-            .await
-            .unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
         assert!(!memory.exists(MemoryType::Bootstrap).await);
 

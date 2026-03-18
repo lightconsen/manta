@@ -480,7 +480,7 @@ pub enum TeamCommands {
 }
 
 // Re-export team types for CLI use
-pub use crate::team::{TeamType, CommunicationPattern};
+pub use crate::team::{CommunicationPattern, TeamType};
 
 #[derive(Debug, Subcommand)]
 pub enum ChannelCommands {
@@ -663,25 +663,28 @@ impl Cli {
             Commands::Config { format } => self.show_config(&config, *format),
             Commands::Health => self.run_health_check(&config).await,
             Commands::Chat { conversation, message } => {
-                self.run_chat(&config, conversation.clone(), message.clone()).await
+                self.run_chat(&config, conversation.clone(), message.clone())
+                    .await
             }
             Commands::AssistantRun { config: assistant_config } => {
                 self.run_assistant_process(assistant_config).await
             }
-            Commands::Admin { command } => {
-                self.run_admin_command(command).await
-            }
-            Commands::Web { port } => {
-                self.run_web(&config, *port).await
-            }
+            Commands::Admin { command } => self.run_admin_command(command).await,
+            Commands::Web { port } => self.run_web(&config, *port).await,
             Commands::Cron { command } => self.run_cron_command(command).await,
             Commands::Skill { command } => self.run_skill_command(command).await,
             Commands::Agent { command } => self.run_agent_command(command).await,
             Commands::Team { command } => self.run_team_command(command).await,
             Commands::Channel { command } => self.run_channel_command(command).await,
-            Commands::Start { host, port, web_port, foreground } => {
-                self.run_start_daemon(host, *port, *web_port, *foreground).await
-            },
+            Commands::Start {
+                host,
+                port,
+                web_port,
+                foreground,
+            } => {
+                self.run_start_daemon(host, *port, *web_port, *foreground)
+                    .await
+            }
             Commands::Stop { force } => self.run_stop_daemon(*force).await,
             Commands::Status => self.run_daemon_status().await,
             Commands::Logs { lines, follow } => self.run_logs(*lines, *follow).await,
@@ -692,11 +695,7 @@ impl Cli {
         let engine = Engine::new();
 
         match command {
-            EntityCommands::Create {
-                name,
-                description,
-                tags,
-            } => {
+            EntityCommands::Create { name, description, tags } => {
                 let request = CreateEntityRequest {
                     name: name.clone(),
                     description: description.clone(),
@@ -776,12 +775,7 @@ impl Cli {
                     }
                 }
             }
-            EntityCommands::Update {
-                id,
-                name,
-                description,
-                status,
-            } => {
+            EntityCommands::Update { id, name, description, status } => {
                 let id = crate::core::models::Id::parse(id)?;
                 let request = UpdateEntityRequest {
                     name: name.clone(),
@@ -828,7 +822,9 @@ impl Cli {
         let jobs_file = crate::dirs::cron_dir().join("cron_jobs.json");
 
         let mut jobs: Vec<ScheduledJob> = if jobs_file.exists() {
-            let content = tokio::fs::read_to_string(&jobs_file).await.unwrap_or_default();
+            let content = tokio::fs::read_to_string(&jobs_file)
+                .await
+                .unwrap_or_default();
             serde_json::from_str(&content).unwrap_or_default()
         } else {
             Vec::new()
@@ -846,7 +842,8 @@ impl Cli {
 
                 for job in &jobs {
                     let status = if job.enabled { "enabled" } else { "disabled" };
-                    println!("{:<20} {:<20} {:<10} {}",
+                    println!(
+                        "{:<20} {:<20} {:<10} {}",
                         truncate(&job.name, 20),
                         truncate(&job.schedule, 20),
                         status,
@@ -854,9 +851,17 @@ impl Cli {
                     );
                 }
             }
-            CronCommands::Add { name, schedule, command: cmd, description } => {
+            CronCommands::Add {
+                name,
+                schedule,
+                command: cmd,
+                description,
+            } => {
                 if jobs.iter().any(|j| j.name == *name) {
-                    return Err(crate::error::MantaError::Validation(format!("Job '{}' already exists", name)));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Job '{}' already exists",
+                        name
+                    )));
                 }
 
                 let job = ScheduledJob::new(
@@ -864,7 +869,7 @@ impl Cli {
                     name.clone(),
                     schedule.clone(),
                     cmd.clone(),
-                    "cli".to_string()
+                    "cli".to_string(),
                 );
 
                 jobs.push(job);
@@ -882,7 +887,9 @@ impl Cli {
                 jobs.retain(|j| j.name != *name);
 
                 if jobs.len() == initial_len {
-                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                    return Err(crate::error::MantaError::NotFound {
+                        resource: format!("Job '{}'", name),
+                    });
                 }
 
                 let content = serde_json::to_string_pretty(&jobs)?;
@@ -897,7 +904,9 @@ impl Cli {
                     tokio::fs::write(&jobs_file, content).await?;
                     println!("✅ Enabled cron job '{}'", name);
                 } else {
-                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                    return Err(crate::error::MantaError::NotFound {
+                        resource: format!("Job '{}'", name),
+                    });
                 }
             }
             CronCommands::Disable { name } => {
@@ -907,7 +916,9 @@ impl Cli {
                     tokio::fs::write(&jobs_file, content).await?;
                     println!("✅ Disabled cron job '{}'", name);
                 } else {
-                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                    return Err(crate::error::MantaError::NotFound {
+                        resource: format!("Job '{}'", name),
+                    });
                 }
             }
             CronCommands::Run { name } => {
@@ -916,7 +927,9 @@ impl Cli {
                     println!("Command: {}", job.prompt);
                     println!("✅ Simulated execution of cron job '{}'", name);
                 } else {
-                    return Err(crate::error::MantaError::NotFound { resource: format!("Job '{}'", name) });
+                    return Err(crate::error::MantaError::NotFound {
+                        resource: format!("Job '{}'", name),
+                    });
                 }
             }
             CronCommands::Status => {
@@ -930,11 +943,9 @@ impl Cli {
                     println!("\nConfigured jobs:");
                     for job in &jobs {
                         let status = if job.enabled { "✅" } else { "❌" };
-                        println!("  {} {} - {} (runs: {})",
-                            status,
-                            job.name,
-                            job.schedule,
-                            job.run_count
+                        println!(
+                            "  {} {} - {} (runs: {})",
+                            status, job.name, job.schedule, job.run_count
                         );
                     }
                 }
@@ -945,7 +956,7 @@ impl Cli {
     }
 
     async fn run_skill_command(&self, command: &SkillCommands) -> Result<()> {
-        use crate::skills::{SkillManager, Skill, TriggerType};
+        use crate::skills::{Skill, SkillManager, TriggerType};
 
         match command {
             SkillCommands::List { all: _, format } => {
@@ -969,18 +980,18 @@ impl Cli {
                         println!("{}", serde_yaml::to_string(&skills)?);
                     }
                     OutputFormat::Table => {
-                        println!("{:<20} {:<8} {:<10} {:<30}", "Name", "Status", "Level", "Description");
+                        println!(
+                            "{:<20} {:<8} {:<10} {:<30}",
+                            "Name", "Status", "Level", "Description"
+                        );
                         println!("{}", "-".repeat(70));
                         for skill in skills {
                             let status = if skill.is_eligible { "✅" } else { "⚠️" };
                             let enabled = if skill.enabled { "" } else { " (disabled)" };
                             let desc = truncate(&skill.description, 30);
-                            println!("{:<20} {:<8} {:<10} {}{}",
-                                skill.name,
-                                status,
-                                skill.source_level,
-                                desc,
-                                enabled
+                            println!(
+                                "{:<20} {:<8} {:<10} {}{}",
+                                skill.name, status, skill.source_level, desc, enabled
                             );
                         }
                     }
@@ -999,7 +1010,14 @@ impl Cli {
                     println!("📦 Skill: {} {}", skill.metadata.emoji, skill.name);
                     println!("{}\n", "=".repeat(50));
                     println!("Description: {}", skill.description);
-                    println!("Status: {}", if skill.is_eligible { "✅ Eligible" } else { "⚠️ Not eligible" });
+                    println!(
+                        "Status: {}",
+                        if skill.is_eligible {
+                            "✅ Eligible"
+                        } else {
+                            "⚠️ Not eligible"
+                        }
+                    );
                     println!("Enabled: {}", if skill.enabled { "Yes" } else { "No" });
                     println!("Source: {:?}", skill.source_level);
                     println!("File: {:?}", skill.source_path);
@@ -1112,10 +1130,11 @@ impl Cli {
                 }
             }
             SkillCommands::Init { name, description } => {
-                let desc = description.clone().unwrap_or_else(|| format!("{} skill", name));
+                let desc = description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} skill", name));
 
-                let skill = Skill::new(name, &desc, "")
-                    .with_trigger(TriggerType::Keyword, name);
+                let skill = Skill::new(name, &desc, "").with_trigger(TriggerType::Keyword, name);
 
                 let manager = SkillManager::new().await?;
                 manager.create_skill(&skill).await?;
@@ -1129,15 +1148,20 @@ impl Cli {
     }
 
     async fn run_agent_command(&self, command: &AgentCommands) -> Result<()> {
-        
-
         // Use centralized ~/.manta/agents directory
         let agents_dir = crate::dirs::agents_dir();
 
         tokio::fs::create_dir_all(&agents_dir).await.ok();
 
         match command {
-            AgentCommands::Create { name, display_name, role, style, prompt, format: output_format } => {
+            AgentCommands::Create {
+                name,
+                display_name,
+                role,
+                style,
+                prompt,
+                format: output_format,
+            } => {
                 let agent_dir = agents_dir.join(name);
 
                 if agent_dir.exists() {
@@ -1152,12 +1176,13 @@ impl Cli {
                 let display = display_name.clone().unwrap_or_else(|| name.clone());
                 let role_text = role.clone().unwrap_or_else(|| "AI Assistant".to_string());
                 let style_text = style.clone();
-                let prompt_text = prompt.clone().unwrap_or_else(||
-                    format!("You are {}, a helpful AI assistant.", display)
-                );
+                let prompt_text = prompt
+                    .clone()
+                    .unwrap_or_else(|| format!("You are {}, a helpful AI assistant.", display));
 
                 // Create IDENTITY.md
-                let identity_content = format!(r#"# Agent Identity
+                let identity_content = format!(
+                    r#"# Agent Identity
 
 ## Name
 {display}
@@ -1170,10 +1195,13 @@ impl Cli {
 
 ## Created
 {date}
-"#, date = chrono::Local::now().format("%Y-%m-%d %H:%M"));
+"#,
+                    date = chrono::Local::now().format("%Y-%m-%d %H:%M")
+                );
 
                 // Create SOUL.md
-                let soul_content = format!(r#"# Agent Soul
+                let soul_content = format!(
+                    r#"# Agent Soul
 
 ## Core Values
 - Helpfulness: Always strive to be useful
@@ -1187,10 +1215,12 @@ impl Cli {
 
 ## Expertise
 {role_text}
-"#);
+"#
+                );
 
                 // Create BOOTSTRAP.md
-                let bootstrap_content = format!(r#"# Bootstrap Configuration
+                let bootstrap_content = format!(
+                    r#"# Bootstrap Configuration
 
 ## System Prompt
 {prompt_text}
@@ -1202,19 +1232,23 @@ Hello! I'm {display}, your {role_text}. How can I help you today?
 - Load context from memory
 - Check for pending tasks
 - Await user input
-"#);
+"#
+                );
 
                 // Write files based on format
                 match output_format.as_str() {
                     "yaml" | "json" => {
                         // For structured formats, create a single agent.yaml file
-                        let agent_yaml = format!(r#"name: {display}
+                        let agent_yaml = format!(
+                            r#"name: {display}
 role: {role_text}
 style: {style_text}
 created: {date}
 system_prompt: |
   {prompt_text}
-"#, date = chrono::Local::now().format("%Y-%m-%d %H:%M"));
+"#,
+                            date = chrono::Local::now().format("%Y-%m-%d %H:%M")
+                        );
                         tokio::fs::write(agent_dir.join("agent.yaml"), agent_yaml).await?;
 
                         // Also write markdown versions for editing
@@ -1249,9 +1283,10 @@ system_prompt: |
                 let agent_dir = agents_dir.join(name);
 
                 if !agent_dir.exists() {
-                    return Err(crate::error::MantaError::Validation(
-                        format!("Agent '{}' not found", name)
-                    ));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Agent '{}' not found",
+                        name
+                    )));
                 }
 
                 if !force {
@@ -1287,13 +1322,14 @@ system_prompt: |
                             match tokio::fs::read_to_string(&identity_path).await {
                                 Ok(content) => {
                                     // Extract name from "## Name" section
-                                    content.lines()
+                                    content
+                                        .lines()
                                         .skip_while(|l| !l.starts_with("## Name"))
                                         .nth(1)
                                         .map(|l| l.trim().to_string())
                                         .unwrap_or_else(|| name.clone())
                                 }
-                                Err(_) => name.clone()
+                                Err(_) => name.clone(),
                             }
                         } else {
                             name.clone()
@@ -1339,9 +1375,10 @@ system_prompt: |
                 let agent_dir = agents_dir.join(name);
 
                 if !agent_dir.exists() {
-                    return Err(crate::error::MantaError::Validation(
-                        format!("Agent '{}' not found. Use 'manta agent create {}' to create it.", name, name)
-                    ));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Agent '{}' not found. Use 'manta agent create {}' to create it.",
+                        name, name
+                    )));
                 }
 
                 // Create active agent marker
@@ -1388,9 +1425,10 @@ system_prompt: |
                 let agent_dir = agents_dir.join(name);
 
                 if !agent_dir.exists() {
-                    return Err(crate::error::MantaError::Validation(
-                        format!("Agent '{}' not found", name)
-                    ));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Agent '{}' not found",
+                        name
+                    )));
                 }
 
                 let files_to_edit: Vec<std::path::PathBuf> = match file.as_str() {
@@ -1403,9 +1441,10 @@ system_prompt: |
                         agent_dir.join("BOOTSTRAP.md"),
                     ],
                     _ => {
-                        return Err(crate::error::MantaError::Validation(
-                            format!("Unknown file '{}'. Use: soul, identity, bootstrap, or all", file)
-                        ));
+                        return Err(crate::error::MantaError::Validation(format!(
+                            "Unknown file '{}'. Use: soul, identity, bootstrap, or all",
+                            file
+                        )));
                     }
                 };
 
@@ -1468,7 +1507,10 @@ system_prompt: |
                 for (filename, default_content) in &files {
                     let file_path = workspace_dir.join(filename);
                     if file_path.exists() && !force {
-                        println!("ℹ️ Skipping {} (already exists, use --force to overwrite)", filename);
+                        println!(
+                            "ℹ️ Skipping {} (already exists, use --force to overwrite)",
+                            filename
+                        );
                     } else {
                         tokio::fs::write(&file_path, default_content).await?;
                         println!("✅ Created {}", file_path.display());
@@ -1588,19 +1630,17 @@ system_prompt: |
                 let db_url = format!("sqlite:{}", db_path.display());
 
                 match crate::memory::SqliteMemoryStore::new(&db_url).await {
-                    Ok(store) => {
-                        match store.get_last_conversation("user").await {
-                            Ok(Some(last_conv)) => {
-                                println!("📱 Resuming conversation: {}", last_conv);
-                                last_conv
-                            }
-                            _ => {
-                                let new_id = crate::channels::ConversationId::generate().to_string();
-                                println!("📱 Starting new conversation: {}", new_id);
-                                new_id
-                            }
+                    Ok(store) => match store.get_last_conversation("user").await {
+                        Ok(Some(last_conv)) => {
+                            println!("📱 Resuming conversation: {}", last_conv);
+                            last_conv
                         }
-                    }
+                        _ => {
+                            let new_id = crate::channels::ConversationId::generate().to_string();
+                            println!("📱 Starting new conversation: {}", new_id);
+                            new_id
+                        }
+                    },
                     Err(_) => {
                         let new_id = crate::channels::ConversationId::generate().to_string();
                         println!("📱 Starting new conversation: {}", new_id);
@@ -1714,8 +1754,8 @@ system_prompt: |
         client: crate::client::DaemonClient,
         mut conversation_id: String,
     ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, BufReader, stdin};
         use std::io::Write;
+        use tokio::io::{stdin, AsyncBufReadExt, BufReader};
 
         println!("🤖 Manta Terminal Chat - Type 'exit' to quit, '/new' for new session");
 
@@ -1790,8 +1830,14 @@ system_prompt: |
     }
 
     /// Start the Manta daemon
-    async fn run_start_daemon(&self, host: &str, port: u16, web_port: u16, foreground: bool) -> Result<()> {
-        use crate::daemon::{DaemonManager, DaemonConfig};
+    async fn run_start_daemon(
+        &self,
+        host: &str,
+        port: u16,
+        web_port: u16,
+        foreground: bool,
+    ) -> Result<()> {
+        use crate::daemon::{DaemonConfig, DaemonManager};
 
         // Ensure directories exist
         crate::dirs::init().await?;
@@ -1820,7 +1866,7 @@ system_prompt: |
 
     /// Stop the Manta daemon
     async fn run_stop_daemon(&self, force: bool) -> Result<()> {
-        use crate::daemon::{DaemonManager, DaemonConfig};
+        use crate::daemon::{DaemonConfig, DaemonManager};
 
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
@@ -1842,7 +1888,7 @@ system_prompt: |
 
     /// Check daemon status
     async fn run_daemon_status(&self) -> Result<()> {
-        use crate::daemon::{DaemonManager, DaemonConfig};
+        use crate::daemon::{DaemonConfig, DaemonManager};
 
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
@@ -1857,18 +1903,24 @@ system_prompt: |
 
     /// Run team management commands
     async fn run_team_command(&self, command: &TeamCommands) -> Result<()> {
-        use crate::team::{Team, TeamType, CommunicationPattern};
+        use crate::team::{CommunicationPattern, Team, TeamType};
 
         match command {
-            TeamCommands::Create { name, description, team_type, agents } => {
+            TeamCommands::Create {
+                name,
+                description,
+                team_type,
+                agents,
+            } => {
                 let teams_dir = crate::dirs::teams_dir();
                 tokio::fs::create_dir_all(&teams_dir).await.ok();
 
                 let team_dir = teams_dir.join(name);
                 if team_dir.exists() {
-                    return Err(crate::error::MantaError::Validation(
-                        format!("Team '{}' already exists. Use 'manta team delete {}' to delete it first.", name, name)
-                    ));
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Team '{}' already exists. Use 'manta team delete {}' to delete it first.",
+                        name, name
+                    )));
                 }
 
                 let mut team = Team::new(name);
@@ -1936,8 +1988,11 @@ system_prompt: |
                                 println!("     Communication: {}", team.communication);
                                 println!("     Active: {}", if team.active { "✓" } else { "✗" });
                                 for (name, member) in &team.members {
-                                    println!("       - {} (role: {}, level: {}, delegate: {})",
-                                        name, member.role, member.level,
+                                    println!(
+                                        "       - {} (role: {}, level: {}, delegate: {})",
+                                        name,
+                                        member.role,
+                                        member.level,
                                         if member.can_delegate { "✓" } else { "✗" }
                                     );
                                 }
@@ -1951,7 +2006,11 @@ system_prompt: |
                             Ok(team) => {
                                 let member_count = team.members.len();
                                 let active_str = if team.active { " [active]" } else { "" };
-                                println!("  📁 {} ({} members{}){}", team_name, member_count, active_str,
+                                println!(
+                                    "  📁 {} ({} members{}){}",
+                                    team_name,
+                                    member_count,
+                                    active_str,
                                     if let Some(desc) = &team.description {
                                         format!(" - {}", desc)
                                     } else {
@@ -1986,8 +2045,13 @@ system_prompt: |
                 if !team.members.is_empty() {
                     println!("\nMembers:");
                     for (name, member) in &team.members {
-                        let delegate_str = if member.can_delegate { " [can delegate]" } else { "" };
-                        println!("  👤 {} - {} (level: {}){}",
+                        let delegate_str = if member.can_delegate {
+                            " [can delegate]"
+                        } else {
+                            ""
+                        };
+                        println!(
+                            "  👤 {} - {} (level: {}){}",
                             name, member.role, member.level, delegate_str
                         );
                     }
@@ -2001,7 +2065,13 @@ system_prompt: |
                 }
             }
 
-            TeamCommands::AddMember { team, agent, role, level, can_delegate } => {
+            TeamCommands::AddMember {
+                team,
+                agent,
+                role,
+                level,
+                can_delegate,
+            } => {
                 let mut team = Team::load(team).await?;
 
                 // Check if agent exists
@@ -2156,29 +2226,25 @@ system_prompt: |
     async fn run_channel_command(&self, command: &ChannelCommands) -> Result<()> {
         match command {
             ChannelCommands::Add { channel, token, foreground } => {
-                self.run_channel_add(*channel, token.clone(), *foreground).await
+                self.run_channel_add(*channel, token.clone(), *foreground)
+                    .await
             }
-            ChannelCommands::Remove { channel } => {
-                self.run_channel_remove(*channel).await
-            }
-            ChannelCommands::List { all } => {
-                self.run_channel_list(*all).await
-            }
-            ChannelCommands::Status { channel } => {
-                self.run_channel_status(*channel).await
-            }
-            ChannelCommands::Test { channel } => {
-                self.run_channel_test(*channel).await
-            }
+            ChannelCommands::Remove { channel } => self.run_channel_remove(*channel).await,
+            ChannelCommands::List { all } => self.run_channel_list(*all).await,
+            ChannelCommands::Status { channel } => self.run_channel_status(*channel).await,
+            ChannelCommands::Test { channel } => self.run_channel_test(*channel).await,
         }
     }
 
     /// Add/connect a channel (Telegram, Discord, Slack, WhatsApp, QQ, Lark)
-    async fn run_channel_add(&self, channel: ChannelType, token: Option<String>, foreground: bool) -> Result<()> {
+    async fn run_channel_add(
+        &self,
+        channel: ChannelType,
+        token: Option<String>,
+        foreground: bool,
+    ) -> Result<()> {
         match channel {
-            ChannelType::Telegram => {
-                self.start_telegram_channel(token, foreground).await
-            }
+            ChannelType::Telegram => self.start_telegram_channel(token, foreground).await,
             ChannelType::Discord => {
                 println!("🚧 Discord channel support coming soon!");
                 println!("   To use Discord, build with: cargo build --features discord");
@@ -2210,27 +2276,30 @@ system_prompt: |
     /// Start Telegram channel
     #[cfg(feature = "telegram")]
     async fn start_telegram_channel(&self, token: Option<String>, foreground: bool) -> Result<()> {
+        use crate::agent::{AgentBuilder, AgentConfig};
         use crate::channels::{Channel, TelegramChannel, TelegramConfig};
-        use crate::agent::{AgentConfig, AgentBuilder};
         use crate::tools::ToolRegistry;
 
         // Get token from args or environment
         let token = match token {
             Some(t) => t,
-            None => std::env::var("TELEGRAM_BOT_TOKEN")
-                .map_err(|_| crate::error::ConfigError::Missing(
-                    "TELEGRAM_BOT_TOKEN environment variable or --token argument".to_string()
-                ))?,
+            None => std::env::var("TELEGRAM_BOT_TOKEN").map_err(|_| {
+                crate::error::ConfigError::Missing(
+                    "TELEGRAM_BOT_TOKEN environment variable or --token argument".to_string(),
+                )
+            })?,
         };
 
         println!("🚀 Starting Telegram bot...");
 
         // Create agent with tools
         let tools = ToolRegistry::new();
-        let _agent = Arc::new(AgentBuilder::new()
-            .config(AgentConfig::default())
-            .tools(Arc::new(tools))
-            .build()?);
+        let _agent = Arc::new(
+            AgentBuilder::new()
+                .config(AgentConfig::default())
+                .tools(Arc::new(tools))
+                .build()?,
+        );
 
         // Create and start Telegram channel
         let config = TelegramConfig::new(token);
@@ -2250,7 +2319,11 @@ system_prompt: |
 
     /// Telegram support not compiled in
     #[cfg(not(feature = "telegram"))]
-    async fn start_telegram_channel(&self, _token: Option<String>, _foreground: bool) -> Result<()> {
+    async fn start_telegram_channel(
+        &self,
+        _token: Option<String>,
+        _foreground: bool,
+    ) -> Result<()> {
         println!("❌ Telegram support not compiled in.");
         println!("   Build with: cargo build --features telegram");
         Ok(())
@@ -2445,20 +2518,22 @@ system_prompt: |
 
     /// Run as an assistant subprocess (internal use)
     async fn run_assistant_process(&self, config_path: &PathBuf) -> Result<()> {
-        use crate::assistants::{AssistantConfig, AssistantType};
+        use crate::agent::{AgentBuilder, AgentConfig};
         use crate::assistants::process::IpcMessage;
-        use crate::agent::{AgentConfig, AgentBuilder};
-        use crate::tools::{ToolRegistry, ShellTool, FileReadTool, FileWriteTool, FileEditTool, GlobTool, TodoTool, WebSearchTool, WebFetchTool, CronTool};
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
-        
+        use crate::assistants::{AssistantConfig, AssistantType};
+        use crate::tools::{
+            CronTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, ShellTool, TodoTool,
+            ToolRegistry, WebFetchTool, WebSearchTool,
+        };
+        use tokio::io::{stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         // Read environment variables set by parent
-        let assistant_id = std::env::var("MANTA_ASSISTANT_ID")
-            .unwrap_or_else(|_| "unknown".to_string());
-        let assistant_name = std::env::var("MANTA_ASSISTANT_NAME")
-            .unwrap_or_else(|_| "Assistant".to_string());
-        let assistant_type_str = std::env::var("MANTA_ASSISTANT_TYPE")
-            .unwrap_or_else(|_| "specialist".to_string());
+        let assistant_id =
+            std::env::var("MANTA_ASSISTANT_ID").unwrap_or_else(|_| "unknown".to_string());
+        let assistant_name =
+            std::env::var("MANTA_ASSISTANT_NAME").unwrap_or_else(|_| "Assistant".to_string());
+        let assistant_type_str =
+            std::env::var("MANTA_ASSISTANT_TYPE").unwrap_or_else(|_| "specialist".to_string());
         let _parent_id = std::env::var("MANTA_PARENT_ASSISTANT_ID").ok();
 
         // Parse assistant type
@@ -2474,18 +2549,22 @@ system_prompt: |
         };
 
         // Load configuration
-        let config_content = tokio::fs::read_to_string(config_path).await
-            .map_err(|e| crate::error::MantaError::Internal(
-                format!("Failed to read assistant config: {}", e)
-            ))?;
-        let assistant_config: AssistantConfig = serde_yaml::from_str(&config_content)
-            .map_err(|e| crate::error::MantaError::Internal(
-                format!("Failed to parse assistant config: {}", e)
-            ))?;
+        let config_content = tokio::fs::read_to_string(config_path).await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to read assistant config: {}", e))
+        })?;
+        let assistant_config: AssistantConfig =
+            serde_yaml::from_str(&config_content).map_err(|e| {
+                crate::error::MantaError::Internal(format!(
+                    "Failed to parse assistant config: {}",
+                    e
+                ))
+            })?;
 
         // Set up logging for this assistant
-        eprintln!("🤖 Assistant '{}' starting (ID: {}, Type: {})",
-            assistant_name, assistant_id, assistant_type);
+        eprintln!(
+            "🤖 Assistant '{}' starting (ID: {}, Type: {})",
+            assistant_name, assistant_id, assistant_type
+        );
 
         // Create provider from environment
         let base_url = std::env::var("MANTA_BASE_URL")
@@ -2493,11 +2572,12 @@ system_prompt: |
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
         let api_key = std::env::var("MANTA_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .map_err(|_| crate::error::MantaError::Validation(
-                "MANTA_API_KEY or OPENAI_API_KEY environment variable required".to_string()
-            ))?;
-        let model = std::env::var("MANTA_MODEL")
-            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            .map_err(|_| {
+                crate::error::MantaError::Validation(
+                    "MANTA_API_KEY or OPENAI_API_KEY environment variable required".to_string(),
+                )
+            })?;
+        let model = std::env::var("MANTA_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
 
         // Create provider
         let provider: Arc<dyn crate::providers::Provider> = {
@@ -2558,13 +2638,17 @@ system_prompt: |
             };
 
             match message {
-                IpcMessage::ProcessRequest { request_id, message: user_message, context: _ } => {
+                IpcMessage::ProcessRequest {
+                    request_id,
+                    message: user_message,
+                    context: _,
+                } => {
                     // Process the message
                     let conversation_id = format!("assistant-{}", assistant_id);
                     let incoming = crate::channels::IncomingMessage::new(
                         "parent",
                         &conversation_id,
-                        user_message
+                        user_message,
                     );
 
                     let response_content = match agent.process_message(incoming).await {
@@ -2633,104 +2717,96 @@ system_prompt: |
         };
 
         match command {
-            AdminCommands::Status => {
-                match client.get_status().await {
-                    Ok(status) => {
-                        println!("🌐 Manta Gateway Status");
-                        println!("======================");
-                        println!("Agents:      {}/{} busy", status.agents.busy, status.agents.total);
-                        println!("Channels:    {}", status.channels);
-                        println!("Version:     {}", status.version);
-                    }
-                    Err(e) => println!("❌ Failed to get status: {}", e),
+            AdminCommands::Status => match client.get_status().await {
+                Ok(status) => {
+                    println!("🌐 Manta Gateway Status");
+                    println!("======================");
+                    println!("Agents:      {}/{} busy", status.agents.busy, status.agents.total);
+                    println!("Channels:    {}", status.channels);
+                    println!("Version:     {}", status.version);
                 }
-            }
-            AdminCommands::Providers => {
-                match client.get_providers().await {
-                    Ok(providers) => {
-                        println!("🔌 LLM Providers");
-                        println!("=================");
-                        if providers.is_empty() {
-                            println!("No providers configured");
-                        } else {
-                            println!("{:<20} {:<12} {:<10} {:<15}", "Name", "Type", "Status", "Health");
-                            println!("{}", "-".repeat(60));
-                            for p in providers {
-                                let status = if p.enabled { "✅ enabled" } else { "❌ disabled" };
-                                let health = format!("{} ({} failures)", p.health.state, p.health.failures);
-                                println!("{:<20} {:<12} {:<10} {:<15}",
-                                    truncate(&p.name, 20),
-                                    truncate(&p.provider_type, 12),
-                                    status,
-                                    truncate(&health, 15)
-                                );
-                            }
+                Err(e) => println!("❌ Failed to get status: {}", e),
+            },
+            AdminCommands::Providers => match client.get_providers().await {
+                Ok(providers) => {
+                    println!("🔌 LLM Providers");
+                    println!("=================");
+                    if providers.is_empty() {
+                        println!("No providers configured");
+                    } else {
+                        println!("{:<20} {:<12} {:<10} {:<15}", "Name", "Type", "Status", "Health");
+                        println!("{}", "-".repeat(60));
+                        for p in providers {
+                            let status = if p.enabled {
+                                "✅ enabled"
+                            } else {
+                                "❌ disabled"
+                            };
+                            let health =
+                                format!("{} ({} failures)", p.health.state, p.health.failures);
+                            println!(
+                                "{:<20} {:<12} {:<10} {:<15}",
+                                truncate(&p.name, 20),
+                                truncate(&p.provider_type, 12),
+                                status,
+                                truncate(&health, 15)
+                            );
                         }
                     }
-                    Err(e) => println!("❌ Failed to get providers: {}", e),
                 }
-            }
-            AdminCommands::Models => {
-                match client.get_models().await {
-                    Ok(models) => {
-                        println!("🤖 Model Aliases");
-                        println!("=================");
-                        if models.aliases.is_empty() {
-                            println!("No models configured");
-                        } else {
-                            for alias in &models.aliases {
-                                println!("  • {}", alias);
-                            }
-                            println!("\nTotal: {} alias(es)", models.aliases.len());
+                Err(e) => println!("❌ Failed to get providers: {}", e),
+            },
+            AdminCommands::Models => match client.get_models().await {
+                Ok(models) => {
+                    println!("🤖 Model Aliases");
+                    println!("=================");
+                    if models.aliases.is_empty() {
+                        println!("No models configured");
+                    } else {
+                        for alias in &models.aliases {
+                            println!("  • {}", alias);
                         }
+                        println!("\nTotal: {} alias(es)", models.aliases.len());
                     }
-                    Err(e) => println!("❌ Failed to get models: {}", e),
                 }
-            }
-            AdminCommands::Default => {
-                match client.get_default_model().await {
-                    Ok(model) => {
-                        println!("📌 Current default model: {}", model.default_model);
+                Err(e) => println!("❌ Failed to get models: {}", e),
+            },
+            AdminCommands::Default => match client.get_default_model().await {
+                Ok(model) => {
+                    println!("📌 Current default model: {}", model.default_model);
+                }
+                Err(e) => println!("❌ Failed to get default model: {}", e),
+            },
+            AdminCommands::Switch { model } => match client.switch_model(model).await {
+                Ok(result) => {
+                    if result.success {
+                        println!("✅ {}", result.message);
+                    } else {
+                        println!("❌ Failed: {}", result.error.unwrap_or_default());
                     }
-                    Err(e) => println!("❌ Failed to get default model: {}", e),
                 }
-            }
-            AdminCommands::Switch { model } => {
-                match client.switch_model(model).await {
-                    Ok(result) => {
-                        if result.success {
-                            println!("✅ {}", result.message);
-                        } else {
-                            println!("❌ Failed: {}", result.error.unwrap_or_default());
-                        }
+                Err(e) => println!("❌ Failed to switch model: {}", e),
+            },
+            AdminCommands::Enable { provider } => match client.enable_provider(provider).await {
+                Ok(result) => {
+                    if result.success {
+                        println!("✅ {}", result.message);
+                    } else {
+                        println!("❌ Failed: {}", result.error.unwrap_or_default());
                     }
-                    Err(e) => println!("❌ Failed to switch model: {}", e),
                 }
-            }
-            AdminCommands::Enable { provider } => {
-                match client.enable_provider(provider).await {
-                    Ok(result) => {
-                        if result.success {
-                            println!("✅ {}", result.message);
-                        } else {
-                            println!("❌ Failed: {}", result.error.unwrap_or_default());
-                        }
+                Err(e) => println!("❌ Failed to enable provider: {}", e),
+            },
+            AdminCommands::Disable { provider } => match client.disable_provider(provider).await {
+                Ok(result) => {
+                    if result.success {
+                        println!("✅ {}", result.message);
+                    } else {
+                        println!("❌ Failed: {}", result.error.unwrap_or_default());
                     }
-                    Err(e) => println!("❌ Failed to enable provider: {}", e),
                 }
-            }
-            AdminCommands::Disable { provider } => {
-                match client.disable_provider(provider).await {
-                    Ok(result) => {
-                        if result.success {
-                            println!("✅ {}", result.message);
-                        } else {
-                            println!("❌ Failed: {}", result.error.unwrap_or_default());
-                        }
-                    }
-                    Err(e) => println!("❌ Failed to disable provider: {}", e),
-                }
-            }
+                Err(e) => println!("❌ Failed to disable provider: {}", e),
+            },
             AdminCommands::Health { provider } => {
                 match client.check_provider_health(provider).await {
                     Ok(result) => {
@@ -2742,44 +2818,53 @@ system_prompt: |
                     Err(e) => println!("❌ Failed to check health: {}", e),
                 }
             }
-            AdminCommands::Fallback { alias } => {
-                match client.get_fallback_chain(alias).await {
-                    Ok(chain) => {
-                        println!("🔗 Fallback Chain for '{}'", alias);
-                        println!("========================={}", "=".repeat(alias.len()));
-                        if chain.fallback_chain.is_empty() {
-                            println!("No fallback chain configured");
-                        } else {
-                            for (i, provider) in chain.fallback_chain.iter().enumerate() {
-                                println!("  {}. {}", i + 1, provider);
-                            }
+            AdminCommands::Fallback { alias } => match client.get_fallback_chain(alias).await {
+                Ok(chain) => {
+                    println!("🔗 Fallback Chain for '{}'", alias);
+                    println!("========================={}", "=".repeat(alias.len()));
+                    if chain.fallback_chain.is_empty() {
+                        println!("No fallback chain configured");
+                    } else {
+                        for (i, provider) in chain.fallback_chain.iter().enumerate() {
+                            println!("  {}. {}", i + 1, provider);
                         }
                     }
-                    Err(e) => println!("❌ Failed to get fallback chain: {}", e),
                 }
-            }
-            AdminCommands::Agents => {
-                match client.get_agents().await {
-                    Ok(agents) => {
-                        println!("🤖 Active Agents");
-                        println!("=================");
-                        if agents.is_empty() {
-                            println!("No agents running");
-                        } else {
-                            println!("{:<20} {:<10}", "ID", "Status");
-                            println!("{}", "-".repeat(35));
-                            for agent in &agents {
-                                let status = if agent.busy { "🔄 busy" } else { "⏳ idle" };
-                                println!("{:<20} {:<10}", truncate(&agent.id, 20), status);
-                            }
-                            println!("\nTotal: {} agent(s)", agents.len());
+                Err(e) => println!("❌ Failed to get fallback chain: {}", e),
+            },
+            AdminCommands::Agents => match client.get_agents().await {
+                Ok(agents) => {
+                    println!("🤖 Active Agents");
+                    println!("=================");
+                    if agents.is_empty() {
+                        println!("No agents running");
+                    } else {
+                        println!("{:<20} {:<10}", "ID", "Status");
+                        println!("{}", "-".repeat(35));
+                        for agent in &agents {
+                            let status = if agent.busy { "🔄 busy" } else { "⏳ idle" };
+                            println!("{:<20} {:<10}", truncate(&agent.id, 20), status);
                         }
+                        println!("\nTotal: {} agent(s)", agents.len());
                     }
-                    Err(e) => println!("❌ Failed to get agents: {}", e),
                 }
-            }
-            AdminCommands::Send { session_id, message, provider, model } => {
-                match client.send_message_with_override(session_id, message, provider.clone(), model.clone()).await {
+                Err(e) => println!("❌ Failed to get agents: {}", e),
+            },
+            AdminCommands::Send {
+                session_id,
+                message,
+                provider,
+                model,
+            } => {
+                match client
+                    .send_message_with_override(
+                        session_id,
+                        message,
+                        provider.clone(),
+                        model.clone(),
+                    )
+                    .await
+                {
                     Ok(result) => {
                         if let Some(response) = result.response {
                             println!("🤖 {}", response);

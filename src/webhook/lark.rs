@@ -258,10 +258,7 @@ async fn process_message(
 ) -> crate::Result<()> {
     // Check if user is allowed
     if !is_user_allowed(&event.sender.sender_id.open_id, &config.allowed_users) {
-        warn!(
-            "Message from disallowed user: {}",
-            event.sender.sender_id.open_id
-        );
+        warn!("Message from disallowed user: {}", event.sender.sender_id.open_id);
         return Ok(());
     }
 
@@ -269,10 +266,7 @@ async fn process_message(
     let content = match event.message.message_type.as_str() {
         "text" => parse_text_content(&event.message.content)?,
         _ => {
-            debug!(
-                "Skipping non-text message type: {}",
-                event.message.message_type
-            );
+            debug!("Skipping non-text message type: {}", event.message.message_type);
             return Ok(());
         }
     };

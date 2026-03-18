@@ -59,9 +59,10 @@ impl Engine {
 
         // Check entity limit
         {
-            let entities = self.entities.read().map_err(|_| {
-                MantaError::Internal("Failed to acquire read lock".to_string())
-            })?;
+            let entities = self
+                .entities
+                .read()
+                .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
 
             if entities.len() >= self.config.max_entities {
                 return Err(MantaError::Validation(format!(
@@ -85,9 +86,10 @@ impl Engine {
         let id = entity.id;
 
         {
-            let mut entities = self.entities.write().map_err(|_| {
-                MantaError::Internal("Failed to acquire write lock".to_string())
-            })?;
+            let mut entities = self
+                .entities
+                .write()
+                .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
             entities.insert(id, entity.clone());
         }
 
@@ -98,22 +100,26 @@ impl Engine {
     /// Get an entity by ID
     #[instrument(skip(self), fields(entity_id = %id))]
     pub fn get_entity(&self, id: Id) -> Result<Entity> {
-        let entities = self.entities.read().map_err(|_| {
-            MantaError::Internal("Failed to acquire read lock".to_string())
-        })?;
+        let entities = self
+            .entities
+            .read()
+            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
 
         entities
             .get(&id)
             .cloned()
-            .ok_or_else(|| MantaError::NotFound { resource: format!("Entity with ID '{}' not found", id) })
+            .ok_or_else(|| MantaError::NotFound {
+                resource: format!("Entity with ID '{}' not found", id),
+            })
     }
 
     /// List all entities with optional filtering
     #[instrument(skip(self))]
     pub fn list_entities(&self, filter: Option<Status>) -> Result<Vec<Entity>> {
-        let entities = self.entities.read().map_err(|_| {
-            MantaError::Internal("Failed to acquire read lock".to_string())
-        })?;
+        let entities = self
+            .entities
+            .read()
+            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
 
         let mut result: Vec<Entity> = if let Some(status) = filter {
             entities
@@ -126,11 +132,7 @@ impl Engine {
         };
 
         // Sort by creation date (newest first)
-        result.sort_by(|a, b| {
-            b.metadata
-                .created_at
-                .cmp(&a.metadata.created_at)
-        });
+        result.sort_by(|a, b| b.metadata.created_at.cmp(&a.metadata.created_at));
 
         debug!(count = result.len(), "Listed entities");
         Ok(result)
@@ -139,13 +141,14 @@ impl Engine {
     /// Update an existing entity
     #[instrument(skip(self, request), fields(entity_id = %id))]
     pub fn update_entity(&self, id: Id, request: UpdateEntityRequest) -> Result<Entity> {
-        let mut entities = self.entities.write().map_err(|_| {
-            MantaError::Internal("Failed to acquire write lock".to_string())
-        })?;
+        let mut entities = self
+            .entities
+            .write()
+            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
 
-        let entity = entities
-            .get_mut(&id)
-            .ok_or_else(|| MantaError::NotFound { resource: format!("Entity with ID '{}' not found", id) })?;
+        let entity = entities.get_mut(&id).ok_or_else(|| MantaError::NotFound {
+            resource: format!("Entity with ID '{}' not found", id),
+        })?;
 
         request.apply(entity)?;
 
@@ -156,9 +159,10 @@ impl Engine {
     /// Delete an entity
     #[instrument(skip(self), fields(entity_id = %id))]
     pub fn delete_entity(&self, id: Id) -> Result<()> {
-        let mut entities = self.entities.write().map_err(|_| {
-            MantaError::Internal("Failed to acquire write lock".to_string())
-        })?;
+        let mut entities = self
+            .entities
+            .write()
+            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
 
         if entities.remove(&id).is_none() {
             return Err(MantaError::NotFound {
@@ -172,9 +176,10 @@ impl Engine {
 
     /// Get entity count
     pub fn entity_count(&self) -> Result<usize> {
-        let entities = self.entities.read().map_err(|_| {
-            MantaError::Internal("Failed to acquire read lock".to_string())
-        })?;
+        let entities = self
+            .entities
+            .read()
+            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
         Ok(entities.len())
     }
 
@@ -186,9 +191,10 @@ impl Engine {
         let cutoff = chrono::Utc::now() - Duration::days(max_age_days);
         let mut archived_count = 0;
 
-        let mut entities = self.entities.write().map_err(|_| {
-            MantaError::Internal("Failed to acquire write lock".to_string())
-        })?;
+        let mut entities = self
+            .entities
+            .write()
+            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
 
         for entity in entities.values_mut() {
             if entity.is_terminal() && entity.metadata.updated_at < cutoff {

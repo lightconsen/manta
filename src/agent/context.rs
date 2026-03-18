@@ -98,8 +98,9 @@ impl Context {
         complexity += parts.saturating_sub(1) * 2;
 
         // Tasks with explicit multiple steps
-        if message_content.to_lowercase().contains("steps") ||
-           message_content.to_lowercase().contains("step by step") {
+        if message_content.to_lowercase().contains("steps")
+            || message_content.to_lowercase().contains("step by step")
+        {
             complexity += 5;
         }
 
@@ -291,15 +292,13 @@ impl Context {
 
             if middle_end > middle_start {
                 // Remove middle messages
-                let _middle: Vec<Message> = self
-                    .messages
-                    .drain(middle_start..middle_end)
-                    .collect();
+                let _middle: Vec<Message> = self.messages.drain(middle_start..middle_end).collect();
 
                 // Add summary placeholder
-                let summary_msg = Message::system(
-                    format!("[{} earlier messages omitted]", middle_end - middle_start)
-                );
+                let summary_msg = Message::system(format!(
+                    "[{} earlier messages omitted]",
+                    middle_end - middle_start
+                ));
                 self.messages.insert(middle_start, summary_msg);
 
                 self.recalculate_tokens();

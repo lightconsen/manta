@@ -19,15 +19,25 @@ pub enum BrowserAction {
     /// Click on an element
     Click { selector: String },
     /// Type text into an input field
-    Type { selector: String, text: String, clear: Option<bool> },
+    Type {
+        selector: String,
+        text: String,
+        clear: Option<bool>,
+    },
     /// Get the current page HTML
     GetHtml,
     /// Get text content of the page or specific element
     GetText { selector: Option<String> },
     /// Take a screenshot
-    Screenshot { full_page: Option<bool>, selector: Option<String> },
+    Screenshot {
+        full_page: Option<bool>,
+        selector: Option<String>,
+    },
     /// Wait for an element to appear
-    WaitFor { selector: String, timeout_ms: Option<u64> },
+    WaitFor {
+        selector: String,
+        timeout_ms: Option<u64>,
+    },
     /// Scroll the page
     Scroll { direction: String, amount: u32 },
     /// Execute JavaScript
@@ -123,19 +133,20 @@ impl BrowserTool {
             builder = builder.chrome_executable(std::path::PathBuf::from(path));
         }
 
-        let config = builder.build()
+        let config = builder
+            .build()
             .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Browser configuration failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         // Launch browser
-        let (browser, mut handler) = Browser::launch(config)
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
+            crate::error::MantaError::ExternalService {
                 source: "Failed to launch Chrome/Chromium. Is it installed?".to_string(),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         // Spawn handler task
         let browser = Arc::new(browser);
@@ -149,12 +160,12 @@ impl BrowserTool {
         });
 
         // Create new page
-        let page = browser.new_page("about:blank")
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let page = browser.new_page("about:blank").await.map_err(|e| {
+            crate::error::MantaError::ExternalService {
                 source: "Failed to create browser page".to_string(),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         let mut results = Vec::new();
         let mut screenshot_data = None;
@@ -179,20 +190,16 @@ impl BrowserTool {
                     }
                 }
 
-                BrowserAction::Click { selector } => {
-                    match page.find_element(&selector).await {
-                        Ok(elem) => {
-                            match elem.click().await {
-                                Ok(_) => Ok(json!({
-                                    "success": true,
-                                    "selector": selector
-                                })),
-                                Err(e) => Err(format!("Failed to click element: {}", e)),
-                            }
-                        }
-                        Err(e) => Err(format!("Element not found: {}", e)),
-                    }
-                }
+                BrowserAction::Click { selector } => match page.find_element(&selector).await {
+                    Ok(elem) => match elem.click().await {
+                        Ok(_) => Ok(json!({
+                            "success": true,
+                            "selector": selector
+                        })),
+                        Err(e) => Err(format!("Failed to click element: {}", e)),
+                    },
+                    Err(e) => Err(format!("Element not found: {}", e)),
+                },
 
                 BrowserAction::Type { selector, text, clear } => {
                     match page.find_element(&selector).await {
@@ -215,39 +222,33 @@ impl BrowserTool {
                     }
                 }
 
-                BrowserAction::GetHtml => {
-                    match page.content().await {
-                        Ok(html) => Ok(json!({
-                            "success": true,
-                            "html": html,
-                            "length": html.len()
-                        })),
-                        Err(e) => Err(format!("Failed to get HTML: {}", e)),
-                    }
-                }
+                BrowserAction::GetHtml => match page.content().await {
+                    Ok(html) => Ok(json!({
+                        "success": true,
+                        "html": html,
+                        "length": html.len()
+                    })),
+                    Err(e) => Err(format!("Failed to get HTML: {}", e)),
+                },
 
                 BrowserAction::GetText { selector } => {
                     match selector {
-                        Some(sel) => {
-                            match page.find_element(&sel).await {
-                                Ok(elem) => {
-                                    match elem.inner_text().await {
-                                        Ok(Some(text)) => Ok(json!({
-                                            "success": true,
-                                            "text": text,
-                                            "selector": sel
-                                        })),
-                                        Ok(None) => Ok(json!({
-                                            "success": true,
-                                            "text": "",
-                                            "selector": sel
-                                        })),
-                                        Err(e) => Err(format!("Failed to get text: {}", e)),
-                                    }
-                                }
-                                Err(e) => Err(format!("Element not found: {}", e)),
-                            }
-                        }
+                        Some(sel) => match page.find_element(&sel).await {
+                            Ok(elem) => match elem.inner_text().await {
+                                Ok(Some(text)) => Ok(json!({
+                                    "success": true,
+                                    "text": text,
+                                    "selector": sel
+                                })),
+                                Ok(None) => Ok(json!({
+                                    "success": true,
+                                    "text": "",
+                                    "selector": sel
+                                })),
+                                Err(e) => Err(format!("Failed to get text: {}", e)),
+                            },
+                            Err(e) => Err(format!("Element not found: {}", e)),
+                        },
                         None => {
                             // Get full page text
                             let script = r#"() => document.body.innerText"#;
@@ -357,26 +358,20 @@ impl BrowserTool {
                     }
                 }
 
-                BrowserAction::Back => {
-                    match page.go_back().await {
-                        Ok(_) => Ok(json!({ "success": true, "action": "back" })),
-                        Err(e) => Err(format!("Failed to go back: {}", e)),
-                    }
-                }
+                BrowserAction::Back => match page.go_back().await {
+                    Ok(_) => Ok(json!({ "success": true, "action": "back" })),
+                    Err(e) => Err(format!("Failed to go back: {}", e)),
+                },
 
-                BrowserAction::Forward => {
-                    match page.go_forward().await {
-                        Ok(_) => Ok(json!({ "success": true, "action": "forward" })),
-                        Err(e) => Err(format!("Failed to go forward: {}", e)),
-                    }
-                }
+                BrowserAction::Forward => match page.go_forward().await {
+                    Ok(_) => Ok(json!({ "success": true, "action": "forward" })),
+                    Err(e) => Err(format!("Failed to go forward: {}", e)),
+                },
 
-                BrowserAction::Reload => {
-                    match page.reload().await {
-                        Ok(_) => Ok(json!({ "success": true, "action": "reload" })),
-                        Err(e) => Err(format!("Failed to reload: {}", e)),
-                    }
-                }
+                BrowserAction::Reload => match page.reload().await {
+                    Ok(_) => Ok(json!({ "success": true, "action": "reload" })),
+                    Err(e) => Err(format!("Failed to reload: {}", e)),
+                },
             };
 
             results.push(result);
@@ -417,7 +412,7 @@ impl BrowserTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         Ok(ToolExecutionResult::error(
-            "Browser automation not available. Build with --features browser to enable."
+            "Browser automation not available. Build with --features browser to enable.",
         ))
     }
 }
@@ -583,11 +578,10 @@ impl Tool for BrowserTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let actions: Vec<BrowserAction> = serde_json::from_value(
-            args.get("actions").cloned().unwrap_or(json!([]))
-        ).map_err(|e| crate::error::MantaError::Validation(
-            format!("Invalid browser actions: {}", e)
-        ))?;
+        let actions: Vec<BrowserAction> =
+            serde_json::from_value(args.get("actions").cloned().unwrap_or(json!([]))).map_err(
+                |e| crate::error::MantaError::Validation(format!("Invalid browser actions: {}", e)),
+            )?;
 
         if actions.is_empty() {
             return Ok(ToolExecutionResult::error("No browser actions specified"));

@@ -283,7 +283,10 @@ impl SessionSearch {
         }
 
         // Build the FTS5 query
-        let fts_query = query_str.split_whitespace().collect::<Vec<_>>().join(" OR ");
+        let fts_query = query_str
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" OR ");
 
         let rows = match (&query.user_id, &query.conversation_id) {
             (Some(user), Some(conv)) => {
@@ -422,11 +425,7 @@ impl SessionSearch {
             });
         }
 
-        info!(
-            "Search for '{}' returned {} results",
-            query.query,
-            results.len()
-        );
+        info!("Search for '{}' returned {} results", query.query, results.len());
         Ok(results)
     }
 
@@ -438,17 +437,16 @@ impl SessionSearch {
         lines: usize,
     ) -> crate::Result<Vec<String>> {
         // Get the rowid of the target message
-        let row: (i64,) = sqlx::query_as(
-            "SELECT rowid FROM messages WHERE id = ?1 AND conversation_id = ?2"
-        )
-        .bind(message_id)
-        .bind(conversation_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| crate::error::MantaError::Storage {
-            context: "Failed to get message rowid".to_string(),
-            details: e.to_string(),
-        })?;
+        let row: (i64,) =
+            sqlx::query_as("SELECT rowid FROM messages WHERE id = ?1 AND conversation_id = ?2")
+                .bind(message_id)
+                .bind(conversation_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to get message rowid".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let rowid = row.0;
 
@@ -459,7 +457,7 @@ impl SessionSearch {
             WHERE conversation_id = ?1 AND rowid < ?2
             ORDER BY rowid DESC
             LIMIT ?3
-            "#
+            "#,
         )
         .bind(conversation_id)
         .bind(rowid)
@@ -478,7 +476,7 @@ impl SessionSearch {
             WHERE conversation_id = ?1 AND rowid > ?2
             ORDER BY rowid ASC
             LIMIT ?3
-            "#
+            "#,
         )
         .bind(conversation_id)
         .bind(rowid)
@@ -504,12 +502,11 @@ impl SessionSearch {
             .await
             .unwrap_or(0);
 
-        let conversations: i64 = sqlx::query_scalar(
-            "SELECT COUNT(DISTINCT conversation_id) FROM messages"
-        )
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(0);
+        let conversations: i64 =
+            sqlx::query_scalar("SELECT COUNT(DISTINCT conversation_id) FROM messages")
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
 
         let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages_fts")
             .fetch_one(&self.pool)
@@ -617,23 +614,18 @@ from all indexed conversations."#
             args: serde_json::Value,
             _context: &ToolContext,
         ) -> crate::Result<ToolExecutionResult> {
-            let query = args["query"]
-                .as_str()
-                .ok_or_else(|| crate::error::MantaError::Validation(
-                    "query is required".to_string()
-                ))?;
+            let query = args["query"].as_str().ok_or_else(|| {
+                crate::error::MantaError::Validation("query is required".to_string())
+            })?;
 
             let limit = args["limit"].as_u64().unwrap_or(5) as usize;
 
-            let search_query = SessionSearchQuery::new(query)
-                .limit(limit);
+            let search_query = SessionSearchQuery::new(query).limit(limit);
 
             let results = self.search.search(search_query).await?;
 
             if results.is_empty() {
-                return Ok(ToolExecutionResult::success(
-                    "No matching conversations found."
-                ));
+                return Ok(ToolExecutionResult::success("No matching conversations found."));
             }
 
             let formatted: Vec<String> = results
@@ -663,8 +655,7 @@ from all indexed conversations."#
                 "count": results.len()
             });
 
-            Ok(ToolExecutionResult::success(formatted.join("\n"))
-                .with_data(data))
+            Ok(ToolExecutionResult::success(formatted.join("\n")).with_data(data))
         }
     }
 }

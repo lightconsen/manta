@@ -191,10 +191,7 @@ async fn handle_callback(
     if let Some(plain_token) = payload.plain_token {
         // Generate signature
         let signature = generate_callback_signature(&plain_token, &config.app_secret);
-        let response = QqCallbackResponse {
-            plain_token,
-            signature,
-        };
+        let response = QqCallbackResponse { plain_token, signature };
         return (StatusCode::OK, Json(response)).into_response();
     }
 
@@ -219,9 +216,8 @@ fn verify_qq_signature(body: &[u8], signature: &str, secret: &str) -> bool {
     let computed_sig = hex::encode(result.into_bytes());
 
     // Signature might be hex or base64 encoded
-    use base64::{Engine as _, engine::general_purpose};
-    computed_sig == signature ||
-    general_purpose::STANDARD.encode(&computed_sig) == signature
+    use base64::{engine::general_purpose, Engine as _};
+    computed_sig == signature || general_purpose::STANDARD.encode(&computed_sig) == signature
 }
 
 /// Generate callback signature for QQ URL verification
@@ -291,23 +287,20 @@ async fn process_message(
 
     // Determine conversation ID (DM vs guild channel)
     let conversation_id = if let Some(ref guild_id) = event.guild_id {
-        format!("dm:{}", guild_id)  // Direct message
+        format!("dm:{}", guild_id) // Direct message
     } else {
-        event.channel_id.clone().unwrap_or_default()  // Guild channel
+        event.channel_id.clone().unwrap_or_default() // Guild channel
     };
 
     // Create incoming message
-    let incoming = crate::channels::IncomingMessage::new(
-        &event.author.id,
-        &conversation_id,
-        content,
-    )
-    .with_metadata(
-        crate::channels::MessageMetadata::new()
-            .with_extra("message_id", event.id.clone())
-            .with_extra("username", event.author.username.clone())
-            .with_extra("timestamp", event.timestamp.clone()),
-    );
+    let incoming =
+        crate::channels::IncomingMessage::new(&event.author.id, &conversation_id, content)
+            .with_metadata(
+                crate::channels::MessageMetadata::new()
+                    .with_extra("message_id", event.id.clone())
+                    .with_extra("username", event.author.username.clone())
+                    .with_extra("timestamp", event.timestamp.clone()),
+            );
 
     // Process the message
     match agent.process_message(incoming).await {

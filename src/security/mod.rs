@@ -125,11 +125,7 @@ impl AuthManager {
     }
 
     /// Create a new session
-    pub async fn create_session(
-        &self,
-        user_id: UserId,
-        ttl_hours: i64,
-    ) -> crate::Result<Session> {
+    pub async fn create_session(&self, user_id: UserId, ttl_hours: i64) -> crate::Result<Session> {
         // Verify user exists
         if !self.user_exists(&user_id).await {
             return Err(crate::error::MantaError::Validation(format!(
@@ -158,7 +154,10 @@ impl AuthManager {
     /// Validate a session token
     pub async fn validate_session(&self, token: &str) -> Option<Session> {
         let sessions = self.sessions.read().await;
-        sessions.get(token).cloned().filter(|s| s.expires_at > chrono::Utc::now())
+        sessions
+            .get(token)
+            .cloned()
+            .filter(|s| s.expires_at > chrono::Utc::now())
     }
 
     /// Revoke a session
@@ -444,10 +443,7 @@ impl RateLimitHeaders {
             .as_secs();
 
         match result {
-            RateLimitResult::Allowed {
-                remaining,
-                reset_after_secs,
-            } => Self {
+            RateLimitResult::Allowed { remaining, reset_after_secs } => Self {
                 limit: capacity,
                 remaining: *remaining,
                 reset: now + reset_after_secs,
@@ -546,10 +542,7 @@ impl RateLimitNotification {
                     headers.remaining, percentage
                 )
             } else {
-                format!(
-                    "{} of {} requests remaining.",
-                    headers.remaining, headers.limit
-                )
+                format!("{} of {} requests remaining.", headers.remaining, headers.limit)
             };
 
             (true, msg)
@@ -592,7 +585,9 @@ mod tests {
 
         assert!(!allowlist.is_allowed(&user_id).await);
 
-        allowlist.allow_user(user_id.clone(), None, None, None).await;
+        allowlist
+            .allow_user(user_id.clone(), None, None, None)
+            .await;
         assert!(allowlist.is_allowed(&user_id).await);
 
         allowlist.deny_user(&user_id).await;
@@ -666,7 +661,8 @@ pub mod headers {
             // Content Security Policy
             headers.insert(
                 "Content-Security-Policy".to_string(),
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';".to_string(),
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+                    .to_string(),
             );
 
             // X-Content-Type-Options
@@ -679,7 +675,10 @@ pub mod headers {
             headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
 
             // Referrer-Policy
-            headers.insert("Referrer-Policy".to_string(), "strict-origin-when-cross-origin".to_string());
+            headers.insert(
+                "Referrer-Policy".to_string(),
+                "strict-origin-when-cross-origin".to_string(),
+            );
 
             // Permissions-Policy
             headers.insert(
@@ -698,9 +697,7 @@ pub mod headers {
 
         /// Create an empty configuration (no security headers)
         pub fn empty() -> Self {
-            Self {
-                headers: HashMap::new(),
-            }
+            Self { headers: HashMap::new() }
         }
 
         /// Add a custom header
@@ -730,10 +727,8 @@ pub mod headers {
 
         /// Apply CORS headers
         pub fn with_cors(mut self, allowed_origin: impl Into<String>) -> Self {
-            self.headers.insert(
-                "Access-Control-Allow-Origin".to_string(),
-                allowed_origin.into(),
-            );
+            self.headers
+                .insert("Access-Control-Allow-Origin".to_string(), allowed_origin.into());
             self.headers.insert(
                 "Access-Control-Allow-Methods".to_string(),
                 "GET, POST, PUT, DELETE, OPTIONS".to_string(),
@@ -747,7 +742,8 @@ pub mod headers {
 
         /// Set Content-Security-Policy
         pub fn with_csp(mut self, policy: impl Into<String>) -> Self {
-            self.headers.insert("Content-Security-Policy".to_string(), policy.into());
+            self.headers
+                .insert("Content-Security-Policy".to_string(), policy.into());
             self
         }
 
@@ -922,9 +918,7 @@ pub mod fingerprint {
             let other_comp = &other.components;
 
             // If IP matches exactly, consider it similar
-            if self_comp.ip_address.is_some()
-                && self_comp.ip_address == other_comp.ip_address
-            {
+            if self_comp.ip_address.is_some() && self_comp.ip_address == other_comp.ip_address {
                 return true;
             }
 
@@ -1022,7 +1016,11 @@ pub mod fingerprint {
         }
 
         /// Check if a fingerprint is similar to known ones
-        pub fn is_similar(&self, user_id: impl AsRef<str>, fingerprint: &DeviceFingerprint) -> bool {
+        pub fn is_similar(
+            &self,
+            user_id: impl AsRef<str>,
+            fingerprint: &DeviceFingerprint,
+        ) -> bool {
             self.fingerprints
                 .get(user_id.as_ref())
                 .map(|fingerprints| fingerprints.iter().any(|f| f.is_similar(fingerprint)))
@@ -1211,19 +1209,22 @@ pub mod secrets {
                 // Generic patterns
                 SecretPattern {
                     name: "Generic API Key",
-                    regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}").unwrap(),
+                    regex: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9_-]{16,}")
+                        .unwrap(),
                     severity: Severity::Medium,
                     description: "Potential API key detected",
                 },
                 SecretPattern {
                     name: "Generic Secret",
-                    regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}").unwrap(),
+                    regex: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*[^\s]{8,}")
+                        .unwrap(),
                     severity: Severity::Medium,
                     description: "Potential password/secret detected",
                 },
                 SecretPattern {
                     name: "JWT Token",
-                    regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*").unwrap(),
+                    regex: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
+                        .unwrap(),
                     severity: Severity::Medium,
                     description: "JWT token detected",
                 },
@@ -1308,8 +1309,7 @@ pub mod secrets {
         fn from(secrets: Vec<DetectedSecret>) -> Self {
             let mut by_severity: std::collections::HashMap<Severity, usize> =
                 std::collections::HashMap::new();
-            let mut unique: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut unique: std::collections::HashSet<String> = std::collections::HashSet::new();
 
             for secret in &secrets {
                 *by_severity.entry(secret.severity).or_insert(0) += 1;
@@ -1440,4 +1440,4 @@ pub mod audit;
 pub mod pentest;
 
 // Re-export SecurityValidator and validation types from tools module for use in security tests
-pub use crate::tools::{SecurityValidator, ToolValidator, ToolValidationError};
+pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};

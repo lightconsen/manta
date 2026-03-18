@@ -88,14 +88,24 @@ impl MessageFormatter for TelegramHtmlFormatter {
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
@@ -122,7 +132,10 @@ impl MessageFormatter for TelegramHtmlFormatter {
         result = regex::Regex::new(r"~~(.+?)~~")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("<s>{}</s>", Self::escape_html(caps.get(1).map(|m| m.as_str()).unwrap_or("")))
+                format!(
+                    "<s>{}</s>",
+                    Self::escape_html(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
+                )
             })
             .to_string();
 
@@ -286,7 +299,12 @@ impl MessageFormatter for SlackFormatter {
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
@@ -294,7 +312,12 @@ impl MessageFormatter for SlackFormatter {
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
@@ -412,14 +435,24 @@ impl PlainTextFormatter {
         result = regex::Regex::new(r"\*\*(.+?)\*\*")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
         result = regex::Regex::new(r"__(.+?)__")
             .unwrap()
             .replace_all(&result, |caps: &regex::Captures<'_>| {
-                format!("{}{}{}", bold_placeholder, caps.get(1).map(|m| m.as_str()).unwrap_or(""), bold_placeholder)
+                format!(
+                    "{}{}{}",
+                    bold_placeholder,
+                    caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+                    bold_placeholder
+                )
             })
             .to_string();
 
@@ -507,18 +540,9 @@ mod tests {
     fn test_telegram_formatter() {
         let formatter = TelegramHtmlFormatter::new();
 
-        assert_eq!(
-            formatter.format_bold("test"),
-            "<b>test</b>"
-        );
-        assert_eq!(
-            formatter.format_italic("test"),
-            "<i>test</i>"
-        );
-        assert_eq!(
-            formatter.format_inline_code("test"),
-            "<code>test</code>"
-        );
+        assert_eq!(formatter.format_bold("test"), "<b>test</b>");
+        assert_eq!(formatter.format_italic("test"), "<i>test</i>");
+        assert_eq!(formatter.format_inline_code("test"), "<code>test</code>");
 
         let md = "**bold** and *italic*";
         let html = formatter.format(md);
@@ -530,14 +554,8 @@ mod tests {
     fn test_discord_formatter() {
         let formatter = DiscordFormatter::new();
 
-        assert_eq!(
-            formatter.format_bold("test"),
-            "**test**"
-        );
-        assert_eq!(
-            formatter.format_italic("test"),
-            "*test*"
-        );
+        assert_eq!(formatter.format_bold("test"), "**test**");
+        assert_eq!(formatter.format_italic("test"), "*test*");
 
         let md = "**bold** and *italic*";
         let formatted = formatter.format(md);
@@ -549,14 +567,8 @@ mod tests {
     fn test_slack_formatter() {
         let formatter = SlackFormatter::new();
 
-        assert_eq!(
-            formatter.format_bold("test"),
-            "*test*"
-        );
-        assert_eq!(
-            formatter.format_italic("test"),
-            "_test_"
-        );
+        assert_eq!(formatter.format_bold("test"), "*test*");
+        assert_eq!(formatter.format_italic("test"), "_test_");
 
         let md = "**bold** and *italic*";
         let mrkdwn = formatter.format(md);

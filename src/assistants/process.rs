@@ -46,10 +46,7 @@ pub enum IpcMessage {
     /// Shutdown request
     Shutdown { reason: Option<String> },
     /// Log message from child
-    Log {
-        level: String,
-        message: String,
-    },
+    Log { level: String, message: String },
 }
 
 /// Handle to a spawned assistant process
@@ -77,8 +74,9 @@ impl AssistantProcess {
         let data_dir = assistant.data_dir.clone();
 
         // Get the current executable path (manta binary)
-        let current_exe = std::env::current_exe()
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to get current exe: {}", e)))?;
+        let current_exe = std::env::current_exe().map_err(|e| {
+            crate::error::MantaError::Internal(format!("Failed to get current exe: {}", e))
+        })?;
 
         // Prepare environment variables for the child
         let mut envs = config.environment.clone();
@@ -86,13 +84,25 @@ impl AssistantProcess {
         envs.insert("MANTA_ASSISTANT_NAME".to_string(), assistant.name.clone());
         envs.insert("MANTA_ASSISTANT_TYPE".to_string(), format!("{}", assistant.assistant_type));
         envs.insert("MANTA_ASSISTANT_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string());
-        envs.insert("MANTA_PARENT_ASSISTANT_ID".to_string(), assistant.parent_id.clone().unwrap_or_default());
+        envs.insert(
+            "MANTA_PARENT_ASSISTANT_ID".to_string(),
+            assistant.parent_id.clone().unwrap_or_default(),
+        );
         envs.insert("MANTA_MODE".to_string(), "assistant_process".to_string());
 
         // Set resource limits in environment
-        envs.insert("MANTA_MAX_ITERATIONS".to_string(), config.resource_limits.max_iterations.to_string());
-        envs.insert("MANTA_MAX_MEMORY_MB".to_string(), config.resource_limits.max_memory_mb.to_string());
-        envs.insert("MANTA_MAX_REQUESTS_PER_MINUTE".to_string(), config.resource_limits.max_requests_per_minute.to_string());
+        envs.insert(
+            "MANTA_MAX_ITERATIONS".to_string(),
+            config.resource_limits.max_iterations.to_string(),
+        );
+        envs.insert(
+            "MANTA_MAX_MEMORY_MB".to_string(),
+            config.resource_limits.max_memory_mb.to_string(),
+        );
+        envs.insert(
+            "MANTA_MAX_REQUESTS_PER_MINUTE".to_string(),
+            config.resource_limits.max_requests_per_minute.to_string(),
+        );
 
         debug!("Spawning assistant process: {} at {:?}", assistant_id, data_dir);
 
@@ -107,15 +117,21 @@ impl AssistantProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| crate::error::MantaError::Internal(format!(
-                "Failed to spawn assistant process: {}", e
-            )))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!(
+                    "Failed to spawn assistant process: {}",
+                    e
+                ))
+            })?;
 
         // Get stdin/stdout handles
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| crate::error::MantaError::Internal("Failed to get stdin".to_string()))?;
-        let stdout = child.stdout.take()
-            .ok_or_else(|| crate::error::MantaError::Internal("Failed to get stdout".to_string()))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            crate::error::MantaError::Internal("Failed to get stdout".to_string())
+        })?;
 
         // Create channels for IPC
         let (tx, mut rx) = mpsc::unbounded_channel::<IpcMessage>();
@@ -140,7 +156,10 @@ impl AssistantProcess {
                     break;
                 }
                 if let Err(e) = stdin.write_all(b"\n").await {
-                    error!("Failed to write newline to assistant {} stdin: {}", assistant_id_clone, e);
+                    error!(
+                        "Failed to write newline to assistant {} stdin: {}",
+                        assistant_id_clone, e
+                    );
                     break;
                 }
                 if let Err(e) = stdin.flush().await {
@@ -229,15 +248,24 @@ impl AssistantProcess {
                         let mut child = child_monitor.lock().await;
                         match child.try_wait() {
                             Ok(Some(status)) => {
-                                warn!("Assistant {} process exited with: {:?}", assistant_id_monitor, status);
+                                warn!(
+                                    "Assistant {} process exited with: {:?}",
+                                    assistant_id_monitor, status
+                                );
                                 break;
                             }
                             Ok(None) => {
                                 // Process still running but not responding
-                                warn!("Assistant {} not responding, considering restart", assistant_id_monitor);
+                                warn!(
+                                    "Assistant {} not responding, considering restart",
+                                    assistant_id_monitor
+                                );
                             }
                             Err(e) => {
-                                error!("Failed to check assistant {} status: {}", assistant_id_monitor, e);
+                                error!(
+                                    "Failed to check assistant {} status: {}",
+                                    assistant_id_monitor, e
+                                );
                                 break;
                             }
                         }
@@ -290,7 +318,11 @@ impl AssistantProcess {
                     Ok(response)
                 } else {
                     Err(crate::error::MantaError::ExternalService {
-                        source: format!("assistant-{}: {}", self.assistant_id, error.unwrap_or_else(|| "Unknown error".to_string())),
+                        source: format!(
+                            "assistant-{}: {}",
+                            self.assistant_id,
+                            error.unwrap_or_else(|| "Unknown error".to_string())
+                        ),
                         cause: None,
                     })
                 }
@@ -301,12 +333,10 @@ impl AssistantProcess {
             Ok(None) => {
                 Err(crate::error::MantaError::Internal("Response channel closed".to_string()))
             }
-            Err(_) => {
-                Err(crate::error::MantaError::ExternalService {
-                    source: format!("assistant-{}: Request timeout", self.assistant_id),
-                    cause: None,
-                })
-            }
+            Err(_) => Err(crate::error::MantaError::ExternalService {
+                source: format!("assistant-{}: Request timeout", self.assistant_id),
+                cause: None,
+            }),
         }
     }
 
@@ -390,11 +420,12 @@ impl ProcessManager {
         context: HashMap<String, serde_json::Value>,
     ) -> crate::Result<String> {
         let processes = self.processes.read().await;
-        let process = processes.get(assistant_id).ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Running assistant {}", assistant_id),
-            }
-        })?;
+        let process =
+            processes
+                .get(assistant_id)
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Running assistant {}", assistant_id),
+                })?;
 
         process.send_message(message, context).await
     }

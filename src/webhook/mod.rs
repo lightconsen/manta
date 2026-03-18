@@ -3,7 +3,7 @@
 //! Provides HTTP endpoints for receiving messages from external platforms
 //! that use webhook callbacks (WhatsApp, Lark/Feishu, QQ).
 
-use axum::{Router, routing::get};
+use axum::{routing::get, Router};
 use std::sync::Arc;
 
 #[cfg(feature = "whatsapp")]

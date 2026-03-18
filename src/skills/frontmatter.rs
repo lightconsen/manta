@@ -222,7 +222,8 @@ impl SkillFile {
 
     /// Load and parse a SKILL.md file from disk
     pub async fn load(path: &std::path::Path) -> crate::Result<Self> {
-        let content = tokio::fs::read_to_string(path).await
+        let content = tokio::fs::read_to_string(path)
+            .await
             .map_err(|e| crate::error::MantaError::Io(e))?;
 
         Self::parse(&content, path.to_path_buf())
@@ -246,10 +247,13 @@ impl SkillFile {
             let body = &after_first[end_pos + 4..]; // Skip \n---
 
             // Parse YAML frontmatter
-            let frontmatter: SkillFrontmatter = serde_yaml::from_str(yaml_content)
-                .map_err(|e| crate::error::MantaError::Config(
-                    crate::error::ConfigError::Parse(format!("Failed to parse SKILL.md frontmatter: {}", e))
-                ))?;
+            let frontmatter: SkillFrontmatter =
+                serde_yaml::from_str(yaml_content).map_err(|e| {
+                    crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                        "Failed to parse SKILL.md frontmatter: {}",
+                        e
+                    )))
+                })?;
 
             Ok((frontmatter, body.trim_start()))
         } else {
@@ -353,7 +357,8 @@ always: false
 Get weather information for any location.
 "#;
 
-        let skill = SkillFile::parse(content, std::path::PathBuf::from("weather/SKILL.md")).unwrap();
+        let skill =
+            SkillFile::parse(content, std::path::PathBuf::from("weather/SKILL.md")).unwrap();
 
         assert_eq!(skill.frontmatter.name, "weather");
         assert_eq!(skill.frontmatter.emoji, "🌤️");
@@ -433,7 +438,8 @@ Tool skill.
     #[test]
     fn test_skill_name_from_path() {
         let content = "---\nname: docker\n---\nContent";
-        let skill = SkillFile::parse(content, std::path::PathBuf::from("/skills/docker/SKILL.md")).unwrap();
+        let skill =
+            SkillFile::parse(content, std::path::PathBuf::from("/skills/docker/SKILL.md")).unwrap();
 
         assert_eq!(skill.skill_name(), "docker");
     }

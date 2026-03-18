@@ -163,11 +163,9 @@ pub fn init_sync() -> crate::Result<PathBuf> {
     for dir in &dirs {
         if !dir.exists() {
             debug!("Creating directory: {:?}", dir);
-            std::fs::create_dir_all(dir).map_err(|e| {
-                crate::error::MantaError::Storage {
-                    context: format!("Failed to create directory: {:?}", dir),
-                    details: e.to_string(),
-                }
+            std::fs::create_dir_all(dir).map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to create directory: {:?}", dir),
+                details: e.to_string(),
             })?;
         }
     }
@@ -240,9 +238,17 @@ mod tests {
 
     #[test]
     fn test_path_for() {
-        assert!(path_for(FileType::Config).to_string_lossy().contains("manta.toml"));
-        assert!(path_for(FileType::MemoryDb).to_string_lossy().contains("memory.db"));
-        assert!(path_for(FileType::Log).to_string_lossy().contains("daemon.log"));
-        assert!(path_for(FileType::Pid).to_string_lossy().contains("daemon.pid"));
+        assert!(path_for(FileType::Config)
+            .to_string_lossy()
+            .contains("manta.toml"));
+        assert!(path_for(FileType::MemoryDb)
+            .to_string_lossy()
+            .contains("memory.db"));
+        assert!(path_for(FileType::Log)
+            .to_string_lossy()
+            .contains("daemon.log"));
+        assert!(path_for(FileType::Pid)
+            .to_string_lossy()
+            .contains("daemon.pid"));
     }
 }

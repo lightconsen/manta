@@ -44,7 +44,12 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
         info!("Starting Tailscale funnel on port {} with domain {}", port, domain_str);
 
         let output = Command::new("tailscale")
-            .args(["funnel", "--http", &format!("{}:{}", domain_str, port), &port.to_string()])
+            .args([
+                "funnel",
+                "--http",
+                &format!("{}:{}", domain_str, port),
+                &port.to_string(),
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -69,7 +74,12 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
         info!("Starting Tailscale serve on port {}", port);
 
         let output = Command::new("tailscale")
-            .args(["serve", "--http", &format!("http://localhost:{}", port), &port.to_string()])
+            .args([
+                "serve",
+                "--http",
+                &format!("http://localhost:{}", port),
+                &port.to_string(),
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

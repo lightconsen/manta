@@ -308,8 +308,7 @@ async fn feishu_webhook_handler(
     };
 
     // Verify signature if secret and headers are present
-    if let (Some(secret), Some(sig), Some(ts), Some(nonce)) =
-        (secret, signature, timestamp, nonce)
+    if let (Some(secret), Some(sig), Some(ts), Some(nonce)) = (secret, signature, timestamp, nonce)
     {
         if !verify_feishu_signature(&secret, ts, nonce, &body, sig) {
             warn!("Feishu webhook: invalid signature");
@@ -496,7 +495,10 @@ fn verify_hmac_sha256(secret: &str, body: &[u8], expected_sig: &str) -> bool {
 
     // Constant-time comparison to prevent timing attacks
     use subtle::ConstantTimeEq;
-    computed_sig.as_bytes().ct_eq(expected_sig.as_bytes()).into()
+    computed_sig
+        .as_bytes()
+        .ct_eq(expected_sig.as_bytes())
+        .into()
 }
 
 /// Verify Feishu/Lark signature
@@ -522,7 +524,10 @@ fn verify_feishu_signature(
 
     // Constant-time comparison to prevent timing attacks
     use subtle::ConstantTimeEq;
-    computed_sig.as_bytes().ct_eq(expected_sig.as_bytes()).into()
+    computed_sig
+        .as_bytes()
+        .ct_eq(expected_sig.as_bytes())
+        .into()
 }
 
 #[cfg(test)]

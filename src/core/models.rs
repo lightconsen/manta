@@ -230,9 +230,7 @@ impl CreateEntityRequest {
     /// Validate the request
     pub fn validate(&self) -> crate::Result<()> {
         if self.name.is_empty() {
-            return Err(crate::error::MantaError::Validation(
-                "Name cannot be empty".to_string(),
-            ));
+            return Err(crate::error::MantaError::Validation("Name cannot be empty".to_string()));
         }
         if self.name.len() > 256 {
             return Err(crate::error::MantaError::Validation(

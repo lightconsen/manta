@@ -302,10 +302,7 @@ pub trait Provider: Send + Sync {
     /// Count tokens in messages (approximate if not provided by API)
     fn count_tokens(&self, messages: &[Message]) -> usize {
         // Simple approximation: 4 chars per token on average
-        messages
-            .iter()
-            .map(|m| m.content.len() / 4)
-            .sum()
+        messages.iter().map(|m| m.content.len() / 4).sum()
     }
 
     /// Check if the provider is healthy
@@ -329,9 +326,7 @@ impl std::fmt::Debug for ProviderRegistry {
 impl ProviderRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
-        Self {
-            providers: HashMap::new(),
-        }
+        Self { providers: HashMap::new() }
     }
 
     /// Register a provider

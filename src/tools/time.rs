@@ -3,7 +3,7 @@
 //! This tool provides time-related utilities like getting current time,
 //! formatting dates, calculating time differences, and scheduling reminders.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
 use serde_json::Value;
@@ -49,8 +49,9 @@ impl TimeTool {
     /// Format a date/time according to a format string
     fn format_time(&self, format: &str, timestamp: Option<i64>) -> crate::Result<String> {
         let datetime: DateTime<Utc> = match timestamp {
-            Some(ts) => DateTime::from_timestamp(ts, 0)
-                .ok_or_else(|| crate::error::MantaError::Validation("Invalid timestamp".to_string()))?,
+            Some(ts) => DateTime::from_timestamp(ts, 0).ok_or_else(|| {
+                crate::error::MantaError::Validation("Invalid timestamp".to_string())
+            })?,
             None => Utc::now(),
         };
 
@@ -282,9 +283,9 @@ Use this for:
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'action' argument".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'action' argument".to_string())
+        })?;
 
         match action {
             "now" => {
@@ -301,28 +302,33 @@ Use this for:
             }
 
             "format" => {
-                let format = args["format"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'format' argument".to_string()))?;
+                let format = args["format"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'format' argument".to_string())
+                })?;
                 let timestamp = args["timestamp"].as_i64();
 
                 let formatted = self.format_time(format, timestamp)?;
-                let source = if timestamp.is_some() { "provided timestamp" } else { "current time" };
+                let source = if timestamp.is_some() {
+                    "provided timestamp"
+                } else {
+                    "current time"
+                };
 
                 info!("Formatted time: {} (format: {})", formatted, format);
 
-                Ok(ToolExecutionResult::success(formatted.clone())
-                    .with_data(serde_json::json!({
-                        "formatted": formatted,
-                        "format": format,
-                        "source": source
-                    })))
+                Ok(ToolExecutionResult::success(formatted.clone()).with_data(serde_json::json!({
+                    "formatted": formatted,
+                    "format": format,
+                    "source": source
+                })))
             }
 
             "parse" => {
-                let expression = args["expression"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'expression' argument".to_string()))?;
+                let expression = args["expression"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "Missing 'expression' argument".to_string(),
+                    )
+                })?;
 
                 match self.parse_natural_time(expression) {
                     Some(result) => {
@@ -348,10 +354,12 @@ Use this for:
             }
 
             "diff" => {
-                let from = args["from"]
+                let from = args["from"].as_i64().ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'from' timestamp".to_string())
+                })?;
+                let to = args["to"]
                     .as_i64()
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'from' timestamp".to_string()))?;
-                let to = args["to"].as_i64().unwrap_or_else(|| Utc::now().timestamp());
+                    .unwrap_or_else(|| Utc::now().timestamp());
 
                 let diff = self.time_diff(from, to);
 

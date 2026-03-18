@@ -6,14 +6,14 @@
 //! Note: This uses the same ScheduledJob struct from crate::cron for compatibility
 //! with the CLI cron commands.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
+use chrono::{Datelike, Timelike, Utc};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
-use chrono::{Utc, Datelike, Timelike};
 
 // Re-export ScheduledJob from crate::cron for consistency
 use crate::cron::ScheduledJob;
@@ -95,7 +95,8 @@ async fn save_jobs_to_file(jobs: &[ScheduledJob]) -> crate::Result<()> {
     }
 
     let content = serde_json::to_string_pretty(jobs)?;
-    tokio::fs::write(&jobs_file, content).await
+    tokio::fs::write(&jobs_file, content)
+        .await
         .map_err(|e| crate::error::MantaError::Io(e))?;
     Ok(())
 }
@@ -124,7 +125,14 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<ScheduledJob>>>) {
                     continue;
                 }
 
-                if is_due(&job.schedule, current_minute, current_hour, current_day, current_month, current_weekday) {
+                if is_due(
+                    &job.schedule,
+                    current_minute,
+                    current_hour,
+                    current_day,
+                    current_month,
+                    current_weekday,
+                ) {
                     // Use 'prompt' field as the command to execute
                     jobs_to_run.push((job.id.clone(), job.name.clone(), job.prompt.clone()));
                 }
@@ -155,7 +163,12 @@ async fn scheduler_loop(jobs: Arc<RwLock<Vec<ScheduledJob>>>) {
                         if !stdout.trim().is_empty() {
                             println!("[{}] {}", job_name, stdout.trim());
                             // Also broadcast to web terminal clients
-                            crate::server::broadcast_cron_output(&format!("[{}] {}", job_name, stdout.trim())).await;
+                            crate::server::broadcast_cron_output(&format!(
+                                "[{}] {}",
+                                job_name,
+                                stdout.trim()
+                            ))
+                            .await;
                         }
                         debug!("Job '{}' executed successfully", job_id);
                     } else {
@@ -290,7 +303,7 @@ impl Tool for CronTool {
                     "description": "Optional job description"
                 }
             }),
-            vec!["action"]
+            vec!["action"],
         )
     }
 
@@ -299,27 +312,37 @@ impl Tool for CronTool {
         args: serde_json::Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args.get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'action' parameter".to_string()))?;
+        let action = args.get("action").and_then(|v| v.as_str()).ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'action' parameter".to_string())
+        })?;
 
         match action {
             "create" => {
-                let name = args.get("name")
+                let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                })?;
+                let schedule = args
+                    .get("schedule")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
-                let schedule = args.get("schedule")
+                    .ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "Missing 'schedule' parameter".to_string(),
+                        )
+                    })?;
+                let command = args
+                    .get("command")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'schedule' parameter".to_string()))?;
-                let command = args.get("command")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'command' parameter".to_string()))?;
+                    .ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "Missing 'command' parameter".to_string(),
+                        )
+                    })?;
 
                 // Validate cron schedule (basic check)
                 let parts: Vec<&str> = schedule.split_whitespace().collect();
                 if parts.len() != 5 {
                     return Ok(ToolExecutionResult::error(
-                        "Invalid schedule format. Use: 'minute hour day month weekday' (5 parts)"
+                        "Invalid schedule format. Use: 'minute hour day month weekday' (5 parts)",
                     ));
                 }
 
@@ -355,7 +378,9 @@ impl Tool for CronTool {
                 let jobs = self.jobs.read().await;
 
                 if jobs.is_empty() {
-                    return Ok(ToolExecutionResult::success("No cron jobs configured. Use 'create' action to add a job."));
+                    return Ok(ToolExecutionResult::success(
+                        "No cron jobs configured. Use 'create' action to add a job.",
+                    ));
                 }
 
                 let mut output = format!("📅 Cron Jobs ({} total)\n", jobs.len());
@@ -378,9 +403,9 @@ impl Tool for CronTool {
                 Ok(ToolExecutionResult::success(&output))
             }
             "enable" => {
-                let name = args.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
+                let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                })?;
 
                 let mut jobs = self.jobs.write().await;
 
@@ -393,9 +418,9 @@ impl Tool for CronTool {
                 }
             }
             "disable" => {
-                let name = args.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
+                let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                })?;
 
                 let mut jobs = self.jobs.write().await;
 
@@ -408,9 +433,9 @@ impl Tool for CronTool {
                 }
             }
             "remove" | "delete" => {
-                let name = args.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
+                let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                })?;
 
                 let mut jobs = self.jobs.write().await;
                 let initial_len = jobs.len();
@@ -424,9 +449,9 @@ impl Tool for CronTool {
                 Ok(ToolExecutionResult::success(&format!("✅ Removed cron job '{}'", name)))
             }
             "run" => {
-                let name = args.get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| crate::error::MantaError::Validation("Missing 'name' parameter".to_string()))?;
+                let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                })?;
 
                 let jobs = self.jobs.read().await;
 
@@ -443,7 +468,8 @@ impl Tool for CronTool {
                             let stdout = String::from_utf8_lossy(&result.stdout);
                             let stderr = String::from_utf8_lossy(&result.stderr);
 
-                            let mut output_text = format!("🔄 Manually running cron job '{}'\n", name);
+                            let mut output_text =
+                                format!("🔄 Manually running cron job '{}'\n", name);
                             output_text.push_str(&format!("Command: {}\n\n", job.prompt));
 
                             if result.status.success() {
@@ -462,9 +488,10 @@ impl Tool for CronTool {
                     Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
                 }
             }
-            _ => {
-                Ok(ToolExecutionResult::error(&format!("Unknown action: {}. Use: create, list, enable, disable, remove, run", action)))
-            }
+            _ => Ok(ToolExecutionResult::error(&format!(
+                "Unknown action: {}. Use: create, list, enable, disable, remove, run",
+                action
+            ))),
         }
     }
 }

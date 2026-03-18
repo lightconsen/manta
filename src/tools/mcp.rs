@@ -29,7 +29,8 @@ pub struct McpClient {
     /// Request ID counter
     request_id: std::sync::atomic::AtomicU64,
     /// Response channels
-    response_channels: std::sync::Arc<tokio::sync::RwLock<HashMap<u64, mpsc::UnboundedSender<McpResponse>>>>,
+    response_channels:
+        std::sync::Arc<tokio::sync::RwLock<HashMap<u64, mpsc::UnboundedSender<McpResponse>>>>,
 }
 
 /// MCP request
@@ -123,9 +124,10 @@ impl McpClient {
             crate::error::MantaError::Internal(format!("Failed to spawn MCP server: {}", e))
         })?;
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            crate::error::MantaError::Internal("Failed to get stdin".to_string())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| crate::error::MantaError::Internal("Failed to get stdin".to_string()))?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
             crate::error::MantaError::Internal("Failed to get stdout".to_string())
@@ -245,14 +247,18 @@ impl McpClient {
 
                 Ok(response)
             }
-            Ok(None) => Err(crate::error::MantaError::Internal("Response channel closed".to_string())),
+            Ok(None) => {
+                Err(crate::error::MantaError::Internal("Response channel closed".to_string()))
+            }
             Err(_) => Err(crate::error::MantaError::Internal("Request timeout".to_string())),
         }
     }
 
     /// List available tools from the MCP server
     async fn list_tools(&mut self) -> crate::Result<()> {
-        let id = self.request_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = self
+            .request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -274,8 +280,14 @@ impl McpClient {
     }
 
     /// Call an MCP tool
-    async fn call_tool(&self, name: &str, params: serde_json::Value) -> crate::Result<serde_json::Value> {
-        let id = self.request_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    async fn call_tool(
+        &self,
+        name: &str,
+        params: serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        let id = self
+            .request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -372,8 +384,7 @@ impl Tool for McpToolWrapper {
         let client = self.client.read().await;
         let result = client.call_tool(&self.tool_name, args).await?;
 
-        Ok(ToolExecutionResult::success(format!("MCP tool result: {}", result))
-            .with_data(result))
+        Ok(ToolExecutionResult::success(format!("MCP tool result: {}", result)).with_data(result))
     }
 }
 
@@ -451,25 +462,29 @@ Example:
         args: serde_json::Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("action is required".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("action is required".to_string())
+        })?;
 
         match action {
             "connect" => {
-                let server_id = args["server_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "server_id is required for connect".to_string()
-                    ))?;
-                let command = args["command"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "command is required for connect".to_string()
-                    ))?;
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "server_id is required for connect".to_string(),
+                    )
+                })?;
+                let command = args["command"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "command is required for connect".to_string(),
+                    )
+                })?;
                 let args_vec: Vec<String> = args["args"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let config = McpConfig {
@@ -485,28 +500,25 @@ Example:
                 let mut clients = self.clients.write().await;
                 clients.insert(server_id.to_string(), client);
 
-                Ok(ToolExecutionResult::success(format!(
-                    "Connected to MCP server: {}", server_id
-                )))
+                Ok(ToolExecutionResult::success(format!("Connected to MCP server: {}", server_id)))
             }
 
             "disconnect" => {
-                let server_id = args["server_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "server_id is required for disconnect".to_string()
-                    ))?;
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "server_id is required for disconnect".to_string(),
+                    )
+                })?;
 
                 let mut clients = self.clients.write().await;
                 if let Some(mut client) = clients.remove(server_id) {
                     client.disconnect().await?;
                     Ok(ToolExecutionResult::success(format!(
-                        "Disconnected from MCP server: {}", server_id
+                        "Disconnected from MCP server: {}",
+                        server_id
                     )))
                 } else {
-                    Ok(ToolExecutionResult::error(format!(
-                        "MCP server not found: {}", server_id
-                    )))
+                    Ok(ToolExecutionResult::error(format!("MCP server not found: {}", server_id)))
                 }
             }
 
@@ -514,34 +526,28 @@ Example:
                 let clients = self.clients.read().await;
                 let servers: Vec<String> = clients.keys().cloned().collect();
 
-                Ok(ToolExecutionResult::success(format!(
-                    "{} MCP servers connected", servers.len()
-                )).with_data(json!({"servers": servers})))
+                Ok(ToolExecutionResult::success(format!("{} MCP servers connected", servers.len()))
+                    .with_data(json!({"servers": servers})))
             }
 
             "tools" => {
-                let server_id = args["server_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "server_id is required for tools".to_string()
-                    ))?;
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "server_id is required for tools".to_string(),
+                    )
+                })?;
 
                 let clients = self.clients.read().await;
                 if let Some(client) = clients.get(server_id) {
                     let tools = client.get_tools();
-                    Ok(ToolExecutionResult::success(format!(
-                        "{} tools available", tools.len()
-                    )).with_data(json!({"tools": tools})))
+                    Ok(ToolExecutionResult::success(format!("{} tools available", tools.len()))
+                        .with_data(json!({"tools": tools})))
                 } else {
-                    Ok(ToolExecutionResult::error(format!(
-                        "MCP server not found: {}", server_id
-                    )))
+                    Ok(ToolExecutionResult::error(format!("MCP server not found: {}", server_id)))
                 }
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
-                "Unknown action: {}", action
-            ))),
+            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }

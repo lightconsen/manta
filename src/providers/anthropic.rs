@@ -2,9 +2,12 @@
 //!
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
-use super::{CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider, Role, ToolCall, Usage};
+use super::{
+    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition,
+    Message, Provider, Role, ToolCall, Usage,
+};
 use async_trait::async_trait;
-use reqwest::header::{CONTENT_TYPE, HeaderMap};
+use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, error, instrument};
@@ -51,7 +54,9 @@ struct AnthropicMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -156,9 +161,9 @@ impl AnthropicProvider {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
-            .map_err(|e| crate::error::MantaError::Internal(format!(
-                "Failed to build HTTP client: {}", e
-            )))?;
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("Failed to build HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             api_key: api_key.into(),
@@ -183,10 +188,7 @@ impl AnthropicProvider {
     /// Build headers with authorization
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-api-key",
-            self.api_key.parse().unwrap(),
-        );
+        headers.insert("x-api-key", self.api_key.parse().unwrap());
         headers.insert("anthropic-version", self.api_version.parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers
@@ -218,7 +220,8 @@ impl AnthropicProvider {
                             content_blocks.push(ContentBlock::ToolUse {
                                 id: tc.id.clone(),
                                 name: tc.function.name.clone(),
-                                input: serde_json::from_str(&tc.function.arguments).unwrap_or_default(),
+                                input: serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or_default(),
                             });
                         }
                     }
@@ -274,7 +277,11 @@ impl AnthropicProvider {
                 role: Role::Assistant,
                 content: text_content,
                 name: None,
-                tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                tool_calls: if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls)
+                },
                 tool_call_id: None,
                 metadata: None,
             },
@@ -374,7 +381,8 @@ impl Provider for AnthropicProvider {
         let (system, messages) = Self::to_anthropic_messages(&request.messages);
 
         let tools = request.tools.as_ref().map(|tools| {
-            tools.iter()
+            tools
+                .iter()
                 .map(|t| Self::to_anthropic_tool(&t.function))
                 .collect::<Vec<_>>()
         });
@@ -391,7 +399,8 @@ impl Provider for AnthropicProvider {
 
         debug!("Sending request to Anthropic API");
 
-        let response = self.client
+        let response = self
+            .client
             .post(self.url("/v1/messages"))
             .headers(self.headers())
             .json(&anthropic_request)
@@ -400,7 +409,10 @@ impl Provider for AnthropicProvider {
             .map_err(|e| crate::error::MantaError::Http(e))?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|e| crate::error::MantaError::Http(e))?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| crate::error::MantaError::Http(e))?;
 
         if !status.is_success() {
             error!("Anthropic API error: {} - {}", status, body);
@@ -413,8 +425,8 @@ impl Provider for AnthropicProvider {
 
         debug!("Received response from Anthropic API");
 
-        let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let anthropic_response: AnthropicResponse =
+            serde_json::from_str(&body).map_err(|e| crate::error::MantaError::ExternalService {
                 source: format!("Failed to parse Anthropic response: {}", e),
                 cause: Some(Box::new(e)),
             })?;

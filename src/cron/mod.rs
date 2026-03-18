@@ -353,17 +353,14 @@ impl CronScheduler {
 
         if let Some(agent) = agent {
             // Create incoming message from job
-            let message = IncomingMessage::new(
-                "system",
-                format!("cron:{}", job.id),
-                job.prompt.clone(),
-            )
-            .with_metadata(
-                crate::channels::MessageMetadata::new()
-                    .with_extra("job_id", job.id.clone())
-                    .with_extra("job_name", job.name.clone())
-                    .with_extra("channel", job.channel.clone()),
-            );
+            let message =
+                IncomingMessage::new("system", format!("cron:{}", job.id), job.prompt.clone())
+                    .with_metadata(
+                        crate::channels::MessageMetadata::new()
+                            .with_extra("job_id", job.id.clone())
+                            .with_extra("job_name", job.name.clone())
+                            .with_extra("channel", job.channel.clone()),
+                    );
 
             // Process the message through the agent
             match agent.process_message(message).await {
@@ -555,34 +552,30 @@ Examples:
             args: serde_json::Value,
             _context: &ToolContext,
         ) -> crate::Result<ToolExecutionResult> {
-            let action = args["action"]
-                .as_str()
-                .ok_or_else(|| crate::error::MantaError::Validation("action is required".to_string()))?;
+            let action = args["action"].as_str().ok_or_else(|| {
+                crate::error::MantaError::Validation("action is required".to_string())
+            })?;
 
             match action {
                 "add" => {
-                    let name = args["name"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "name is required for add".to_string()
-                        ))?;
-                    let schedule = args["schedule"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "schedule is required for add".to_string()
-                        ))?;
-                    let prompt = args["prompt"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "prompt is required for add".to_string()
-                        ))?;
-                    let channel = args["channel"]
-                        .as_str()
-                        .unwrap_or("default");
+                    let name = args["name"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation("name is required for add".to_string())
+                    })?;
+                    let schedule = args["schedule"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "schedule is required for add".to_string(),
+                        )
+                    })?;
+                    let prompt = args["prompt"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "prompt is required for add".to_string(),
+                        )
+                    })?;
+                    let channel = args["channel"].as_str().unwrap_or("default");
 
                     // Try to parse natural language
-                    let schedule = parse_natural_language(schedule)
-                        .unwrap_or_else(|| schedule.to_string());
+                    let schedule =
+                        parse_natural_language(schedule).unwrap_or_else(|| schedule.to_string());
 
                     let job = ScheduledJob::new(
                         uuid::Uuid::new_v4().to_string(),
@@ -600,11 +593,11 @@ Examples:
                 }
 
                 "remove" => {
-                    let job_id = args["job_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "job_id is required for remove".to_string()
-                        ))?;
+                    let job_id = args["job_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "job_id is required for remove".to_string(),
+                        )
+                    })?;
 
                     self.scheduler.remove_job(job_id).await?;
                     Ok(ToolExecutionResult::success(format!("Removed job: {}", job_id)))
@@ -632,42 +625,41 @@ Examples:
                 }
 
                 "enable" => {
-                    let job_id = args["job_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "job_id is required for enable".to_string()
-                        ))?;
+                    let job_id = args["job_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "job_id is required for enable".to_string(),
+                        )
+                    })?;
 
                     self.scheduler.set_job_enabled(job_id, true).await?;
                     Ok(ToolExecutionResult::success(format!("Enabled job: {}", job_id)))
                 }
 
                 "disable" => {
-                    let job_id = args["job_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "job_id is required for disable".to_string()
-                        ))?;
+                    let job_id = args["job_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "job_id is required for disable".to_string(),
+                        )
+                    })?;
 
                     self.scheduler.set_job_enabled(job_id, false).await?;
                     Ok(ToolExecutionResult::success(format!("Disabled job: {}", job_id)))
                 }
 
                 "trigger" => {
-                    let job_id = args["job_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "job_id is required for trigger".to_string()
-                        ))?;
+                    let job_id = args["job_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "job_id is required for trigger".to_string(),
+                        )
+                    })?;
 
                     self.scheduler.trigger_job(job_id).await?;
                     Ok(ToolExecutionResult::success(format!("Triggered job: {}", job_id)))
                 }
 
-                _ => Err(crate::error::MantaError::Validation(format!(
-                    "Unknown action: {}",
-                    action
-                ))),
+                _ => {
+                    Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action)))
+                }
             }
         }
     }
@@ -679,13 +671,7 @@ mod tests {
 
     #[test]
     fn test_scheduled_job() {
-        let mut job = ScheduledJob::new(
-            "job1",
-            "Test Job",
-            "@hourly",
-            "Run diagnostics",
-            "cli",
-        );
+        let mut job = ScheduledJob::new("job1", "Test Job", "@hourly", "Run diagnostics", "cli");
 
         assert!(job.enabled);
         assert_eq!(job.run_count, 0);
@@ -699,8 +685,7 @@ mod tests {
 
     #[test]
     fn test_job_max_runs() {
-        let mut job = ScheduledJob::new("job1", "Test", "@hourly", "test", "cli")
-            .with_max_runs(2);
+        let mut job = ScheduledJob::new("job1", "Test", "@hourly", "test", "cli").with_max_runs(2);
 
         let now = Utc::now();
 
@@ -720,18 +705,9 @@ mod tests {
 
     #[test]
     fn test_natural_language_parsing() {
-        assert_eq!(
-            parse_natural_language("every hour"),
-            Some("@hourly".to_string())
-        );
-        assert_eq!(
-            parse_natural_language("daily"),
-            Some("@daily".to_string())
-        );
-        assert_eq!(
-            parse_natural_language("run weekly"),
-            Some("@weekly".to_string())
-        );
+        assert_eq!(parse_natural_language("every hour"), Some("@hourly".to_string()));
+        assert_eq!(parse_natural_language("daily"), Some("@daily".to_string()));
+        assert_eq!(parse_natural_language("run weekly"), Some("@weekly".to_string()));
     }
 
     #[test]

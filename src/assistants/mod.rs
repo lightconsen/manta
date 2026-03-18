@@ -13,7 +13,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 // Re-export process types
-pub use process::{IpcMessage, AssistantProcess, ProcessManager};
+pub use process::{AssistantProcess, IpcMessage, ProcessManager};
 
 /// Type of specialized assistant
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,11 +91,7 @@ impl AssistantType {
                 ]
             }
             AssistantType::Scheduler => {
-                vec![
-                    "cron".to_string(),
-                    "time".to_string(),
-                    "memory".to_string(),
-                ]
+                vec!["cron".to_string(), "time".to_string(), "memory".to_string()]
             }
             AssistantType::Social => {
                 vec!["memory".to_string(), "web_fetch".to_string()]
@@ -246,7 +242,9 @@ impl AssistantConfig {
 
     /// Get the effective tools
     pub fn effective_tools(&self) -> Vec<String> {
-        self.tools.clone().unwrap_or_else(|| self.assistant_type.default_tools())
+        self.tools
+            .clone()
+            .unwrap_or_else(|| self.assistant_type.default_tools())
     }
 }
 
@@ -410,18 +408,20 @@ impl AssistantSpawner {
 
         // Create subdirectories
         for subdir in &["memory", "skills", "logs"] {
-            tokio::fs::create_dir_all(data_dir.join(subdir)).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+            tokio::fs::create_dir_all(data_dir.join(subdir))
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
                     context: format!("Failed to create {} directory", subdir),
                     details: e.to_string(),
-                }
-            })?;
+                })?;
         }
 
         // Save configuration first (before consuming config)
         let config_path = data_dir.join("config.yaml");
         let config_yaml = serde_yaml::to_string(&config)?;
-        tokio::fs::write(&config_path, config_yaml).await.map_err(crate::error::MantaError::Io)?;
+        tokio::fs::write(&config_path, config_yaml)
+            .await
+            .map_err(crate::error::MantaError::Io)?;
 
         // Create the assistant (config is moved here)
         let assistant = PersistentAssistant::from_config(config, data_dir);
@@ -439,19 +439,25 @@ impl AssistantSpawner {
 
         // Start the assistant (in background)
         let assistant_config = assistant.to_config();
-        self.start_assistant(&assistant.id, &assistant_config).await?;
+        self.start_assistant(&assistant.id, &assistant_config)
+            .await?;
 
         Ok(assistant)
     }
 
     /// Start an assistant process
-    async fn start_assistant(&self, assistant_id: &str, config: &AssistantConfig) -> crate::Result<()> {
+    async fn start_assistant(
+        &self,
+        assistant_id: &str,
+        config: &AssistantConfig,
+    ) -> crate::Result<()> {
         let assistant = {
             let assistants = self.assistants.read().await;
-            assistants
-                .get(assistant_id)
-                .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Assistant {}", assistant_id) })?
+            assistants.get(assistant_id).cloned().ok_or_else(|| {
+                crate::error::MantaError::NotFound {
+                    resource: format!("Assistant {}", assistant_id),
+                }
+            })?
         };
 
         debug!("Starting assistant process: {}", assistant_id);
@@ -460,7 +466,8 @@ impl AssistantSpawner {
         self.process_manager.start(&assistant, config).await?;
 
         // Mark as running
-        self.update_status(assistant_id, AssistantStatus::Running).await;
+        self.update_status(assistant_id, AssistantStatus::Running)
+            .await;
 
         info!("Assistant {} started successfully (process spawned)", assistant_id);
         Ok(())
@@ -479,11 +486,16 @@ impl AssistantSpawner {
     }
 
     /// Send a message to a specific assistant
-    pub async fn message_assistant(&self, assistant_id: &str, message: &str) -> crate::Result<String> {
-        let assistant = self
-            .get_assistant(assistant_id)
-            .await
-            .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Assistant {}", assistant_id) })?;
+    pub async fn message_assistant(
+        &self,
+        assistant_id: &str,
+        message: &str,
+    ) -> crate::Result<String> {
+        let assistant = self.get_assistant(assistant_id).await.ok_or_else(|| {
+            crate::error::MantaError::NotFound {
+                resource: format!("Assistant {}", assistant_id),
+            }
+        })?;
 
         if assistant.status != AssistantStatus::Running {
             return Err(crate::error::MantaError::Validation(format!(
@@ -494,18 +506,26 @@ impl AssistantSpawner {
 
         // Verify the process is actually running
         if !self.process_manager.is_running(assistant_id).await {
-            self.update_status(assistant_id, AssistantStatus::Error).await;
+            self.update_status(assistant_id, AssistantStatus::Error)
+                .await;
             return Err(crate::error::MantaError::ExternalService {
                 source: format!("assistant-{}: Assistant process is not running", assistant_id),
                 cause: None,
             });
         }
 
-        debug!("Sending message to assistant {}: {}", assistant_id, message.chars().take(50).collect::<String>());
+        debug!(
+            "Sending message to assistant {}: {}",
+            assistant_id,
+            message.chars().take(50).collect::<String>()
+        );
 
         // Send message via process manager (real IPC)
         let context = HashMap::new();
-        let response = self.process_manager.send_message(assistant_id, message, context).await?;
+        let response = self
+            .process_manager
+            .send_message(assistant_id, message, context)
+            .await?;
 
         info!("Received response from assistant {} ({} chars)", assistant_id, response.len());
         Ok(response)
@@ -513,17 +533,21 @@ impl AssistantSpawner {
 
     /// Terminate an assistant
     pub async fn terminate(&self, assistant_id: &str) -> crate::Result<()> {
-        let _assistant = self
-            .get_assistant(assistant_id)
-            .await
-            .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Assistant {}", assistant_id) })?;
+        let _assistant = self.get_assistant(assistant_id).await.ok_or_else(|| {
+            crate::error::MantaError::NotFound {
+                resource: format!("Assistant {}", assistant_id),
+            }
+        })?;
 
         info!("Terminating assistant: {}", assistant_id);
 
-        self.update_status(assistant_id, AssistantStatus::Stopping).await;
+        self.update_status(assistant_id, AssistantStatus::Stopping)
+            .await;
 
         // Stop the actual process
-        self.process_manager.stop(assistant_id, Some("Terminated by parent".to_string())).await?;
+        self.process_manager
+            .stop(assistant_id, Some("Terminated by parent".to_string()))
+            .await?;
 
         // Remove from registry
         {
@@ -537,14 +561,16 @@ impl AssistantSpawner {
 
     /// Pause/suspend an assistant
     pub async fn pause(&self, assistant_id: &str) -> crate::Result<()> {
-        self.update_status(assistant_id, AssistantStatus::Paused).await;
+        self.update_status(assistant_id, AssistantStatus::Paused)
+            .await;
         info!("Assistant {} paused", assistant_id);
         Ok(())
     }
 
     /// Resume a paused assistant
     pub async fn resume(&self, assistant_id: &str) -> crate::Result<()> {
-        self.update_status(assistant_id, AssistantStatus::Running).await;
+        self.update_status(assistant_id, AssistantStatus::Running)
+            .await;
         info!("Assistant {} resumed", assistant_id);
         Ok(())
     }
@@ -669,30 +695,31 @@ Examples:
             args: serde_json::Value,
             _context: &ToolContext,
         ) -> crate::Result<ToolExecutionResult> {
-            let action = args["action"]
-                .as_str()
-                .ok_or_else(|| crate::error::MantaError::Validation("action is required".to_string()))?;
+            let action = args["action"].as_str().ok_or_else(|| {
+                crate::error::MantaError::Validation("action is required".to_string())
+            })?;
 
             match action {
                 "spawn" => {
-                    let name = args["name"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "name is required for spawn".to_string()
-                        ))?;
+                    let name = args["name"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "name is required for spawn".to_string(),
+                        )
+                    })?;
 
-                    let assistant_type = if let Some(specialization) = args["specialization"].as_str() {
-                        AssistantType::Specialist(specialization.to_string())
-                    } else {
-                        let type_str = args["assistant_type"].as_str().unwrap_or("specialist");
-                        match type_str {
-                            "researcher" => AssistantType::Researcher,
-                            "code_reviewer" => AssistantType::CodeReviewer,
-                            "scheduler" => AssistantType::Scheduler,
-                            "social" => AssistantType::Social,
-                            _ => AssistantType::Specialist(type_str.to_string()),
-                        }
-                    };
+                    let assistant_type =
+                        if let Some(specialization) = args["specialization"].as_str() {
+                            AssistantType::Specialist(specialization.to_string())
+                        } else {
+                            let type_str = args["assistant_type"].as_str().unwrap_or("specialist");
+                            match type_str {
+                                "researcher" => AssistantType::Researcher,
+                                "code_reviewer" => AssistantType::CodeReviewer,
+                                "scheduler" => AssistantType::Scheduler,
+                                "social" => AssistantType::Social,
+                                _ => AssistantType::Specialist(type_str.to_string()),
+                            }
+                        };
 
                     let mut config = AssistantConfig::new(name, assistant_type);
 
@@ -705,7 +732,8 @@ Examples:
                     Ok(ToolExecutionResult::success(format!(
                         "Spawned assistant: {} (id: {})",
                         assistant.name, assistant.id
-                    )).with_data(serde_json::json!({
+                    ))
+                    .with_data(serde_json::json!({
                         "id": assistant.id,
                         "name": assistant.name,
                         "type": assistant.assistant_type.to_string(),
@@ -733,35 +761,39 @@ Examples:
                     Ok(ToolExecutionResult::success(format!(
                         "{} assistants found",
                         assistants.len()
-                    )).with_data(serde_json::json!({
+                    ))
+                    .with_data(serde_json::json!({
                         "assistants": summary,
                         "count": assistants.len(),
                     })))
                 }
 
                 "message" => {
-                    let assistant_id = args["assistant_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "assistant_id is required for message".to_string()
-                        ))?;
-                    let message = args["message"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "message is required for message".to_string()
-                        ))?;
+                    let assistant_id = args["assistant_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "assistant_id is required for message".to_string(),
+                        )
+                    })?;
+                    let message = args["message"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "message is required for message".to_string(),
+                        )
+                    })?;
 
-                    let response = self.spawner.message_assistant(assistant_id, message).await?;
+                    let response = self
+                        .spawner
+                        .message_assistant(assistant_id, message)
+                        .await?;
 
                     Ok(ToolExecutionResult::success(response))
                 }
 
                 "terminate" => {
-                    let assistant_id = args["assistant_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "assistant_id is required for terminate".to_string()
-                        ))?;
+                    let assistant_id = args["assistant_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "assistant_id is required for terminate".to_string(),
+                        )
+                    })?;
 
                     self.spawner.terminate(assistant_id).await?;
 
@@ -772,39 +804,32 @@ Examples:
                 }
 
                 "pause" => {
-                    let assistant_id = args["assistant_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "assistant_id is required for pause".to_string()
-                        ))?;
+                    let assistant_id = args["assistant_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "assistant_id is required for pause".to_string(),
+                        )
+                    })?;
 
                     self.spawner.pause(assistant_id).await?;
 
-                    Ok(ToolExecutionResult::success(format!(
-                        "Paused assistant: {}",
-                        assistant_id
-                    )))
+                    Ok(ToolExecutionResult::success(format!("Paused assistant: {}", assistant_id)))
                 }
 
                 "resume" => {
-                    let assistant_id = args["assistant_id"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "assistant_id is required for resume".to_string()
-                        ))?;
+                    let assistant_id = args["assistant_id"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "assistant_id is required for resume".to_string(),
+                        )
+                    })?;
 
                     self.spawner.resume(assistant_id).await?;
 
-                    Ok(ToolExecutionResult::success(format!(
-                        "Resumed assistant: {}",
-                        assistant_id
-                    )))
+                    Ok(ToolExecutionResult::success(format!("Resumed assistant: {}", assistant_id)))
                 }
 
-                _ => Err(crate::error::MantaError::Validation(format!(
-                    "Unknown action: {}",
-                    action
-                ))),
+                _ => {
+                    Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action)))
+                }
             }
         }
     }

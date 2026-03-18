@@ -134,7 +134,9 @@ impl SkillStorage {
             for marker in &markers {
                 if current.join(marker).exists() {
                     let workspace_skills = current.join(".manta").join("skills");
-                    if workspace_skills.exists() && workspace_skills != cwd.join(".manta").join("skills") {
+                    if workspace_skills.exists()
+                        && workspace_skills != cwd.join(".manta").join("skills")
+                    {
                         return Some(workspace_skills);
                     }
                 }
@@ -195,7 +197,12 @@ impl SkillStorage {
         let mut seen = std::collections::HashSet::new();
 
         // Discover in order of priority (bundled first, then override)
-        for level in [StorageLevel::Bundled, StorageLevel::User, StorageLevel::Workspace, StorageLevel::Project] {
+        for level in [
+            StorageLevel::Bundled,
+            StorageLevel::User,
+            StorageLevel::Workspace,
+            StorageLevel::Project,
+        ] {
             let discovered = self.discover_at_level(level).await;
 
             for skill in discovered {
@@ -251,12 +258,7 @@ impl SkillStorage {
                                 .unwrap_or("unknown")
                                 .to_string();
 
-                            skills.push(SkillLocation {
-                                level,
-                                path,
-                                name,
-                                skill_file,
-                            });
+                            skills.push(SkillLocation { level, path, name, skill_file });
                         }
                     }
                 }
@@ -295,7 +297,7 @@ impl SkillStorage {
 
         if !path.exists() {
             return Err(crate::error::MantaError::NotFound {
-                resource: format!("Skill '{}' not found at {:?}", name, path)
+                resource: format!("Skill '{}' not found at {:?}", name, path),
             });
         }
 
@@ -310,7 +312,12 @@ impl SkillStorage {
     /// Get the storage level for a skill
     pub async fn get_skill_level(&self, name: &str) -> Option<StorageLevel> {
         // Check in priority order
-        for level in [StorageLevel::Project, StorageLevel::Workspace, StorageLevel::User, StorageLevel::Bundled] {
+        for level in [
+            StorageLevel::Project,
+            StorageLevel::Workspace,
+            StorageLevel::User,
+            StorageLevel::Bundled,
+        ] {
             if let Some(path) = self.skill_file_path(name, level) {
                 if path.exists() {
                     return Some(level);
@@ -347,7 +354,12 @@ impl SkillStorage {
     pub async fn list_with_levels(&self) -> HashMap<String, StorageLevel> {
         let mut map = HashMap::new();
 
-        for level in [StorageLevel::Bundled, StorageLevel::User, StorageLevel::Workspace, StorageLevel::Project] {
+        for level in [
+            StorageLevel::Bundled,
+            StorageLevel::User,
+            StorageLevel::Workspace,
+            StorageLevel::Project,
+        ] {
             let skills = self.discover_at_level(level).await;
             for skill in skills {
                 // Higher priority levels override

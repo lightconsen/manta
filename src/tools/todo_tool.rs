@@ -45,7 +45,8 @@ impl TodoTool {
     /// Get the file path for a conversation's todo file
     fn todo_file_path(&self, conversation_id: &str) -> PathBuf {
         // Sanitize conversation ID to be safe for filenames
-        let safe_id = conversation_id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+        let safe_id =
+            conversation_id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
         self.base_dir.join(format!("{}.json", safe_id))
     }
 
@@ -60,18 +61,16 @@ impl TodoTool {
         debug!("Loading todo store from {:?}", path);
 
         match tokio::fs::read_to_string(&path).await {
-            Ok(content) => {
-                match TodoStore::from_json(&content) {
-                    Ok(store) => {
-                        debug!("Loaded {} tasks for conversation {}", store.count(), conversation_id);
-                        Some(store)
-                    }
-                    Err(e) => {
-                        error!("Failed to parse todo file {:?}: {}", path, e);
-                        None
-                    }
+            Ok(content) => match TodoStore::from_json(&content) {
+                Ok(store) => {
+                    debug!("Loaded {} tasks for conversation {}", store.count(), conversation_id);
+                    Some(store)
                 }
-            }
+                Err(e) => {
+                    error!("Failed to parse todo file {:?}: {}", path, e);
+                    None
+                }
+            },
             Err(e) => {
                 error!("Failed to read todo file {:?}: {}", path, e);
                 None
@@ -293,18 +292,20 @@ Examples:
         args: serde_json::Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("action is required".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("action is required".to_string())
+        })?;
 
         let conversation_id = &context.conversation_id;
         let mut store = self.get_store(conversation_id).await;
 
         match action {
             "create" => {
-                let content = args["content"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("content is required for create".to_string()))?;
+                let content = args["content"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "content is required for create".to_string(),
+                    )
+                })?;
 
                 let mut task = store.create_task(content);
 
@@ -324,13 +325,15 @@ Examples:
             }
 
             "update" => {
-                let task_id = args["task_id"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation("task_id is required for update".to_string()))?;
+                let task_id = args["task_id"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "task_id is required for update".to_string(),
+                    )
+                })?;
 
-                let task = store
-                    .get_mut(task_id)
-                    .ok_or_else(|| crate::error::MantaError::Validation(format!("Task {} not found", task_id)))?;
+                let task = store.get_mut(task_id).ok_or_else(|| {
+                    crate::error::MantaError::Validation(format!("Task {} not found", task_id))
+                })?;
 
                 if let Some(status_str) = args["status"].as_str() {
                     let status = match status_str {
@@ -382,12 +385,11 @@ Examples:
                 let active_count = store.list_active().len();
                 let formatted = store.format_for_prompt();
 
-                Ok(ToolExecutionResult::success(formatted)
-                    .with_data(json!({
-                        "tasks": tasks,
-                        "total": store.count(),
-                        "active": active_count
-                    })))
+                Ok(ToolExecutionResult::success(formatted).with_data(json!({
+                    "tasks": tasks,
+                    "total": store.count(),
+                    "active": active_count
+                })))
             }
 
             "clear_completed" => {
@@ -409,19 +411,15 @@ Examples:
                     total, pending, in_progress, completed
                 );
 
-                Ok(ToolExecutionResult::success(summary)
-                    .with_data(json!({
-                        "total": total,
-                        "pending": pending,
-                        "in_progress": in_progress,
-                        "completed": completed
-                    })))
+                Ok(ToolExecutionResult::success(summary).with_data(json!({
+                    "total": total,
+                    "pending": pending,
+                    "in_progress": in_progress,
+                    "completed": completed
+                })))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
-                "Unknown action: {}",
-                action
-            ))),
+            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }
@@ -432,7 +430,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_todo_tool_create() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         let tool = TodoTool::with_dir(temp_dir.clone());
@@ -456,7 +455,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_todo_tool_persistence() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         // Create first tool instance and add task
@@ -464,12 +464,9 @@ mod tests {
             let tool = TodoTool::with_dir(temp_dir.clone());
             let ctx = ToolContext::new("user", "persistent_conv");
 
-            tool.execute(
-                json!({"action": "create", "content": "Persistent task"}),
-                &ctx,
-            )
-            .await
-            .unwrap();
+            tool.execute(json!({"action": "create", "content": "Persistent task"}), &ctx)
+                .await
+                .unwrap();
         }
 
         // Create second tool instance (simulating daemon restart)
@@ -477,10 +474,7 @@ mod tests {
             let tool = TodoTool::with_dir(temp_dir.clone());
             let ctx = ToolContext::new("user", "persistent_conv");
 
-            let result = tool
-                .execute(json!({"action": "list"}), &ctx)
-                .await
-                .unwrap();
+            let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
 
             let output = result.to_string();
             assert!(output.contains("Persistent task"));
@@ -496,17 +490,11 @@ mod tests {
         let ctx = ToolContext::new("user", "conv_1");
 
         // Create a task first
-        tool.execute(
-            json!({"action": "create", "content": "Task 1"}),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-        let result = tool
-            .execute(json!({"action": "list"}), &ctx)
+        tool.execute(json!({"action": "create", "content": "Task 1"}), &ctx)
             .await
             .unwrap();
+
+        let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
 
         let output = result.to_string();
         assert!(output.contains("Task 1"));
@@ -514,7 +502,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_todo_cleanup() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         let tool = TodoTool::with_dir(temp_dir.clone());
@@ -522,12 +511,9 @@ mod tests {
         // Create a task and complete it
         {
             let ctx = ToolContext::new("user", "cleanup_conv");
-            tool.execute(
-                json!({"action": "create", "content": "Old task"}),
-                &ctx,
-            )
-            .await
-            .unwrap();
+            tool.execute(json!({"action": "create", "content": "Old task"}), &ctx)
+                .await
+                .unwrap();
 
             tool.execute(
                 json!({"action": "update", "task_id": "task_1", "status": "completed"}),

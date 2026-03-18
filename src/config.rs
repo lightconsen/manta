@@ -385,11 +385,9 @@ impl Config {
             self.server.host = host;
         }
         if let Ok(port) = std::env::var(format!("{}_SERVER_PORT", ENV_PREFIX)) {
-            self.server.port = port.parse().map_err(|e| {
-                ConfigError::InvalidValue {
-                    key: "server.port".to_string(),
-                    message: format!("Invalid port number: {}", e),
-                }
+            self.server.port = port.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "server.port".to_string(),
+                message: format!("Invalid port number: {}", e),
             })?;
         }
 
@@ -495,44 +493,49 @@ impl ConfigWatcher {
         let config_path_for_reload = config_path.as_ref().to_path_buf();
 
         let change_tx_clone = change_tx.clone();
-        let mut watcher: notify::RecommendedWatcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            match res {
-                Ok(event) => {
-                    // Only react to modify/create events
-                    if matches!(
-                        event.kind,
-                        notify::EventKind::Modify(_) | notify::EventKind::Create(_)
-                    ) {
-                        // Try to reload config
-                        match Config::load_with_file(Some(&config_path_for_reload)) {
-                            Ok(new_config) => {
-                                tracing::info!("Configuration reloaded successfully");
-                                on_change(&new_config);
-                                let _ = change_tx_clone.try_send(());
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to reload configuration: {}", e);
+        let mut watcher: notify::RecommendedWatcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                match res {
+                    Ok(event) => {
+                        // Only react to modify/create events
+                        if matches!(
+                            event.kind,
+                            notify::EventKind::Modify(_) | notify::EventKind::Create(_)
+                        ) {
+                            // Try to reload config
+                            match Config::load_with_file(Some(&config_path_for_reload)) {
+                                Ok(new_config) => {
+                                    tracing::info!("Configuration reloaded successfully");
+                                    on_change(&new_config);
+                                    let _ = change_tx_clone.try_send(());
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to reload configuration: {}", e);
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        tracing::error!("Config file watcher error: {}", e);
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Config file watcher error: {}", e);
-                }
-            }
-        })
-        .map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to create config watcher: {}", e))
-        })?;
-
-        notify::Watcher::watch(&mut watcher, &path, notify::RecursiveMode::NonRecursive)
+            })
             .map_err(|e| {
+                crate::error::MantaError::Internal(format!(
+                    "Failed to create config watcher: {}",
+                    e
+                ))
+            })?;
+
+        notify::Watcher::watch(&mut watcher, &path, notify::RecursiveMode::NonRecursive).map_err(
+            |e| {
                 crate::error::MantaError::Internal(format!(
                     "Failed to watch config file {}: {}",
                     path.display(),
                     e
                 ))
-            })?;
+            },
+        )?;
 
         Ok((
             ConfigWatcher {
@@ -553,8 +556,8 @@ pub struct ReloadableConfig {
 impl ReloadableConfig {
     /// Create a new reloadable config
     pub async fn new(config: Config) -> crate::Result<Self> {
-        let config_path = Self::find_config_file_path()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
+        let config_path =
+            Self::find_config_file_path().unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
 
         let config_arc = std::sync::Arc::new(tokio::sync::RwLock::new(config));
         let config_for_callback = config_arc.clone();
@@ -620,9 +623,9 @@ pub mod hot_reload {
     use tracing::{debug, error, info, warn};
 
     #[cfg(feature = "hot-reload")]
-    use notify_debouncer_full::{new_debouncer, DebouncedEvent, Debouncer, FileIdMap};
+    use notify::{RecommendedWatcher, RecursiveMode};
     #[cfg(feature = "hot-reload")]
-    use notify::{RecursiveMode, RecommendedWatcher};
+    use notify_debouncer_full::{new_debouncer, DebouncedEvent, Debouncer, FileIdMap};
 
     /// Configuration file types that can be hot-reloaded
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -741,7 +744,9 @@ pub mod hot_reload {
                                         let files = futures::executor::block_on(async {
                                             watched_files.read().await
                                         });
-                                        files.get(path).map(|f| f.config_type)
+                                        files
+                                            .get(path)
+                                            .map(|f| f.config_type)
                                             .unwrap_or(ConfigFileType::Custom)
                                     };
 
@@ -854,11 +859,8 @@ pub mod hot_reload {
         }
 
         /// Register a handler for config changes
-        pub async fn register_handler<F, Fut>(
-            &self,
-            config_type: ConfigFileType,
-            handler: F,
-        ) where
+        pub async fn register_handler<F, Fut>(&self, config_type: ConfigFileType, handler: F)
+        where
             F: Fn(ConfigChangeEvent) -> Fut + Send + Sync + 'static,
             Fut: std::future::Future<Output = Result<(), String>> + Send + 'static,
         {
@@ -875,10 +877,7 @@ pub mod hot_reload {
             let mut rx = self.change_rx.write().await;
 
             while let Some(event) = rx.recv().await {
-                info!(
-                    "Processing config change: {:?} ({:?})",
-                    event.path, event.change_type
-                );
+                info!("Processing config change: {:?} ({:?})", event.path, event.change_type);
 
                 // Get handlers for this config type
                 let handlers = {
@@ -945,14 +944,13 @@ pub mod hot_reload {
     impl HotReloadBuilder {
         /// Create a new builder
         pub fn new() -> Self {
-            Self {
-                config_paths: vec![],
-            }
+            Self { config_paths: vec![] }
         }
 
         /// Add a config file to watch
         pub fn watch(mut self, path: impl AsRef<Path>, config_type: ConfigFileType) -> Self {
-            self.config_paths.push((path.as_ref().to_path_buf(), config_type));
+            self.config_paths
+                .push((path.as_ref().to_path_buf(), config_type));
             self
         }
 
@@ -1033,7 +1031,7 @@ format = "json"
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.logging.level, "debug");
         match config.logging.format {
-            LogFormat::Json => {},
+            LogFormat::Json => {}
             _ => panic!("Expected JSON format"),
         }
     }

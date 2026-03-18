@@ -35,7 +35,11 @@ pub async fn show_logs(n: usize) -> crate::Result<()> {
     }
 
     // Print last N lines
-    let start = if all_lines.len() > n { all_lines.len() - n } else { 0 };
+    let start = if all_lines.len() > n {
+        all_lines.len() - n
+    } else {
+        0
+    };
     for line in &all_lines[start..] {
         println!("{}", line);
     }
@@ -132,10 +136,7 @@ impl LogWriter {
             .await
             .map_err(|e| crate::error::MantaError::Io(e))?;
 
-        Ok(Self {
-            file: Some(file),
-            path,
-        })
+        Ok(Self { file: Some(file), path })
     }
 
     /// Write a log line

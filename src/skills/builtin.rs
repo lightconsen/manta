@@ -3,7 +3,7 @@
 //! These skills are always available and cannot be uninstalled.
 //! They provide core functionality for skill management and scheduling.
 
-use super::{Skill, SkillTrigger, TriggerType, StorageLevel};
+use super::{Skill, SkillTrigger, StorageLevel, TriggerType};
 use std::collections::HashMap;
 
 /// Get all built-in skills
@@ -162,13 +162,9 @@ fn create_find_skills() -> Skill {
 
 /// Create the cron built-in skill
 fn create_cron_skill() -> Skill {
-    let mut skill = Skill::new(
-        "cron",
-        "Schedule recurring tasks and automated jobs",
-        CRON_PROMPT,
-    )
-    .with_emoji("⏰")
-    .by("manta");
+    let mut skill = Skill::new("cron", "Schedule recurring tasks and automated jobs", CRON_PROMPT)
+        .with_emoji("⏰")
+        .by("manta");
 
     // Add triggers
     skill.triggers = vec![
@@ -274,13 +270,9 @@ fn create_clawhub_skill() -> Skill {
 
 /// Create the summarize built-in skill
 fn create_summarize_skill() -> Skill {
-    let mut skill = Skill::new(
-        "summarize",
-        "Summarize URLs, files, and content",
-        SUMMARIZE_PROMPT,
-    )
-    .with_emoji("📝")
-    .by("manta");
+    let mut skill = Skill::new("summarize", "Summarize URLs, files, and content", SUMMARIZE_PROMPT)
+        .with_emoji("📝")
+        .by("manta");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -322,13 +314,9 @@ fn create_summarize_skill() -> Skill {
 
 /// Create the weather built-in skill
 fn create_weather_skill() -> Skill {
-    let mut skill = Skill::new(
-        "weather",
-        "Get weather information for locations",
-        WEATHER_PROMPT,
-    )
-    .with_emoji("🌤️")
-    .by("manta");
+    let mut skill = Skill::new("weather", "Get weather information for locations", WEATHER_PROMPT)
+        .with_emoji("🌤️")
+        .by("manta");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -370,13 +358,9 @@ fn create_weather_skill() -> Skill {
 
 /// Create the tmux built-in skill
 fn create_tmux_skill() -> Skill {
-    let mut skill = Skill::new(
-        "tmux",
-        "Control tmux sessions remotely",
-        TMUX_PROMPT,
-    )
-    .with_emoji("🖥️")
-    .by("manta");
+    let mut skill = Skill::new("tmux", "Control tmux sessions remotely", TMUX_PROMPT)
+        .with_emoji("🖥️")
+        .by("manta");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -411,13 +395,10 @@ fn create_tmux_skill() -> Skill {
 
 /// Create the github built-in skill
 fn create_github_skill() -> Skill {
-    let mut skill = Skill::new(
-        "github",
-        "GitHub CLI integration for repos, PRs, and issues",
-        GITHUB_PROMPT,
-    )
-    .with_emoji("🐙")
-    .by("manta");
+    let mut skill =
+        Skill::new("github", "GitHub CLI integration for repos, PRs, and issues", GITHUB_PROMPT)
+            .with_emoji("🐙")
+            .by("manta");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1565,13 +1546,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 /// Create the nano-pdf built-in skill
 fn create_nano_pdf_skill() -> Skill {
-    let mut skill = Skill::new(
-        "nano-pdf",
-        "Read, create, and manipulate PDF documents",
-        NANO_PDF_PROMPT,
-    )
-    .with_emoji("📄")
-    .by("manta");
+    let mut skill =
+        Skill::new("nano-pdf", "Read, create, and manipulate PDF documents", NANO_PDF_PROMPT)
+            .with_emoji("📄")
+            .by("manta");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1619,9 +1597,7 @@ fn create_nano_pdf_skill() -> Skill {
     ];
 
     // Note: requires_bin takes ownership, must chain before assigning to skill
-    let mut skill = skill
-        .requires_bin("pdftotext")
-        .requires_bin("pandoc");
+    let mut skill = skill.requires_bin("pdftotext").requires_bin("pandoc");
 
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
@@ -2480,7 +2456,11 @@ mod tests {
         assert!(skill.enabled);
         assert!(!skill.triggers.is_empty());
         // Nano PDF requires pdftotext and pandoc
-        assert!(skill.metadata.requires.bins.contains(&"pdftotext".to_string()));
+        assert!(skill
+            .metadata
+            .requires
+            .bins
+            .contains(&"pdftotext".to_string()));
     }
 
     #[test]

@@ -152,13 +152,14 @@ impl Tool for AcpSpawnTool {
             timeout_seconds: args.timeout_seconds.or(Some(300)),
         };
 
-        info!(
-            "Spawning subagent for task: {} (mode: {:?})",
-            args.task, config.mode
-        );
+        info!("Spawning subagent for task: {} (mode: {:?})", args.task, config.mode);
 
         // Spawn the subagent
-        match self.acp.spawn_subagent(session_id.clone(), parent_id.clone(), config).await {
+        match self
+            .acp
+            .spawn_subagent(session_id.clone(), parent_id.clone(), config)
+            .await
+        {
             Ok(handle) => {
                 let subagent_id = handle.id.clone();
 
@@ -254,7 +255,11 @@ enum SessionAction {
     /// Terminate a session
     Terminate { session_id: String },
     /// Send message to a session subagent
-    Message { session_id: String, subagent_id: String, message: String },
+    Message {
+        session_id: String,
+        subagent_id: String,
+        message: String,
+    },
 }
 
 #[async_trait]
@@ -374,7 +379,10 @@ impl Tool for AcpSessionTool {
                 match self.acp.terminate_session(&session_id).await {
                     Ok(count) => Ok(ToolExecutionResult {
                         success: true,
-                        output: format!("Terminated {} subagent(s) in session {}", count, session_id),
+                        output: format!(
+                            "Terminated {} subagent(s) in session {}",
+                            count, session_id
+                        ),
                         error: None,
                         data: Some(serde_json::json!({
                             "terminated_count": count,
@@ -391,7 +399,11 @@ impl Tool for AcpSessionTool {
                     }),
                 }
             }
-            SessionAction::Message { session_id, subagent_id, message } => {
+            SessionAction::Message {
+                session_id,
+                subagent_id,
+                message,
+            } => {
                 let _session_id = AcpSessionId(session_id);
                 let incoming = IncomingMessage::new(
                     "user".to_string(),

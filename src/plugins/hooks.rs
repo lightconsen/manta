@@ -109,7 +109,8 @@ pub struct HookHandler {
     /// Handler priority (lower = earlier)
     pub priority: i32,
     /// Handler function
-    pub handler: Arc<dyn Fn(HookPayload) -> futures::future::BoxFuture<'static, HookResult> + Send + Sync>,
+    pub handler:
+        Arc<dyn Fn(HookPayload) -> futures::future::BoxFuture<'static, HookResult> + Send + Sync>,
 }
 
 /// Hook registry - manages all hook handlers
@@ -152,10 +153,7 @@ impl HookRegistry {
         let mut current_payload = payload;
 
         for handler in handlers_list {
-            debug!(
-                "Executing hook {:?} for plugin '{}'",
-                hook_type, handler.plugin_id
-            );
+            debug!("Executing hook {:?} for plugin '{}'", hook_type, handler.plugin_id);
 
             let result = (handler.handler)(current_payload.clone()).await;
 
@@ -199,10 +197,8 @@ impl HookRegistry {
         handlers
             .iter()
             .map(|(hook_type, handlers_list)| {
-                let plugin_ids: Vec<String> = handlers_list
-                    .iter()
-                    .map(|h| h.plugin_id.clone())
-                    .collect();
+                let plugin_ids: Vec<String> =
+                    handlers_list.iter().map(|h| h.plugin_id.clone()).collect();
                 (hook_type.clone(), plugin_ids)
             })
             .collect()

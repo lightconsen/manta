@@ -2,9 +2,7 @@
 //!
 //! This provider wraps multiple providers and tries them in order until one succeeds.
 
-use super::{
-    CompletionRequest, CompletionResponse, CompletionStream, Provider,
-};
+use super::{CompletionRequest, CompletionResponse, CompletionStream, Provider};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -29,10 +27,7 @@ impl std::fmt::Debug for FallbackProvider {
 impl FallbackProvider {
     /// Create a new fallback provider with the given providers
     pub fn new(name: impl Into<String>, providers: Vec<Arc<dyn Provider>>) -> Self {
-        Self {
-            name: name.into(),
-            providers,
-        }
+        Self { name: name.into(), providers }
     }
 
     /// Create with default providers (openai -> anthropic)
@@ -47,7 +42,10 @@ impl FallbackProvider {
 
     /// Get the list of provider names in the chain
     pub fn chain(&self) -> Vec<String> {
-        self.providers.iter().map(|p| p.name().to_string()).collect()
+        self.providers
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect()
     }
 }
 
@@ -92,12 +90,7 @@ impl Provider for FallbackProvider {
                     return Ok(response);
                 }
                 Err(e) => {
-                    warn!(
-                        "Provider {} failed: {} - Error: {}",
-                        idx + 1,
-                        provider_name,
-                        e
-                    );
+                    warn!("Provider {} failed: {} - Error: {}", idx + 1, provider_name, e);
                     last_error = Some(e);
                 }
             }
@@ -169,9 +162,7 @@ impl std::fmt::Debug for FallbackChainBuilder {
 
 impl Default for FallbackChainBuilder {
     fn default() -> Self {
-        Self {
-            providers: Vec::new(),
-        }
+        Self { providers: Vec::new() }
     }
 }
 

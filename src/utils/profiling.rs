@@ -239,12 +239,7 @@ impl PerformanceReport {
             for timer in &self.timers {
                 output.push_str(&format!(
                     "  {}: {} calls, avg={:.2?}, min={:.2?}, max={:.2?}, total={:.2?}\n",
-                    timer.name,
-                    timer.count,
-                    timer.avg,
-                    timer.min,
-                    timer.max,
-                    timer.total
+                    timer.name, timer.count, timer.avg, timer.min, timer.max, timer.total
                 ));
             }
             output.push('\n');
@@ -331,7 +326,9 @@ macro_rules! time_block {
 macro_rules! count_event {
     ($name:expr) => {
         tokio::spawn(async move {
-            $crate::utils::profiling::global_profiler().increment_counter($name).await;
+            $crate::utils::profiling::global_profiler()
+                .increment_counter($name)
+                .await;
         });
     };
 }

@@ -50,7 +50,11 @@ pub enum MessageType {
 
 impl MeshMessage {
     /// Create a new direct message
-    pub fn direct(from: impl Into<String>, to: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn direct(
+        from: impl Into<String>,
+        to: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             from: from.into(),
@@ -78,7 +82,11 @@ impl MeshMessage {
     }
 
     /// Create a request message
-    pub fn request(from: impl Into<String>, to: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn request(
+        from: impl Into<String>,
+        to: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             from: from.into(),
@@ -133,7 +141,10 @@ impl AssistantMesh {
     }
 
     /// Register an assistant with the mesh
-    pub async fn register(&self, assistant_id: impl Into<String>) -> tokio::sync::mpsc::UnboundedReceiver<MeshMessage> {
+    pub async fn register(
+        &self,
+        assistant_id: impl Into<String>,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<MeshMessage> {
         let assistant_id = assistant_id.into();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -171,7 +182,7 @@ impl AssistantMesh {
             } else {
                 warn!("Recipient {} not found in mesh", recipient_id);
                 return Err(crate::error::MantaError::NotFound {
-                    resource: format!("Assistant {}", recipient_id)
+                    resource: format!("Assistant {}", recipient_id),
                 });
             }
         } else if msg_type == MessageType::Broadcast {
@@ -261,10 +272,22 @@ impl AssistantMesh {
         MeshStats {
             registered_assistants: routes.len(),
             total_messages: history.len(),
-            broadcasts: history.iter().filter(|m| m.msg_type == MessageType::Broadcast).count(),
-            direct_messages: history.iter().filter(|m| m.msg_type == MessageType::Direct).count(),
-            requests: history.iter().filter(|m| m.msg_type == MessageType::Request).count(),
-            responses: history.iter().filter(|m| m.msg_type == MessageType::Response).count(),
+            broadcasts: history
+                .iter()
+                .filter(|m| m.msg_type == MessageType::Broadcast)
+                .count(),
+            direct_messages: history
+                .iter()
+                .filter(|m| m.msg_type == MessageType::Direct)
+                .count(),
+            requests: history
+                .iter()
+                .filter(|m| m.msg_type == MessageType::Request)
+                .count(),
+            responses: history
+                .iter()
+                .filter(|m| m.msg_type == MessageType::Response)
+                .count(),
         }
     }
 }
@@ -358,44 +381,40 @@ Messages are routed automatically to recipients."#
             args: serde_json::Value,
             context: &ToolContext,
         ) -> crate::Result<ToolExecutionResult> {
-            let action = args["action"]
-                .as_str()
-                .ok_or_else(|| crate::error::MantaError::Validation("action is required".to_string()))?;
+            let action = args["action"].as_str().ok_or_else(|| {
+                crate::error::MantaError::Validation("action is required".to_string())
+            })?;
 
             let from = context.conversation_id.clone();
 
             match action {
                 "send" => {
-                    let to = args["to"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "to is required for send".to_string()
-                        ))?;
-                    let content = args["content"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "content is required for send".to_string()
-                        ))?;
+                    let to = args["to"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation("to is required for send".to_string())
+                    })?;
+                    let content = args["content"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "content is required for send".to_string(),
+                        )
+                    })?;
 
                     let msg_id = self.mesh.send(&from, to, content).await?;
 
-                    Ok(ToolExecutionResult::success(format!(
-                        "Message sent to {}", to
-                    )).with_data(json!({"message_id": msg_id, "to": to})))
+                    Ok(ToolExecutionResult::success(format!("Message sent to {}", to))
+                        .with_data(json!({"message_id": msg_id, "to": to})))
                 }
 
                 "broadcast" => {
-                    let content = args["content"]
-                        .as_str()
-                        .ok_or_else(|| crate::error::MantaError::Validation(
-                            "content is required for broadcast".to_string()
-                        ))?;
+                    let content = args["content"].as_str().ok_or_else(|| {
+                        crate::error::MantaError::Validation(
+                            "content is required for broadcast".to_string(),
+                        )
+                    })?;
 
                     let msg_id = self.mesh.broadcast(&from, content).await?;
 
-                    Ok(ToolExecutionResult::success(format!(
-                        "Message broadcast to all assistants"
-                    )).with_data(json!({"message_id": msg_id})))
+                    Ok(ToolExecutionResult::success(format!("Message broadcast to all assistants"))
+                        .with_data(json!({"message_id": msg_id})))
                 }
 
                 "status" => {
@@ -405,7 +424,8 @@ Messages are routed automatically to recipients."#
                     Ok(ToolExecutionResult::success(format!(
                         "{} assistants registered in mesh",
                         stats.registered_assistants
-                    )).with_data(json!({
+                    ))
+                    .with_data(json!({
                         "stats": stats,
                         "registered": registered,
                     })))
@@ -417,12 +437,13 @@ Messages are routed automatically to recipients."#
                     Ok(ToolExecutionResult::success(format!(
                         "{} assistants registered",
                         registered.len()
-                    )).with_data(json!({"assistants": registered})))
+                    ))
+                    .with_data(json!({"assistants": registered})))
                 }
 
-                _ => Err(crate::error::MantaError::Validation(format!(
-                    "Unknown action: {}", action
-                ))),
+                _ => {
+                    Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action)))
+                }
             }
         }
     }

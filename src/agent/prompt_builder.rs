@@ -116,10 +116,7 @@ impl PromptContext {
             || msg.contains("bash")
         {
             TaskType::System
-        } else if msg.contains("plan")
-            || msg.contains("steps")
-            || msg.contains("break down")
-        {
+        } else if msg.contains("plan") || msg.contains("steps") || msg.contains("break down") {
             TaskType::Planning
         } else if self.is_follow_up {
             TaskType::FollowUp
@@ -367,12 +364,9 @@ impl PromptBuilder {
     /// Add active task/plan context
     pub fn add_task_context(&mut self, context: &str) {
         self.add_section(
-            PromptSection::new(
-                "active_task",
-                format!("## Current Task Context\n\n{}", context),
-            )
-            .with_priority(9)
-            .dynamic(),
+            PromptSection::new("active_task", format!("## Current Task Context\n\n{}", context))
+                .with_priority(9)
+                .dynamic(),
         );
     }
 
@@ -467,11 +461,7 @@ impl PromptBuilder {
     }
 
     /// Build from a complete context in one call
-    pub fn build_from_context(
-        base_prompt: &str,
-        ctx: &PromptContext,
-        max_tokens: usize,
-    ) -> String {
+    pub fn build_from_context(base_prompt: &str, ctx: &PromptContext, max_tokens: usize) -> String {
         let mut builder = Self::new(base_prompt).with_max_tokens(max_tokens);
 
         // Add phase context
@@ -521,28 +511,17 @@ impl PromptBuilder {
             TaskType::Debugging => {
                 matches!(
                     tool_name,
-                    "file_read"
-                        | "grep"
-                        | "shell"
-                        | "code_execution"
-                        | "browser"
-                        | "web_search"
+                    "file_read" | "grep" | "shell" | "code_execution" | "browser" | "web_search"
                 )
             }
             TaskType::Research => {
-                matches!(
-                    tool_name,
-                    "web_search" | "web_fetch" | "browser" | "file_read" | "shell"
-                )
+                matches!(tool_name, "web_search" | "web_fetch" | "browser" | "file_read" | "shell")
             }
             TaskType::System => {
                 matches!(tool_name, "shell" | "file_read" | "file_write" | "browser")
             }
             TaskType::Planning => {
-                matches!(
-                    tool_name,
-                    "todo" | "file_read" | "shell" | "browser" | "web_search"
-                )
+                matches!(tool_name, "todo" | "file_read" | "shell" | "browser" | "web_search")
             }
             _ => true, // All tools relevant for general tasks
         }
@@ -623,10 +602,13 @@ mod tests {
 
         // Add many large sections
         for i in 0..10 {
-            builder.add_section(PromptSection::new(
-                format!("section{}", i),
-                "A".repeat(100) // ~25 tokens each
-            ).with_priority(i as u8));
+            builder.add_section(
+                PromptSection::new(
+                    format!("section{}", i),
+                    "A".repeat(100), // ~25 tokens each
+                )
+                .with_priority(i as u8),
+            );
         }
 
         let prompt = builder.build();

@@ -82,47 +82,48 @@ Examples:
         args: serde_json::Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation(
-                "action is required".to_string()
-            ))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("action is required".to_string())
+        })?;
 
         // Get team name from args or context
         let team_name = args["team"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| crate::error::MantaError::Validation(
-                "Team name is required. Use 'team' parameter.".to_string()
-            ))?;
+            .ok_or_else(|| {
+                crate::error::MantaError::Validation(
+                    "Team name is required. Use 'team' parameter.".to_string(),
+                )
+            })?;
 
         // Get sender agent name from context
         let sender = context.conversation_id.clone();
         // In a real implementation, you'd map conversation_id to agent name
         // For now, we'll use a simplified approach
-        let sender_agent = sender.split(':').last()
-            .unwrap_or(&sender)
-            .to_string();
+        let sender_agent = sender.split(':').last().unwrap_or(&sender).to_string();
 
         let mesh_manager = get_team_mesh_manager().await;
 
         match action {
             "send" => {
-                let to = args["to"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "'to' is required for send action".to_string()
-                    ))?;
+                let to = args["to"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "'to' is required for send action".to_string(),
+                    )
+                })?;
 
-                let message = args["message"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "'message' is required for send action".to_string()
-                    ))?;
+                let message = args["message"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "'message' is required for send action".to_string(),
+                    )
+                })?;
 
                 info!(
                     "Team message from {} to {} in team {}: {} chars",
-                    sender_agent, to, team_name, message.len()
+                    sender_agent,
+                    to,
+                    team_name,
+                    message.len()
                 );
 
                 let result = mesh_manager
@@ -133,7 +134,8 @@ Examples:
                     "Message sent to {} using {:?} pattern",
                     result.recipients.join(", "),
                     result.pattern
-                )).with_data(json!({
+                ))
+                .with_data(json!({
                     "message_id": result.message_id,
                     "recipients": result.recipients,
                     "pattern": format!("{:?}", result.pattern)
@@ -141,15 +143,17 @@ Examples:
             }
 
             "broadcast" => {
-                let message = args["message"]
-                    .as_str()
-                    .ok_or_else(|| crate::error::MantaError::Validation(
-                        "'message' is required for broadcast action".to_string()
-                    ))?;
+                let message = args["message"].as_str().ok_or_else(|| {
+                    crate::error::MantaError::Validation(
+                        "'message' is required for broadcast action".to_string(),
+                    )
+                })?;
 
                 info!(
                     "Team broadcast from {} in team {}: {} chars",
-                    sender_agent, team_name, message.len()
+                    sender_agent,
+                    team_name,
+                    message.len()
                 );
 
                 let result = mesh_manager
@@ -160,7 +164,8 @@ Examples:
                     "Broadcast sent to {} team members using {:?} pattern",
                     result.recipients.len(),
                     result.pattern
-                )).with_data(json!({
+                ))
+                .with_data(json!({
                     "message_id": result.message_id,
                     "recipient_count": result.recipients.len(),
                     "recipients": result.recipients,
@@ -177,7 +182,8 @@ Examples:
                         session.team_name,
                         session.agents.len(),
                         session.pattern
-                    )).with_data(json!({
+                    ))
+                    .with_data(json!({
                         "team_id": session.team_id,
                         "team_name": session.team_name,
                         "pattern": format!("{:?}", session.pattern),
@@ -190,7 +196,8 @@ Examples:
                     Ok(ToolExecutionResult::success(format!(
                         "Team '{}' is not currently active in the mesh",
                         team_name
-                    )).with_data(json!({
+                    ))
+                    .with_data(json!({
                         "team_id": team_name,
                         "active": false
                     })))
@@ -201,7 +208,8 @@ Examples:
                 let session = mesh_manager.get_session(&team_name).await;
 
                 if let Some(session) = session {
-                    let agent_details: Vec<serde_json::Value> = session.agents
+                    let agent_details: Vec<serde_json::Value> = session
+                        .agents
                         .iter()
                         .map(|a| {
                             let is_lead = session.leads.contains(a);
@@ -222,7 +230,8 @@ Examples:
                         "Team '{}' has {} agents",
                         session.team_name,
                         session.agents.len()
-                    )).with_data(json!({
+                    ))
+                    .with_data(json!({
                         "team": session.team_name,
                         "pattern": format!("{:?}", session.pattern),
                         "agents": agent_details
@@ -230,20 +239,19 @@ Examples:
                 } else {
                     // Try to load from storage
                     match crate::team::Team::load(&team_name).await {
-                        Ok(team) => {
-                            Ok(ToolExecutionResult::success(format!(
-                                "Team '{}' found (not active). Activate with 'manta team activate {}'",
-                                team.name, team.name
-                            )).with_data(json!({
-                                "team": team.name,
-                                "active": false,
-                                "member_count": team.members.len(),
-                                "members": team.members.keys().cloned().collect::<Vec<_>>()
-                            })))
-                        }
+                        Ok(team) => Ok(ToolExecutionResult::success(format!(
+                            "Team '{}' found (not active). Activate with 'manta team activate {}'",
+                            team.name, team.name
+                        ))
+                        .with_data(json!({
+                            "team": team.name,
+                            "active": false,
+                            "member_count": team.members.len(),
+                            "members": team.members.keys().cloned().collect::<Vec<_>>()
+                        }))),
                         Err(e) => Err(crate::error::MantaError::NotFound {
-                            resource: format!("Team '{}'", team_name)
-                        })
+                            resource: format!("Team '{}'", team_name),
+                        }),
                     }
                 }
             }
@@ -252,9 +260,8 @@ Examples:
                 let history = mesh_manager.get_team_history(&team_name).await;
 
                 if history.is_empty() {
-                    Ok(ToolExecutionResult::success(
-                        "No messages in team history yet"
-                    ).with_data(json!({"messages": []})))
+                    Ok(ToolExecutionResult::success("No messages in team history yet")
+                        .with_data(json!({"messages": []})))
                 } else {
                     let messages: Vec<serde_json::Value> = history
                         .into_iter()
@@ -273,13 +280,15 @@ Examples:
                     Ok(ToolExecutionResult::success(format!(
                         "Retrieved {} messages from team history",
                         messages.len()
-                    )).with_data(json!({"messages": messages})))
+                    ))
+                    .with_data(json!({"messages": messages})))
                 }
             }
 
-            _ => Err(crate::error::MantaError::Validation(
-                format!("Unknown action: '{}'. Use: send, broadcast, status, list, history", action)
-            ))
+            _ => Err(crate::error::MantaError::Validation(format!(
+                "Unknown action: '{}'. Use: send, broadcast, status, list, history",
+                action
+            ))),
         }
     }
 }

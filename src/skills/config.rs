@@ -58,9 +58,9 @@ fn default_true() -> bool {
 /// API key configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyConfig {
-    pub source: String,     // "env" or "keychain"
-    pub provider: String,   // "default" or provider name
-    pub id: String,         // env var name or keychain id
+    pub source: String,   // "env" or "keychain"
+    pub provider: String, // "default" or provider name
+    pub id: String,       // env var name or keychain id
 }
 
 /// Installation preferences

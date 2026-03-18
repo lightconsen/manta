@@ -36,7 +36,7 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            timeout_secs: 300, // 5 minutes
+            timeout_secs: 300,       // 5 minutes
             max_output_size: 50_000, // 50KB
             allowed_imports: vec![],
             forbidden_imports: vec![
@@ -76,7 +76,8 @@ impl CodeExecutionTool {
 
         // Check for forbidden imports
         for forbidden in &self.config.forbidden_imports {
-            let pattern = format!(r"(?i)(import\s+{}|from\s+{}\s+import)",
+            let pattern = format!(
+                r"(?i)(import\s+{}|from\s+{}\s+import)",
                 regex::escape(forbidden),
                 regex::escape(forbidden)
             );
@@ -111,10 +112,15 @@ impl CodeExecutionTool {
     }
 
     /// Execute Python code in sandbox
-    async fn execute_python(&self, code: &str, _context: &ToolContext) -> crate::Result<CodeResult> {
+    async fn execute_python(
+        &self,
+        code: &str,
+        _context: &ToolContext,
+    ) -> crate::Result<CodeResult> {
         // Create wrapped code with output capture
         let max_size = self.config.max_output_size;
-        let header = format!(r#"# -*- coding: utf-8 -*-
+        let header = format!(
+            r#"# -*- coding: utf-8 -*-
 import sys
 import json
 import traceback
@@ -144,7 +150,9 @@ result = {{}}
 try:
     exec_globals = {{}}
     exec_locals = {{}}
-""#, max_size, max_size);
+""#,
+            max_size, max_size
+        );
 
         let footer = r#"
     result['success'] = True
@@ -159,7 +167,8 @@ print("\n__PTC_RESULT__")
 print(json.dumps(result))
 "#;
 
-        let code_escaped = format!("    exec(compile({:?}, '<string>', 'exec'), exec_globals, exec_locals)", code);
+        let code_escaped =
+            format!("    exec(compile({:?}, '<string>', 'exec'), exec_globals, exec_locals)", code);
         let wrapped_code = format!("{}{}{}", header, code_escaped, footer);
 
         // Spawn Python process
@@ -197,12 +206,14 @@ print(json.dumps(result))
 
             if let Err(e) = stdout_res {
                 return Err(crate::error::MantaError::Internal(format!(
-                    "Failed to read stdout: {}", e
+                    "Failed to read stdout: {}",
+                    e
                 )));
             }
             if let Err(e) = stderr_res {
                 return Err(crate::error::MantaError::Internal(format!(
-                    "Failed to read stderr: {}", e
+                    "Failed to read stderr: {}",
+                    e
                 )));
             }
 
@@ -217,9 +228,8 @@ print(json.dumps(result))
             // Parse PTC result if present
             let ptc_result = if let Some(idx) = stdout_str.find("__PTC_RESULT__") {
                 let json_part = &stdout_str[idx + "__PTC_RESULT__".len()..];
-                serde_json::from_str(json_part.trim()).unwrap_or_else(|_| {
-                    json!({"success": status.success(), "error": null})
-                })
+                serde_json::from_str(json_part.trim())
+                    .unwrap_or_else(|_| json!({"success": status.success(), "error": null}))
             } else {
                 json!({"success": status.success(), "error": null})
             };
@@ -230,7 +240,8 @@ print(json.dumps(result))
                 exit_code: status.code().unwrap_or(-1),
                 result: ptc_result,
             })
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(Ok(result)) => Ok(result),
@@ -238,9 +249,10 @@ print(json.dumps(result))
             Err(_) => {
                 // Timeout - kill the process
                 let _ = child.kill().await;
-                Err(crate::error::MantaError::Internal(
-                    format!("Code execution timed out after {} seconds", self.config.timeout_secs)
-                ))
+                Err(crate::error::MantaError::Internal(format!(
+                    "Code execution timed out after {} seconds",
+                    self.config.timeout_secs
+                )))
             }
         }
     }
@@ -329,18 +341,17 @@ print(json.dumps({"average": result, "count": len(data)}))
         args: serde_json::Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let code = args["code"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation(
-                "code parameter is required".to_string()
-            ))?;
+        let code = args["code"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("code parameter is required".to_string())
+        })?;
 
         let language = args["language"].as_str().unwrap_or("python");
 
         if language != "python" {
-            return Err(crate::error::MantaError::Validation(
-                format!("Unsupported language: {}", language)
-            ));
+            return Err(crate::error::MantaError::Validation(format!(
+                "Unsupported language: {}",
+                language
+            )));
         }
 
         // Validate code for security
@@ -360,13 +371,12 @@ print(json.dumps({"average": result, "count": len(data)}))
         // Execute the code
         match self.execute_python(code, context).await {
             Ok(result) => {
-                let success = result.exit_code == 0 && result.result["success"].as_bool().unwrap_or(true);
+                let success =
+                    result.exit_code == 0 && result.result["success"].as_bool().unwrap_or(true);
 
                 let mut output = format!(
                     "Exit code: {}\n\n## stdout\n{}\n\n## stderr\n{}",
-                    result.exit_code,
-                    result.stdout,
-                    result.stderr
+                    result.exit_code, result.stdout, result.stderr
                 );
 
                 // Truncate if too long
@@ -379,11 +389,9 @@ print(json.dumps({"average": result, "count": len(data)}))
                 }
 
                 if success {
-                    Ok(ToolExecutionResult::success(output)
-                        .with_data(result.result))
+                    Ok(ToolExecutionResult::success(output).with_data(result.result))
                 } else {
-                    Ok(ToolExecutionResult::error(output)
-                        .with_data(result.result))
+                    Ok(ToolExecutionResult::error(output).with_data(result.result))
                 }
             }
             Err(e) => {

@@ -17,13 +17,13 @@ pub mod vector;
 pub mod local_embeddings;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
-pub use personality::{PersonalityMemory, MemoryType};
+pub use personality::{MemoryType, PersonalityMemory};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
 pub use vector::{
-    ApiEmbeddingProvider, LocalGgufEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
-    EmbeddingProvider, MemoryVectorStore, TextChunker, VectorBackend, VectorMemoryService,
-    VectorStore, VectorStoreStats,
+    ApiEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
+    EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker, VectorBackend,
+    VectorMemoryService, VectorStore, VectorStoreStats,
 };
 
 /// Unique identifier for a memory entry
@@ -107,9 +107,7 @@ impl Memory {
 
     /// Set expiration time (TTL in seconds)
     pub fn with_ttl(mut self, ttl_seconds: u64) -> Self {
-        self.expires_at = Some(
-            SystemTime::now() + std::time::Duration::from_secs(ttl_seconds),
-        );
+        self.expires_at = Some(SystemTime::now() + std::time::Duration::from_secs(ttl_seconds));
         self
     }
 

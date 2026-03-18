@@ -8,7 +8,7 @@ use super::{
 };
 use async_trait::async_trait;
 use futures_core::Stream;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
+use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -90,10 +90,7 @@ impl OpenAiProvider {
     /// Build headers with authorization
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            format!("Bearer {}", self.api_key).parse().unwrap(),
-        );
+        headers.insert(AUTHORIZATION, format!("Bearer {}", self.api_key).parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers
     }
@@ -200,7 +197,10 @@ impl Provider for OpenAiProvider {
 
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
-        let model = request.model.clone().unwrap_or_else(|| self.default_model.clone());
+        let model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.default_model.clone());
         info!("OpenAI API request - model: {}, base_url: {}", model, self.base_url);
 
         let tools: Option<Vec<OpenAiTool>> = request.tools.map(|tools| {
@@ -215,7 +215,11 @@ impl Provider for OpenAiProvider {
 
         let body = OpenAiRequest {
             model: model.clone(),
-            messages: request.messages.iter().map(Self::to_openai_message).collect(),
+            messages: request
+                .messages
+                .iter()
+                .map(Self::to_openai_message)
+                .collect(),
             tools,
             temperature: request.temperature.unwrap_or(0.7),
             max_tokens: request.max_tokens,
@@ -281,7 +285,10 @@ impl Provider for OpenAiProvider {
                         retries += 1;
                         // Exponential backoff: 1s, 2s, 4s
                         let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
-                        warn!("Retryable error detected, retrying after {:?}... (attempt {}/{})", delay, retries, max_retries);
+                        warn!(
+                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -309,7 +316,11 @@ impl Provider for OpenAiProvider {
 
         let body = OpenAiRequest {
             model,
-            messages: request.messages.iter().map(Self::to_openai_message).collect(),
+            messages: request
+                .messages
+                .iter()
+                .map(Self::to_openai_message)
+                .collect(),
             tools,
             temperature: request.temperature.unwrap_or(0.7),
             max_tokens: request.max_tokens,
@@ -622,9 +633,6 @@ mod tests {
     #[test]
     fn test_url_building() {
         let provider = OpenAiProvider::new("test-key").unwrap();
-        assert_eq!(
-            provider.url("/chat/completions"),
-            "https://api.openai.com/v1/chat/completions"
-        );
+        assert_eq!(provider.url("/chat/completions"), "https://api.openai.com/v1/chat/completions");
     }
 }

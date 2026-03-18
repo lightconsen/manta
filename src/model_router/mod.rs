@@ -153,9 +153,9 @@ impl Default for ModelRouterConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CircuitState {
     #[default]
-    Closed,    // Normal operation
-    Open,      // Failing, reject requests
-    HalfOpen,  // Testing if recovered
+    Closed, // Normal operation
+    Open,     // Failing, reject requests
+    HalfOpen, // Testing if recovered
 }
 
 /// Provider health tracking
@@ -284,17 +284,16 @@ impl ModelRouter {
                         base_url.clone(),
                     )?
                 } else {
-                    crate::providers::anthropic::AnthropicProvider::new(
-                        config.api_key.clone(),
-                    )?
+                    crate::providers::anthropic::AnthropicProvider::new(config.api_key.clone())?
                 };
                 Ok(Arc::new(provider))
             }
             ProviderType::OpenAi => {
                 // Create OpenAI provider
-                let base_url = config.base_url.clone().unwrap_or_else(||
-                    "https://api.openai.com/v1".to_string()
-                );
+                let base_url = config
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
                 let provider = crate::providers::OpenAiProvider::with_base_url(
                     config.api_key.clone(),
                     base_url,
@@ -304,7 +303,8 @@ impl ModelRouter {
             _ => Err(crate::error::ConfigError::InvalidValue {
                 key: "provider_type".to_string(),
                 message: format!("Provider type not supported: {:?}", config.provider_type),
-            }.into()),
+            }
+            .into()),
         }
     }
 
@@ -350,10 +350,7 @@ impl ModelRouter {
 
             // Check circuit breaker
             if self.is_circuit_open(&entry.provider).await {
-                warn!(
-                    "Circuit breaker open for provider: {}",
-                    entry.provider
-                );
+                warn!("Circuit breaker open for provider: {}", entry.provider);
                 continue;
             }
 
@@ -368,10 +365,7 @@ impl ModelRouter {
                         return Ok(response);
                     }
                     Err(e) => {
-                        error!(
-                            "Provider {} failed: {}",
-                            entry.provider, e
-                        );
+                        error!("Provider {} failed: {}", entry.provider, e);
                         self.record_failure(&entry.provider).await;
                         last_error = Some(e);
                     }
@@ -480,14 +474,19 @@ impl ModelRouter {
         let health = self.health.read().await;
         health
             .iter()
-            .map(|(k, v)| (k.clone(), ProviderHealth {
-                state: v.state,
-                failures: v.failures,
-                successes: v.successes,
-                last_failure: v.last_failure,
-                avg_latency_ms: v.avg_latency_ms,
-                last_health_check: v.last_health_check,
-            }))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    ProviderHealth {
+                        state: v.state,
+                        failures: v.failures,
+                        successes: v.successes,
+                        last_failure: v.last_failure,
+                        avg_latency_ms: v.avg_latency_ms,
+                        last_health_check: v.last_health_check,
+                    },
+                )
+            })
             .collect()
     }
 
@@ -515,8 +514,9 @@ impl ModelRouter {
                 Ok(provider_arc)
             } else {
                 Err(crate::error::ConfigError::Missing(
-                    "No providers configured and ANTHROPIC_API_KEY not set".to_string()
-                ).into())
+                    "No providers configured and ANTHROPIC_API_KEY not set".to_string(),
+                )
+                .into())
             }
         }
     }
@@ -548,7 +548,8 @@ impl ModelRouter {
             return Err(crate::error::ConfigError::InvalidValue {
                 key: "default_model".to_string(),
                 message: format!("Unknown model alias: {}", alias_name),
-            }.into());
+            }
+            .into());
         }
         drop(config);
 
@@ -578,7 +579,10 @@ impl ModelRouter {
 
                 ProviderInfo {
                     name: name.clone(),
-                    provider_type: provider_config.as_ref().map(|c| format!("{:?}", c.provider_type)).unwrap_or_default(),
+                    provider_type: provider_config
+                        .as_ref()
+                        .map(|c| format!("{:?}", c.provider_type))
+                        .unwrap_or_default(),
                     enabled: h.state != CircuitState::Open,
                     health: ProviderHealthInfo {
                         state: format!("{:?}", h.state),
@@ -606,7 +610,8 @@ impl ModelRouter {
             Err(crate::error::ConfigError::InvalidValue {
                 key: "provider".to_string(),
                 message: format!("Unknown provider: {}", name),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -621,7 +626,8 @@ impl ModelRouter {
             Err(crate::error::ConfigError::InvalidValue {
                 key: "provider".to_string(),
                 message: format!("Unknown provider: {}", name),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -658,7 +664,8 @@ impl ModelRouter {
             return Err(crate::error::ConfigError::InvalidValue {
                 key: "provider".to_string(),
                 message: format!("Unknown provider: {}", name),
-            }.into());
+            }
+            .into());
         }
         drop(providers);
 
@@ -771,21 +778,31 @@ impl ModelRouter {
     /// Get fallback chain for an alias
     pub async fn get_fallback_chain(&self, alias_name: &str) -> Vec<String> {
         let chains = self.fallback_chains.read().await;
-        chains.get(alias_name)
+        chains
+            .get(alias_name)
             .map(|entries| entries.iter().map(|e| e.provider.clone()).collect())
             .unwrap_or_default()
     }
 
     /// Update fallback chain for an alias at runtime
-    pub async fn set_fallback_chain(&self, alias_name: &str, provider_chain: Vec<String>) -> crate::Result<()> {
+    pub async fn set_fallback_chain(
+        &self,
+        alias_name: &str,
+        provider_chain: Vec<String>,
+    ) -> crate::Result<()> {
         let config = self.config.read().await;
         if !config.aliases.contains_key(alias_name) {
             return Err(crate::error::ConfigError::InvalidValue {
                 key: "alias".to_string(),
                 message: format!("Unknown alias: {}", alias_name),
-            }.into());
+            }
+            .into());
         }
-        let model = config.aliases.get(alias_name).map(|a| a.model.clone()).unwrap_or_default();
+        let model = config
+            .aliases
+            .get(alias_name)
+            .map(|a| a.model.clone())
+            .unwrap_or_default();
         drop(config);
 
         let entries: Vec<FallbackEntry> = provider_chain
@@ -803,7 +820,9 @@ impl ModelRouter {
 
         // Also update config
         let mut config = self.config.write().await;
-        config.fallback_chains.insert(alias_name.to_string(), provider_chain);
+        config
+            .fallback_chains
+            .insert(alias_name.to_string(), provider_chain);
 
         Ok(())
     }
@@ -852,10 +871,7 @@ pub trait LlmProvider: Send + Sync {
     async fn list_models(&self) -> crate::Result<Vec<String>>;
 
     /// Complete a chat request
-    async fn complete(
-        &self,
-        request: CompletionRequest,
-    ) -> crate::Result<CompletionResponse>;
+    async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse>;
 
     /// Stream a completion
     async fn complete_stream(

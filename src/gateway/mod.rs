@@ -8,19 +8,19 @@
 //! - Authentication and security policies
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade, Query, ConnectInfo},
+    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post},
     Router,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{SocketAddr, IpAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use futures_util::{StreamExt, SinkExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -28,8 +28,11 @@ use crate::acp::AcpControlPlane;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
-use crate::config::hot_reload::{HotReloadManager, ConfigFileType};
-use crate::memory::vector::{VectorMemoryService, ApiEmbeddingProvider, LocalGgufEmbeddingProvider, EmbeddingConfig, MemoryVectorStore};
+use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::memory::vector::{
+    ApiEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
+    VectorMemoryService,
+};
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::tools::ToolRegistry;
@@ -132,7 +135,7 @@ pub struct VectorMemoryConfig {
 impl Default for VectorMemoryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,  // Disabled by default to avoid blocking on model download
+            enabled: false, // Disabled by default to avoid blocking on model download
             provider: EmbeddingProviderType::LocalGguf,
             embedding_api_key: None,
             embedding_model: "text-embedding-3-small".to_string(),
@@ -438,10 +441,7 @@ pub enum GatewayEvent {
         status: AgentStatus,
     },
     /// Channel connected/disconnected
-    ChannelStatus {
-        channel: String,
-        connected: bool,
-    },
+    ChannelStatus { channel: String, connected: bool },
     /// Tool execution started
     ToolCalling {
         session_id: String,
@@ -539,8 +539,10 @@ impl Gateway {
         }
 
         // Initialize security components
-        let auth_manager = Arc::new(crate::security::AuthManager::new()
-            .with_pairing_required(config.security.pairing_required));
+        let auth_manager = Arc::new(
+            crate::security::AuthManager::new()
+                .with_pairing_required(config.security.pairing_required),
+        );
         let rate_limiter = Arc::new(crate::security::RateLimiter::new(
             config.security.rate_limit.capacity,
             config.security.rate_limit.refill_rate,
@@ -554,11 +556,12 @@ impl Gateway {
         ) = match config.storage.storage_type.as_str() {
             "sqlite" => {
                 // Use absolute path for database to avoid working directory issues
-                let db_path = config.storage.database_url.as_ref()
+                let db_path = config
+                    .storage
+                    .database_url
+                    .as_ref()
                     .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
-                    .unwrap_or_else(|| {
-                        crate::dirs::manta_dir().join("data").join("manta.db")
-                    });
+                    .unwrap_or_else(|| crate::dirs::manta_dir().join("data").join("manta.db"));
 
                 // Ensure parent directory exists
                 if let Some(parent) = db_path.parent() {
@@ -569,9 +572,8 @@ impl Gateway {
                 let db_url = format!("sqlite:///{}", db_path.display());
                 info!("Connecting to SQLite storage at: {}", db_url);
 
-                let sqlite_storage = Arc::new(
-                    crate::adapters::SqliteStorage::connect(&db_url).await?
-                );
+                let sqlite_storage =
+                    Arc::new(crate::adapters::SqliteStorage::connect(&db_url).await?);
                 // Clone the Arc for use as VectorStore trait object
                 let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
                 // Wrap in RwLock for the generic storage interface
@@ -580,18 +582,13 @@ impl Gateway {
                 (storage, Some(vector_store))
             }
             "file" => {
-                let base_path = config.storage.base_path.as_deref()
-                    .unwrap_or("./data");
-                let storage = Arc::new(RwLock::new(
-                    crate::adapters::FileStorage::new(base_path)?
-                ));
+                let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
+                let storage = Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?));
                 (storage, None)
             }
             _ => {
                 // Default to memory storage
-                let storage = Arc::new(RwLock::new(
-                    crate::adapters::InMemoryStorage::new()
-                ));
+                let storage = Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()));
                 (storage, None)
             }
         };
@@ -622,7 +619,11 @@ impl Gateway {
         // Configure providers from config
         for (name, provider_config) in &config.providers {
             info!("Configuring provider: {}", name);
-            if let Err(e) = state.model_router.add_provider(name, provider_config.clone()).await {
+            if let Err(e) = state
+                .model_router
+                .add_provider(name, provider_config.clone())
+                .await
+            {
                 warn!("Failed to add provider '{}': {}", name, e);
             }
         }
@@ -631,57 +632,61 @@ impl Gateway {
         if config.vector_memory.enabled {
             info!("Initializing vector memory service...");
 
-            let embedding_provider: Option<Arc<dyn crate::memory::vector::EmbeddingProvider>> = match config.vector_memory.provider {
-                EmbeddingProviderType::OpenAi => {
-                    if let Some(ref api_key) = config.vector_memory.embedding_api_key {
-                        info!("Using OpenAI embedding provider");
-                        let mut provider = ApiEmbeddingProvider::new(
-                            api_key.clone(),
-                            config.vector_memory.embedding_model.clone(),
-                            config.vector_memory.embedding_dimension,
-                        );
-                        if let Some(ref base_url) = config.vector_memory.api_base_url {
-                            provider = provider.with_base_url(base_url.clone());
-                        }
-                        Some(Arc::new(provider))
-                    } else {
-                        warn!("OpenAI embedding provider requires an API key");
-                        None
-                    }
-                }
-                EmbeddingProviderType::LocalGguf => {
-                    #[cfg(feature = "local-embeddings")]
-                    {
-                        if let Some(ref model_path) = config.vector_memory.local_model_path {
-                            info!("Using local GGUF embedding provider");
-                            use crate::memory::local_embeddings::ModelSource;
-                            let source = ModelSource::parse(model_path);
-                            let provider = LocalGgufEmbeddingProvider::create(
-                                source,
+            let embedding_provider: Option<Arc<dyn crate::memory::vector::EmbeddingProvider>> =
+                match config.vector_memory.provider {
+                    EmbeddingProviderType::OpenAi => {
+                        if let Some(ref api_key) = config.vector_memory.embedding_api_key {
+                            info!("Using OpenAI embedding provider");
+                            let mut provider = ApiEmbeddingProvider::new(
+                                api_key.clone(),
+                                config.vector_memory.embedding_model.clone(),
                                 config.vector_memory.embedding_dimension,
-                            ).await;
-                            if provider.is_fts_only() {
-                                if let Some(reason) = provider.fts_reason() {
-                                    warn!("Local GGUF provider in FTS-only mode: {}", reason);
-                                } else {
-                                    info!("Local GGUF provider initialized, will load model on first use");
-                                }
-                            } else {
-                                info!("GGUF model configured from {}", model_path);
+                            );
+                            if let Some(ref base_url) = config.vector_memory.api_base_url {
+                                provider = provider.with_base_url(base_url.clone());
                             }
                             Some(Arc::new(provider))
                         } else {
-                            warn!("Local GGUF provider requires 'local_model_path' configuration");
+                            warn!("OpenAI embedding provider requires an API key");
                             None
                         }
                     }
-                    #[cfg(not(feature = "local-embeddings"))]
-                    {
-                        warn!("Local GGUF provider requires 'local-embeddings' feature. Build with: cargo build --features local-embeddings");
-                        None
+                    EmbeddingProviderType::LocalGguf => {
+                        #[cfg(feature = "local-embeddings")]
+                        {
+                            if let Some(ref model_path) = config.vector_memory.local_model_path {
+                                info!("Using local GGUF embedding provider");
+                                use crate::memory::local_embeddings::ModelSource;
+                                let source = ModelSource::parse(model_path);
+                                let provider = LocalGgufEmbeddingProvider::create(
+                                    source,
+                                    config.vector_memory.embedding_dimension,
+                                )
+                                .await;
+                                if provider.is_fts_only() {
+                                    if let Some(reason) = provider.fts_reason() {
+                                        warn!("Local GGUF provider in FTS-only mode: {}", reason);
+                                    } else {
+                                        info!("Local GGUF provider initialized, will load model on first use");
+                                    }
+                                } else {
+                                    info!("GGUF model configured from {}", model_path);
+                                }
+                                Some(Arc::new(provider))
+                            } else {
+                                warn!(
+                                    "Local GGUF provider requires 'local_model_path' configuration"
+                                );
+                                None
+                            }
+                        }
+                        #[cfg(not(feature = "local-embeddings"))]
+                        {
+                            warn!("Local GGUF provider requires 'local-embeddings' feature. Build with: cargo build --features local-embeddings");
+                            None
+                        }
                     }
-                }
-            };
+                };
 
             if let Some(embedding_provider) = embedding_provider {
                 // Use unified storage as the vector store (if it's SqliteStorage)
@@ -710,7 +715,10 @@ impl Gateway {
                     vector_store,
                     &embedding_config,
                 ));
-                info!("✅ Vector memory service initialized with {:?} provider", config.vector_memory.provider);
+                info!(
+                    "✅ Vector memory service initialized with {:?} provider",
+                    config.vector_memory.provider
+                );
                 *state.vector_memory.write().await = Some(service);
             } else {
                 warn!("Vector memory enabled but no suitable provider available");
@@ -757,10 +765,7 @@ impl Gateway {
         }
 
         // Start message processing worker
-        tokio::spawn(Self::process_message_queue(
-            state.clone(),
-            message_queue_rx,
-        ));
+        tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
 
         Ok(Self { state, config })
     }
@@ -795,7 +800,10 @@ impl Gateway {
         let hot_reload = self.state.hot_reload.read().await.clone();
         if let Some(ref hot_reload) = hot_reload {
             let config_path = crate::dirs::default_config_file();
-            if let Err(e) = hot_reload.watch_file(&config_path, ConfigFileType::Main).await {
+            if let Err(e) = hot_reload
+                .watch_file(&config_path, ConfigFileType::Main)
+                .await
+            {
                 warn!("Failed to watch config file: {}", e);
             }
             // Start hot reload processing in background
@@ -811,7 +819,10 @@ impl Gateway {
         }
 
         // Initialize default agent (optional - requires provider configuration)
-        match self.spawn_agent("default".to_string(), self.config.default_agent.clone()).await {
+        match self
+            .spawn_agent("default".to_string(), self.config.default_agent.clone())
+            .await
+        {
             Ok(()) => info!("Default agent spawned successfully"),
             Err(e) => {
                 warn!("Failed to spawn default agent: {}", e);
@@ -849,10 +860,7 @@ impl Gateway {
         }
 
         // Start web terminal server
-        tokio::spawn(Self::start_web_terminal(
-            self.config.web_port,
-            self.state.clone(),
-        ));
+        tokio::spawn(Self::start_web_terminal(self.config.web_port, self.state.clone()));
 
         // Run the server
         axum::serve(listener, app).await.map_err(|e| {
@@ -948,7 +956,8 @@ impl Gateway {
         let (tx, mut rx) = mpsc::channel(100);
 
         // Create provider from model router
-        let provider: Arc<dyn crate::providers::Provider> = self.state.model_router.create_default_provider().await?;
+        let provider: Arc<dyn crate::providers::Provider> =
+            self.state.model_router.create_default_provider().await?;
 
         // Get tool registry from state
         let tools = self.state.tool_registry.clone();
@@ -987,17 +996,12 @@ impl Gateway {
                         user_id,
                         channel: _,
                     } => {
-                        info!(
-                            "Agent {} processing message for session {}",
-                            agent_id, session_id
-                        );
+                        info!("Agent {} processing message for session {}", agent_id, session_id);
 
                         // Update status to processing
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
-                            status: AgentStatus::Processing {
-                                session_id: session_id.clone(),
-                            },
+                            status: AgentStatus::Processing { session_id: session_id.clone() },
                         });
 
                         // Create incoming message for the Agent
@@ -1011,24 +1015,37 @@ impl Gateway {
                         let progress_state = state.clone();
                         let progress_session_id = session_id.clone();
                         let progress_agent_id = agent_id.clone();
-                        let progress_cb: crate::agent::ProgressCallback = Arc::new(
-                            move |event: crate::agent::ProgressEvent| {
+                        let progress_cb: crate::agent::ProgressCallback =
+                            Arc::new(move |event: crate::agent::ProgressEvent| {
                                 let state = progress_state.clone();
                                 let session_id = progress_session_id.clone();
                                 let agent_id = progress_agent_id.clone();
                                 Box::pin(async move {
                                     match event {
-                                        crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
-                                            info!("ToolCalling event: {} for session {}", name, session_id);
-                                            let _ = state.event_tx.send(GatewayEvent::ToolCalling {
-                                                session_id: session_id.clone(),
-                                                agent_id: agent_id.clone(),
-                                                tool_name: name,
-                                                arguments: arguments.clone(),
-                                            });
+                                        crate::agent::ProgressEvent::ToolCalling {
+                                            name,
+                                            arguments,
+                                        } => {
+                                            info!(
+                                                "ToolCalling event: {} for session {}",
+                                                name, session_id
+                                            );
+                                            let _ =
+                                                state.event_tx.send(GatewayEvent::ToolCalling {
+                                                    session_id: session_id.clone(),
+                                                    agent_id: agent_id.clone(),
+                                                    tool_name: name,
+                                                    arguments: arguments.clone(),
+                                                });
                                         }
-                                        crate::agent::ProgressEvent::ToolResult { name, result } => {
-                                            info!("ToolResult event: {} for session {}", name, session_id);
+                                        crate::agent::ProgressEvent::ToolResult {
+                                            name,
+                                            result,
+                                        } => {
+                                            info!(
+                                                "ToolResult event: {} for session {}",
+                                                name, session_id
+                                            );
                                             let _ = state.event_tx.send(GatewayEvent::ToolResult {
                                                 session_id: session_id.clone(),
                                                 agent_id: agent_id.clone(),
@@ -1039,8 +1056,7 @@ impl Gateway {
                                         _ => {} // Ignore other events for now
                                     }
                                 })
-                            }
-                        );
+                            });
 
                         // Process message with progress callbacks
                         let response_content = match agent
@@ -1120,10 +1136,13 @@ impl Gateway {
                     #[cfg(feature = "telegram")]
                     {
                         if let Some(token) = config.credentials.get("token") {
-                            let telegram_config = crate::channels::telegram::TelegramConfig::new(token)
-                                .allow_usernames(config.allow_from.clone());
+                            let telegram_config =
+                                crate::channels::telegram::TelegramConfig::new(token)
+                                    .allow_usernames(config.allow_from.clone());
 
-                            let channel = Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
+                            let channel = Arc::new(
+                                crate::channels::telegram::TelegramChannel::new(telegram_config),
+                            );
                             let channel_name = name.clone();
                             // Start the channel in a background task
                             let channel_for_task = channel.clone();
@@ -1132,7 +1151,11 @@ impl Gateway {
                                     error!("Telegram channel {} failed: {}", channel_name, e);
                                 }
                             });
-                            self.state.channels.write().await.insert(name.clone(), channel);
+                            self.state
+                                .channels
+                                .write()
+                                .await
+                                .insert(name.clone(), channel);
                             info!("✅ Telegram channel '{}' initialized", name);
                         } else {
                             warn!("Telegram channel '{}' missing 'token' in credentials", name);
@@ -1147,9 +1170,12 @@ impl Gateway {
                     #[cfg(feature = "discord")]
                     {
                         if let Some(token) = config.credentials.get("token") {
-                            let discord_config = crate::channels::discord::DiscordConfig::new(token);
+                            let discord_config =
+                                crate::channels::discord::DiscordConfig::new(token);
 
-                            let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
+                            let channel = Arc::new(crate::channels::discord::DiscordChannel::new(
+                                discord_config,
+                            ));
                             let channel_name = name.clone();
                             let channel_for_task = channel.clone();
                             tokio::spawn(async move {
@@ -1157,7 +1183,11 @@ impl Gateway {
                                     error!("Discord channel {} failed: {}", channel_name, e);
                                 }
                             });
-                            self.state.channels.write().await.insert(name.clone(), channel);
+                            self.state
+                                .channels
+                                .write()
+                                .await
+                                .insert(name.clone(), channel);
                             info!("✅ Discord channel '{}' initialized", name);
                         } else {
                             warn!("Discord channel '{}' missing 'token' in credentials", name);
@@ -1174,7 +1204,8 @@ impl Gateway {
                         if let Some(token) = config.credentials.get("token") {
                             let slack_config = crate::channels::slack::SlackConfig::new(token);
 
-                            let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
+                            let channel =
+                                Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
                             let channel_name = name.clone();
                             let channel_for_task = channel.clone();
                             tokio::spawn(async move {
@@ -1182,7 +1213,11 @@ impl Gateway {
                                     error!("Slack channel {} failed: {}", channel_name, e);
                                 }
                             });
-                            self.state.channels.write().await.insert(name.clone(), channel);
+                            self.state
+                                .channels
+                                .write()
+                                .await
+                                .insert(name.clone(), channel);
                             info!("✅ Slack channel '{}' initialized", name);
                         } else {
                             warn!("Slack channel '{}' missing 'token' in credentials", name);
@@ -1199,11 +1234,14 @@ impl Gateway {
                         // WhatsApp requires both phone_number_id and access_token
                         if let (Some(phone_id), Some(token)) = (
                             config.credentials.get("phone_number_id"),
-                            config.credentials.get("access_token")
+                            config.credentials.get("access_token"),
                         ) {
-                            let whatsapp_config = crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
+                            let whatsapp_config =
+                                crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
 
-                            let channel = Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
+                            let channel = Arc::new(
+                                crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config),
+                            );
                             let channel_name = name.clone();
                             let channel_for_task = channel.clone();
                             tokio::spawn(async move {
@@ -1211,7 +1249,11 @@ impl Gateway {
                                     error!("WhatsApp channel {} failed: {}", channel_name, e);
                                 }
                             });
-                            self.state.channels.write().await.insert(name.clone(), channel);
+                            self.state
+                                .channels
+                                .write()
+                                .await
+                                .insert(name.clone(), channel);
                             info!("✅ WhatsApp channel '{}' initialized", name);
                         } else {
                             warn!("WhatsApp channel '{}' missing 'phone_number_id' or 'access_token' in credentials", name);
@@ -1229,9 +1271,10 @@ impl Gateway {
                         if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
                             config.credentials.get("app_id"),
                             config.credentials.get("app_secret"),
-                            config.credentials.get("bot_qq")
+                            config.credentials.get("bot_qq"),
                         ) {
-                            let qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
+                            let qq_config =
+                                crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
 
                             let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
                             let channel_name = name.clone();
@@ -1241,7 +1284,11 @@ impl Gateway {
                                     error!("QQ channel {} failed: {}", channel_name, e);
                                 }
                             });
-                            self.state.channels.write().await.insert(name.clone(), channel);
+                            self.state
+                                .channels
+                                .write()
+                                .await
+                                .insert(name.clone(), channel);
                             info!("✅ QQ channel '{}' initialized", name);
                         } else {
                             warn!("QQ channel '{}' missing required credentials (app_id, app_secret, bot_qq)", name);
@@ -1255,7 +1302,10 @@ impl Gateway {
                 ChannelType::Feishu | ChannelType::WebTerminal => {
                     // Feishu/Lark and WebTerminal are handled via webhooks/SocketMode
                     // They don't need a persistent connection here
-                    info!("Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn", name, config.channel_type);
+                    info!(
+                        "Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn",
+                        name, config.channel_type
+                    );
                 }
                 ChannelType::Websocket => {
                     info!("WebSocket channel '{}' requires external connection", name);
@@ -1299,12 +1349,12 @@ impl Gateway {
     }
 
     /// Resolve which agent should handle a session
-    async fn resolve_agent_for_session(
-        state: &Arc<GatewayState>,
-        session_id: &str,
-    ) -> String {
+    async fn resolve_agent_for_session(state: &Arc<GatewayState>, session_id: &str) -> String {
         let routing = state.session_routing.read().await;
-        routing.get(session_id).cloned().unwrap_or_else(|| "default".to_string())
+        routing
+            .get(session_id)
+            .cloned()
+            .unwrap_or_else(|| "default".to_string())
     }
 
     /// Start Tailscale for remote access
@@ -1312,15 +1362,14 @@ impl Gateway {
         #[cfg(feature = "tailscale")]
         {
             info!("Starting Tailscale integration...");
-            crate::tailscale::start(
-                self.config.port,
-                self.config.tailscale_domain.clone(),
-            ).await?;
+            crate::tailscale::start(self.config.port, self.config.tailscale_domain.clone()).await?;
         }
 
         #[cfg(not(feature = "tailscale"))]
         {
-            warn!("Tailscale feature not compiled in. Install with: cargo build --features tailscale");
+            warn!(
+                "Tailscale feature not compiled in. Install with: cargo build --features tailscale"
+            );
         }
 
         Ok(())
@@ -1645,7 +1694,10 @@ async fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Resul
             info!("MemoryTool registered successfully");
         }
         Err(e) => {
-            warn!("Failed to initialize MemoryTool: {}. Memory functionality will not be available.", e);
+            warn!(
+                "Failed to initialize MemoryTool: {}. Memory functionality will not be available.",
+                e
+            );
         }
     }
 
@@ -1678,7 +1730,9 @@ async fn chat_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<ChatRequestCompat>,
 ) -> impl IntoResponse {
-    let conversation_id = body.conversation_id.unwrap_or_else(|| "default".to_string());
+    let conversation_id = body
+        .conversation_id
+        .unwrap_or_else(|| "default".to_string());
 
     // Use the default agent to process the message
     let agents = state.agents.read().await;
@@ -1695,9 +1749,12 @@ async fn chat_handler(
         };
 
         if let Err(e) = agent_handle.tx.send(cmd).await {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to send message to agent: {}", e),
-            })));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to send message to agent: {}", e),
+                })),
+            );
         }
 
         // Drop the agents lock so we don't hold it while waiting
@@ -1710,17 +1767,23 @@ async fn chat_handler(
         loop {
             // Check for timeout
             if start.elapsed() > timeout {
-                return (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({
-                    "error": "Request timeout",
-                })));
+                return (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(serde_json::json!({
+                        "error": "Request timeout",
+                    })),
+                );
             }
 
             // Wait for event with a smaller timeout to allow checking
-            match tokio::time::timeout(
-                tokio::time::Duration::from_millis(100),
-                event_rx.recv()
-            ).await {
-                Ok(Ok(GatewayEvent::AgentResponse { session_id, agent_id: _, content })) => {
+            match tokio::time::timeout(tokio::time::Duration::from_millis(100), event_rx.recv())
+                .await
+            {
+                Ok(Ok(GatewayEvent::AgentResponse {
+                    session_id,
+                    agent_id: _,
+                    content,
+                })) => {
                     if session_id == conversation_id {
                         let resp = serde_json::json!({
                             "response": content,
@@ -1736,9 +1799,12 @@ async fn chat_handler(
                 }
                 Ok(Err(_)) => {
                     // Event channel closed
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                        "error": "Event channel closed",
-                    })));
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": "Event channel closed",
+                        })),
+                    );
                 }
                 Err(_) => {
                     // Timeout on recv, continue loop to check overall timeout
@@ -1747,9 +1813,12 @@ async fn chat_handler(
             }
         }
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
-            "error": "No default agent available",
-        })))
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "No default agent available",
+            })),
+        )
     }
 }
 
@@ -1760,10 +1829,7 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_websocket(socket, state))
 }
 
-async fn handle_websocket(
-    socket: axum::extract::ws::WebSocket,
-    state: Arc<GatewayState>,
-) {
+async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: Arc<GatewayState>) {
     use axum::extract::ws::Message;
     use futures_util::{SinkExt, StreamExt};
 
@@ -1812,9 +1878,7 @@ async fn handle_websocket(
     info!("Gateway events WebSocket disconnected");
 }
 
-async fn list_agents_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let agents = state.agents.read().await;
     let list: Vec<_> = agents
         .iter()
@@ -1832,8 +1896,8 @@ async fn create_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Json(config): Json<AgentConfig>,
 ) -> impl IntoResponse {
-    use tracing::info;
     use crate::agent::Agent;
+    use tracing::info;
 
     // Generate unique agent ID
     let agent_id = format!("agent-{}", uuid::Uuid::new_v4());
@@ -1928,7 +1992,8 @@ async fn get_agent_handler(
         Some(agent) => Json(serde_json::json!({
             "id": agent.id,
             "busy": agent.busy,
-        })).into_response(),
+        }))
+        .into_response(),
         None => (StatusCode::NOT_FOUND, "Agent not found").into_response(),
     }
 }
@@ -1981,9 +2046,7 @@ async fn delete_agent_handler(
     StatusCode::NO_CONTENT
 }
 
-async fn list_channels_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_channels_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let channels = state.channels.read().await;
     let list: Vec<_> = channels.keys().cloned().collect();
     Json(list)
@@ -2003,11 +2066,15 @@ async fn send_message_handler(
 
     // If provider override is specified, we route through that provider
     if let Some(provider_name) = provider_override {
-        match state.model_router.complete_with_provider(
-            &provider_name,
-            body.model_id,
-            vec![crate::providers::Message::user(body.message.clone())],
-        ).await {
+        match state
+            .model_router
+            .complete_with_provider(
+                &provider_name,
+                body.model_id,
+                vec![crate::providers::Message::user(body.message.clone())],
+            )
+            .await
+        {
             Ok(response) => {
                 let resp = serde_json::json!({
                     "message_id": message_id,
@@ -2042,9 +2109,13 @@ async fn send_message_handler(
     };
 
     if let Err(e) = state.message_queue.send(queued_msg).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "error": format!("Failed to queue message: {}", e),
-        }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Failed to queue message: {}", e),
+            })),
+        )
+            .into_response();
     }
 
     let resp = serde_json::json!({
@@ -2070,18 +2141,24 @@ async fn get_conversation_history_handler(
     // Access storage directly to get chat history
     let storage = state.storage.read().await;
 
-    match storage.get_conversation_history(&conversation_id, limit).await {
+    match storage
+        .get_conversation_history(&conversation_id, limit)
+        .await
+    {
         Ok(messages) => {
-            let messages_json: Vec<_> = messages.into_iter().map(|m| {
-                serde_json::json!({
-                    "id": m.id,
-                    "conversation_id": m.conversation_id,
-                    "user_id": m.user_id,
-                    "role": m.role,
-                    "content": m.content,
-                    "created_at": m.created_at,
+            let messages_json: Vec<_> = messages
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "conversation_id": m.conversation_id,
+                        "user_id": m.user_id,
+                        "role": m.role,
+                        "content": m.content,
+                        "created_at": m.created_at,
+                    })
                 })
-            }).collect();
+                .collect();
 
             let resp = serde_json::json!({
                 "conversation_id": conversation_id,
@@ -2091,9 +2168,12 @@ async fn get_conversation_history_handler(
         }
         Err(e) => {
             error!("Failed to get conversation history: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to get conversation history: {}", e)
-            })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to get conversation history: {}", e)
+                })),
+            )
         }
     }
 }
@@ -2103,7 +2183,10 @@ async fn get_last_conversation_handler(
     State(state): State<Arc<GatewayState>>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let user_id = params.get("user_id").cloned().unwrap_or_else(|| "web_user".to_string());
+    let user_id = params
+        .get("user_id")
+        .cloned()
+        .unwrap_or_else(|| "web_user".to_string());
 
     // Access storage directly to get last conversation
     let storage = state.storage.read().await;
@@ -2118,16 +2201,17 @@ async fn get_last_conversation_handler(
         }
         Err(e) => {
             error!("Failed to get last conversation: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to get last conversation: {}", e)
-            })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to get last conversation: {}", e)
+                })),
+            )
         }
     }
 }
 
-async fn status_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let agents = state.agents.read().await;
     let channels = state.channels.read().await;
 
@@ -2167,9 +2251,7 @@ async fn handle_canvas_websocket(
 
     let canvas_session = match state.canvas_manager.get_session(&canvas_id).await {
         Some(session) => session,
-        None => {
-            state.canvas_manager.create_session(event_tx).await
-        }
+        None => state.canvas_manager.create_session(event_tx).await,
     };
 
     // Subscribe to updates
@@ -2208,9 +2290,7 @@ async fn handle_canvas_websocket(
     info!("Canvas WebSocket disconnected: {}", canvas_id.0);
 }
 
-async fn create_canvas_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn create_canvas_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let (event_tx, _) = mpsc::channel(100);
     let session = state.canvas_manager.create_session(event_tx).await;
 
@@ -2230,13 +2310,12 @@ async fn get_canvas_handler(
     let canvas_id = crate::canvas::CanvasId(id.clone());
 
     match state.canvas_manager.get_session(&canvas_id).await {
-        Some(session) => {
-            Json(serde_json::json!({
-                "canvas_id": id,
-                "status": "active",
-                "session_id": session.id.0,
-            })).into_response()
-        }
+        Some(session) => Json(serde_json::json!({
+            "canvas_id": id,
+            "status": "active",
+            "session_id": session.id.0,
+        }))
+        .into_response(),
         None => {
             let error = serde_json::json!({
                 "error": format!("Canvas '{}' not found", id),
@@ -2259,9 +2338,7 @@ async fn delete_canvas_handler(
 
 // Provider Management Handlers
 
-async fn list_providers_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_providers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let providers = state.model_router.list_providers().await;
     Json(serde_json::json!({
         "providers": providers,
@@ -2402,7 +2479,11 @@ async fn set_fallback_chain_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SetFallbackChainRequest>,
 ) -> impl IntoResponse {
-    match state.model_router.set_fallback_chain(&alias, body.providers).await {
+    match state
+        .model_router
+        .set_fallback_chain(&alias, body.providers)
+        .await
+    {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -2420,18 +2501,14 @@ async fn set_fallback_chain_handler(
     }
 }
 
-async fn list_models_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let aliases = state.model_router.list_aliases().await;
     Json(serde_json::json!({
         "aliases": aliases,
     }))
 }
 
-async fn get_default_model_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn get_default_model_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let default = state.model_router.get_default_model().await;
     Json(serde_json::json!({
         "default_model": default,
@@ -2460,7 +2537,10 @@ async fn memory_search_handler(
     let vector_memory = state.vector_memory.read().await;
     match vector_memory.as_ref() {
         Some(vm) => {
-            match vm.search_collection(&body.query, body.limit, &body.collection).await {
+            match vm
+                .search_collection(&body.query, body.limit, &body.collection)
+                .await
+            {
                 Ok(results) => {
                     let response = serde_json::json!({
                         "query": body.query,
@@ -2502,7 +2582,10 @@ async fn memory_add_handler(
     let vector_memory = state.vector_memory.read().await;
     match vector_memory.as_ref() {
         Some(vm) => {
-            match vm.add_to_collection(&body.content, body.metadata, &body.collection).await {
+            match vm
+                .add_to_collection(&body.content, body.metadata, &body.collection)
+                .await
+            {
                 Ok(doc_id) => {
                     let response = serde_json::json!({
                         "document_id": doc_id,
@@ -2551,9 +2634,7 @@ async fn list_memory_collections_handler(
 
 // Plugin Management API Handlers
 
-async fn list_plugins_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let plugins = state.plugin_manager.list_plugins().await;
     let plugin_list: Vec<_> = plugins
         .iter()
@@ -2638,9 +2719,7 @@ async fn unload_plugin_handler(
 
 // Skills API Handlers
 
-async fn list_skills_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let skills_manager = state.skills_manager.read().await;
     let skills = skills_manager.list_skills().await;
 
@@ -2792,9 +2871,7 @@ async fn run_skill_handler(
 
 // ACP (Agent Control Plane) API Handlers
 
-async fn list_acp_sessions_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_acp_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let subagents = state.acp.list_subagents().await;
     let sessions: Vec<_> = subagents
         .iter()
@@ -2860,16 +2937,17 @@ async fn spawn_subagent_handler(
         timeout_seconds: Some(300),
     };
 
-    match state.acp.spawn_subagent(session_id.clone(), parent_id, config).await {
+    match state
+        .acp
+        .spawn_subagent(session_id.clone(), parent_id, config)
+        .await
+    {
         Ok(handle) => {
             let subagent_id = handle.id.clone();
 
             // Send task to subagent
-            let message = IncomingMessage::new(
-                "api-user".to_string(),
-                session_id.to_string(),
-                body.task,
-            );
+            let message =
+                IncomingMessage::new("api-user".to_string(), session_id.to_string(), body.task);
 
             match state.acp.send_message(&subagent_id, message).await {
                 Ok(response) => {
@@ -2949,11 +3027,8 @@ async fn acp_session_message_handler(
 
     // Use the first active subagent
     let subagent = &subagents[0];
-    let message = IncomingMessage::new(
-        "api-user".to_string(),
-        session_id.to_string(),
-        body.message,
-    );
+    let message =
+        IncomingMessage::new("api-user".to_string(), session_id.to_string(), body.message);
 
     match state.acp.send_message(&subagent.id, message).await {
         Ok(response) => {

@@ -33,7 +33,9 @@ pub enum ProgressEvent {
 }
 
 /// Callback type for progress updates
-pub type ProgressCallback = Arc<dyn Fn(ProgressEvent) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+pub type ProgressCallback = Arc<
+    dyn Fn(ProgressEvent) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
 
 pub mod budget;
 pub mod compressor;
@@ -55,8 +57,12 @@ fn is_obviously_time_sensitive(message: &str) -> bool {
 
     // Only check for obvious time keywords that clearly indicate real-time needs
     let obvious_time_queries = [
-        "what time is it", "current time", "what's the time",
-        "现在几点", "当前时间", "现在时间",
+        "what time is it",
+        "current time",
+        "what's the time",
+        "现在几点",
+        "当前时间",
+        "现在时间",
     ];
 
     for query in &obvious_time_queries {
@@ -133,9 +139,14 @@ Reply with ONLY "CACHE" or "NOCACHE"."#,
 fn are_tools_cacheable(tool_names: &[String]) -> bool {
     // Non-cacheable tools that return time-sensitive or real-time data
     let non_cacheable = [
-        "datetime", "time", "clock", "date",
-        "weather_current", "weather_now",
-        "stock_price", "crypto_price",
+        "datetime",
+        "time",
+        "clock",
+        "date",
+        "weather_current",
+        "weather_now",
+        "stock_price",
+        "crypto_price",
     ];
 
     for tool in tool_names {
@@ -185,7 +196,12 @@ impl ResponseCache {
     }
 
     /// Get cached response if not expired
-    pub async fn get(&self, user_id: &str, conversation_id: &str, message: &str) -> Option<CachedResponse> {
+    pub async fn get(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        message: &str,
+    ) -> Option<CachedResponse> {
         let key = Self::generate_key(user_id, conversation_id, message);
         let cache = self.cache.read().await;
 
@@ -200,7 +216,14 @@ impl ResponseCache {
     }
 
     /// Store a response in cache
-    pub async fn set(&self, user_id: &str, conversation_id: &str, message: &str, response: String, tools_used: Vec<String>) {
+    pub async fn set(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        message: &str,
+        response: String,
+        tools_used: Vec<String>,
+    ) {
         let key = Self::generate_key(user_id, conversation_id, message);
         let entry = CachedResponse {
             response,
@@ -215,9 +238,7 @@ impl ResponseCache {
         if cache.len() > 1000 {
             let keys_to_remove: Vec<u64> = cache
                 .iter()
-                .filter(|(_, v)| {
-                    v.created_at.elapsed().unwrap_or(Duration::MAX) > self.ttl
-                })
+                .filter(|(_, v)| v.created_at.elapsed().unwrap_or(Duration::MAX) > self.ttl)
                 .map(|(k, _)| *k)
                 .collect();
 
@@ -230,9 +251,7 @@ impl ResponseCache {
     /// Clear expired entries
     pub async fn cleanup(&self) {
         let mut cache = self.cache.write().await;
-        cache.retain(|_, v| {
-            v.created_at.elapsed().unwrap_or(Duration::MAX) < self.ttl
-        });
+        cache.retain(|_, v| v.created_at.elapsed().unwrap_or(Duration::MAX) < self.ttl);
     }
 }
 
@@ -366,11 +385,7 @@ pub struct Agent {
 
 impl Agent {
     /// Create a new Agent
-    pub fn new(
-        config: AgentConfig,
-        provider: Arc<dyn Provider>,
-        tools: Arc<ToolRegistry>,
-    ) -> Self {
+    pub fn new(config: AgentConfig, provider: Arc<dyn Provider>, tools: Arc<ToolRegistry>) -> Self {
         let provider_clone = provider.clone();
 
         Self {
@@ -458,7 +473,10 @@ impl Agent {
         prompt_ctx.detect_task_type();
 
         // Set phase based on existing context or new conversation
-        let history_len = existing_context.as_ref().map(|c| c.history().len()).unwrap_or(0);
+        let history_len = existing_context
+            .as_ref()
+            .map(|c| c.history().len())
+            .unwrap_or(0);
         prompt_ctx = prompt_ctx.set_phase(history_len);
 
         // Check for active plan
@@ -494,7 +512,10 @@ impl Agent {
         // Set dynamic tool iteration limit based on message complexity
         let dynamic_limit = Context::calculate_dynamic_limit(user_message);
         context.set_max_tool_iterations(dynamic_limit);
-        info!("Set dynamic tool iteration limit: {} for conversation {}", dynamic_limit, conversation_id);
+        info!(
+            "Set dynamic tool iteration limit: {} for conversation {}",
+            dynamic_limit, conversation_id
+        );
 
         contexts.insert(conversation_id.to_string(), context.clone());
         context
@@ -514,26 +535,30 @@ impl Agent {
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
         // Skip cache if this looks like a follow-up (short message referring to previous context)
-        let is_follow_up = content.len() < 50 &&
-            (content.contains("it") || content.contains("that") || content.contains("this") ||
-             content.contains("上面的") || content.contains("这个") || content.contains("那个"));
+        let is_follow_up = content.len() < 50
+            && (content.contains("it")
+                || content.contains("that")
+                || content.contains("this")
+                || content.contains("上面的")
+                || content.contains("这个")
+                || content.contains("那个"));
 
         // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
+        let should_cache = !is_follow_up
+            && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
 
         if should_cache {
-            if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
+            if let Some(cached) = self
+                .response_cache
+                .get(&user_id, &conversation_id, &content)
+                .await
+            {
                 info!("Cache hit for user {} - returning cached response", user_id);
 
                 // Store user message in chat history
                 if let Some(ref store) = self.chat_history {
                     use crate::memory::{ChatHistoryStore, ChatMessage};
-                    let chat_msg = ChatMessage::new(
-                        &conversation_id,
-                        &user_id,
-                        "user",
-                        &content,
-                    );
+                    let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store user message: {}", e);
                     }
@@ -542,12 +567,8 @@ impl Agent {
                 // Store cached assistant response in chat history
                 if let Some(ref store) = self.chat_history {
                     use crate::memory::{ChatHistoryStore, ChatMessage};
-                    let chat_msg = ChatMessage::new(
-                        &conversation_id,
-                        &user_id,
-                        "assistant",
-                        &cached.response,
-                    );
+                    let chat_msg =
+                        ChatMessage::new(&conversation_id, &user_id, "assistant", &cached.response);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store assistant message: {}", e);
                     }
@@ -565,12 +586,7 @@ impl Agent {
         let message_id = uuid::Uuid::new_v4().to_string();
         if let Some(ref store) = self.chat_history {
             use crate::memory::{ChatHistoryStore, ChatMessage};
-            let chat_msg = ChatMessage::new(
-                &conversation_id,
-                &user_id,
-                "user",
-                &content,
-            );
+            let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
             // Clone message_id before moving chat_msg
             let msg_id = chat_msg.id.clone();
             if let Err(e) = store.store_message(chat_msg).await {
@@ -578,13 +594,19 @@ impl Agent {
             }
             // Index for session search
             if let Some(ref search) = self.session_search {
-                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &content, "user").await {
+                if let Err(e) = search
+                    .index_message(&msg_id, &conversation_id, &user_id, &content, "user")
+                    .await
+                {
                     error!("Failed to index user message for search: {}", e);
                 }
             }
         } else if let Some(ref search) = self.session_search {
             // Even if chat history is not enabled, index for search
-            if let Err(e) = search.index_message(&message_id, &conversation_id, &user_id, &content, "user").await {
+            if let Err(e) = search
+                .index_message(&message_id, &conversation_id, &user_id, &content, "user")
+                .await
+            {
                 error!("Failed to index user message for search: {}", e);
             }
         }
@@ -637,10 +659,7 @@ impl Agent {
         let active_plan_check = {
             let plans = self.active_plans.read().await;
             plans.get(&conversation_id).map(|p| {
-                (
-                    p.plan.progress_percent(),
-                    p.plan.current_task().map(|t| t.description.clone()),
-                )
+                (p.plan.progress_percent(), p.plan.current_task().map(|t| t.description.clone()))
             })
         };
 
@@ -667,26 +686,46 @@ impl Agent {
             }
             // Index for session search
             if let Some(ref search) = self.session_search {
-                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+                if let Err(e) = search
+                    .index_message(
+                        &msg_id,
+                        &conversation_id,
+                        &user_id,
+                        &response.message.content,
+                        "assistant",
+                    )
+                    .await
+                {
                     error!("Failed to index assistant message for search: {}", e);
                 }
             }
         } else if let Some(ref search) = self.session_search {
             // Even if chat history is not enabled, index for search
-            if let Err(e) = search.index_message(&assistant_message_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+            if let Err(e) = search
+                .index_message(
+                    &assistant_message_id,
+                    &conversation_id,
+                    &user_id,
+                    &response.message.content,
+                    "assistant",
+                )
+                .await
+            {
                 error!("Failed to index assistant message for search: {}", e);
             }
         }
 
         // Only cache the response if it should be cached
         if should_cache {
-            self.response_cache.set(
-                &user_id,
-                &conversation_id,
-                &content,
-                response.message.content.clone(),
-                vec![], // TODO: Track actual tools used
-            ).await;
+            self.response_cache
+                .set(
+                    &user_id,
+                    &conversation_id,
+                    &content,
+                    response.message.content.clone(),
+                    vec![], // TODO: Track actual tools used
+                )
+                .await;
         }
 
         // Create outgoing message
@@ -715,32 +754,37 @@ impl Agent {
         (progress_cb)(ProgressEvent::Started).await;
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
-        let is_follow_up = content.len() < 50 &&
-            (content.contains("it") || content.contains("that") || content.contains("this") ||
-             content.contains("上面的") || content.contains("这个") || content.contains("那个"));
+        let is_follow_up = content.len() < 50
+            && (content.contains("it")
+                || content.contains("that")
+                || content.contains("this")
+                || content.contains("上面的")
+                || content.contains("这个")
+                || content.contains("那个"));
 
         // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
+        let should_cache = !is_follow_up
+            && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
 
         if should_cache {
-            if let Some(cached) = self.response_cache.get(&user_id, &conversation_id, &content).await {
+            if let Some(cached) = self
+                .response_cache
+                .get(&user_id, &conversation_id, &content)
+                .await
+            {
                 info!("Cache hit for user {} - returning cached response", user_id);
 
                 // Notify cache hit
                 (progress_cb)(ProgressEvent::ToolCalling {
                     name: "cache".to_string(),
                     arguments: "{\"hit\": true}".to_string(),
-                }).await;
+                })
+                .await;
 
                 // Store user message in chat history
                 if let Some(ref store) = self.chat_history {
                     use crate::memory::{ChatHistoryStore, ChatMessage};
-                    let chat_msg = ChatMessage::new(
-                        &conversation_id,
-                        &user_id,
-                        "user",
-                        &content,
-                    );
+                    let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store user message: {}", e);
                     }
@@ -749,19 +793,18 @@ impl Agent {
                 // Store cached assistant response in chat history
                 if let Some(ref store) = self.chat_history {
                     use crate::memory::{ChatHistoryStore, ChatMessage};
-                    let chat_msg = ChatMessage::new(
-                        &conversation_id,
-                        &user_id,
-                        "assistant",
-                        &cached.response,
-                    );
+                    let chat_msg =
+                        ChatMessage::new(&conversation_id, &user_id, "assistant", &cached.response);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store assistant message: {}", e);
                     }
                 }
 
                 // Notify completed with cached response
-                (progress_cb)(ProgressEvent::Completed { response: cached.response.clone() }).await;
+                (progress_cb)(ProgressEvent::Completed {
+                    response: cached.response.clone(),
+                })
+                .await;
 
                 // Return cached response
                 return Ok(OutgoingMessage::new(
@@ -775,23 +818,24 @@ impl Agent {
         let message_id = uuid::Uuid::new_v4().to_string();
         if let Some(ref store) = self.chat_history {
             use crate::memory::{ChatHistoryStore, ChatMessage};
-            let chat_msg = ChatMessage::new(
-                &conversation_id,
-                &user_id,
-                "user",
-                &content,
-            );
+            let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
             let msg_id = chat_msg.id.clone();
             if let Err(e) = store.store_message(chat_msg).await {
                 error!("Failed to store user message: {}", e);
             }
             if let Some(ref search) = self.session_search {
-                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &content, "user").await {
+                if let Err(e) = search
+                    .index_message(&msg_id, &conversation_id, &user_id, &content, "user")
+                    .await
+                {
                     error!("Failed to index user message for search: {}", e);
                 }
             }
         } else if let Some(ref search) = self.session_search {
-            if let Err(e) = search.index_message(&message_id, &conversation_id, &user_id, &content, "user").await {
+            if let Err(e) = search
+                .index_message(&message_id, &conversation_id, &user_id, &content, "user")
+                .await
+            {
                 error!("Failed to index user message for search: {}", e);
             }
         }
@@ -803,7 +847,9 @@ impl Agent {
         context.add_message(Message::user(&content));
 
         // Get response from LLM with progress
-        let response = self.get_completion_with_progress(&mut context, progress_cb.clone()).await?;
+        let response = self
+            .get_completion_with_progress(&mut context, progress_cb.clone())
+            .await?;
 
         // Store assistant response
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
@@ -820,30 +866,47 @@ impl Agent {
                 error!("Failed to store assistant message: {}", e);
             }
             if let Some(ref search) = self.session_search {
-                if let Err(e) = search.index_message(&msg_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+                if let Err(e) = search
+                    .index_message(
+                        &msg_id,
+                        &conversation_id,
+                        &user_id,
+                        &response.message.content,
+                        "assistant",
+                    )
+                    .await
+                {
                     error!("Failed to index assistant message for search: {}", e);
                 }
             }
         } else if let Some(ref search) = self.session_search {
-            if let Err(e) = search.index_message(&assistant_message_id, &conversation_id, &user_id, &response.message.content, "assistant").await {
+            if let Err(e) = search
+                .index_message(
+                    &assistant_message_id,
+                    &conversation_id,
+                    &user_id,
+                    &response.message.content,
+                    "assistant",
+                )
+                .await
+            {
                 error!("Failed to index assistant message for search: {}", e);
             }
         }
 
         // Only cache the response if it should be cached
         if should_cache {
-            self.response_cache.set(
-                &user_id,
-                &conversation_id,
-                &content,
-                response.message.content.clone(),
-                vec![],
-            ).await;
+            self.response_cache
+                .set(&user_id, &conversation_id, &content, response.message.content.clone(), vec![])
+                .await;
         }
 
         // Notify completed
         let response_content = response.message.content.clone();
-        (progress_cb)(ProgressEvent::Completed { response: response_content.clone() }).await;
+        (progress_cb)(ProgressEvent::Completed {
+            response: response_content.clone(),
+        })
+        .await;
 
         // Create outgoing message
         let outgoing = OutgoingMessage::new(
@@ -855,7 +918,10 @@ impl Agent {
     }
 
     /// Get a completion from the LLM, handling tool calls
-    async fn get_completion(&self, context: &mut Context) -> crate::Result<crate::providers::CompletionResponse> {
+    async fn get_completion(
+        &self,
+        context: &mut Context,
+    ) -> crate::Result<crate::providers::CompletionResponse> {
         let messages = context.to_messages();
 
         // Get available tools
@@ -932,8 +998,8 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools concurrently (up to limit)
-        let tool_context = ToolContext::new("user", context.id())
-            .with_timeout(std::time::Duration::from_secs(30));
+        let tool_context =
+            ToolContext::new("user", context.id()).with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
@@ -956,7 +1022,11 @@ impl Agent {
 
             debug!("Executing tool: {}", tool_name);
 
-            let result = match self.tools.execute_call(&tool_call.function, &tool_context).await {
+            let result = match self
+                .tools
+                .execute_call(&tool_call.function, &tool_context)
+                .await
+            {
                 Ok(exec_result) => {
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     info!("Tool {} executed successfully", tool_call.function.name);
@@ -1079,8 +1149,8 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools with progress
-        let tool_context = ToolContext::new("user", context.id())
-            .with_timeout(std::time::Duration::from_secs(30));
+        let tool_context =
+            ToolContext::new("user", context.id()).with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
@@ -1095,8 +1165,10 @@ impl Agent {
                 // Notify about duplicate
                 (progress_cb)(ProgressEvent::ToolResult {
                     name: tool_name.clone(),
-                    result: "[Duplicate tool call skipped - already executed with same parameters]".to_string(),
-                }).await;
+                    result: "[Duplicate tool call skipped - already executed with same parameters]"
+                        .to_string(),
+                })
+                .await;
 
                 // Add error result so LLM knows this failed
                 results.push(ToolResult::error(
@@ -1118,7 +1190,11 @@ impl Agent {
 
             debug!("Executing tool: {}", tool_name);
 
-            let result = match self.tools.execute_call(&tool_call.function, &tool_context).await {
+            let result = match self
+                .tools
+                .execute_call(&tool_call.function, &tool_context)
+                .await
+            {
                 Ok(exec_result) => {
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     let result_str = tool_result.content.clone();
@@ -1259,8 +1335,9 @@ impl AgentBuilder {
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
             self.config.unwrap_or_default(),
-            self.provider
-                .ok_or_else(|| crate::error::MantaError::Validation("Provider required".to_string()))?,
+            self.provider.ok_or_else(|| {
+                crate::error::MantaError::Validation("Provider required".to_string())
+            })?,
             self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
         );
 

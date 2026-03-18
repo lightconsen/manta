@@ -164,12 +164,10 @@ impl DaemonClient {
     /// Check if daemon is running and has AI agent
     pub async fn health(&self) -> crate::Result<HealthResponse> {
         let url = format!("{}/health", self.base_url);
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to connect: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Failed to connect: {}", e))
+            })?;
 
         let health: HealthResponse = response
             .json()
@@ -225,9 +223,9 @@ impl DaemonClient {
         conversation_id: Option<&str>,
     ) -> crate::Result<ChatResponse> {
         let url = &self.ws_url;
-        let (ws_stream, _) = connect_async(url)
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("WebSocket connect failed: {}", e)))?;
+        let (ws_stream, _) = connect_async(url).await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("WebSocket connect failed: {}", e))
+        })?;
 
         let (mut write, mut read) = ws_stream.split();
 
@@ -239,16 +237,17 @@ impl DaemonClient {
         let msg = serde_json::to_string(&request)
             .map_err(|e| crate::error::MantaError::Internal(format!("JSON error: {}", e)))?;
 
-        write.send(Message::Text(msg))
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("WebSocket send failed: {}", e)))?;
+        write.send(Message::Text(msg)).await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("WebSocket send failed: {}", e))
+        })?;
 
         // Receive response
         if let Some(msg) = read.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    let response: ChatResponse = serde_json::from_str(&text)
-                        .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+                    let response: ChatResponse = serde_json::from_str(&text).map_err(|e| {
+                        crate::error::MantaError::Internal(format!("Invalid response: {}", e))
+                    })?;
                     Ok(response)
                 }
                 Ok(Message::Close(_)) => {
@@ -257,9 +256,7 @@ impl DaemonClient {
                 Err(e) => {
                     Err(crate::error::MantaError::Internal(format!("WebSocket error: {}", e)))
                 }
-                _ => {
-                    Err(crate::error::MantaError::Internal("Unexpected message type".to_string()))
-                }
+                _ => Err(crate::error::MantaError::Internal("Unexpected message type".to_string())),
             }
         } else {
             Err(crate::error::MantaError::Internal("No response received".to_string()))
@@ -281,10 +278,14 @@ impl DaemonClient {
     /// Get Gateway status
     pub async fn get_status(&self) -> crate::Result<GatewayStatus> {
         let url = format!("{}/api/v1/status", self.base_url);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let status = response.json().await
+        let status = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(status)
     }
@@ -292,10 +293,14 @@ impl DaemonClient {
     /// Get list of providers
     pub async fn get_providers(&self) -> crate::Result<Vec<ProviderInfo>> {
         let url = format!("{}/api/v1/providers", self.base_url);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let providers = response.json().await
+        let providers = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(providers)
     }
@@ -303,10 +308,14 @@ impl DaemonClient {
     /// Get list of model aliases
     pub async fn get_models(&self) -> crate::Result<ModelsResponse> {
         let url = format!("{}/api/v1/models", self.base_url);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let models = response.json().await
+        let models = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(models)
     }
@@ -314,10 +323,14 @@ impl DaemonClient {
     /// Get default model
     pub async fn get_default_model(&self) -> crate::Result<DefaultModelResponse> {
         let url = format!("{}/api/v1/models/default", self.base_url);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let model = response.json().await
+        let model = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(model)
     }
@@ -327,10 +340,17 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers/switch", self.base_url);
         let body = serde_json::json!({ "model": model });
 
-        let response = self.client.post(&url).json(&body).send().await
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
@@ -338,10 +358,14 @@ impl DaemonClient {
     /// Enable a provider
     pub async fn enable_provider(&self, provider: &str) -> crate::Result<OperationResult> {
         let url = format!("{}/api/v1/providers/{}/enable", self.base_url, provider);
-        let response = self.client.post(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.post(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
@@ -349,21 +373,32 @@ impl DaemonClient {
     /// Disable a provider
     pub async fn disable_provider(&self, provider: &str) -> crate::Result<OperationResult> {
         let url = format!("{}/api/v1/providers/{}/disable", self.base_url, provider);
-        let response = self.client.post(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.post(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
     /// Check provider health
-    pub async fn check_provider_health(&self, provider: &str) -> crate::Result<HealthCheckResponse> {
+    pub async fn check_provider_health(
+        &self,
+        provider: &str,
+    ) -> crate::Result<HealthCheckResponse> {
         let url = format!("{}/api/v1/providers/{}/check", self.base_url, provider);
-        let response = self.client.post(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.post(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
@@ -371,10 +406,14 @@ impl DaemonClient {
     /// Get fallback chain for an alias
     pub async fn get_fallback_chain(&self, alias: &str) -> crate::Result<FallbackChainResponse> {
         let url = format!("{}/api/v1/providers/fallback/{}", self.base_url, alias);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
@@ -382,10 +421,14 @@ impl DaemonClient {
     /// Get list of agents
     pub async fn get_agents(&self) -> crate::Result<Vec<AgentInfo>> {
         let url = format!("{}/api/v1/agents", self.base_url);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
-        let agents = response.json().await
+        let agents = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(agents)
     }
@@ -405,19 +448,35 @@ impl DaemonClient {
             "model_alias": model,
         });
 
-        let response = self.client.post(&url).json(&body).send().await
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
     /// Get chat history for a conversation
-    pub async fn get_chat_history(&self, conversation_id: &str, limit: usize) -> crate::Result<ChatHistoryResponse> {
-        let url = format!("{}/api/v1/conversations/{}/messages?limit={}", self.base_url, conversation_id, limit);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+    pub async fn get_chat_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> crate::Result<ChatHistoryResponse> {
+        let url = format!(
+            "{}/api/v1/conversations/{}/messages?limit={}",
+            self.base_url, conversation_id, limit
+        );
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -426,16 +485,23 @@ impl DaemonClient {
             )));
         }
 
-        let history = response.json().await
+        let history = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(history)
     }
 
     /// Get last conversation ID for a user
-    pub async fn get_last_conversation(&self, user_id: &str) -> crate::Result<LastConversationResponse> {
+    pub async fn get_last_conversation(
+        &self,
+        user_id: &str,
+    ) -> crate::Result<LastConversationResponse> {
         let url = format!("{}/api/v1/conversations/last?user_id={}", self.base_url, user_id);
-        let response = self.client.get(&url).send().await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::Internal(format!(
@@ -444,7 +510,9 @@ impl DaemonClient {
             )));
         }
 
-        let result = response.json().await
+        let result = response
+            .json()
+            .await
             .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
@@ -461,15 +529,15 @@ pub async fn check_daemon() -> crate::Result<DaemonClient> {
             } else {
                 Err(crate::error::MantaError::Internal(
                     "Daemon is running but AI agent is not configured.\n\
-                     Set MANTA_BASE_URL and MANTA_API_KEY, then restart daemon.".to_string()
+                     Set MANTA_BASE_URL and MANTA_API_KEY, then restart daemon."
+                        .to_string(),
                 ))
             }
         }
-        Err(_) => {
-            Err(crate::error::MantaError::Internal(
-                "Daemon is not running.\n\
-                 Start it with: manta start".to_string()
-            ))
-        }
+        Err(_) => Err(crate::error::MantaError::Internal(
+            "Daemon is not running.\n\
+                 Start it with: manta start"
+                .to_string(),
+        )),
     }
 }

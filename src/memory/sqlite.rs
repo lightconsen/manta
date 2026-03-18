@@ -1,8 +1,11 @@
 //! SQLite implementation of the MemoryStore trait
 
-use super::{ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore, cosine_similarity};
+use super::{
+    cosine_similarity, ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats,
+    MemoryStore,
+};
 use async_trait::async_trait;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use tracing::{debug, info};
@@ -77,17 +80,13 @@ impl SqliteMemoryStore {
             ("idx_memories_type", "memory_type"),
             ("idx_memories_expires", "expires_at"),
         ] {
-            let sql = format!(
-                "CREATE INDEX IF NOT EXISTS {} ON memories({})",
-                idx_name, col
-            );
-            sqlx::query(&sql)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| crate::error::MantaError::Storage {
+            let sql = format!("CREATE INDEX IF NOT EXISTS {} ON memories({})", idx_name, col);
+            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
+                crate::error::MantaError::Storage {
                     context: format!("Failed to create index {}", idx_name),
                     details: e.to_string(),
-                })?;
+                }
+            })?;
         }
 
         // Create chat_messages table for conversation history
@@ -117,17 +116,13 @@ impl SqliteMemoryStore {
             ("idx_chat_user", "user_id"),
             ("idx_chat_created", "created_at"),
         ] {
-            let sql = format!(
-                "CREATE INDEX IF NOT EXISTS {} ON chat_messages({})",
-                idx_name, col
-            );
-            sqlx::query(&sql)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| crate::error::MantaError::Storage {
+            let sql = format!("CREATE INDEX IF NOT EXISTS {} ON chat_messages({})", idx_name, col);
+            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
+                crate::error::MantaError::Storage {
                     context: format!("Failed to create index {}", idx_name),
                     details: e.to_string(),
-                })?;
+                }
+            })?;
         }
 
         debug!("Database schema created successfully");
@@ -136,14 +131,13 @@ impl SqliteMemoryStore {
 
     /// Serialize embedding to bytes
     fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
-        embedding.iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect()
+        embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
     /// Deserialize embedding from bytes
     fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-        bytes.chunks_exact(4)
+        bytes
+            .chunks_exact(4)
             .map(|chunk| {
                 let arr: [u8; 4] = chunk.try_into().unwrap_or([0; 4]);
                 f32::from_le_bytes(arr)
@@ -180,11 +174,9 @@ impl SqliteMemoryStore {
         metadata_str: Option<String>,
     ) -> crate::Result<Memory> {
         let embedding = embedding_bytes.map(|b| Self::deserialize_embedding(&b));
-        let created_at = Self::secs_to_system_time(created_at_secs)
-            .unwrap_or_else(SystemTime::now);
+        let created_at = Self::secs_to_system_time(created_at_secs).unwrap_or_else(SystemTime::now);
         let expires_at = expires_at_secs.and_then(Self::secs_to_system_time);
-        let metadata = metadata_str
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok(Memory {
             id: MemoryId::new(id),
@@ -205,12 +197,16 @@ impl MemoryStore for SqliteMemoryStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         debug!("Storing memory: {}", memory.id);
 
-        let embedding_bytes = memory.embedding.as_ref()
+        let embedding_bytes = memory
+            .embedding
+            .as_ref()
             .map(|e| Self::serialize_embedding(e));
 
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
-        let metadata_str = memory.metadata.as_ref()
+        let metadata_str = memory
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
 
         sqlx::query(
@@ -258,14 +254,22 @@ impl MemoryStore for SqliteMemoryStore {
             Some(row) => {
                 let memory = Self::build_memory(
                     row.try_get("id").map_err(|e| storage_err("id", e))?,
-                    row.try_get("user_id").map_err(|e| storage_err("user_id", e))?,
-                    row.try_get("conversation_id").map_err(|e| storage_err("conversation_id", e))?,
-                    row.try_get("content").map_err(|e| storage_err("content", e))?,
-                    row.try_get("memory_type").map_err(|e| storage_err("memory_type", e))?,
-                    row.try_get("embedding").map_err(|e| storage_err("embedding", e))?,
-                    row.try_get("created_at").map_err(|e| storage_err("created_at", e))?,
-                    row.try_get("expires_at").map_err(|e| storage_err("expires_at", e))?,
-                    row.try_get("metadata").map_err(|e| storage_err("metadata", e))?,
+                    row.try_get("user_id")
+                        .map_err(|e| storage_err("user_id", e))?,
+                    row.try_get("conversation_id")
+                        .map_err(|e| storage_err("conversation_id", e))?,
+                    row.try_get("content")
+                        .map_err(|e| storage_err("content", e))?,
+                    row.try_get("memory_type")
+                        .map_err(|e| storage_err("memory_type", e))?,
+                    row.try_get("embedding")
+                        .map_err(|e| storage_err("embedding", e))?,
+                    row.try_get("created_at")
+                        .map_err(|e| storage_err("created_at", e))?,
+                    row.try_get("expires_at")
+                        .map_err(|e| storage_err("expires_at", e))?,
+                    row.try_get("metadata")
+                        .map_err(|e| storage_err("metadata", e))?,
                 )?;
 
                 if memory.is_expired() {
@@ -281,11 +285,15 @@ impl MemoryStore for SqliteMemoryStore {
     async fn update(&self, memory: Memory) -> crate::Result<()> {
         debug!("Updating memory: {}", memory.id);
 
-        let embedding_bytes = memory.embedding.as_ref()
+        let embedding_bytes = memory
+            .embedding
+            .as_ref()
             .map(|e| Self::serialize_embedding(e));
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
-        let metadata_str = memory.metadata.as_ref()
+        let metadata_str = memory
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
 
         let result = sqlx::query(
@@ -300,7 +308,7 @@ impl MemoryStore for SqliteMemoryStore {
                 expires_at = ?,
                 metadata = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&memory.user_id)
         .bind(&memory.conversation_id)
@@ -376,7 +384,10 @@ impl MemoryStore for SqliteMemoryStore {
             query.limit
         };
 
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {} OFFSET {}", fetch_limit, query.offset));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            fetch_limit, query.offset
+        ));
 
         // Build and execute query
         let mut db_query = sqlx::query(&sql);
@@ -398,26 +409,34 @@ impl MemoryStore for SqliteMemoryStore {
             db_query = db_query.bind(now);
         }
 
-        let rows = db_query.fetch_all(&self.pool)
-            .await
-            .map_err(|e| crate::error::MantaError::Storage {
+        let rows = db_query.fetch_all(&self.pool).await.map_err(|e| {
+            crate::error::MantaError::Storage {
                 context: "Failed to search memories".to_string(),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
 
         let mut memories: Vec<Memory> = Vec::new();
 
         for row in rows {
             let memory = Self::build_memory(
                 row.try_get("id").map_err(|e| storage_err("id", e))?,
-                row.try_get("user_id").map_err(|e| storage_err("user_id", e))?,
-                row.try_get("conversation_id").map_err(|e| storage_err("conversation_id", e))?,
-                row.try_get("content").map_err(|e| storage_err("content", e))?,
-                row.try_get("memory_type").map_err(|e| storage_err("memory_type", e))?,
-                row.try_get("embedding").map_err(|e| storage_err("embedding", e))?,
-                row.try_get("created_at").map_err(|e| storage_err("created_at", e))?,
-                row.try_get("expires_at").map_err(|e| storage_err("expires_at", e))?,
-                row.try_get("metadata").map_err(|e| storage_err("metadata", e))?,
+                row.try_get("user_id")
+                    .map_err(|e| storage_err("user_id", e))?,
+                row.try_get("conversation_id")
+                    .map_err(|e| storage_err("conversation_id", e))?,
+                row.try_get("content")
+                    .map_err(|e| storage_err("content", e))?,
+                row.try_get("memory_type")
+                    .map_err(|e| storage_err("memory_type", e))?,
+                row.try_get("embedding")
+                    .map_err(|e| storage_err("embedding", e))?,
+                row.try_get("created_at")
+                    .map_err(|e| storage_err("created_at", e))?,
+                row.try_get("expires_at")
+                    .map_err(|e| storage_err("expires_at", e))?,
+                row.try_get("metadata")
+                    .map_err(|e| storage_err("metadata", e))?,
             )?;
             memories.push(memory);
         }
@@ -448,14 +467,15 @@ impl MemoryStore for SqliteMemoryStore {
 
         let now = Self::system_time_to_secs(SystemTime::now());
 
-        let result = sqlx::query("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?")
-            .bind(now)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| crate::error::MantaError::Storage {
-                context: "Failed to cleanup expired memories".to_string(),
-                details: e.to_string(),
-            })?;
+        let result =
+            sqlx::query("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?")
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to cleanup expired memories".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let count = result.rows_affected() as usize;
         info!("Cleaned up {} expired memories", count);
@@ -473,33 +493,38 @@ impl MemoryStore for SqliteMemoryStore {
                 context: "Failed to get total count".to_string(),
                 details: e.to_string(),
             })?;
-        let total_count: i64 = total_row.try_get("count")
-            .map_err(|e| crate::error::MantaError::Storage {
-                context: "Failed to parse total count".to_string(),
-                details: e.to_string(),
-            })?;
+        let total_count: i64 =
+            total_row
+                .try_get("count")
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to parse total count".to_string(),
+                    details: e.to_string(),
+                })?;
 
         // Count by type
-        let type_rows = sqlx::query("SELECT memory_type, COUNT(*) as count FROM memories GROUP BY memory_type")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| crate::error::MantaError::Storage {
-                context: "Failed to get type counts".to_string(),
-                details: e.to_string(),
-            })?;
+        let type_rows =
+            sqlx::query("SELECT memory_type, COUNT(*) as count FROM memories GROUP BY memory_type")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to get type counts".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let mut count_by_type = HashMap::new();
         for row in type_rows {
-            let mem_type: String = row.try_get("memory_type")
-                .map_err(|e| crate::error::MantaError::Storage {
-                    context: "Failed to parse memory_type".to_string(),
-                    details: e.to_string(),
-                })?;
-            let count: i64 = row.try_get("count")
-                .map_err(|e| crate::error::MantaError::Storage {
-                    context: "Failed to parse count".to_string(),
-                    details: e.to_string(),
-                })?;
+            let mem_type: String =
+                row.try_get("memory_type")
+                    .map_err(|e| crate::error::MantaError::Storage {
+                        context: "Failed to parse memory_type".to_string(),
+                        details: e.to_string(),
+                    })?;
+            let count: i64 =
+                row.try_get("count")
+                    .map_err(|e| crate::error::MantaError::Storage {
+                        context: "Failed to parse count".to_string(),
+                        details: e.to_string(),
+                    })?;
             count_by_type.insert(mem_type, count as usize);
         }
 
@@ -513,11 +538,13 @@ impl MemoryStore for SqliteMemoryStore {
                 context: "Failed to get expired count".to_string(),
                 details: e.to_string(),
             })?;
-        let expired_count: i64 = expired_row.try_get("count")
-            .map_err(|e| crate::error::MantaError::Storage {
-                context: "Failed to parse expired count".to_string(),
-                details: e.to_string(),
-            })?;
+        let expired_count: i64 =
+            expired_row
+                .try_get("count")
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to parse expired count".to_string(),
+                    details: e.to_string(),
+                })?;
 
         Ok(MemoryStats {
             total_count: total_count as usize,
@@ -536,10 +563,15 @@ impl MemoryStore for SqliteMemoryStore {
 #[async_trait]
 impl ChatHistoryStore for SqliteMemoryStore {
     async fn store_message(&self, message: ChatMessage) -> crate::Result<()> {
-        debug!("Storing chat message: {} in conversation: {}", message.id, message.conversation_id);
+        debug!(
+            "Storing chat message: {} in conversation: {}",
+            message.id, message.conversation_id
+        );
 
         let created_at_secs = Self::system_time_to_secs(message.created_at);
-        let metadata_str = message.metadata.as_ref()
+        let metadata_str = message
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
 
         sqlx::query(
@@ -547,7 +579,7 @@ impl ChatHistoryStore for SqliteMemoryStore {
             INSERT INTO chat_messages
             (id, conversation_id, user_id, role, content, created_at, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&message.id)
         .bind(&message.conversation_id)
@@ -563,7 +595,10 @@ impl ChatHistoryStore for SqliteMemoryStore {
             details: e.to_string(),
         })?;
 
-        info!("Chat message stored: {} in conversation: {}", message.id, message.conversation_id);
+        info!(
+            "Chat message stored: {} in conversation: {}",
+            message.id, message.conversation_id
+        );
         Ok(())
     }
 
@@ -581,7 +616,7 @@ impl ChatHistoryStore for SqliteMemoryStore {
             WHERE conversation_id = ?
             ORDER BY created_at ASC
             LIMIT ?
-            "#
+            "#,
         )
         .bind(conversation_id)
         .bind(limit as i64)
@@ -594,17 +629,25 @@ impl ChatHistoryStore for SqliteMemoryStore {
 
         let mut messages: Vec<ChatMessage> = Vec::new();
         for row in rows {
-            let created_at_secs: i64 = row.try_get("created_at")
+            let created_at_secs: i64 = row
+                .try_get("created_at")
                 .map_err(|e| storage_err("created_at", e))?;
-            let metadata_str: Option<String> = row.try_get("metadata")
+            let metadata_str: Option<String> = row
+                .try_get("metadata")
                 .map_err(|e| storage_err("metadata", e))?;
 
             let message = ChatMessage {
                 id: row.try_get("id").map_err(|e| storage_err("id", e))?,
-                conversation_id: row.try_get("conversation_id").map_err(|e| storage_err("conversation_id", e))?,
-                user_id: row.try_get("user_id").map_err(|e| storage_err("user_id", e))?,
+                conversation_id: row
+                    .try_get("conversation_id")
+                    .map_err(|e| storage_err("conversation_id", e))?,
+                user_id: row
+                    .try_get("user_id")
+                    .map_err(|e| storage_err("user_id", e))?,
                 role: row.try_get("role").map_err(|e| storage_err("role", e))?,
-                content: row.try_get("content").map_err(|e| storage_err("content", e))?,
+                content: row
+                    .try_get("content")
+                    .map_err(|e| storage_err("content", e))?,
                 created_at: Self::secs_to_system_time(created_at_secs)
                     .unwrap_or_else(SystemTime::now),
                 metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
@@ -630,7 +673,7 @@ impl ChatHistoryStore for SqliteMemoryStore {
             WHERE user_id = ?
             ORDER BY MAX(created_at) DESC
             LIMIT ?
-            "#
+            "#,
         )
         .bind(user_id)
         .bind(limit as i64)
@@ -676,7 +719,7 @@ impl ChatHistoryStore for SqliteMemoryStore {
             WHERE user_id = ?
             ORDER BY created_at DESC
             LIMIT 1
-            "#
+            "#,
         )
         .bind(user_id)
         .fetch_optional(&self.pool)
@@ -707,8 +750,7 @@ mod tests {
         let store = SqliteMemoryStore::new_in_memory().await.unwrap();
 
         // Store a memory
-        let memory = Memory::new("user1", "Hello world", "fact")
-            .with_conversation("conv1");
+        let memory = Memory::new("user1", "Hello world", "fact").with_conversation("conv1");
 
         let id = store.store(memory.clone()).await.unwrap();
         assert_eq!(id.0, memory.id.0);
@@ -745,11 +787,17 @@ mod tests {
         }
 
         // Search for user
-        let results = store.search(MemoryQuery::new().for_user("user1").limit(10)).await.unwrap();
+        let results = store
+            .search(MemoryQuery::new().for_user("user1").limit(10))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 5);
 
         // Search with content filter
-        let results = store.search(MemoryQuery::new().with_content("Memory 2")).await.unwrap();
+        let results = store
+            .search(MemoryQuery::new().with_content("Memory 2"))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "Memory 2");
     }
@@ -759,8 +807,7 @@ mod tests {
         let store = SqliteMemoryStore::new_in_memory().await.unwrap();
 
         // Store a memory with very short TTL (1 second)
-        let memory = Memory::new("user1", "Temporary", "fact")
-            .with_ttl(1);
+        let memory = Memory::new("user1", "Temporary", "fact").with_ttl(1);
 
         let id = store.store(memory).await.unwrap();
 

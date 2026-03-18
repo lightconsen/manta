@@ -3,8 +3,8 @@
 //! This module implements the Channel trait for Slack using the Web API.
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ConversationId, FormattedContent,
-    IncomingMessage, OutgoingMessage,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
+    OutgoingMessage,
 };
 use crate::core::models::Id;
 use async_trait::async_trait;
@@ -218,32 +218,33 @@ impl Channel for SlackChannel {
                 .header("Authorization", format!("Bearer {}", self.config.bot_token))
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::Internal(
-                    format!("Slack API request failed: {}", e)
-                ))?;
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Slack API request failed: {}", e))
+                })?;
 
             let status = resp.status();
             if !status.is_success() {
-                return Err(crate::error::MantaError::Internal(
-                    format!("Slack API returned error: {}", status)
-                ));
+                return Err(crate::error::MantaError::Internal(format!(
+                    "Slack API returned error: {}",
+                    status
+                )));
             }
 
-            self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.running
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             info!("Slack channel started");
             Ok(())
         }
 
         #[cfg(not(feature = "slack"))]
         {
-            Err(crate::error::MantaError::Internal(
-                "Slack feature not enabled".to_string()
-            ))
+            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
     async fn stop(&self) -> crate::Result<()> {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         info!("Slack channel stopped");
         Ok(())
     }
@@ -276,26 +277,25 @@ impl Channel for SlackChannel {
                 }))
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::Internal(
-                    format!("Slack send failed: {}", e)
-                ))?;
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Slack send failed: {}", e))
+                })?;
 
             if resp.status().is_success() {
                 debug!("Slack message sent successfully");
                 Ok(Id::new())
             } else {
-                Err(crate::error::MantaError::Internal(
-                    format!("Slack API error: {}", resp.status())
-                ))
+                Err(crate::error::MantaError::Internal(format!(
+                    "Slack API error: {}",
+                    resp.status()
+                )))
             }
         }
 
         #[cfg(not(feature = "slack"))]
         {
             let _ = message;
-            Err(crate::error::MantaError::Internal(
-                "Slack feature not enabled".to_string()
-            ))
+            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
@@ -316,9 +316,7 @@ impl Channel for SlackChannel {
         #[cfg(not(feature = "slack"))]
         {
             let _ = (message_id, new_content);
-            Err(crate::error::MantaError::Internal(
-                "Slack feature not enabled".to_string()
-            ))
+            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
@@ -333,9 +331,7 @@ impl Channel for SlackChannel {
         #[cfg(not(feature = "slack"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal(
-                "Slack feature not enabled".to_string()
-            ))
+            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
         }
     }
 

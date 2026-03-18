@@ -220,7 +220,8 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
             input: texts.to_vec(),
         };
 
-        let response: EmbeddingResponse = self.client
+        let response: EmbeddingResponse = self
+            .client
             .post(format!("{}/embeddings", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request)
@@ -238,7 +239,8 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
             })?;
 
         // Sort by index to maintain order
-        let mut embeddings: Vec<(usize, Vec<f32>)> = response.data
+        let mut embeddings: Vec<(usize, Vec<f32>)> = response
+            .data
             .into_iter()
             .map(|d| (d.index, d.embedding))
             .collect();
@@ -356,10 +358,8 @@ impl VectorStore for MemoryVectorStore {
 
     async fn stats(&self) -> crate::Result<VectorStoreStats> {
         let chunks = self.chunks.read().await;
-        let sources: std::collections::HashSet<String> = chunks
-            .values()
-            .map(|c| c.source_id.clone())
-            .collect();
+        let sources: std::collections::HashSet<String> =
+            chunks.values().map(|c| c.source_id.clone()).collect();
 
         Ok(VectorStoreStats {
             total_vectors: chunks.len(),
@@ -401,10 +401,7 @@ pub struct TextChunker {
 
 impl TextChunker {
     pub fn new(chunk_size: usize, chunk_overlap: usize) -> Self {
-        Self {
-            chunk_size,
-            chunk_overlap,
-        }
+        Self { chunk_size, chunk_overlap }
     }
 
     /// Chunk text into overlapping segments
@@ -442,11 +439,7 @@ impl BatchEmbeddingProcessor {
         chunker: TextChunker,
         batch_size: usize,
     ) -> Self {
-        Self {
-            provider,
-            chunker,
-            batch_size,
-        }
+        Self { provider, chunker, batch_size }
     }
 
     /// Process documents and store embeddings
@@ -493,11 +486,7 @@ impl BatchEmbeddingProcessor {
         // Store all chunks
         store.store_chunks(embedded_chunks.clone()).await?;
 
-        info!(
-            "Processed {} documents into {} chunks",
-            documents.len(),
-            embedded_chunks.len()
-        );
+        info!("Processed {} documents into {} chunks", documents.len(), embedded_chunks.len());
 
         Ok(embedded_chunks)
     }
@@ -553,7 +542,9 @@ impl VectorMemoryService {
             });
         }
 
-        self.vector_store.store_chunks(embedded_chunks.clone()).await?;
+        self.vector_store
+            .store_chunks(embedded_chunks.clone())
+            .await?;
 
         Ok(embedded_chunks)
     }
@@ -566,12 +557,16 @@ impl VectorMemoryService {
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>> {
         let query_embedding = self.embedding_provider.embed(query).await?;
-        self.vector_store.search_similar(&query_embedding, limit, threshold).await
+        self.vector_store
+            .search_similar(&query_embedding, limit, threshold)
+            .await
     }
 
     /// Delete memory embeddings
     pub async fn delete_memory(&self, memory_id: &MemoryId) -> crate::Result<usize> {
-        self.vector_store.delete_by_source(&memory_id.to_string()).await
+        self.vector_store
+            .delete_by_source(&memory_id.to_string())
+            .await
     }
 
     /// Get stats
@@ -587,7 +582,10 @@ impl VectorMemoryService {
         _collection: &str,
     ) -> crate::Result<Vec<SearchResult>> {
         let query_embedding = self.embedding_provider.embed(query).await?;
-        let results = self.vector_store.search_similar(&query_embedding, limit, 0.7).await?;
+        let results = self
+            .vector_store
+            .search_similar(&query_embedding, limit, 0.7)
+            .await?;
 
         Ok(results
             .into_iter()

@@ -237,8 +237,7 @@ async fn process_messages(
 
             // Create incoming message
             let incoming = crate::channels::IncomingMessage::new(
-                &msg.from,
-                &msg.from, // Use sender's phone number as conversation ID
+                &msg.from, &msg.from, // Use sender's phone number as conversation ID
                 &content,
             )
             .with_metadata(

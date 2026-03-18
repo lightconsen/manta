@@ -12,8 +12,8 @@ pub mod manifest;
 pub mod runtime;
 
 pub use hooks::{
-    HookExecutionResult, HookHandler, HookHandlerBuilder, HookPayload, HookRegistry,
-    HookResult, HookType,
+    HookExecutionResult, HookHandler, HookHandlerBuilder, HookPayload, HookRegistry, HookResult,
+    HookType,
 };
 pub use manifest::{
     PluginArg, PluginCapability, PluginCommand, PluginManifest, PluginPermission, PluginTool,
@@ -140,11 +140,7 @@ impl PluginManager {
     }
 
     /// Create a sample plugin template
-    pub async fn create_template(
-        &self,
-        name: &str,
-        description: &str,
-    ) -> crate::Result<PathBuf> {
+    pub async fn create_template(&self, name: &str, description: &str) -> crate::Result<PathBuf> {
         let plugin_dir = self.plugins_dir.join(name);
         tokio::fs::create_dir_all(&plugin_dir).await?;
 
@@ -172,11 +168,8 @@ impl PluginManager {
         let config = serde_json::json!({
             "example_setting": "value"
         });
-        tokio::fs::write(
-            plugin_dir.join("config.json"),
-            serde_json::to_string_pretty(&config)?,
-        )
-        .await?;
+        tokio::fs::write(plugin_dir.join("config.json"), serde_json::to_string_pretty(&config)?)
+            .await?;
 
         // Create README
         let readme = format!(
@@ -223,11 +216,7 @@ pub struct PluginToolWrapper {
 }
 
 impl PluginToolWrapper {
-    pub fn new(
-        plugin_id: String,
-        tool: &PluginTool,
-        runtime: Arc<PluginRuntime>,
-    ) -> Self {
+    pub fn new(plugin_id: String, tool: &PluginTool, runtime: Arc<PluginRuntime>) -> Self {
         Self {
             plugin_id,
             tool_name: tool.name.clone(),

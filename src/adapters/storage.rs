@@ -44,7 +44,9 @@ impl From<StorageError> for MantaError {
             },
             StorageError::Full => MantaError::Validation("Storage is full".to_string()),
             StorageError::Io(e) => MantaError::Io(e),
-            StorageError::Serialization(msg) => MantaError::Internal(format!("Serialization error: {}", msg)),
+            StorageError::Serialization(msg) => {
+                MantaError::Internal(format!("Serialization error: {}", msg))
+            }
             StorageError::Backend(msg) => MantaError::Internal(format!("Storage backend: {}", msg)),
         }
     }
@@ -122,27 +124,28 @@ impl Default for InMemoryStorage {
 #[async_trait]
 impl Storage for InMemoryStorage {
     async fn get(&self, id: Id) -> Result<Entity, StorageError> {
-        let data = self.data.read().map_err(|_| {
-            StorageError::Backend("Failed to acquire read lock".to_string())
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
 
-        data.get(&id)
-            .cloned()
-            .ok_or(StorageError::NotFound(id))
+        data.get(&id).cloned().ok_or(StorageError::NotFound(id))
     }
 
     async fn list(&self) -> Result<Vec<Entity>, StorageError> {
-        let data = self.data.read().map_err(|_| {
-            StorageError::Backend("Failed to acquire read lock".to_string())
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
 
         Ok(data.values().cloned().collect())
     }
 
     async fn create(&self, entity: &Entity) -> Result<(), StorageError> {
-        let mut data = self.data.write().map_err(|_| {
-            StorageError::Backend("Failed to acquire write lock".to_string())
-        })?;
+        let mut data = self
+            .data
+            .write()
+            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
 
         if data.len() >= self.max_size {
             return Err(StorageError::Full);
@@ -153,9 +156,10 @@ impl Storage for InMemoryStorage {
     }
 
     async fn update(&self, entity: &Entity) -> Result<(), StorageError> {
-        let mut data = self.data.write().map_err(|_| {
-            StorageError::Backend("Failed to acquire write lock".to_string())
-        })?;
+        let mut data = self
+            .data
+            .write()
+            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
 
         if !data.contains_key(&entity.id) {
             return Err(StorageError::NotFound(entity.id));
@@ -166,9 +170,10 @@ impl Storage for InMemoryStorage {
     }
 
     async fn delete(&self, id: Id) -> Result<(), StorageError> {
-        let mut data = self.data.write().map_err(|_| {
-            StorageError::Backend("Failed to acquire write lock".to_string())
-        })?;
+        let mut data = self
+            .data
+            .write()
+            .map_err(|_| StorageError::Backend("Failed to acquire write lock".to_string()))?;
 
         data.remove(&id)
             .ok_or(StorageError::NotFound(id))
@@ -176,18 +181,20 @@ impl Storage for InMemoryStorage {
     }
 
     async fn count(&self) -> Result<usize, StorageError> {
-        let data = self.data.read().map_err(|_| {
-            StorageError::Backend("Failed to acquire read lock".to_string())
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|_| StorageError::Backend("Failed to acquire read lock".to_string()))?;
 
         Ok(data.len())
     }
 
     async fn health_check(&self) -> Result<(), StorageError> {
         // In-memory storage is always healthy unless we can't acquire the lock
-        let _guard = self.data.read().map_err(|_| {
-            StorageError::Backend("Storage lock poisoned".to_string())
-        })?;
+        let _guard = self
+            .data
+            .read()
+            .map_err(|_| StorageError::Backend("Storage lock poisoned".to_string()))?;
         drop(_guard);
         Ok(())
     }
@@ -251,9 +258,7 @@ impl Storage for FileStorage {
         let path = self.entity_path(entity.id);
 
         if path.exists() {
-            return Err(StorageError::Backend(
-                format!("Entity {} already exists", entity.id)
-            ));
+            return Err(StorageError::Backend(format!("Entity {} already exists", entity.id)));
         }
 
         let content = serde_json::to_string_pretty(entity)
@@ -354,12 +359,10 @@ impl SqliteStorage {
         .map_err(|e| StorageError::Backend(format!("Failed to create entities table: {}", e)))?;
 
         // Create index on status for faster filtering
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_entities_status ON entities(status)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create index: {}", e)))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_entities_status ON entities(status)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(format!("Failed to create index: {}", e)))?;
 
         // Vector chunks table for semantic search
         sqlx::query(
@@ -378,7 +381,9 @@ impl SqliteStorage {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create vector_chunks table: {}", e)))?;
+        .map_err(|e| {
+            StorageError::Backend(format!("Failed to create vector_chunks table: {}", e))
+        })?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_vector_chunks_source ON vector_chunks(source_id)",
@@ -403,7 +408,9 @@ impl SqliteStorage {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::Backend(format!("Failed to create chat_messages table: {}", e)))?;
+        .map_err(|e| {
+            StorageError::Backend(format!("Failed to create chat_messages table: {}", e))
+        })?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at DESC)",
@@ -458,8 +465,8 @@ impl SqliteStorage {
 
     /// Convert a database row to an Entity
     fn row_to_entity(row: &sqlx::sqlite::SqliteRow) -> Result<Entity, StorageError> {
-        use chrono::DateTime;
         use crate::core::models::{Metadata, Status};
+        use chrono::DateTime;
 
         let id_str: String = row.get("id");
         let id = Id::parse(&id_str)
@@ -473,8 +480,9 @@ impl SqliteStorage {
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
         let status_str: String = row.get("status");
-        let status = status_str.parse::<Status>()
-            .map_err(|e| StorageError::Serialization(format!("Invalid status: {} - {}", status_str, e)))?;
+        let status = status_str.parse::<Status>().map_err(|e| {
+            StorageError::Serialization(format!("Invalid status: {} - {}", status_str, e))
+        })?;
 
         let created_at_str: String = row.get("created_at");
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -507,13 +515,11 @@ impl SqliteStorage {
 #[async_trait]
 impl Storage for SqliteStorage {
     async fn get(&self, id: Id) -> Result<Entity, StorageError> {
-        let row = sqlx::query(
-            "SELECT * FROM entities WHERE id = ?1"
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let row = sqlx::query("SELECT * FROM entities WHERE id = ?1")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         match row {
             Some(row) => Self::row_to_entity(&row),
@@ -522,16 +528,12 @@ impl Storage for SqliteStorage {
     }
 
     async fn list(&self) -> Result<Vec<Entity>, StorageError> {
-        let rows = sqlx::query(
-            "SELECT * FROM entities ORDER BY created_at DESC"
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = sqlx::query("SELECT * FROM entities ORDER BY created_at DESC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        rows.iter()
-            .map(Self::row_to_entity)
-            .collect()
+        rows.iter().map(Self::row_to_entity).collect()
     }
 
     async fn create(&self, entity: &Entity) -> Result<(), StorageError> {
@@ -569,7 +571,7 @@ impl Storage for SqliteStorage {
             SET name = ?1, description = ?2, tags = ?3, status = ?4,
                 updated_at = ?5, version = ?6
             WHERE id = ?7
-            "#
+            "#,
         )
         .bind(&entity.name)
         .bind(&entity.description)
@@ -671,7 +673,9 @@ fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
 #[async_trait]
 impl VectorStore for SqliteStorage {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
-        let metadata_json = chunk.metadata.as_ref()
+        let metadata_json = chunk
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default())
             .unwrap_or_default();
 
@@ -723,7 +727,8 @@ impl VectorStore for SqliteStorage {
             .filter_map(|row| {
                 let embedding_bytes: Vec<u8> = row.get("embedding");
                 let chunk_embedding = deserialize_embedding(&embedding_bytes);
-                let similarity = crate::memory::cosine_similarity(query_embedding, &chunk_embedding);
+                let similarity =
+                    crate::memory::cosine_similarity(query_embedding, &chunk_embedding);
 
                 if similarity >= threshold {
                     let metadata: Option<String> = row.get("metadata");
@@ -767,7 +772,7 @@ impl VectorStore for SqliteStorage {
 
     async fn stats(&self) -> crate::Result<VectorStoreStats> {
         let row = sqlx::query(
-            "SELECT COUNT(*) as total, COUNT(DISTINCT source_id) as sources FROM vector_chunks"
+            "SELECT COUNT(*) as total, COUNT(DISTINCT source_id) as sources FROM vector_chunks",
         )
         .fetch_one(&self.pool)
         .await
@@ -791,7 +796,7 @@ impl VectorStore for SqliteStorage {
         let dimension = first_chunk
             .map(|row| {
                 let bytes: Vec<u8> = row.get("embedding");
-                bytes.len() / 4  // 4 bytes per f32
+                bytes.len() / 4 // 4 bytes per f32
             })
             .unwrap_or(0);
 
@@ -817,7 +822,9 @@ impl VectorStore for SqliteStorage {
 #[async_trait]
 impl ChatHistoryStore for SqliteStorage {
     async fn store_message(&self, message: ChatMessage) -> crate::Result<()> {
-        let metadata_json = message.metadata.as_ref()
+        let metadata_json = message
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default())
             .unwrap_or_default();
 
@@ -960,7 +967,9 @@ impl ChatHistoryStore for SqliteStorage {
 #[async_trait]
 impl MemoryStore for SqliteStorage {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
-        let metadata_json = memory.metadata.as_ref()
+        let metadata_json = memory
+            .metadata
+            .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default())
             .unwrap_or_default();
 
@@ -995,30 +1004,32 @@ impl MemoryStore for SqliteStorage {
     }
 
     async fn get(&self, id: &MemoryId) -> crate::Result<Option<Memory>> {
-        let row = sqlx::query(
-            "SELECT * FROM memories WHERE id = ?1"
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
-            source: "Failed to get memory".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let row = sqlx::query("SELECT * FROM memories WHERE id = ?1")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to get memory".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
 
         match row {
             Some(row) => {
                 let created_at_str: String = row.get("created_at");
-                let created_at = rfc3339_to_system_time(&created_at_str)
-                    .ok_or_else(|| crate::error::MantaError::Internal("Invalid created_at".to_string()))?;
+                let created_at = rfc3339_to_system_time(&created_at_str).ok_or_else(|| {
+                    crate::error::MantaError::Internal("Invalid created_at".to_string())
+                })?;
 
-                let expires_at = row.get::<Option<String>, _>("expires_at")
+                let expires_at = row
+                    .get::<Option<String>, _>("expires_at")
                     .and_then(|s| rfc3339_to_system_time(&s));
 
-                let embedding = row.get::<Option<Vec<u8>>, _>("embedding")
+                let embedding = row
+                    .get::<Option<Vec<u8>>, _>("embedding")
                     .map(|b| deserialize_embedding(&b));
 
-                let metadata = row.get::<Option<String>, _>("metadata")
+                let metadata = row
+                    .get::<Option<String>, _>("metadata")
                     .and_then(|m| serde_json::from_str(&m).ok());
 
                 Ok(Some(Memory {
@@ -1092,13 +1103,12 @@ impl MemoryStore for SqliteStorage {
             query_builder = query_builder.bind(param);
         }
 
-        let rows = query_builder
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let rows = query_builder.fetch_all(&self.pool).await.map_err(|e| {
+            crate::error::MantaError::ExternalService {
                 source: "Failed to search memories".to_string(),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         let memories: Vec<Memory> = rows
             .into_iter()
@@ -1106,13 +1116,16 @@ impl MemoryStore for SqliteStorage {
                 let created_at_str: String = row.get("created_at");
                 let created_at = rfc3339_to_system_time(&created_at_str)?;
 
-                let expires_at = row.get::<Option<String>, _>("expires_at")
+                let expires_at = row
+                    .get::<Option<String>, _>("expires_at")
                     .and_then(|s| rfc3339_to_system_time(&s));
 
-                let embedding = row.get::<Option<Vec<u8>>, _>("embedding")
+                let embedding = row
+                    .get::<Option<Vec<u8>>, _>("embedding")
                     .map(|b| deserialize_embedding(&b));
 
-                let metadata = row.get::<Option<String>, _>("metadata")
+                let metadata = row
+                    .get::<Option<String>, _>("metadata")
                     .and_then(|m| serde_json::from_str(&m).ok());
 
                 Some(Memory {
@@ -1149,7 +1162,7 @@ impl MemoryStore for SqliteStorage {
 
     async fn cleanup_expired(&self) -> crate::Result<usize> {
         let result = sqlx::query(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')"
+            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')",
         )
         .execute(&self.pool)
         .await

@@ -31,10 +31,7 @@ impl DatabaseStore {
                 details: e.to_string(),
             })?;
 
-        let store = Self {
-            pool,
-            batch_size: 100,
-        };
+        let store = Self { pool, batch_size: 100 };
 
         store.optimize().await?;
         store.init_schema().await?;
@@ -146,13 +143,12 @@ impl DatabaseStore {
         ];
 
         for (name, sql) in &indexes {
-            sqlx::query(sql)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| crate::error::MantaError::Storage {
+            sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
+                crate::error::MantaError::Storage {
                     context: format!("Failed to create index {}", name),
                     details: e.to_string(),
-                })?;
+                }
+            })?;
         }
 
         // Create FTS5 virtual table for full-text search

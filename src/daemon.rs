@@ -43,8 +43,7 @@ impl DaemonManager {
         }
 
         // Get the current executable path
-        let exe_path = std::env::current_exe()
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+        let exe_path = std::env::current_exe().map_err(|e| crate::error::MantaError::Io(e))?;
 
         // Get log file path
         let log_path = crate::logs::log_file_path();
@@ -64,12 +63,19 @@ impl DaemonManager {
         // Spawn the daemon process with output redirected to log file
         let child = Command::new(&exe_path)
             .arg("start")
-            .arg("--host").arg(&self.config.host)
-            .arg("--port").arg(self.config.port.to_string())
-            .arg("--web-port").arg(self.config.web_port.to_string())
+            .arg("--host")
+            .arg(&self.config.host)
+            .arg("--port")
+            .arg(self.config.port.to_string())
+            .arg("--web-port")
+            .arg(self.config.web_port.to_string())
             .arg("--foreground")
             .stdin(std::process::Stdio::null())
-            .stdout(log_file_std.try_clone().map_err(|e| crate::error::MantaError::Io(e))?)
+            .stdout(
+                log_file_std
+                    .try_clone()
+                    .map_err(|e| crate::error::MantaError::Io(e))?,
+            )
             .stderr(log_file_std)
             .spawn()
             .map_err(|e| crate::error::MantaError::Io(e))?;
@@ -94,8 +100,8 @@ impl DaemonManager {
     pub async fn run_foreground(&self) -> crate::Result<()> {
         println!("🚀 Manta daemon running with Gateway...");
 
-        use crate::gateway::{Gateway, GatewayConfig};
         use crate::agent::AgentConfig;
+        use crate::gateway::{Gateway, GatewayConfig};
 
         // Build GatewayConfig from daemon config and environment
         let mut gateway_config = GatewayConfig {
@@ -112,17 +118,23 @@ impl DaemonManager {
             acp: Default::default(),
             cron: Default::default(),
             providers: std::collections::HashMap::new(),
-            model: std::env::var("MANTA_MODEL").unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
-            model_provider: std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| "anthropic".to_string()),
+            model: std::env::var("MANTA_MODEL")
+                .unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string()),
+            model_provider: std::env::var("MANTA_MODEL_PROVIDER")
+                .unwrap_or_else(|_| "anthropic".to_string()),
             security: Default::default(),
             storage: Default::default(),
         };
 
         // Enable features based on environment variables
         // Vector Memory - enabled by default with local GGUF embeddings
-        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED").map(|v| v == "true" || v == "1").unwrap_or(true) {
+        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(true)
+        {
             gateway_config.vector_memory.enabled = true;
-            gateway_config.vector_memory.embedding_api_key = std::env::var("MANTA_EMBEDDING_API_KEY").ok();
+            gateway_config.vector_memory.embedding_api_key =
+                std::env::var("MANTA_EMBEDDING_API_KEY").ok();
             if let Ok(model) = std::env::var("MANTA_EMBEDDING_MODEL") {
                 gateway_config.vector_memory.embedding_model = model;
             }
@@ -130,7 +142,10 @@ impl DaemonManager {
         }
 
         // Plugins - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_PLUGINS_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+        if std::env::var("MANTA_PLUGINS_ENABLED")
+            .map(|v| v == "false" || v == "0")
+            .unwrap_or(false)
+        {
             gateway_config.plugins.enabled = false;
             println!("🔌 Plugins disabled via environment");
         } else {
@@ -138,7 +153,10 @@ impl DaemonManager {
         }
 
         // Hot Reload - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_HOT_RELOAD_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+        if std::env::var("MANTA_HOT_RELOAD_ENABLED")
+            .map(|v| v == "false" || v == "0")
+            .unwrap_or(false)
+        {
             gateway_config.hot_reload.enabled = false;
             println!("♻️  Hot reload disabled via environment");
         } else {
@@ -146,7 +164,10 @@ impl DaemonManager {
         }
 
         // ACP - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_ACP_ENABLED").map(|v| v == "false" || v == "0").unwrap_or(false) {
+        if std::env::var("MANTA_ACP_ENABLED")
+            .map(|v| v == "false" || v == "0")
+            .unwrap_or(false)
+        {
             gateway_config.acp.enabled = false;
             println!("🎛️  ACP disabled via environment");
         } else {
@@ -154,7 +175,9 @@ impl DaemonManager {
         }
 
         // Configure LLM Provider from environment variables (legacy support)
-        if let (Ok(base_url), Ok(api_key)) = (std::env::var("MANTA_BASE_URL"), std::env::var("MANTA_API_KEY")) {
+        if let (Ok(base_url), Ok(api_key)) =
+            (std::env::var("MANTA_BASE_URL"), std::env::var("MANTA_API_KEY"))
+        {
             let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false);
@@ -175,7 +198,9 @@ impl DaemonManager {
             };
 
             let provider_name = if is_anthropic { "anthropic" } else { "openai" };
-            gateway_config.providers.insert(provider_name.to_string(), provider_config);
+            gateway_config
+                .providers
+                .insert(provider_name.to_string(), provider_config);
             println!("🤖 Configured {} provider from environment", provider_name);
         } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
             // Also support direct ANTHROPIC_API_KEY
@@ -187,7 +212,9 @@ impl DaemonManager {
                 max_retries: 3,
                 retry_delay_ms: 1000,
             };
-            gateway_config.providers.insert("anthropic".to_string(), provider_config);
+            gateway_config
+                .providers
+                .insert("anthropic".to_string(), provider_config);
             println!("🤖 Configured Anthropic provider from ANTHROPIC_API_KEY");
         } else if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
             // Support OPENAI_API_KEY
@@ -199,7 +226,9 @@ impl DaemonManager {
                 max_retries: 3,
                 retry_delay_ms: 1000,
             };
-            gateway_config.providers.insert("openai".to_string(), provider_config);
+            gateway_config
+                .providers
+                .insert("openai".to_string(), provider_config);
             println!("🤖 Configured OpenAI provider from OPENAI_API_KEY");
         }
 
@@ -236,10 +265,12 @@ impl DaemonManager {
                         use nix::sys::signal::{kill, Signal};
                         use nix::unistd::Pid;
 
-                        kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-                            .map_err(|e| crate::error::MantaError::Internal(
-                                format!("Failed to send signal: {}", e)
-                            ))?;
+                        kill(Pid::from_raw(pid as i32), Signal::SIGTERM).map_err(|e| {
+                            crate::error::MantaError::Internal(format!(
+                                "Failed to send signal: {}",
+                                e
+                            ))
+                        })?;
                     }
 
                     #[cfg(not(unix))]
@@ -287,10 +318,12 @@ impl DaemonManager {
                         use nix::sys::signal::{kill, Signal};
                         use nix::unistd::Pid;
 
-                        kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
-                            .map_err(|e| crate::error::MantaError::Internal(
-                                format!("Failed to send signal: {}", e)
-                            ))?;
+                        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).map_err(|e| {
+                            crate::error::MantaError::Internal(format!(
+                                "Failed to send signal: {}",
+                                e
+                            ))
+                        })?;
                     }
 
                     #[cfg(not(unix))]
@@ -372,7 +405,6 @@ impl DaemonManager {
     async fn is_process_running(&self, pid: u32) -> bool {
         #[cfg(unix)]
         {
-
             use nix::unistd::Pid;
 
             // Send signal 0 to check if process exists

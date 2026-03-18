@@ -2,7 +2,7 @@
 //!
 //! This tool allows the AI to execute shell commands in a sandboxed environment.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::process::Stdio;
@@ -90,9 +90,9 @@ impl Tool for ShellTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let command_str = args["command"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'command' argument".to_string()))?;
+        let command_str = args["command"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'command' argument".to_string())
+        })?;
 
         // Check if command is allowed
         if !context.is_command_allowed(command_str) {
@@ -221,8 +221,7 @@ impl Tool for ShellTool {
 
                 if output.status.success() {
                     info!("Command executed successfully in {:?}", duration);
-                    Ok(ToolExecutionResult::success(truncated)
-                        .with_execution_time(duration))
+                    Ok(ToolExecutionResult::success(truncated).with_execution_time(duration))
                 } else {
                     let exit_code = output.status.code().unwrap_or(-1);
                     warn!("Command failed with exit code {}: {}", exit_code, command_str);
@@ -235,10 +234,7 @@ impl Tool for ShellTool {
             }
             Ok(Err(e)) => {
                 error!("Failed to execute command: {}", e);
-                Ok(ToolExecutionResult::error(format!(
-                    "Execution failed: {}",
-                    e
-                )))
+                Ok(ToolExecutionResult::error(format!("Execution failed: {}", e)))
             }
             Err(_) => {
                 error!("Command timed out after {:?}", context.timeout);
@@ -302,8 +298,7 @@ mod tests {
         }
 
         let tool = ShellTool::new();
-        let context = ToolContext::new("user", "conv1")
-            .with_timeout(Duration::from_millis(100));
+        let context = ToolContext::new("user", "conv1").with_timeout(Duration::from_millis(100));
 
         let args = serde_json::json!({
             "command": "sleep 5"

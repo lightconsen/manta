@@ -51,8 +51,7 @@ pub mod qq;
 pub mod lark;
 
 pub use formatter::{
-    MessageFormatter, TelegramHtmlFormatter, DiscordFormatter,
-    SlackFormatter, PlainTextFormatter
+    DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
 };
 
 /// A user identifier
@@ -398,9 +397,7 @@ impl std::fmt::Debug for ChannelRegistry {
 impl ChannelRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
-        Self {
-            channels: HashMap::new(),
-        }
+        Self { channels: HashMap::new() }
     }
 
     /// Register a channel
@@ -445,7 +442,6 @@ impl ChannelRegistry {
 
 /// Input validation and sanitization for messages
 pub mod validation {
-    
 
     /// Default maximum message length (10,000 characters)
     pub const DEFAULT_MAX_MESSAGE_LENGTH: usize = 10_000;
@@ -564,16 +560,14 @@ pub mod validation {
                     .filter(|c| c.is_control() && !c.is_whitespace())
                     .collect();
                 if !control_chars.is_empty() {
-                    return Err(ValidationError::ControlCharacters(
-                        control_chars.iter().collect()
-                    ));
+                    return Err(ValidationError::ControlCharacters(control_chars.iter().collect()));
                 }
             }
 
             // Check for null bytes
             if message.contains('\0') {
                 return Err(ValidationError::SuspiciousContent(
-                    "Null bytes not allowed".to_string()
+                    "Null bytes not allowed".to_string(),
                 ));
             }
 
@@ -689,8 +683,8 @@ mod tests {
 
     #[test]
     fn test_attachment() {
-        let attachment = Attachment::new("test.txt", "text/plain")
-            .with_data(b"Hello World".to_vec());
+        let attachment =
+            Attachment::new("test.txt", "text/plain").with_data(b"Hello World".to_vec());
         assert_eq!(attachment.filename, "test.txt");
         assert_eq!(attachment.size, 11);
     }

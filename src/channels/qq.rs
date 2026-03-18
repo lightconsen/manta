@@ -39,7 +39,11 @@ pub struct QqConfig {
 
 impl QqConfig {
     /// Create new config with app credentials
-    pub fn new(app_id: impl Into<String>, app_secret: impl Into<String>, bot_qq: impl Into<String>) -> Self {
+    pub fn new(
+        app_id: impl Into<String>,
+        app_secret: impl Into<String>,
+        bot_qq: impl Into<String>,
+    ) -> Self {
         Self {
             app_id: app_id.into(),
             app_secret: app_secret.into(),
@@ -201,12 +205,14 @@ impl QqChannel {
                 cause: Some(Box::new(e)),
             })?;
 
-        let token_resp: QqTokenResponse = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse QQ token response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let token_resp: QqTokenResponse =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse QQ token response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let mut token = self.current_token.write().await;
         *token = token_resp.access_token.clone();
@@ -234,19 +240,23 @@ impl QqChannel {
             request = request.json(&payload);
         }
 
-        let response = request.send().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("QQ API request failed: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let response =
+            request
+                .send()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("QQ API request failed: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
-        let result: T = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse QQ response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let result: T =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse QQ response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         Ok(result)
     }
@@ -263,14 +273,18 @@ impl QqChannel {
             .channel_id
             .as_ref()
             .or(req.guild_id.as_ref())
-            .ok_or_else(|| crate::error::MantaError::Validation(
-                "Channel ID or Guild ID required".to_string()
-            ))?;
+            .ok_or_else(|| {
+                crate::error::MantaError::Validation("Channel ID or Guild ID required".to_string())
+            })?;
 
         let endpoint = endpoint.replace("{channel_id}", channel_id);
 
         let response: QqResponse<serde_json::Value> = self
-            .api_request(reqwest::Method::POST, &endpoint, Some(serde_json::to_value(&req).unwrap()))
+            .api_request(
+                reqwest::Method::POST,
+                &endpoint,
+                Some(serde_json::to_value(&req).unwrap()),
+            )
             .await?;
 
         if response.code != 0 {
@@ -345,7 +359,8 @@ impl Channel for QqChannel {
             }
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         info!("QQ channel started");
         info!("Note: WebSocket/Webhook configuration required for receiving messages");
@@ -360,7 +375,8 @@ impl Channel for QqChannel {
 
     async fn stop(&self) -> crate::Result<()> {
         info!("Stopping QQ channel...");
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -369,9 +385,10 @@ impl Channel for QqChannel {
 
         // Check if allowed
         if !self.is_qq_allowed(recipient) {
-            return Err(crate::error::MantaError::Validation(
-                format!("QQ {} is not in allow list", recipient)
-            ));
+            return Err(crate::error::MantaError::Validation(format!(
+                "QQ {} is not in allow list",
+                recipient
+            )));
         }
 
         // Format content

@@ -39,7 +39,6 @@ pub mod acp;
 pub mod adapters;
 pub mod agent;
 pub mod assistants;
-pub mod team;
 pub mod canvas;
 pub mod channels;
 pub mod cli;
@@ -59,10 +58,11 @@ pub mod providers;
 pub mod security;
 pub mod server;
 pub mod skills;
+pub mod team;
 pub mod tools;
+pub mod utils;
 pub mod web;
 pub mod webhook;
-pub mod utils;
 
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
@@ -73,7 +73,10 @@ pub use config::{Config, ConfigWatcher, ReloadableConfig};
 pub use error::{MantaError, Result};
 
 // Re-export hot reload types
-pub use config::hot_reload::{ConfigChangeEvent, ConfigChangeType, ConfigFileType, HotReloadBuilder, HotReloadManager, WatchedConfig};
+pub use config::hot_reload::{
+    ConfigChangeEvent, ConfigChangeType, ConfigFileType, HotReloadBuilder, HotReloadManager,
+    WatchedConfig,
+};
 
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -122,8 +125,6 @@ mod tests {
     fn test_environment() {
         // Should return development by default
         let env = environment();
-        assert!(
-            env == "development" || !std::env::var("MANTA_ENV").unwrap_or_default().is_empty()
-        );
+        assert!(env == "development" || !std::env::var("MANTA_ENV").unwrap_or_default().is_empty());
     }
 }

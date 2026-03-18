@@ -24,10 +24,10 @@ mod storage;
 mod watcher;
 
 pub use config::{SkillConfig, SkillEntryConfig};
-pub use frontmatter::{InstallSpec as SkillInstallSpec, SkillFrontmatter, SkillFile};
+pub use frontmatter::{InstallSpec as SkillInstallSpec, SkillFile, SkillFrontmatter};
 pub use install::{install_all, install_binary, InstallResult};
-pub use storage::StorageLevel;
 pub use storage::SkillStorage;
+pub use storage::StorageLevel;
 pub use watcher::SkillWatcher;
 
 /// Types of skill triggers
@@ -392,10 +392,7 @@ impl Skill {
         }
 
         if !self.metadata.requires.bins.is_empty() {
-            output.push_str(&format!(
-                "  Requires: {}\n",
-                self.metadata.requires.bins.join(", ")
-            ));
+            output.push_str(&format!("  Requires: {}\n", self.metadata.requires.bins.join(", ")));
         }
 
         if !self.is_eligible {
@@ -486,7 +483,10 @@ impl SkillManager {
                     skill.check_eligibility();
 
                     // Check if skill is enabled in config
-                    skill.enabled = self.config.entries.get(&skill.name)
+                    skill.enabled = self
+                        .config
+                        .entries
+                        .get(&skill.name)
                         .map(|e| e.enabled)
                         .unwrap_or(true);
 
@@ -615,11 +615,7 @@ impl SkillManager {
     /// List eligible skills only
     pub async fn list_eligible_skills(&self) -> Vec<Skill> {
         let skills = self.skills.read().await;
-        skills
-            .values()
-            .filter(|s| s.is_eligible)
-            .cloned()
-            .collect()
+        skills.values().filter(|s| s.is_eligible).cloned().collect()
     }
 
     /// Find skills matching user input
@@ -675,7 +671,8 @@ impl SkillManager {
 
         // Format as SKILL.md
         let emoji = skill.metadata.emoji.clone();
-        let content = frontmatter::format_skill_md(&skill.name, &skill.description, &skill.prompt, &emoji);
+        let content =
+            frontmatter::format_skill_md(&skill.name, &skill.description, &skill.prompt, &emoji);
         tokio::fs::write(&skill_file, content).await?;
 
         info!("Created skill: {} at {:?}", skill.name, skill_file);
@@ -701,10 +698,12 @@ impl SkillManager {
 
     /// Install a skill's dependencies
     pub async fn install_skill(&self, name: &str) -> crate::Result<Vec<InstallResult>> {
-        let skill = self
-            .get_skill(name)
-            .await
-            .ok_or_else(|| crate::error::MantaError::NotFound { resource: format!("Skill: {}", name) })?;
+        let skill =
+            self.get_skill(name)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Skill: {}", name),
+                })?;
 
         let mut results = Vec::new();
 
@@ -891,8 +890,8 @@ mod tests {
 
     #[test]
     fn test_skill_eligibility() {
-        let mut skill = Skill::new("test", "Test", "prompt")
-            .with_trigger(TriggerType::Keyword, "test");
+        let mut skill =
+            Skill::new("test", "Test", "prompt").with_trigger(TriggerType::Keyword, "test");
 
         // Add a binary that definitely exists
         skill.metadata.requires.bins.push("cargo".to_string());

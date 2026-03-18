@@ -2,7 +2,7 @@
 //!
 //! This tool searches file contents using regex patterns, similar to the grep command.
 
-use super::{Tool, ToolContext, ToolExecutionResult, create_schema};
+use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,7 +36,9 @@ impl GrepTool {
         path: &Path,
         context_lines: usize,
     ) -> crate::Result<Vec<SearchMatch>> {
-        let content = fs::read_to_string(path).await.map_err(crate::error::MantaError::Io)?;
+        let content = fs::read_to_string(path)
+            .await
+            .map_err(crate::error::MantaError::Io)?;
 
         let mut matches = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
@@ -79,66 +81,80 @@ impl GrepTool {
         dir: &'a Path,
         include_pattern: Option<&'a str>,
         context_lines: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<Vec<SearchMatch>>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = crate::Result<Vec<SearchMatch>>> + Send + 'a>,
+    > {
         Box::pin(async move {
-        let mut all_matches = Vec::new();
-        let mut entries = fs::read_dir(dir).await.map_err(crate::error::MantaError::Io)?;
+            let mut all_matches = Vec::new();
+            let mut entries = fs::read_dir(dir)
+                .await
+                .map_err(crate::error::MantaError::Io)?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(crate::error::MantaError::Io)? {
-            if all_matches.len() >= MAX_RESULTS {
-                break;
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(crate::error::MantaError::Io)?
+            {
+                if all_matches.len() >= MAX_RESULTS {
+                    break;
+                }
+
+                let path = entry.path();
+
+                if path.is_dir() {
+                    // Skip hidden directories and common non-source directories
+                    if let Some(name) = path.file_name() {
+                        let name = name.to_string_lossy();
+                        if name.starts_with('.')
+                            || name == "node_modules"
+                            || name == "target"
+                            || name == "__pycache__"
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Recursively search subdirectories
+                    let sub_matches = self
+                        .search_directory(pattern, &path, include_pattern, context_lines)
+                        .await?;
+                    all_matches.extend(sub_matches);
+                } else if path.is_file() {
+                    // Check file size
+                    if let Ok(metadata) = fs::metadata(&path).await {
+                        if metadata.len() > MAX_FILE_SIZE {
+                            warn!("Skipping large file: {}", path.display());
+                            continue;
+                        }
+                    }
+
+                    // Check include pattern
+                    if let Some(inc) = include_pattern {
+                        if !self.matches_pattern(&path, inc) {
+                            continue;
+                        }
+                    }
+
+                    // Check if file is text
+                    if let Ok(content) = fs::read(&path).await {
+                        if self.is_binary(&content) {
+                            continue;
+                        }
+                    }
+
+                    // Search the file
+                    match self.search_file(pattern, &path, context_lines).await {
+                        Ok(mut matches) => {
+                            all_matches.append(&mut matches);
+                        }
+                        Err(e) => {
+                            debug!("Error searching file {}: {}", path.display(), e);
+                        }
+                    }
+                }
             }
 
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Skip hidden directories and common non-source directories
-                if let Some(name) = path.file_name() {
-                    let name = name.to_string_lossy();
-                    if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" {
-                        continue;
-                    }
-                }
-
-                // Recursively search subdirectories
-                let sub_matches = self.search_directory(pattern, &path, include_pattern, context_lines).await?;
-                all_matches.extend(sub_matches);
-            } else if path.is_file() {
-                // Check file size
-                if let Ok(metadata) = fs::metadata(&path).await {
-                    if metadata.len() > MAX_FILE_SIZE {
-                        warn!("Skipping large file: {}", path.display());
-                        continue;
-                    }
-                }
-
-                // Check include pattern
-                if let Some(inc) = include_pattern {
-                    if !self.matches_pattern(&path, inc) {
-                        continue;
-                    }
-                }
-
-                // Check if file is text
-                if let Ok(content) = fs::read(&path).await {
-                    if self.is_binary(&content) {
-                        continue;
-                    }
-                }
-
-                // Search the file
-                match self.search_file(pattern, &path, context_lines).await {
-                    Ok(mut matches) => {
-                        all_matches.append(&mut matches);
-                    }
-                    Err(e) => {
-                        debug!("Error searching file {}: {}", path.display(), e);
-                    }
-                }
-            }
-        }
-
-        Ok(all_matches)
+            Ok(all_matches)
         })
     }
 
@@ -167,16 +183,12 @@ impl GrepTool {
     /// Format search results
     fn format_results(&self, matches: &[SearchMatch], output_format: &str) -> String {
         match output_format {
-            "json" => {
-                serde_json::to_string_pretty(matches).unwrap_or_else(|_| "[]".to_string())
-            }
-            "compact" => {
-                matches
-                    .iter()
-                    .map(|m| format!("{}:{}:{}", m.file, m.line_number, m.line_content.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            "json" => serde_json::to_string_pretty(matches).unwrap_or_else(|_| "[]".to_string()),
+            "compact" => matches
+                .iter()
+                .map(|m| format!("{}:{}:{}", m.file, m.line_number, m.line_content.trim()))
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => {
                 // Pretty format with context
                 matches
@@ -273,13 +285,14 @@ Supports regex patterns and can search recursively through directories."#
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let pattern_str = args["pattern"]
-            .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'pattern' argument".to_string()))?;
+        let pattern_str = args["pattern"].as_str().ok_or_else(|| {
+            crate::error::MantaError::Validation("Missing 'pattern' argument".to_string())
+        })?;
 
         // Compile regex
-        let pattern = regex::Regex::new(pattern_str)
-            .map_err(|e| crate::error::MantaError::Validation(format!("Invalid regex pattern: {}", e)))?;
+        let pattern = regex::Regex::new(pattern_str).map_err(|e| {
+            crate::error::MantaError::Validation(format!("Invalid regex pattern: {}", e))
+        })?;
 
         let path_str = args["path"]
             .as_str()
@@ -302,17 +315,14 @@ Supports regex patterns and can search recursively through directories."#
             .min(MAX_CONTEXT_LINES);
         let output_format = args["format"].as_str().unwrap_or("pretty");
 
-        info!(
-            "Searching for '{}' in '{}'",
-            pattern_str,
-            path_str.display()
-        );
+        info!("Searching for '{}' in '{}'", pattern_str, path_str.display());
 
         // Perform search
         let matches = if path_str.is_file() {
             self.search_file(&pattern, &path_str, context_lines).await?
         } else if path_str.is_dir() {
-            self.search_directory(&pattern, &path_str, include_pattern, context_lines).await?
+            self.search_directory(&pattern, &path_str, include_pattern, context_lines)
+                .await?
         } else {
             return Ok(ToolExecutionResult::error(format!(
                 "Path '{}' does not exist",
