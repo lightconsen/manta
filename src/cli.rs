@@ -565,6 +565,9 @@ pub enum ChannelCommands {
         /// Bot token (can also use env var: TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, etc.)
         #[arg(short, long)]
         token: Option<String>,
+        /// Agent to route messages to (defaults to "default" agent)
+        #[arg(short, long)]
+        agent: Option<String>,
     },
     /// Stop a channel
     Stop {
@@ -2302,8 +2305,8 @@ system_prompt: |
     /// Run channel commands
     async fn run_channel_command(&self, command: &ChannelCommands) -> Result<()> {
         match command {
-            ChannelCommands::Add { channel, token } => {
-                self.run_channel_add(*channel, token.clone()).await
+            ChannelCommands::Add { channel, token, agent } => {
+                self.run_channel_add(*channel, token.clone(), agent.clone()).await
             }
             ChannelCommands::Stop { channel } => self.run_channel_stop(*channel).await,
             ChannelCommands::Remove { channel } => self.run_channel_remove(*channel).await,
@@ -2318,9 +2321,10 @@ system_prompt: |
         &self,
         channel: ChannelType,
         token: Option<String>,
+        agent: Option<String>,
     ) -> Result<()> {
         match channel {
-            ChannelType::Telegram => self.add_telegram_channel(token).await,
+            ChannelType::Telegram => self.add_telegram_channel(token, agent).await,
             ChannelType::Discord => {
                 println!("🚧 Discord channel support coming soon!");
                 println!("   To use Discord, build with: cargo build --features discord");
@@ -2393,7 +2397,7 @@ system_prompt: |
 
     /// Add/configure Telegram channel in Gateway
     #[cfg(feature = "telegram")]
-    async fn add_telegram_channel(&self, token: Option<String>) -> Result<()> {
+    async fn add_telegram_channel(&self, token: Option<String>, agent: Option<String>) -> Result<()> {
         use crate::gateway::ChannelConfig;
         use crate::channels::ChannelType;
 
@@ -2408,6 +2412,11 @@ system_prompt: |
         };
 
         println!("🚀 Adding Telegram channel to Gateway...");
+        if let Some(ref agent) = agent {
+            println!("   Agent: {}", agent);
+        } else {
+            println!("   Agent: default");
+        }
 
         // Load the Gateway config
         let config_path = crate::dirs::manta_dir().join("manta.toml");
@@ -2430,7 +2439,7 @@ system_prompt: |
             dm_policy: "open".to_string(),
             allow_from: vec![],
             block_from: vec![],
-            agent_id: None,
+            agent_id: agent,
         };
 
         config.channels.insert("telegram".to_string(), channel_config);
@@ -2448,7 +2457,7 @@ system_prompt: |
 
     /// Telegram support not compiled in
     #[cfg(not(feature = "telegram"))]
-    async fn add_telegram_channel(&self, _token: Option<String>) -> Result<()> {
+    async fn add_telegram_channel(&self, _token: Option<String>, _agent: Option<String>) -> Result<()> {
         println!("❌ Telegram support not compiled in.");
         println!("   Build with: cargo build --features telegram");
         Ok(())
