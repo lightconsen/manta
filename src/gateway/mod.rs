@@ -329,7 +329,7 @@ impl Default for GatewayConfig {
 }
 
 /// Channel-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelConfig {
     /// Channel type
     pub channel_type: ChannelType,
@@ -1130,268 +1130,357 @@ impl Gateway {
                 continue;
             }
 
-            info!("Initializing channel {} ({:?})", name, config.channel_type);
-
-            match config.channel_type {
-                ChannelType::Telegram => {
-                    #[cfg(feature = "telegram")]
-                    {
-                        if let Some(token) = config.credentials.get("token") {
-                            let telegram_config =
-                                crate::channels::telegram::TelegramConfig::new(token)
-                                    .allow_usernames(config.allow_from.clone());
-
-                            let channel = Arc::new(
-                                crate::channels::telegram::TelegramChannel::new(telegram_config),
-                            );
-
-                            // Create message channel for routing Telegram -> Gateway agent
-                            let (message_tx, mut message_rx) = mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
-
-                            // Set up the global message queue sender for Telegram channel
-                            crate::channels::telegram::set_message_queue_sender(message_tx);
-
-                            // Get default agent for routing messages (clone the handle)
-                            let agent_handle = self.state.agents.read().await.get("default").cloned();
-                            if agent_handle.is_none() {
-                                warn!("No default agent available for Telegram channel '{}'", name);
-                            }
-
-                            // Spawn task to process messages from Telegram and route to agent
-                            let agent_for_task = agent_handle.clone();
-                            tokio::spawn(async move {
-                                info!("DEBUG: Telegram message processing task started");
-                                while let Some(message) = message_rx.recv().await {
-                                    info!("DEBUG: Received message from Telegram queue: session={}, user={}, content={}",
-                                        message.conversation_id.0, message.user_id.0, message.content);
-                                    if let Some(ref handle) = agent_for_task {
-                                        info!("DEBUG: Sending to agent via command channel");
-                                        // Send to agent via its command channel
-                                        let cmd = AgentCommand::ProcessMessage {
-                                            session_id: message.conversation_id.0.clone(),
-                                            message: message.content.clone(),
-                                            user_id: message.user_id.0.clone(),
-                                            channel: "telegram".to_string(),
-                                        };
-                                        if let Err(e) = handle.tx.send(cmd).await {
-                                            error!("Failed to send message to agent: {}", e);
-                                        } else {
-                                            info!("DEBUG: Message sent to agent successfully");
-                                        }
-                                    } else {
-                                        error!("No default agent available to process Telegram message");
-                                    }
-                                }
-                                info!("DEBUG: Telegram message processing task ended");
-                            });
-
-                            // Subscribe to agent responses and send back to Telegram
-                            let mut event_rx = self.state.event_tx.subscribe();
-                            let channel_for_telegram = channel.clone();
-                            let channel_name = name.clone();
-                            tokio::spawn(async move {
-                                info!("DEBUG: Telegram response handler task started");
-                                loop {
-                                    match event_rx.recv().await {
-                                        Ok(GatewayEvent::AgentResponse { session_id, content, .. }) => {
-                                            info!("DEBUG: Received AgentResponse event for session: {}", session_id);
-                                            // Send response back to Telegram
-                                            let conversation_id = crate::channels::ConversationId::new(session_id.clone());
-                                            let outgoing = crate::channels::OutgoingMessage::new(
-                                                conversation_id,
-                                                content.clone()
-                                            );
-                                            info!("DEBUG: Sending response back to Telegram: {}", content);
-                                            if let Err(e) = channel_for_telegram.send(outgoing).await {
-                                                error!("Failed to send response to Telegram channel '{}': {}", channel_name, e);
-                                            } else {
-                                                info!("Sent agent response to Telegram session {}", session_id);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            info!("DEBUG: Event channel error: {:?}", e);
-                                            // Event channel closed or lagged, break loop
-                                            break;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                info!("DEBUG: Telegram response handler task ended");
-                            });
-
-                            let channel_name = name.clone();
-                            // Start the channel in a background task
-                            let channel_for_task = channel.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = channel_for_task.start().await {
-                                    error!("Telegram channel {} failed: {}", channel_name, e);
-                                }
-                            });
-                            self.state
-                                .channels
-                                .write()
-                                .await
-                                .insert(name.clone(), channel);
-                            info!("✅ Telegram channel '{}' initialized", name);
-                        } else {
-                            warn!("Telegram channel '{}' missing 'token' in credentials", name);
-                        }
-                    }
-                    #[cfg(not(feature = "telegram"))]
-                    {
-                        warn!("Telegram feature not enabled, skipping channel '{}'", name);
-                    }
-                }
-                ChannelType::Discord => {
-                    #[cfg(feature = "discord")]
-                    {
-                        if let Some(token) = config.credentials.get("token") {
-                            let discord_config =
-                                crate::channels::discord::DiscordConfig::new(token);
-
-                            let channel = Arc::new(crate::channels::discord::DiscordChannel::new(
-                                discord_config,
-                            ));
-                            let channel_name = name.clone();
-                            let channel_for_task = channel.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = channel_for_task.start().await {
-                                    error!("Discord channel {} failed: {}", channel_name, e);
-                                }
-                            });
-                            self.state
-                                .channels
-                                .write()
-                                .await
-                                .insert(name.clone(), channel);
-                            info!("✅ Discord channel '{}' initialized", name);
-                        } else {
-                            warn!("Discord channel '{}' missing 'token' in credentials", name);
-                        }
-                    }
-                    #[cfg(not(feature = "discord"))]
-                    {
-                        warn!("Discord feature not enabled, skipping channel '{}'", name);
-                    }
-                }
-                ChannelType::Slack => {
-                    #[cfg(feature = "slack")]
-                    {
-                        if let Some(token) = config.credentials.get("token") {
-                            let slack_config = crate::channels::slack::SlackConfig::new(token);
-
-                            let channel =
-                                Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
-                            let channel_name = name.clone();
-                            let channel_for_task = channel.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = channel_for_task.start().await {
-                                    error!("Slack channel {} failed: {}", channel_name, e);
-                                }
-                            });
-                            self.state
-                                .channels
-                                .write()
-                                .await
-                                .insert(name.clone(), channel);
-                            info!("✅ Slack channel '{}' initialized", name);
-                        } else {
-                            warn!("Slack channel '{}' missing 'token' in credentials", name);
-                        }
-                    }
-                    #[cfg(not(feature = "slack"))]
-                    {
-                        warn!("Slack feature not enabled, skipping channel '{}'", name);
-                    }
-                }
-                ChannelType::Whatsapp => {
-                    #[cfg(feature = "whatsapp")]
-                    {
-                        // WhatsApp requires both phone_number_id and access_token
-                        if let (Some(phone_id), Some(token)) = (
-                            config.credentials.get("phone_number_id"),
-                            config.credentials.get("access_token"),
-                        ) {
-                            let whatsapp_config =
-                                crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
-
-                            let channel = Arc::new(
-                                crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config),
-                            );
-                            let channel_name = name.clone();
-                            let channel_for_task = channel.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = channel_for_task.start().await {
-                                    error!("WhatsApp channel {} failed: {}", channel_name, e);
-                                }
-                            });
-                            self.state
-                                .channels
-                                .write()
-                                .await
-                                .insert(name.clone(), channel);
-                            info!("✅ WhatsApp channel '{}' initialized", name);
-                        } else {
-                            warn!("WhatsApp channel '{}' missing 'phone_number_id' or 'access_token' in credentials", name);
-                        }
-                    }
-                    #[cfg(not(feature = "whatsapp"))]
-                    {
-                        warn!("WhatsApp feature not enabled, skipping channel '{}'", name);
-                    }
-                }
-                ChannelType::Qq => {
-                    #[cfg(feature = "qq")]
-                    {
-                        // QQ requires app_id, app_secret, and bot_qq
-                        if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
-                            config.credentials.get("app_id"),
-                            config.credentials.get("app_secret"),
-                            config.credentials.get("bot_qq"),
-                        ) {
-                            let qq_config =
-                                crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
-
-                            let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
-                            let channel_name = name.clone();
-                            let channel_for_task = channel.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = channel_for_task.start().await {
-                                    error!("QQ channel {} failed: {}", channel_name, e);
-                                }
-                            });
-                            self.state
-                                .channels
-                                .write()
-                                .await
-                                .insert(name.clone(), channel);
-                            info!("✅ QQ channel '{}' initialized", name);
-                        } else {
-                            warn!("QQ channel '{}' missing required credentials (app_id, app_secret, bot_qq)", name);
-                        }
-                    }
-                    #[cfg(not(feature = "qq"))]
-                    {
-                        warn!("QQ feature not enabled, skipping channel '{}'", name);
-                    }
-                }
-                ChannelType::Feishu | ChannelType::WebTerminal => {
-                    // Feishu/Lark and WebTerminal are handled via webhooks/SocketMode
-                    // They don't need a persistent connection here
-                    info!(
-                        "Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn",
-                        name, config.channel_type
-                    );
-                }
-                ChannelType::Websocket => {
-                    info!("WebSocket channel '{}' requires external connection", name);
-                }
+            // Check if channel already running
+            if self.state.channels.read().await.contains_key(name) {
+                info!("Channel {} already running, skipping", name);
+                continue;
             }
+
+            self.init_single_channel(name, config).await?;
         }
 
-        let channel_count = self.state.channels.read().await.len();
-        info!("✅ Initialized {} active channel connections", channel_count);
+        Ok(())
+    }
 
+    /// Initialize a single channel by name and config
+    async fn init_single_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        info!("Initializing channel {} ({:?})", name, config.channel_type);
+
+        match config.channel_type {
+            ChannelType::Telegram => {
+                #[cfg(feature = "telegram")]
+                {
+                    self.init_telegram_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "telegram"))]
+                {
+                    warn!("Telegram feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Discord => {
+                #[cfg(feature = "discord")]
+                {
+                    self.init_discord_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "discord"))]
+                {
+                    warn!("Discord feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Slack => {
+                #[cfg(feature = "slack")]
+                {
+                    self.init_slack_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "slack"))]
+                {
+                    warn!("Slack feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Whatsapp => {
+                #[cfg(feature = "whatsapp")]
+                {
+                    self.init_whatsapp_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "whatsapp"))]
+                {
+                    warn!("WhatsApp feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Qq => {
+                #[cfg(feature = "qq")]
+                {
+                    self.init_qq_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "qq"))]
+                {
+                    warn!("QQ feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Feishu | ChannelType::WebTerminal => {
+                // Feishu/Lark and WebTerminal are handled via webhooks/SocketMode
+                info!(
+                    "Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn",
+                    name, config.channel_type
+                );
+            }
+            ChannelType::Websocket => {
+                info!("WebSocket channel '{}' requires external connection", name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Process message queue
+
+    /// Initialize Telegram channel
+    #[cfg(feature = "telegram")]
+    async fn init_telegram_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        if let Some(token) = config.credentials.get("token") {
+            let telegram_config = crate::channels::telegram::TelegramConfig::new(token)
+                .allow_usernames(config.allow_from.clone());
+
+            let channel = Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
+
+            // Create message channel for routing Telegram -> Gateway agent
+            let (message_tx, mut message_rx) =
+                mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+
+            // Set up the global message queue sender for Telegram channel
+            crate::channels::telegram::set_message_queue_sender(message_tx);
+
+            // Get agent for routing messages (use channel's agent_id or default)
+            let agent_name = config.agent_id.as_deref().unwrap_or("default");
+            let agent_handle = self.state.agents.read().await.get(agent_name).cloned();
+            if agent_handle.is_none() {
+                warn!(
+                    "No '{}' agent available for Telegram channel '{}', messages will not be routed",
+                    agent_name, name
+                );
+            } else {
+                info!(
+                    "Telegram channel '{}' connected to agent '{}'",
+                    name, agent_name
+                );
+            }
+
+            // Spawn task to process messages from Telegram and route to agent
+            let agent_for_task = agent_handle.clone();
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                info!("DEBUG: Telegram message processing task started");
+                while let Some(message) = message_rx.recv().await {
+                    info!(
+                        "DEBUG: Received message from Telegram queue: session={}, user={}, content={}",
+                        message.conversation_id.0,
+                        message.user_id.0,
+                        message.content
+                    );
+                    if let Some(ref handle) = agent_for_task {
+                        info!("DEBUG: Sending to agent via command channel");
+                        // Send to agent via its command channel
+                        let cmd = AgentCommand::ProcessMessage {
+                            session_id: message.conversation_id.0.clone(),
+                            message: message.content.clone(),
+                            user_id: message.user_id.0.clone(),
+                            channel: "telegram".to_string(),
+                        };
+                        if let Err(e) = handle.tx.send(cmd).await {
+                            error!("Failed to send message to agent: {}", e);
+                        } else {
+                            info!("DEBUG: Message sent to agent successfully");
+                        }
+                    } else {
+                        error!("No default agent available to process Telegram message");
+                    }
+                }
+                info!("DEBUG: Telegram message processing task ended");
+            });
+
+            // Subscribe to agent responses and send back to Telegram
+            let mut event_rx = self.state.event_tx.subscribe();
+            let channel_for_telegram = channel.clone();
+            let channel_name = name.to_string();
+            tokio::spawn(async move {
+                info!("DEBUG: Telegram response handler task started");
+                loop {
+                    match event_rx.recv().await {
+                        Ok(GatewayEvent::AgentResponse {
+                            session_id,
+                            content,
+                            ..
+                        }) => {
+                            info!(
+                                "DEBUG: Received AgentResponse event for session: {}",
+                                session_id
+                            );
+                            // Send response back to Telegram
+                            let conversation_id =
+                                crate::channels::ConversationId::new(session_id.clone());
+                            let outgoing = crate::channels::OutgoingMessage::new(
+                                conversation_id,
+                                content.clone(),
+                            );
+                            info!("DEBUG: Sending response back to Telegram: {}", content);
+                            if let Err(e) = channel_for_telegram.send(outgoing).await {
+                                error!(
+                                    "Failed to send response to Telegram channel '{}': {}",
+                                    channel_name, e
+                                );
+                            } else {
+                                info!("Sent agent response to Telegram session {}", session_id);
+                            }
+                        }
+                        Err(e) => {
+                            info!("DEBUG: Event channel error: {:?}", e);
+                            // Event channel closed or lagged, break loop
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                info!("DEBUG: Telegram response handler task ended");
+            });
+
+            let channel_name = name.to_string();
+            // Start the channel in a background task
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("Telegram channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ Telegram channel '{}' initialized", name);
+        } else {
+            warn!("Telegram channel '{}' missing 'token' in credentials", name);
+        }
+        Ok(())
+    }
+
+    /// Initialize Discord channel
+    #[cfg(feature = "discord")]
+    async fn init_discord_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        if let Some(token) = config.credentials.get("token") {
+            let discord_config = crate::channels::discord::DiscordConfig::new(token);
+
+            let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
+            let channel_name = name.to_string();
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("Discord channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ Discord channel '{}' initialized", name);
+        } else {
+            warn!("Discord channel '{}' missing 'token' in credentials", name);
+        }
+        Ok(())
+    }
+
+    /// Initialize Slack channel
+    #[cfg(feature = "slack")]
+    async fn init_slack_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        if let Some(token) = config.credentials.get("token") {
+            let slack_config = crate::channels::slack::SlackConfig::new(token);
+
+            let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
+            let channel_name = name.to_string();
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("Slack channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ Slack channel '{}' initialized", name);
+        } else {
+            warn!("Slack channel '{}' missing 'token' in credentials", name);
+        }
+        Ok(())
+    }
+
+    /// Initialize WhatsApp channel
+    #[cfg(feature = "whatsapp")]
+    async fn init_whatsapp_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        if let (Some(phone_id), Some(token)) = (
+            config.credentials.get("phone_number_id"),
+            config.credentials.get("access_token"),
+        ) {
+            let whatsapp_config =
+                crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
+
+            let channel = Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
+            let channel_name = name.to_string();
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("WhatsApp channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ WhatsApp channel '{}' initialized", name);
+        } else {
+            warn!(
+                "WhatsApp channel '{}' missing 'phone_number_id' or 'access_token' in credentials",
+                name
+            );
+        }
+        Ok(())
+    }
+
+    /// Initialize QQ channel
+    #[cfg(feature = "qq")]
+    async fn init_qq_channel(
+        &self,
+        name: &str,
+        config: &ChannelConfig,
+    ) -> crate::Result<()> {
+        if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
+            config.credentials.get("app_id"),
+            config.credentials.get("app_secret"),
+            config.credentials.get("bot_qq"),
+        ) {
+            let qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
+
+            let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
+            let channel_name = name.to_string();
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("QQ channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ QQ channel '{}' initialized", name);
+        } else {
+            warn!(
+                "QQ channel '{}' missing required credentials (app_id, app_secret, bot_qq)",
+                name
+            );
+        }
         Ok(())
     }
 
@@ -1484,16 +1573,145 @@ impl Gateway {
     async fn register_hot_reload_handlers(&self, hot_reload: &HotReloadManager) {
         use crate::config::hot_reload::ConfigFileType;
 
-        // Handler for main config changes
+        let state = self.state.clone();
+        let current_config = self.config.clone();
+
+        // Handler for main config changes (includes manta.toml)
         hot_reload
-            .register_handler(ConfigFileType::Main, |_event| async move {
-                info!("Main config file changed - reloading configuration");
-                // In a full implementation, this would:
-                // 1. Reload the config file
-                // 2. Update GatewayConfig
-                // 3. Notify components of changes
-                // 4. Possibly restart affected services
-                Ok(())
+            .register_handler(ConfigFileType::Main, move |_event| {
+                let state = state.clone();
+                let current_config = current_config.clone();
+                async move {
+                    info!("Main config file changed - reloading configuration");
+
+                    // Reload config from disk
+                    let config_path = crate::dirs::manta_dir().join("manta.toml");
+                    if !config_path.exists() {
+                        return Ok(());
+                    }
+
+                    let content = match tokio::fs::read_to_string(&config_path).await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Failed to read manta.toml: {}", e);
+                            return Ok(());
+                        }
+                    };
+
+                    let new_config: GatewayConfig = match toml::from_str(&content) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            error!("Failed to parse manta.toml: {}", e);
+                            return Ok(());
+                        }
+                    };
+
+                    // Get current running channels
+                    let current_channels: Vec<String> = {
+                        let channels = state.channels.read().await;
+                        channels.keys().cloned().collect()
+                    };
+
+                    // 1. Stop removed or disabled channels
+                    for name in &current_channels {
+                        let should_stop = match new_config.channels.get(name) {
+                            None => {
+                                info!("Channel '{}' removed from config, stopping...", name);
+                                true
+                            }
+                            Some(cfg) if !cfg.enabled => {
+                                info!("Channel '{}' disabled in config, stopping...", name);
+                                true
+                            }
+                            _ => false,
+                        };
+
+                        if should_stop {
+                            // Remove channel from state (channel will be dropped, should clean up itself)
+                            let removed = {
+                                let mut channels = state.channels.write().await;
+                                channels.remove(name).is_some()
+                            };
+                            if removed {
+                                info!("✅ Stopped channel '{}'", name);
+                            }
+                        }
+                    }
+
+                    // 2. Handle new or modified channels
+                    for (name, new_channel_config) in &new_config.channels {
+                        if !new_channel_config.enabled {
+                            continue;
+                        }
+
+                        let existing = {
+                            let channels = state.channels.read().await;
+                            channels.get(name).cloned()
+                        };
+
+                        match existing {
+                            Some(_channel) => {
+                                // Channel exists - check if config changed
+                                let old_config = current_config.channels.get(name);
+                                let config_changed = old_config.map(|old| {
+                                    old.credentials != new_channel_config.credentials
+                                        || old.allow_from != new_channel_config.allow_from
+                                        || old.block_from != new_channel_config.block_from
+                                        || old.dm_policy != new_channel_config.dm_policy
+                                }).unwrap_or(true);
+
+                                if config_changed {
+                                    info!(
+                                        "Channel '{}' config changed, restarting...",
+                                        name
+                                    );
+
+                                    // Remove old channel
+                                    {
+                                        let mut channels = state.channels.write().await;
+                                        channels.remove(name);
+                                    }
+
+                                    // Start with new config
+                                    let gateway = Gateway {
+                                        state: state.clone(),
+                                        config: new_config.clone(),
+                                    };
+                                    if let Err(e) = gateway
+                                        .init_single_channel(name, new_channel_config)
+                                        .await
+                                    {
+                                        error!("Failed to restart channel '{}': {}", name, e);
+                                    } else {
+                                        info!("✅ Restarted channel '{}' with new config", name);
+                                    }
+                                }
+                            }
+                            None => {
+                                // New channel - initialize it
+                                info!(
+                                    "Hot-reloading new channel: {} ({:?})",
+                                    name, new_channel_config.channel_type
+                                );
+
+                                let gateway = Gateway {
+                                    state: state.clone(),
+                                    config: new_config.clone(),
+                                };
+                                if let Err(e) = gateway
+                                    .init_single_channel(name, new_channel_config)
+                                    .await
+                                {
+                                    error!("Failed to hot-reload channel '{}': {}", name, e);
+                                } else {
+                                    info!("✅ Hot-reloaded channel '{}'", name);
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
             })
             .await;
 
