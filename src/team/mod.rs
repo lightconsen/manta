@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn};
 
+pub mod mesh;
+
+pub use mesh::{TeamMeshManager, TeamMeshSession, TeamMessageResult, get_team_mesh_manager};
+
 /// Team configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Team {

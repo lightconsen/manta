@@ -2100,17 +2100,40 @@ system_prompt: |
             }
 
             TeamCommands::Activate { name, acp: _ } => {
-                let mut team = Team::load(name).await?;
+                use crate::team::mesh::TeamMeshManager;
+
+                let team = Team::load(name).await?;
+
+                // Activate in mesh
+                let mesh_manager = TeamMeshManager::new();
+                let session = mesh_manager.activate_team(&team).await?;
+
+                // Mark as active in storage
+                let mut team = team;
                 team.active = true;
                 team.save().await?;
+
                 println!("✅ Activated team '{}'", name);
-                println!("   The team is now ready for use in the ACP runtime");
+                println!("   Pattern: {:?}", session.pattern);
+                println!("   Agents registered: {}", session.agents.len());
+                if !session.leads.is_empty() {
+                    println!("   Leads: {}", session.leads.join(", "));
+                }
+                println!("   The team is now ready for runtime communication");
             }
 
             TeamCommands::Deactivate { name } => {
+                use crate::team::mesh::TeamMeshManager;
+
+                // Deactivate in mesh
+                let mesh_manager = TeamMeshManager::new();
+                mesh_manager.deactivate_team(name).await?;
+
+                // Mark as inactive in storage
                 let mut team = Team::load(name).await?;
                 team.active = false;
                 team.save().await?;
+
                 println!("✅ Deactivated team '{}'", name);
             }
         }

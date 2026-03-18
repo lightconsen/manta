@@ -388,6 +388,7 @@ pub mod mcp;
 pub mod memory;
 pub mod shell;
 pub mod time;
+pub mod team_communicate_tool;
 pub mod todo_tool;
 pub mod web;
 
@@ -396,6 +397,7 @@ pub use browser::BrowserTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
+pub use team_communicate_tool::TeamCommunicateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;
 pub use mcp::McpConnectionTool;
