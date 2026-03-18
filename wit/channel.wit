@@ -1,0 +1,131 @@
+package manta:channel@0.1.0;
+
+/// Channel capabilities
+record capabilities {
+    supports-formatting: bool,
+    supports-attachments: bool,
+    supports-images: bool,
+    supports-threads: bool,
+    supports-typing: bool,
+    supports-buttons: bool,
+    supports-commands: bool,
+    supports-reactions: bool,
+}
+
+/// Message attachment
+record attachment {
+    filename: string,
+    content-type: string,
+    size: u64,
+    /// Base64-encoded content
+    data: string,
+}
+
+/// Incoming message from a channel
+record incoming-message {
+    id: string,
+    user-id: string,
+    conversation-id: string,
+    content: string,
+    attachments: list<attachment>,
+}
+
+/// Outgoing message to send
+record outgoing-message {
+    conversation-id: string,
+    content: string,
+    formatted-content: option<string>,
+    reply-to: option<string>,
+}
+
+/// Message options
+record message-options {
+    /// Whether to show typing indicator
+    show-typing: bool,
+    /// Whether to send silently
+    silent: bool,
+}
+
+/// Channel errors
+variant channel-error {
+    /// Generic error with message
+    generic(string),
+    /// Not configured
+    not-configured,
+    /// Send failed
+    send-failed(string),
+    /// Invalid configuration
+    invalid-config(string),
+    /// Not supported
+    not-supported(string),
+    /// Rate limited
+    rate-limited(u64),
+}
+
+/// Result type for channel operations
+variant result<T> {
+    ok(T),
+    err(channel-error),
+}
+
+/// Channel interface
+interface channel {
+    /// Initialize the channel with configuration (JSON string)
+    init: func(config: string) -> result<string>;
+
+    /// Start the channel (begin receiving messages)
+    start: func() -> result<tuple<>>;
+
+    /// Stop the channel
+    stop: func() -> result<tuple<>>;
+
+    /// Get channel name
+    get-name: func() -> string;
+
+    /// Get channel capabilities
+    get-capabilities: func() -> capabilities;
+
+    /// Send a message
+    send: func(message: outgoing-message, options: message-options) -> result<string>;
+
+    /// Send typing indicator
+    send-typing: func(conversation-id: string) -> result<tuple<>>;
+
+    /// Edit a message
+    edit-message: func(message-id: string, new-content: string) -> result<tuple<>>;
+
+    /// Delete a message
+    delete-message: func(message-id: string) -> result<tuple<>>;
+
+    /// Health check
+    health-check: func() -> result<bool>;
+}
+
+/// Host interface - callbacks the plugin can call into the host
+interface host {
+    /// Log a message
+    log: func(level: log-level, message: string);
+
+    /// Send an incoming message to the host
+    receive-message: func(message: incoming-message);
+
+    /// Get host-provided configuration
+    get-config: func() -> string;
+}
+
+/// Log levels
+enum log-level {
+    debug,
+    info,
+    warn,
+    error,
+}
+
+/// World definition - what the plugin exports and imports
+world channel-plugin {
+    /// Plugin exports the channel interface
+    export channel;
+
+    /// Plugin imports the host interface
+    import host;
+}

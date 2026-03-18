@@ -105,6 +105,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: ChannelCommands,
     },
+    /// Plugin management for WASM channel extensions
+    #[command(name = "plugin")]
+    Plugin {
+        /// Plugin subcommand
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
     /// Start the Manta daemon (background server)
     Start {
         /// Host to bind to
@@ -481,6 +488,71 @@ pub enum TeamCommands {
 
 // Re-export team types for CLI use
 pub use crate::team::{CommunicationPattern, TeamType};
+
+#[derive(Debug, Subcommand)]
+pub enum PluginCommands {
+    /// List available WASM channel plugins
+    List {
+        /// Show loaded plugins only
+        #[arg(short, long)]
+        loaded: bool,
+        /// Show detailed information
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Load a WASM plugin
+    Load {
+        /// Plugin name (matches .wasm filename)
+        name: String,
+        /// Path to plugin WASM file
+        #[arg(short, long)]
+        path: Option<std::path::PathBuf>,
+        /// Configuration as JSON string
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+    /// Unload a WASM plugin
+    Unload {
+        /// Plugin name
+        name: String,
+    },
+    /// Start a loaded plugin
+    Start {
+        /// Plugin name
+        name: String,
+    },
+    /// Stop a running plugin
+    Stop {
+        /// Plugin name
+        name: String,
+    },
+    /// Install a plugin from a URL or local path
+    Install {
+        /// Source URL or file path
+        source: String,
+        /// Plugin name (defaults to filename)
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Force reinstall if already exists
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Remove an installed plugin
+    Remove {
+        /// Plugin name
+        name: String,
+    },
+    /// Show plugin details
+    Show {
+        /// Plugin name
+        name: String,
+    },
+    /// Check plugin health
+    Health {
+        /// Plugin name
+        name: String,
+    },
+}
 
 #[derive(Debug, Subcommand)]
 pub enum ChannelCommands {

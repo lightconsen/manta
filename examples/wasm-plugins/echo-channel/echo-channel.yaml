@@ -1,0 +1,19 @@
+name: echo
+version: 0.1.0
+author: manta-team
+description: Echo channel - echoes back messages for testing
+capabilities:
+  - formatting
+  - typing
+  - commands
+config_schema:
+  type: object
+  properties:
+    prefix:
+      type: string
+      description: Prefix for echoed messages
+      default: "Echo"
+    include_timestamp:
+      type: boolean
+      description: Include timestamp in echoed messages
+      default: true

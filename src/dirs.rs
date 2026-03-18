@@ -87,6 +87,11 @@ pub fn teams_dir() -> PathBuf {
     manta_dir().join("teams")
 }
 
+/// Get the extensions directory (~/.manta/extensions)
+pub fn extensions_dir() -> PathBuf {
+    manta_dir().join("extensions")
+}
+
 /// Get the PID file path (~/.manta/daemon.pid)
 pub fn pid_file() -> PathBuf {
     manta_dir().join("daemon.pid")

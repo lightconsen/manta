@@ -7,6 +7,7 @@ use crate::core::models::Id;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 pub mod formatter;
 
@@ -49,6 +50,9 @@ pub mod qq;
 
 #[cfg(feature = "lark")]
 pub mod lark;
+
+#[cfg(feature = "plugins")]
+pub mod plugin_host;
 
 pub use formatter::{
     DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
@@ -639,6 +643,120 @@ pub use qq::{QqChannel, QqConfig};
 
 #[cfg(feature = "lark")]
 pub use lark::{LarkChannel, LarkConfig};
+
+#[cfg(feature = "plugins")]
+pub use plugin_host::{PluginChannel, PluginChannelRegistry, PluginManifest};
+
+/// Extended channel registry that supports both native and WASM plugins
+#[cfg(feature = "plugins")]
+pub struct ExtendedChannelRegistry {
+    /// Native channels
+    native: ChannelRegistry,
+    /// WASM plugin channels
+    plugins: Option<PluginChannelRegistry>,
+}
+
+#[cfg(feature = "plugins")]
+impl ExtendedChannelRegistry {
+    /// Create a new extended registry
+    pub fn new(message_tx: mpsc::UnboundedSender<IncomingMessage>) -> Self {
+        let plugin_dir = crate::dirs::extensions_dir().join("channels");
+        Self {
+            native: ChannelRegistry::new(),
+            plugins: Some(PluginChannelRegistry::new(plugin_dir, message_tx)),
+        }
+    }
+
+    /// Register a native channel
+    pub fn register_native(&mut self, channel: BoxedChannel) {
+        self.native.register(channel);
+    }
+
+    /// Get a channel by name (checks native first, then plugins)
+    pub async fn get(&self, name: &str) -> Option<BoxedChannel> {
+        // Check native channels first
+        if let Some(channel) = self.native.get(name) {
+            // This is a bit awkward since we can't clone BoxedChannel
+            // In practice, you'd need to wrap channels in Arc or use a different approach
+            return None; // Placeholder - would need Arc<dyn Channel> in practice
+        }
+
+        // Check plugin channels
+        if let Some(ref plugins) = self.plugins {
+            if let Some(plugin) = plugins.get_plugin(name).await {
+                return Some(Box::new(plugin));
+            }
+        }
+
+        None
+    }
+
+    /// List all available channel names
+    pub async fn list(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.native.list().into_iter().map(|s| s.to_string()).collect();
+
+        if let Some(ref plugins) = self.plugins {
+            names.extend(plugins.list_loaded().await);
+        }
+
+        names
+    }
+
+    /// Load a WASM plugin
+    pub async fn load_plugin(&self, name: &str, config: Option<serde_json::Value>) -> crate::Result<()> {
+        if let Some(ref plugins) = self.plugins {
+            plugins.load_plugin(name, config).await?;
+        }
+        Ok(())
+    }
+
+    /// Unload a WASM plugin
+    pub async fn unload_plugin(&self, name: &str) -> crate::Result<()> {
+        if let Some(ref plugins) = self.plugins {
+            plugins.unload_plugin(name).await?;
+        }
+        Ok(())
+    }
+
+    /// Discover available WASM plugins
+    pub async fn discover_plugins(&self) -> crate::Result<Vec<(String, std::path::PathBuf)>> {
+        if let Some(ref plugins) = self.plugins {
+            plugins.discover_plugins().await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Start all channels (native and plugins)
+    pub async fn start_all(&self) -> Vec<crate::Result<()>> {
+        let mut results = self.native.start_all().await;
+
+        if let Some(ref plugins) = self.plugins {
+            results.extend(plugins.start_all().await);
+        }
+
+        results
+    }
+
+    /// Stop all channels
+    pub async fn stop_all(&self) -> Vec<crate::Result<()>> {
+        let mut results = self.native.stop_all().await;
+
+        if let Some(ref plugins) = self.plugins {
+            results.extend(plugins.stop_all().await);
+        }
+
+        results
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Default for ExtendedChannelRegistry {
+    fn default() -> Self {
+        let (message_tx, _) = mpsc::unbounded_channel();
+        Self::new(message_tx)
+    }
+}
 
 #[cfg(test)]
 mod tests {

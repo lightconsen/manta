@@ -49,6 +49,10 @@ pub enum MantaError {
         #[source]
         cause: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
+
+    /// Plugin errors (WASM extension errors)
+    #[error("Plugin error: {0}")]
+    Plugin(String),
 }
 
 /// Configuration-specific errors
