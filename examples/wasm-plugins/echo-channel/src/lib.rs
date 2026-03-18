@@ -1,111 +1,50 @@
 //! Echo Channel - Example WASM Plugin for Manta
 //!
 //! This is a simple example channel that echoes back any messages it receives.
-//! It demonstrates the WASM plugin interface for Manta channels.
+//! It demonstrates the WASM plugin interface for Manta channels using the SDK.
 
+use manta_channel_sdk::{
+    export_channel, Capabilities, Channel, ChannelError, IncomingMessage, MessageOptions,
+    OutgoingMessage, log_debug, log_info, log_warn, emit_message, Result,
+};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::collections::HashMap;
 
-// Import the WIT-generated bindings
-mod bindings {
-    wit_bindgen::generate!({
-        path: "../../../wit/channel.wit",
-        world: "channel-plugin",
-    });
+/// Configuration for the echo channel
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct EchoConfig {
+    /// Prefix for echoed messages
+    #[serde(default = "default_prefix")]
+    pub prefix: String,
+    /// Include timestamp in echoed messages
+    #[serde(default = "default_timestamp")]
+    pub include_timestamp: bool,
 }
 
-use bindings::exports::manta::channel::channel::Guest;
-use bindings::manta::channel::host::{self, LogLevel};
-
-/// Plugin state
-#[derive(Serialize, Deserialize)]
-struct EchoConfig {
-    prefix: String,
-    include_timestamp: bool,
+fn default_prefix() -> String {
+    "Echo".to_string()
 }
 
-impl Default for EchoConfig {
-    fn default() -> Self {
-        Self {
-            prefix: "Echo".to_string(),
-            include_timestamp: true,
-        }
-    }
+fn default_timestamp() -> bool {
+    true
 }
 
-/// Channel state stored in thread-local
-thread_local! {
-    static STATE: RefCell<ChannelState> = RefCell::new(ChannelState::default());
-}
-
+/// The Echo Channel implementation
 #[derive(Default)]
-struct ChannelState {
+pub struct EchoChannel {
     config: EchoConfig,
     running: bool,
     message_count: u64,
 }
 
-/// The Echo Channel implementation
-pub struct EchoChannel;
+impl Channel for EchoChannel {
+    type Config = EchoConfig;
 
-impl Guest for EchoChannel {
-    /// Initialize the channel with configuration
-    fn init(config: String) -> Result<String, String> {
-        host::log(LogLevel::Info, "EchoChannel: Initializing...");
-
-        let echo_config: EchoConfig = if config.is_empty() {
-            EchoConfig::default()
-        } else {
-            serde_json::from_str(&config).map_err(|e| format!("Invalid config: {}", e))?
-        };
-
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.config = echo_config;
-            state.running = false;
-            state.message_count = 0;
-        });
-
-        host::log(LogLevel::Info, "EchoChannel: Initialized successfully");
-        Ok("Echo channel ready".to_string())
+    fn name(&self) -> &str {
+        "echo"
     }
 
-    /// Start the channel
-    fn start() -> Result<(), String> {
-        host::log(LogLevel::Info, "EchoChannel: Starting...");
-
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.running = true;
-        });
-
-        // Simulate receiving a message (in real implementation, this would set up listeners)
-        host::log(LogLevel::Info, "EchoChannel: Started and listening");
-        Ok(())
-    }
-
-    /// Stop the channel
-    fn stop() -> Result<(), String> {
-        host::log(LogLevel::Info, "EchoChannel: Stopping...");
-
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.running = false;
-        });
-
-        host::log(LogLevel::Info, "EchoChannel: Stopped");
-        Ok(())
-    }
-
-    /// Get channel name
-    fn get_name() -> String {
-        "echo".to_string()
-    }
-
-    /// Get channel capabilities
-    fn get_capabilities() -> bindings::exports::manta::channel::channel::Capabilities {
-        bindings::exports::manta::channel::channel::Capabilities {
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
             supports_formatting: true,
             supports_attachments: false,
             supports_images: false,
@@ -117,75 +56,82 @@ impl Guest for EchoChannel {
         }
     }
 
-    /// Send a message
-    fn send(
-        message: bindings::exports::manta::channel::channel::OutgoingMessage,
-        _options: bindings::exports::manta::channel::channel::MessageOptions,
-    ) -> Result<String, String> {
-        let conversation_id = message.conversation_id;
-        let content = message.content;
+    fn init(&mut self, config: EchoConfig) -> Result<()> {
+        self.config = config;
+        self.running = false;
+        self.message_count = 0;
 
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.message_count += 1;
-
-            let prefix = &state.config.prefix;
-            let timestamp = if state.config.include_timestamp {
-                format!(" [{}]", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs())
-            } else {
-                String::new()
-            };
-
-            // In a real channel, this would send to an external service
-            // For echo, we just log and return
-            let log_msg = format!(
-                "{}:{} - {}: {}{}",
-                prefix, state.message_count, conversation_id, content, timestamp
-            );
-            host::log(LogLevel::Info, &log_msg);
-
-            // Echo the message back as an incoming message
-            let incoming = bindings::manta::channel::host::IncomingMessage {
-                id: format!("echo-{}", state.message_count),
-                user_id: "echo-bot".to_string(),
-                conversation_id: conversation_id.clone(),
-                content: format!("Echo: {}", content),
-                attachments: vec![],
-            };
-            host::receive_message(incoming);
-        });
-
-        Ok(format!("msg-{}", conversation_id))
-    }
-
-    /// Send typing indicator
-    fn send_typing(_conversation_id: String) -> Result<(), String> {
-        host::log(LogLevel::Debug, "EchoChannel: Typing indicator");
+        log_info(&format!(
+            "EchoChannel initialized with prefix '{}'",
+            self.config.prefix
+        ));
         Ok(())
     }
 
-    /// Edit a message (not supported in echo)
-    fn edit_message(_message_id: String, _new_content: String) -> Result<(), String> {
-        host::log(LogLevel::Warn, "EchoChannel: Edit not supported");
+    fn start(&mut self) -> Result<()> {
+        self.running = true;
+        log_info("EchoChannel started");
         Ok(())
     }
 
-    /// Delete a message (not supported in echo)
-    fn delete_message(_message_id: String) -> Result<(), String> {
-        host::log(LogLevel::Warn, "EchoChannel: Delete not supported");
+    fn stop(&mut self) -> Result<()> {
+        self.running = false;
+        log_info("EchoChannel stopped");
         Ok(())
     }
 
-    /// Health check
-    fn health_check() -> Result<bool, String> {
-        STATE.with(|state| {
-            let state = state.borrow();
-            Ok(state.running)
-        })
+    fn send(&mut self, message: OutgoingMessage, _options: MessageOptions) -> Result<String> {
+        self.message_count += 1;
+
+        let timestamp = if self.config.include_timestamp {
+            format!(" [{}]", self.message_count)
+        } else {
+            String::new()
+        };
+
+        // Log the message
+        let log_msg = format!(
+            "{}:{} - {}: {}{}",
+            self.config.prefix, self.message_count,
+            message.conversation_id, message.content, timestamp
+        );
+        log_info(&log_msg);
+
+        // Echo the message back
+        let echo_content = format!("{}: {}", self.config.prefix, message.content);
+
+        let incoming = IncomingMessage {
+            id: format!("echo-{}", self.message_count),
+            user_id: "echo-bot".to_string(),
+            conversation_id: message.conversation_id,
+            content: echo_content,
+            attachments: vec![],
+        };
+
+        emit_message(incoming);
+
+        Ok(format!("msg-{}", self.message_count))
+    }
+
+    fn send_typing(&mut self, _conversation_id: String) -> Result<()> {
+        log_debug("Sending typing indicator");
+        Ok(())
+    }
+
+    fn edit_message(&mut self, _message_id: String, _new_content: String) -> Result<()> {
+        log_warn("Edit not supported in echo channel");
+        Err(ChannelError::NotSupported("Edit not supported".to_string()))
+    }
+
+    fn delete_message(&mut self, _message_id: String) -> Result<()> {
+        log_warn("Delete not supported in echo channel");
+        Err(ChannelError::NotSupported("Delete not supported".to_string()))
+    }
+
+    fn health_check(&self) -> Result<bool> {
+        Ok(self.running)
     }
 }
 
-bindings::export!(EchoChannel with_types_in bindings);
+// Export the channel
+export_channel!(EchoChannel);

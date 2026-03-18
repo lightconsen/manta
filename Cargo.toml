@@ -8,6 +8,9 @@ description = "Manta - A Rust application"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/example/manta"
 
+[workspace]
+members = ["crates/*"]
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }

@@ -3,15 +3,17 @@
 //! This module provides the runtime for loading and executing WASM-based
 //! channel plugins, enabling third-party channels without recompiling Manta.
 
-use crate::channels::{Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, OutgoingMessage};
+use crate::channels::{
+    Attachment, Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, MessageMetadata,
+    OutgoingMessage, UserId,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
-use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime::{Engine, Func, Instance, Linker, Module, Store, TypedFunc, Val, ValType};
 
 /// Host state passed to WASM plugins
 pub struct HostState {
@@ -21,17 +23,6 @@ pub struct HostState {
     pub config: String,
     /// Message sender for incoming messages
     pub message_tx: mpsc::UnboundedSender<IncomingMessage>,
-    /// Logger
-    pub log_tx: mpsc::UnboundedSender<(LogLevel, String)>,
-}
-
-/// Log levels for plugin logging
-#[derive(Debug, Clone, Copy)]
-pub enum LogLevel {
-    Debug,
-    Info,
-    Warn,
-    Error,
 }
 
 /// A WASM-based channel plugin
@@ -40,48 +31,81 @@ pub struct PluginChannel {
     name: String,
     /// Plugin ID
     id: String,
-    /// WASM store - wrapped in Mutex for thread safety
+    /// WASM store
     store: Arc<Mutex<Store<HostState>>>,
-    /// Function pointers - stored as Option to allow re-initialization
-    init_fn: TypedFunc<(String,), (Result<String, String>,)>,
-    start_fn: TypedFunc<(), (Result<(), String>,)>,
-    stop_fn: TypedFunc<(), (Result<(), String>,)>,
-    get_name_fn: TypedFunc<(), (String,)>,
-    get_capabilities_fn: TypedFunc<(), (PluginCapabilities,)>,
-    send_fn: TypedFunc<(PluginOutgoingMessage, PluginMessageOptions), (Result<String, String>,)>,
-    send_typing_fn: TypedFunc<(String,), (Result<(), String>,)>,
-    edit_message_fn: TypedFunc<(String, String), (Result<(), String>,)>,
-    delete_message_fn: TypedFunc<(String,), (Result<(), String>,)>,
-    health_check_fn: TypedFunc<(), (Result<bool, String>,)>,
+    /// Function pointers
+    init_fn: TypedFunc<(i32, i32), i64>,
+    start_fn: TypedFunc<(), i32>,
+    stop_fn: TypedFunc<(), i32>,
+    get_name_fn: TypedFunc<(), (i32, i32)>,
+    get_capabilities_fn: TypedFunc<(), i64>,
+    send_fn: TypedFunc<(i32, i32), i64>,
+    send_typing_fn: TypedFunc<(i32, i32), i32>,
+    edit_message_fn: TypedFunc<(i32, i32, i32, i32), i32>,
+    delete_message_fn: TypedFunc<(i32, i32), i32>,
+    health_check_fn: TypedFunc<(), i32>,
+    /// Memory export for reading/writing strings
+    memory: wasmtime::Memory,
+    /// Alloc function for allocating memory in the guest
+    alloc_fn: TypedFunc<i32, i32>,
+    /// Free function for freeing memory in the guest
+    free_fn: TypedFunc<(i32, i32), ()>,
 }
 
-/// Capabilities as represented in WASM
-#[derive(Clone, Debug)]
-pub struct PluginCapabilities {
-    pub supports_formatting: bool,
-    pub supports_attachments: bool,
-    pub supports_images: bool,
-    pub supports_threads: bool,
-    pub supports_typing: bool,
-    pub supports_buttons: bool,
-    pub supports_commands: bool,
-    pub supports_reactions: bool,
+/// Helper to write a string to WASM memory and return (ptr, len)
+fn write_string_to_memory(
+    store: &mut Store<HostState>,
+    memory: &wasmtime::Memory,
+    alloc_fn: &TypedFunc<i32, i32>,
+    s: &str,
+) -> crate::Result<(i32, i32)> {
+    let bytes = s.as_bytes();
+    let len = bytes.len() as i32;
+
+    // Allocate memory in the guest
+    let ptr = alloc_fn.call(store, len).map_err(|e| {
+        crate::error::MantaError::Plugin(format!("Failed to allocate memory: {}", e))
+    })?;
+
+    // Write the string
+    memory.write(store, ptr as usize, bytes).map_err(|e| {
+        crate::error::MantaError::Plugin(format!("Failed to write to memory: {}", e))
+    })?;
+
+    Ok((ptr, len))
 }
 
-/// Outgoing message for WASM interface
-#[derive(Clone, Debug)]
-pub struct PluginOutgoingMessage {
-    pub conversation_id: String,
-    pub content: String,
-    pub formatted_content: Option<String>,
-    pub reply_to: Option<String>,
+/// Helper to read a string from WASM memory
+fn read_string_from_memory(
+    store: &mut Store<HostState>,
+    memory: &wasmtime::Memory,
+    ptr: i32,
+    len: i32,
+) -> crate::Result<String> {
+    let mut buffer = vec![0u8; len as usize];
+    memory.read(store, ptr as usize, &mut buffer).map_err(|e| {
+        crate::error::MantaError::Plugin(format!("Failed to read from memory: {}", e))
+    })?;
+
+    String::from_utf8(buffer).map_err(|e| {
+        crate::error::MantaError::Plugin(format!("Invalid UTF-8: {}", e))
+    })
 }
 
-/// Message options for WASM interface
-#[derive(Clone, Debug)]
-pub struct PluginMessageOptions {
-    pub show_typing: bool,
-    pub silent: bool,
+/// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok), low 32 bits = value/error ptr
+fn encode_result(ok: &str, err: Option<&str>) -> i64 {
+    match err {
+        None => {
+            let ptr = ok.as_ptr() as usize as u32;
+            let len = ok.len() as u32;
+            ((len as i64) << 32) | (ptr as i64)
+        }
+        Some(e) => {
+            let ptr = e.as_ptr() as usize as u32;
+            let len = e.len() as u32;
+            ((len as i64) << 32) | (ptr as i64) | (1i64 << 63) // Set error bit
+        }
+    }
 }
 
 impl PluginChannel {
@@ -101,123 +125,169 @@ impl PluginChannel {
             }
         })?;
 
-        // Create engine (run synchronously in blocking task)
-        let (store, init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn,
-             send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn) =
-            tokio::task::spawn_blocking(move || {
-                let engine = Engine::default();
-
-                // Compile module
-                let module = Module::new(&engine, &wasm_bytes).map_err(|e| {
-                    crate::error::MantaError::Plugin(format!("Failed to compile WASM module: {}", e))
-                })?;
-
-                // Create linker
-                let mut linker: Linker<HostState> = Linker::new(&engine);
-
-                // Add WASI support
-                wasmtime_wasi::add_to_linker(&mut linker, |_state: &mut HostState| {
-                    WasiCtxBuilder::new()
-                        .inherit_stdio()
-                        .build()
-                }).map_err(|e| {
-                    crate::error::MantaError::Plugin(format!("Failed to add WASI: {}", e))
-                })?;
-
-                // Create host state
-                let (log_tx, mut log_rx) = mpsc::unbounded_channel();
-
-                let host_state = HostState {
-                    name: "plugin".to_string(),
-                    config: config.to_string(),
-                    message_tx,
-                    log_tx,
-                };
-
-                // Create store
-                let mut store = Store::new(&engine, host_state);
-
-                // Create instance
-                let instance = linker.instantiate(&mut store, &module).map_err(|e| {
-                    crate::error::MantaError::Plugin(format!("Failed to instantiate WASM: {}", e))
-                })?;
-
-                // Get function pointers
-                let init_fn = instance
-                    .get_typed_func::<(String,), (Result<String, String>,)>(&mut store, "init")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'init' export: {}", e))
-                    })?;
-
-                let start_fn = instance
-                    .get_typed_func::<(), (Result<(), String>,)>(&mut store, "start")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'start' export: {}", e))
-                    })?;
-
-                let stop_fn = instance
-                    .get_typed_func::<(), (Result<(), String>,)>(&mut store, "stop")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'stop' export: {}", e))
-                    })?;
-
-                let get_name_fn = instance
-                    .get_typed_func::<(), (String,)>(&mut store, "get_name")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'get_name' export: {}", e))
-                    })?;
-
-                let get_capabilities_fn = instance
-                    .get_typed_func::<(), (PluginCapabilities,)>(&mut store, "get_capabilities")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'get_capabilities' export: {}", e))
-                    })?;
-
-                let send_fn = instance
-                    .get_typed_func::<(PluginOutgoingMessage, PluginMessageOptions), (Result<String, String>,)>(
-                        &mut store, "send",
-                    )
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'send' export: {}", e))
-                    })?;
-
-                let send_typing_fn = instance
-                    .get_typed_func::<(String,), (Result<(), String>,)>(&mut store, "send_typing")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'send_typing' export: {}", e))
-                    })?;
-
-                let edit_message_fn = instance
-                    .get_typed_func::<(String, String), (Result<(), String>,)>(&mut store, "edit_message")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'edit_message' export: {}", e))
-                    })?;
-
-                let delete_message_fn = instance
-                    .get_typed_func::<(String,), (Result<(), String>,)>(&mut store, "delete_message")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'delete_message' export: {}", e))
-                    })?;
-
-                let health_check_fn = instance
-                    .get_typed_func::<(), (Result<bool, String>,)>(&mut store, "health_check")
-                    .map_err(|e| {
-                        crate::error::MantaError::Plugin(format!("Missing 'health_check' export: {}", e))
-                    })?;
-
-                Ok::<_, crate::error::MantaError>((
-                    store, init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn,
-                    send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn
-                ))
-            }).await.map_err(|e| {
-                crate::error::MantaError::Plugin(format!("Blocking task failed: {}", e))
-            })??;
-
+        let config_str = config.to_string();
         let plugin_name = wasm_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+
+        // Use spawn_blocking for WASM operations
+        let (store, instance, memory, alloc_fn, free_fn) = tokio::task::spawn_blocking(move || {
+            let engine = Engine::default();
+            let module = Module::new(&engine, &wasm_bytes).map_err(|e| {
+                crate::error::MantaError::Plugin(format!("Failed to compile WASM: {}", e))
+            })?;
+
+            // Create linker with host functions
+            let mut linker: Linker<HostState> = Linker::new(&engine);
+
+            // Define host.log function
+            linker.func_wrap(
+                "host",
+                "log",
+                |mut caller: wasmtime::Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
+                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        let mut buffer = vec![0u8; len as usize];
+                        if memory.read(&caller, ptr as usize, &mut buffer).is_ok() {
+                            if let Ok(message) = String::from_utf8(buffer) {
+                                let level_str = match level {
+                                    0 => "DEBUG",
+                                    1 => "INFO",
+                                    2 => "WARN",
+                                    3 => "ERROR",
+                                    _ => "UNKNOWN",
+                                };
+                                println!("[{}] {}", level_str, message);
+                            }
+                        }
+                    }
+                },
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define log: {}", e)))?;
+
+            // Define host.receive_message function
+            linker.func_wrap(
+                "host",
+                "receive-message",
+                |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| {
+                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        let mut buffer = vec![0u8; len as usize];
+                        if memory.read(&caller, ptr as usize, &mut buffer).is_ok() {
+                            if let Ok(json) = String::from_utf8(buffer) {
+                                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&json) {
+                                    // Send to host's message channel
+                                    if let Some(tx) = caller.data().message_tx.clone().into() {
+                                        // Parse incoming message from JSON
+                                        let _ = tx.send(IncomingMessage {
+                                            id: Id::new(),
+                                            user_id: UserId::new(
+                                                msg.get("user_id")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("unknown"),
+                                            ),
+                                            conversation_id: ConversationId::new(
+                                                msg.get("conversation_id")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("default"),
+                                            ),
+                                            content: msg
+                                                .get("content")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            attachments: vec![],
+                                            metadata: MessageMetadata::new(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define receive_message: {}", e)))?;
+
+            // Define host.get_config function - returns (ptr, len)
+            linker.func_wrap(
+                "host",
+                "get-config",
+                |mut caller: wasmtime::Caller<'_, HostState>| -> i64 {
+                    let config = caller.data().config.clone();
+                    // Return packed i64: high 32 bits = len, low 32 bits = ptr
+                    // This is a simplified version - in reality we'd need to allocate
+                    0i64 // Placeholder
+                },
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define get_config: {}", e)))?;
+
+            let host_state = HostState {
+                name: plugin_name.clone(),
+                config: config_str,
+                message_tx,
+            };
+
+            let mut store = Store::new(&engine, host_state);
+            let instance = linker.instantiate(&mut store, &module).map_err(|e| {
+                crate::error::MantaError::Plugin(format!("Failed to instantiate: {}", e))
+            })?;
+
+            // Get memory export
+            let memory = instance.get_export(&mut store, "memory")
+                .and_then(|e| e.into_memory())
+                .ok_or_else(|| crate::error::MantaError::Plugin("No memory export".to_string()))?;
+
+            // Get alloc function
+            let alloc_fn = instance.get_typed_func::<i32, i32>(&mut store, "alloc"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No alloc export: {}", e)))?;
+
+            // Get free function
+            let free_fn = instance.get_typed_func::<(i32, i32), ()>(
+                &mut store, "free"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No free export: {}", e)))?;
+
+            Ok::<_, crate::error::MantaError>((store, instance, memory, alloc_fn, free_fn))
+        }).await.map_err(|e| crate::error::MantaError::Plugin(format!("Task failed: {}", e)))??;
+
+        // Get function pointers
+        let (init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn, send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn) = {
+            let mut locked_store = store.lock().await;
+
+            let init_fn = instance.get_typed_func::<(i32, i32), i64>(&mut *locked_store, "init"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No init: {}", e)))?;
+
+            let start_fn = instance.get_typed_func::<(), i32>(&mut *locked_store, "start"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No start: {}", e)))?;
+
+            let stop_fn = instance.get_typed_func::<(), i32>(&mut *locked_store, "stop"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No stop: {}", e)))?;
+
+            let get_name_fn = instance.get_typed_func::<(), (i32, i32)>(&mut *locked_store, "get_name"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No get_name: {}", e)))?;
+
+            let get_capabilities_fn = instance.get_typed_func::<(), i64>(
+                &mut *locked_store, "get_capabilities"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No get_capabilities: {}", e)))?;
+
+            let send_fn = instance.get_typed_func::<(i32, i32), i64>(
+                &mut *locked_store, "send"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No send: {}", e)))?;
+
+            let send_typing_fn = instance.get_typed_func::<(i32, i32), i32>(
+                &mut *locked_store, "send_typing"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No send_typing: {}", e)))?;
+
+            let edit_message_fn = instance.get_typed_func::<(i32, i32, i32, i32), i32>(
+                &mut *locked_store, "edit_message"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No edit_message: {}", e)))?;
+
+            let delete_message_fn = instance.get_typed_func::<(i32, i32), i32>(
+                &mut *locked_store, "delete_message"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No delete_message: {}", e)))?;
+
+            let health_check_fn = instance.get_typed_func::<(), i32>(
+                &mut *locked_store, "health_check"
+            ).map_err(|e| crate::error::MantaError::Plugin(format!("No health_check: {}", e)))?;
+
+            (init_fn, start_fn, stop_fn, get_name_fn, get_capabilities_fn, send_fn, send_typing_fn, edit_message_fn, delete_message_fn, health_check_fn)
+        };
 
         let plugin_id = uuid::Uuid::new_v4().to_string();
 
@@ -237,23 +307,37 @@ impl PluginChannel {
             edit_message_fn,
             delete_message_fn,
             health_check_fn,
+            memory,
+            alloc_fn,
+            free_fn,
         })
     }
 
     /// Initialize the plugin with configuration
     pub async fn init(&self, config: &serde_json::Value) -> crate::Result<String> {
-        let config_str = config.to_string();
-        let init_fn = self.init_fn;
-        let store = self.store.clone();
+        let mut store = self.store.lock().await;
+        let (ptr, len) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &config.to_string(),
+        )?;
 
-        let result = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            init_fn.call(&mut *store, (config_str,))
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Init task failed: {}", e))
+        let result = self.init_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Init failed: {}", e))
         })?;
 
-        result.map_err(|e| crate::error::MantaError::Plugin(format!("Plugin init failed: {}", e)))
+        // Free the input string
+        self.free_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
+        })?;
+
+        // Parse result - simplified
+        if result == 0 {
+            Ok("initialized".to_string())
+        } else {
+            Err(crate::error::MantaError::Plugin("Init returned error".to_string()))
+        }
     }
 }
 
@@ -277,134 +361,140 @@ impl Channel for PluginChannel {
     }
 
     async fn start(&self) -> crate::Result<()> {
-        let start_fn = self.start_fn;
-        let store = self.store.clone();
-
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            start_fn.call(&mut *store, ())
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Start task failed: {}", e))
+        let mut store = self.store.lock().await;
+        let result = self.start_fn.call(&mut *store, ()).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Start failed: {}", e))
         })?;
 
-        result.map_err(|e| crate::error::MantaError::Plugin(format!("Plugin start failed: {}", e)))?;
-
-        info!("Started WASM plugin channel '{}'", self.name);
-        Ok(())
+        if result == 0 {
+            info!("Started plugin channel '{}'", self.name);
+            Ok(())
+        } else {
+            Err(crate::error::MantaError::Plugin(format!("Start returned {}", result)))
+        }
     }
 
     async fn stop(&self) -> crate::Result<()> {
-        let stop_fn = self.stop_fn;
-        let store = self.store.clone();
-
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            stop_fn.call(&mut *store, ())
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Stop task failed: {}", e))
+        let mut store = self.store.lock().await;
+        let result = self.stop_fn.call(&mut *store, ()).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Stop failed: {}", e))
         })?;
 
-        result.map_err(|e| crate::error::MantaError::Plugin(format!("Plugin stop failed: {}", e)))?;
-
-        info!("Stopped WASM plugin channel '{}'", self.name);
-        Ok(())
+        if result == 0 {
+            info!("Stopped plugin channel '{}'", self.name);
+            Ok(())
+        } else {
+            Err(crate::error::MantaError::Plugin(format!("Stop returned {}", result)))
+        }
     }
 
     async fn send(&self, message: OutgoingMessage) -> crate::Result<Id> {
-        let plugin_msg = PluginOutgoingMessage {
-            conversation_id: message.conversation_id.to_string(),
-            content: message.content,
-            formatted_content: None,
-            reply_to: message.reply_to.map(|id| id.to_string()),
-        };
+        let json = serde_json::json!({
+            "conversation_id": message.conversation_id.to_string(),
+            "content": message.content,
+            "reply_to": message.reply_to.map(|r| r.to_string()),
+        });
 
-        let options = PluginMessageOptions {
-            show_typing: message.options.show_typing,
-            silent: message.options.silent,
-        };
+        let mut store = self.store.lock().await;
+        let (ptr, len) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &json.to_string(),
+        )?;
 
-        let send_fn = self.send_fn;
-        let store = self.store.clone();
-
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            send_fn.call(&mut *store, (plugin_msg, options))
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Send task failed: {}", e))
+        let result = self.send_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Send failed: {}", e))
         })?;
 
-        let message_id = result.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Plugin send failed: {}", e))
+        self.free_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
         })?;
 
-        Ok(Id(message_id))
+        if result >= 0 {
+            Ok(Id(format!("msg-{}", result)))
+        } else {
+            Err(crate::error::MantaError::Plugin(format!("Send returned {}", result)))
+        }
     }
 
     async fn send_typing(&self, conversation_id: &ConversationId) -> crate::Result<()> {
-        let send_typing_fn = self.send_typing_fn;
-        let store = self.store.clone();
-        let conv_id = conversation_id.to_string();
+        let mut store = self.store.lock().await;
+        let (ptr, len) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &conversation_id.to_string(),
+        )?;
 
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            send_typing_fn.call(&mut *store, (conv_id,))
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Send typing task failed: {}", e))
+        let result = self.send_typing_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Send_typing failed: {}", e))
         })?;
 
-        result.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Plugin send_typing failed: {}", e))
-        })
+        self.free_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
+        })?;
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(crate::error::MantaError::Plugin(format!("Send_typing returned {}", result)))
+        }
     }
 
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
-        let edit_message_fn = self.edit_message_fn;
-        let store = self.store.clone();
-        let msg_id = message_id.to_string();
+        let mut store = self.store.lock().await;
+        let (ptr1, len1) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &message_id.to_string(),
+        )?;
+        let (ptr2, len2) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &new_content,
+        )?;
 
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            edit_message_fn.call(&mut *store, (msg_id, new_content))
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Edit message task failed: {}", e))
+        let result = self.edit_message_fn.call(&mut *store, (ptr1, len1, ptr2, len2)
+        ).map_err(|e| crate::error::MantaError::Plugin(format!("Edit failed: {}", e)))?;
+
+        self.free_fn.call(&mut *store, (ptr1, len1)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
+        })?;
+        self.free_fn.call(&mut *store, (ptr2, len2)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
         })?;
 
-        result.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Plugin edit_message failed: {}", e))
-        })
+        if result == 0 { Ok(()) } else { Err(crate::error::MantaError::Plugin(format!("Edit returned {}", result))) }
     }
 
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
-        let delete_message_fn = self.delete_message_fn;
-        let store = self.store.clone();
-        let msg_id = message_id.to_string();
+        let mut store = self.store.lock().await;
+        let (ptr, len) = write_string_to_memory(
+            &mut *store,
+            &self.memory,
+            &self.alloc_fn,
+            &message_id.to_string(),
+        )?;
 
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            delete_message_fn.call(&mut *store, (msg_id,))
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Delete message task failed: {}", e))
+        let result = self.delete_message_fn.call(&mut *store, (ptr, len)
+        ).map_err(|e| crate::error::MantaError::Plugin(format!("Delete failed: {}", e)))?;
+
+        self.free_fn.call(&mut *store, (ptr, len)).map_err(|e| {
+            crate::error::MantaError::Plugin(format!("Free failed: {}", e))
         })?;
 
-        result.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Plugin delete_message failed: {}", e))
-        })
+        if result == 0 { Ok(()) } else { Err(crate::error::MantaError::Plugin(format!("Delete returned {}", result))) }
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
-        let health_check_fn = self.health_check_fn;
-        let store = self.store.clone();
+        let mut store = self.store.lock().await;
+        let result = self.health_check_fn.call(&mut *store, ()
+        ).map_err(|e| crate::error::MantaError::Plugin(format!("Health check failed: {}", e)))?;
 
-        let (result,) = tokio::task::spawn_blocking(move || {
-            let mut store = store.blocking_lock();
-            health_check_fn.call(&mut *store, ())
-        }).await.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Health check task failed: {}", e))
-        })?;
-
-        result.map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Plugin health_check failed: {}", e))
-        })
+        Ok(result == 1)
     }
 }
 
@@ -421,20 +511,13 @@ pub struct PluginManifest {
 
 /// Registry for managing WASM channel plugins
 pub struct PluginChannelRegistry {
-    /// Loaded plugins
     plugins: Arc<RwLock<HashMap<String, Arc<PluginChannel>>>>,
-    /// Plugin directory
     plugin_dir: PathBuf,
-    /// Message sender for incoming messages
     message_tx: mpsc::UnboundedSender<IncomingMessage>,
 }
 
 impl PluginChannelRegistry {
-    /// Create a new plugin registry
-    pub fn new(
-        plugin_dir: PathBuf,
-        message_tx: mpsc::UnboundedSender<IncomingMessage>,
-    ) -> Self {
+    pub fn new(plugin_dir: PathBuf, message_tx: mpsc::UnboundedSender<IncomingMessage>) -> Self {
         Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             plugin_dir,
@@ -442,7 +525,6 @@ impl PluginChannelRegistry {
         }
     }
 
-    /// Discover available plugins
     pub async fn discover_plugins(&self) -> crate::Result<Vec<(String, PathBuf)>> {
         let mut plugins = Vec::new();
 
@@ -477,7 +559,6 @@ impl PluginChannelRegistry {
         Ok(plugins)
     }
 
-    /// Load a plugin
     pub async fn load_plugin(
         &self,
         name: &str,
@@ -491,7 +572,6 @@ impl PluginChannelRegistry {
             });
         }
 
-        // Check if already loaded
         {
             let plugins = self.plugins.read().await;
             if let Some(plugin) = plugins.get(name) {
@@ -499,7 +579,6 @@ impl PluginChannelRegistry {
             }
         }
 
-        // Load manifest if exists
         let manifest_path = self.plugin_dir.join(format!("{}.yaml", name));
         let config = if manifest_path.exists() {
             let manifest_yaml = tokio::fs::read_to_string(&manifest_path).await?;
@@ -509,16 +588,11 @@ impl PluginChannelRegistry {
             config.unwrap_or_else(|| serde_json::json!({}))
         };
 
-        // Load the plugin
         let plugin = PluginChannel::load(&wasm_path, config, self.message_tx.clone()).await?;
-
-        // Initialize
-        let _init_result = plugin.init(&serde_json::json!({})).await?;
-        debug!("Plugin '{}' initialized", name);
+        let _ = plugin.init(&serde_json::json!({})).await?;
 
         let plugin = Arc::new(plugin);
 
-        // Store
         {
             let mut plugins = self.plugins.write().await;
             plugins.insert(name.to_string(), plugin.clone());
@@ -528,31 +602,25 @@ impl PluginChannelRegistry {
         Ok(plugin)
     }
 
-    /// Unload a plugin
     pub async fn unload_plugin(&self, name: &str) -> crate::Result<()> {
         let mut plugins = self.plugins.write().await;
-
         if let Some(plugin) = plugins.remove(name) {
             let _ = plugin.stop().await;
             info!("Unloaded plugin '{}'", name);
         }
-
         Ok(())
     }
 
-    /// Get a loaded plugin
     pub async fn get_plugin(&self, name: &str) -> Option<Arc<PluginChannel>> {
         let plugins = self.plugins.read().await;
         plugins.get(name).cloned()
     }
 
-    /// List loaded plugins
     pub async fn list_loaded(&self) -> Vec<String> {
         let plugins = self.plugins.read().await;
         plugins.keys().cloned().collect()
     }
 
-    /// Load all discovered plugins
     pub async fn load_all(&self) -> crate::Result<Vec<String>> {
         let discovered = self.discover_plugins().await?;
         let mut loaded = Vec::new();
@@ -560,16 +628,13 @@ impl PluginChannelRegistry {
         for (name, _) in discovered {
             match self.load_plugin(&name, None).await {
                 Ok(_) => loaded.push(name),
-                Err(e) => {
-                    warn!("Failed to load plugin '{}': {}", name, e);
-                }
+                Err(e) => warn!("Failed to load plugin '{}': {}", name, e),
             }
         }
 
         Ok(loaded)
     }
 
-    /// Start all loaded plugins
     pub async fn start_all(&self) -> Vec<crate::Result<()>> {
         let plugins = self.plugins.read().await;
         let mut results = Vec::new();
@@ -585,7 +650,6 @@ impl PluginChannelRegistry {
         results
     }
 
-    /// Stop all loaded plugins
     pub async fn stop_all(&self) -> Vec<crate::Result<()>> {
         let plugins = self.plugins.read().await;
         let mut results = Vec::new();
