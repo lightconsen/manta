@@ -4,6 +4,7 @@
 //! multiple sources: defaults, config files, and environment variables.
 
 use crate::error::{ConfigError, Result};
+use crate::secrets::SecretRef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -231,9 +232,9 @@ impl Default for StorageConfig {
 pub struct ServiceConfig {
     /// Service endpoint URL
     pub endpoint: String,
-    /// API key (can reference env var with ${ENV_VAR} syntax)
+    /// API key (can be raw string, env var reference like "$ENV_VAR", or SecretRef object)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key: Option<SecretRef>,
     /// Request timeout in seconds
     #[serde(default = "default_service_timeout")]
     pub timeout_seconds: u64,
@@ -470,6 +471,51 @@ impl Config {
     /// Check if a service is configured
     pub fn has_service(&self, name: &str) -> bool {
         self.services.contains_key(name)
+    }
+
+    /// Resolve all secrets in the configuration
+    ///
+    /// This resolves SecretRef values to their actual secret values using
+    /// environment variables, files, or external executables.
+    pub async fn resolve_secrets(&mut self) -> Result<()> {
+        use crate::secrets::SecretResolver;
+
+        let resolver = SecretResolver::default();
+
+        // Resolve secrets in all service configurations
+        for (name, service) in &mut self.services {
+            if let Some(api_key_ref) = &service.api_key {
+                match resolver.resolve(api_key_ref).await {
+                    Ok(resolved) => {
+                        debug!("Resolved API key for service '{}'", name);
+                        // Store the resolved value back as a raw string SecretRef
+                        service.api_key = Some(crate::secrets::SecretRef::String(resolved));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to resolve API key for service '{}': {}",
+                            name, e
+                        );
+                        // Continue with other services, don't fail completely
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get a resolved API key for a service
+    ///
+    /// Returns None if the service doesn't exist or has no API key.
+    /// Returns the raw value (resolved or inline) if available.
+    pub fn get_resolved_api_key(&self, service_name: &str) -> Option<String> {
+        self.services.get(service_name).and_then(|s| {
+            s.api_key.as_ref().and_then(|key| match key {
+                crate::secrets::SecretRef::String(s) => Some(s.clone()),
+                _ => None, // Not yet resolved
+            })
+        })
     }
 }
 
@@ -1053,9 +1099,71 @@ base_delay_ms = 500
         let config: Config = toml::from_str(toml_str).unwrap();
         let api_service = config.get_service("api").unwrap();
         assert_eq!(api_service.endpoint, "https://api.example.com");
-        assert_eq!(api_service.api_key, Some("secret123".to_string()));
+        assert_eq!(
+            api_service.api_key,
+            Some(SecretRef::String("secret123".to_string()))
+        );
         assert_eq!(api_service.timeout_seconds, 60);
         assert_eq!(api_service.retry.max_retries, 5);
         assert_eq!(api_service.retry.base_delay_ms, 500);
+    }
+
+    #[test]
+    fn test_service_config_with_env_ref() {
+        let toml_str = r#"
+[services.api]
+endpoint = "https://api.example.com"
+api_key = "$API_KEY"
+timeout_seconds = 60
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let api_service = config.get_service("api").unwrap();
+        assert_eq!(
+            api_service.api_key,
+            Some(SecretRef::String("$API_KEY".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_service_config_with_explicit_env() {
+        let toml_str = r#"
+[services.api]
+endpoint = "https://api.example.com"
+api_key = { env = "API_KEY" }
+timeout_seconds = 60
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let api_service = config.get_service("api").unwrap();
+        assert_eq!(
+            api_service.api_key,
+            Some(SecretRef::Explicit {
+                env: Some("API_KEY".to_string()),
+                file: None,
+                exec: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_service_config_with_file_ref() {
+        let toml_str = r#"
+[services.api]
+endpoint = "https://api.example.com"
+api_key = { file = "/run/secrets/api_key" }
+timeout_seconds = 60
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let api_service = config.get_service("api").unwrap();
+        assert_eq!(
+            api_service.api_key,
+            Some(SecretRef::Explicit {
+                env: None,
+                file: Some(std::path::PathBuf::from("/run/secrets/api_key")),
+                exec: None,
+            })
+        );
     }
 }
