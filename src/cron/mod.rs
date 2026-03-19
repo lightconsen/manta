@@ -2,6 +2,18 @@
 //!
 //! This module implements scheduled task execution using cron expressions.
 //! Jobs can be scheduled with natural language or standard cron syntax.
+//!
+//! # Advanced Scheduler
+//!
+//! The `advanced` submodule provides a production-grade scheduler with:
+//! - Timer-based scheduling (exact time, not polling)
+//! - Shell command and AI agent execution
+//! - Multi-channel delivery
+//! - Retry logic with exponential backoff
+//! - Crash recovery
+//! - Run history logging
+
+pub mod advanced;
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
