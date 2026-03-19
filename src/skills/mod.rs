@@ -17,15 +17,18 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
 mod builtin;
+mod builtin_macros;
 mod config;
 mod frontmatter;
 mod install;
+pub mod registry;
 mod storage;
 mod watcher;
 
 pub use config::{SkillConfig, SkillEntryConfig};
-pub use frontmatter::{InstallSpec as SkillInstallSpec, SkillFile, SkillFrontmatter};
+pub use frontmatter::{InstallSpec as SkillInstallSpec, SkillFile, SkillFrontmatter, SkillTriggerItem, OpenClawFrontmatter};
 pub use install::{install_all, install_binary, InstallResult};
+pub use registry::{SkillListing, SkillRegistry, SkillUpdate};
 pub use storage::SkillStorage;
 pub use storage::StorageLevel;
 pub use watcher::SkillWatcher;

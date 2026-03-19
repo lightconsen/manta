@@ -74,9 +74,60 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub slash: Option<SlashConfig>,
 
+    /// Skill version
+    #[serde(default = "default_version")]
+    pub version: String,
+
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+
+    /// Author who created the skill
+    #[serde(default)]
+    pub author: String,
+
+    /// Triggers that activate this skill (OpenClaw format)
+    #[serde(default)]
+    pub triggers: Vec<SkillTriggerItem>,
+
+    /// OpenClaw-specific metadata
+    #[serde(rename = "openclaw", default)]
+    pub openclaw: OpenClawFrontmatter,
+
     /// Custom configuration values
-    #[serde(default, flatten)]
+    #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+fn default_version() -> String {
+    "1.0.0".to_string()
+}
+
+/// Single trigger item in the triggers array
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillTriggerItem {
+    /// Trigger type: command, keyword, regex, intent
+    #[serde(rename = "type")]
+    pub trigger_type: String,
+    /// The pattern to match
+    pub pattern: String,
+    /// Priority (higher = checked first)
+    #[serde(default)]
+    pub priority: i32,
+}
+
+/// OpenClaw metadata in frontmatter
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenClawFrontmatter {
+    /// Display emoji
+    #[serde(default)]
+    pub emoji: String,
+    /// Category for organization
+    #[serde(default)]
+    pub category: String,
+    /// Tags for filtering
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Runtime requirements configuration
