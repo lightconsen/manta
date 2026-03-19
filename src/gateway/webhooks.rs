@@ -36,6 +36,40 @@ pub struct WebhookResponse {
     pub message: String,
 }
 
+/// Session mapping for webhook-based channels (platform_id -> session_uuid)
+/// This provides UUID-based sessions with /new command support
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+
+/// Get or create a session UUID for a platform user
+async fn get_or_create_session(
+    sessions: &RwLock<HashMap<String, String>>,
+    platform_key: &str,
+) -> String {
+    {
+        let map = sessions.read().await;
+        if let Some(session_id) = map.get(platform_key) {
+            return session_id.clone();
+        }
+    }
+    // Create new session
+    let new_session = uuid::Uuid::new_v4().to_string();
+    let mut map = sessions.write().await;
+    map.insert(platform_key.to_string(), new_session.clone());
+    new_session
+}
+
+/// Reset session for a platform user (when /new is used)
+async fn reset_session(
+    sessions: &RwLock<HashMap<String, String>>,
+    platform_key: &str,
+) -> String {
+    let new_session = uuid::Uuid::new_v4().to_string();
+    let mut map = sessions.write().await;
+    map.insert(platform_key.to_string(), new_session.clone());
+    new_session
+}
+
 /// Create the public webhook router
 pub fn create_webhook_router(state: Arc<GatewayState>) -> Router {
     Router::new()
@@ -156,13 +190,31 @@ async fn whatsapp_webhook_handler(
                                     &text_body[..text_body.len().min(50)]
                                 );
 
+                                // Handle /new command to reset session
+                                let platform_key = format!("whatsapp:{}", from);
+                                let session_id = if text_body.trim() == "/new" {
+                                    let new_session = reset_session(&state.webhook_sessions, &platform_key).await;
+                                    info!("🆕 New WhatsApp session started for {}: {}", from, new_session);
+                                    // Send confirmation message back (would need channel.send here)
+                                    new_session
+                                } else {
+                                    // Get or create session UUID
+                                    get_or_create_session(&state.webhook_sessions, &platform_key).await
+                                };
+
+                                // Store session mapping for response routing
+                                {
+                                    let mut sessions = state.session_channels.write().await;
+                                    sessions.insert(session_id.clone(), ("whatsapp".to_string(), from.to_string()));
+                                }
+
                                 // Queue message for processing
                                 let queued_msg = super::QueuedMessage {
                                     id: uuid::Uuid::new_v4().to_string(),
                                     channel: "whatsapp".to_string(),
                                     user_id: from.to_string(),
                                     content: text_body.to_string(),
-                                    session_id: format!("whatsapp:{}", from),
+                                    session_id, // Use UUID session
                                     timestamp: chrono::Utc::now(),
                                 };
 
@@ -350,13 +402,30 @@ async fn feishu_webhook_handler(
                     text.chars().take(50).collect::<String>()
                 );
 
+                // Handle /new command to reset session
+                let platform_key = format!("feishu:{}", user_id);
+                let session_id = if text.trim() == "/new" {
+                    let new_session = reset_session(&state.webhook_sessions, &platform_key).await;
+                    info!("🆕 New Feishu session started for {}: {}", user_id, new_session);
+                    new_session
+                } else {
+                    // Get or create session UUID
+                    get_or_create_session(&state.webhook_sessions, &platform_key).await
+                };
+
+                // Store session mapping for response routing
+                {
+                    let mut sessions = state.session_channels.write().await;
+                    sessions.insert(session_id.clone(), ("feishu".to_string(), user_id.to_string()));
+                }
+
                 // Queue message
                 let queued_msg = super::QueuedMessage {
                     id: uuid::Uuid::new_v4().to_string(),
                     channel: "feishu".to_string(),
                     user_id: user_id.to_string(),
                     content: text.to_string(),
-                    session_id: format!("feishu:{}", user_id),
+                    session_id, // Use UUID session
                     timestamp: chrono::Utc::now(),
                 };
 
@@ -448,13 +517,30 @@ async fn generic_webhook_handler(
         .to_string();
 
     if !content.is_empty() {
+        // Handle /new command to reset session
+        let platform_key = format!("{}:{}", channel, user_id);
+        let session_id = if content.trim() == "/new" {
+            let new_session = reset_session(&state.webhook_sessions, &platform_key).await;
+            info!("🆕 New {} session started for {}: {}", channel, user_id, new_session);
+            new_session
+        } else {
+            // Get or create session UUID
+            get_or_create_session(&state.webhook_sessions, &platform_key).await
+        };
+
+        // Store session mapping for response routing
+        {
+            let mut sessions = state.session_channels.write().await;
+            sessions.insert(session_id.clone(), (channel.clone(), user_id.clone()));
+        }
+
         // Queue message
         let queued_msg = super::QueuedMessage {
             id: uuid::Uuid::new_v4().to_string(),
             channel: channel.clone(),
             user_id: user_id.clone(),
             content,
-            session_id: format!("{}:{}", channel, user_id),
+            session_id, // Use UUID session
             timestamp: chrono::Utc::now(),
         };
 

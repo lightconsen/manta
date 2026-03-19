@@ -60,6 +60,8 @@ pub struct TelegramChannel {
     shutdown_notify: Arc<Notify>,
     /// Message sender for routing incoming messages to the gateway/agent
     message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
+    /// Session mapping: chat_id -> session_uuid (for /new command support)
+    session_map: Arc<RwLock<HashMap<i64, String>>>,
 }
 
 impl std::fmt::Debug for TelegramChannel {
@@ -85,7 +87,31 @@ impl TelegramChannel {
             message_map: Arc::new(RwLock::new(HashMap::new())),
             shutdown_notify: Arc::new(Notify::new()),
             message_tx: Arc::new(RwLock::new(None)),
+            session_map: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Get or create a session UUID for a chat
+    async fn get_or_create_session(&self, chat_id: i64) -> String {
+        {
+            let sessions = self.session_map.read().await;
+            if let Some(session_id) = sessions.get(&chat_id) {
+                return session_id.clone();
+            }
+        }
+        // Create new session
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(chat_id, new_session.clone());
+        new_session
+    }
+
+    /// Reset session for a chat (when /new is used)
+    async fn reset_session(&self, chat_id: i64) -> String {
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(chat_id, new_session.clone());
+        new_session
     }
 
     /// Set the message queue sender for routing incoming messages
@@ -208,6 +234,7 @@ impl Channel for TelegramChannel {
             let running = self.running.clone();
             let shutdown_notify = self.shutdown_notify.clone();
             let message_tx = self.get_message_sender().await;
+            let session_map = self.session_map.clone();
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
@@ -217,8 +244,9 @@ impl Channel for TelegramChannel {
                     Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
                         let tx = message_tx.clone();
                         let allowed = allowed_usernames.clone();
+                        let sessions = session_map.clone();
                         async move {
-                            handle_message_with_sender(bot, msg, tx, allowed).await
+                            handle_message_with_sender(bot, msg, tx, allowed, sessions).await
                         }
                     }),
                 );
@@ -466,6 +494,7 @@ async fn handle_message_with_sender(
     msg: Message,
     message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
     allowed_usernames: Vec<String>,
+    session_map: Arc<RwLock<HashMap<i64, String>>>,
 ) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
         let user = msg.from();
@@ -473,6 +502,7 @@ async fn handle_message_with_sender(
             .as_ref()
             .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
             .unwrap_or_else(|| "unknown".to_string());
+        let chat_id = msg.chat.id.0;
 
         // Check if user is allowed
         if !allowed_usernames.is_empty() {
@@ -494,16 +524,47 @@ async fn handle_message_with_sender(
             }
         }
 
+        // Handle /new command to start a fresh session
+        if text.trim() == "/new" {
+            let new_session = uuid::Uuid::new_v4().to_string();
+            {
+                let mut sessions = session_map.write().await;
+                sessions.insert(chat_id, new_session.clone());
+            }
+            info!("🆕 New session started for @{}: {}", username, new_session);
+            bot.send_message(
+                msg.chat.id,
+                format!("🆕 Started new session:\n`{}`\n\nYour conversation history is now fresh.", new_session),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+            return Ok(());
+        }
+
         info!("📨 Received message from @{}: {}", username, text);
 
-        // Create incoming message
-        let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
-        let chat_id = msg.chat.id.0.to_string();
+        // Get or create session UUID for this chat
+        let session_id = {
+            let sessions = session_map.read().await;
+            if let Some(sid) = sessions.get(&chat_id) {
+                sid.clone()
+            } else {
+                drop(sessions);
+                let new_session = uuid::Uuid::new_v4().to_string();
+                let mut sessions = session_map.write().await;
+                sessions.insert(chat_id, new_session.clone());
+                new_session
+            }
+        };
 
-        let incoming = IncomingMessage::new(&user_id, &chat_id, text).with_metadata(
+        // Create incoming message with UUID session
+        let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
+
+        let incoming = IncomingMessage::new(&user_id, &session_id, text).with_metadata(
             MessageMetadata::new()
                 .with_extra("message_id", msg.id.0)
-                .with_extra("chat_type", format!("{:?}", msg.chat.kind)),
+                .with_extra("chat_type", format!("{:?}", msg.chat.kind))
+                .with_extra("telegram_chat_id", chat_id),
         );
 
         // Route to agent via message queue if available

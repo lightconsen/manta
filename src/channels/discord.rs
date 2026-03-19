@@ -81,6 +81,9 @@ pub struct DiscordChannel {
     /// Message ID to Channel ID mapping for edit/delete operations
     #[cfg(feature = "discord")]
     message_channel_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, u64>>>,
+    /// Session mapping: channel_id -> session_uuid (for /new command support)
+    #[cfg(feature = "discord")]
+    session_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, String>>>,
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -109,7 +112,34 @@ impl DiscordChannel {
             message_channel_map: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             )),
+            #[cfg(feature = "discord")]
+            session_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
+    }
+
+    #[cfg(feature = "discord")]
+    /// Get or create a session UUID for a channel
+    async fn get_or_create_session(&self, channel_id: u64) -> String {
+        {
+            let sessions = self.session_map.read().await;
+            if let Some(session_id) = sessions.get(&channel_id) {
+                return session_id.clone();
+            }
+        }
+        // Create new session
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(channel_id, new_session.clone());
+        new_session
+    }
+
+    #[cfg(feature = "discord")]
+    /// Reset session for a channel (when /new is used)
+    async fn reset_session(&self, channel_id: u64) -> String {
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(channel_id, new_session.clone());
+        new_session
     }
 
     /// Track a message ID to channel ID mapping
@@ -216,8 +246,12 @@ impl Channel for DiscordChannel {
                 | GatewayIntents::GUILD_MESSAGE_REACTIONS
                 | GatewayIntents::DIRECT_MESSAGE_REACTIONS;
 
+            let session_map = self.session_map.clone();
             let mut client = Client::builder(&self.config.token, intents)
-                .event_handler(DiscordHandler { config: self.config.clone() })
+                .event_handler(DiscordHandler {
+                    config: self.config.clone(),
+                    session_map,
+                })
                 .await
                 .map_err(|e| {
                     crate::error::MantaError::Internal(format!("Discord client error: {}", e))
@@ -460,6 +494,34 @@ impl Channel for DiscordChannel {
 #[cfg(feature = "discord")]
 struct DiscordHandler {
     config: DiscordConfig,
+    /// Session mapping: channel_id -> session_uuid (for /new command support)
+    session_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, String>>>,
+}
+
+#[cfg(feature = "discord")]
+impl DiscordHandler {
+    /// Get or create a session UUID for a channel
+    async fn get_or_create_session(&self, channel_id: u64) -> String {
+        {
+            let sessions = self.session_map.read().await;
+            if let Some(session_id) = sessions.get(&channel_id) {
+                return session_id.clone();
+            }
+        }
+        // Create new session
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(channel_id, new_session.clone());
+        new_session
+    }
+
+    /// Reset session for a channel (when /new is used)
+    async fn reset_session(&self, channel_id: u64) -> String {
+        let new_session = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.session_map.write().await;
+        sessions.insert(channel_id, new_session.clone());
+        new_session
+    }
 }
 
 #[cfg(feature = "discord")]
@@ -484,6 +546,7 @@ impl EventHandler for DiscordHandler {
         let is_dm = msg.guild_id.is_none();
         let is_mentioned = msg.mentions.iter().any(|u| u.bot);
         let has_prefix = msg.content.starts_with(&self.config.command_prefix);
+        let channel_id = msg.channel_id.get();
 
         if is_dm || is_mentioned || has_prefix {
             let content = if has_prefix {
@@ -494,16 +557,37 @@ impl EventHandler for DiscordHandler {
                 msg.content.clone()
             };
 
+            // Handle /new command to start a fresh session
+            if content.trim() == "/new" {
+                let new_session = self.reset_session(channel_id).await;
+                info!("🆕 New session started for {}: {}", msg.author.name, new_session);
+                let _ = msg
+                    .channel_id
+                    .say(
+                        &ctx.http,
+                        format!(
+                            "🆕 Started new session:\n`{}`\n\nYour conversation history is now fresh.",
+                            new_session
+                        ),
+                    )
+                    .await;
+                return;
+            }
+
+            // Get or create session UUID for this channel
+            let session_id = self.get_or_create_session(channel_id).await;
+
             let incoming = IncomingMessage::new(
                 &msg.author.id.get().to_string(),
-                &msg.channel_id.get().to_string(),
+                &session_id, // Use UUID session instead of channel_id
                 content,
             )
             .with_metadata(
                 MessageMetadata::new()
                     .with_extra("message_id", msg.id.get())
                     .with_extra("username", msg.author.name.clone())
-                    .with_extra("is_dm", is_dm),
+                    .with_extra("is_dm", is_dm)
+                    .with_extra("discord_channel_id", channel_id),
             );
 
             // Send to handler if configured
