@@ -23,19 +23,38 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A resolved secret value with metadata
-#[derive(Debug, Clone)]
+///
+/// SECURITY NOTE: This struct implements custom `Debug` that redacts the secret value.
+/// The secret value is also automatically zeroized in memory when the struct is dropped.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ResolvedSecret {
-    /// The secret value
+    /// The secret value - automatically zeroized on drop
+    #[zeroize]
     pub value: String,
-    /// Source of the secret
+    /// Source of the secret (not sensitive, but kept for metadata)
+    #[zeroize(skip)]
     pub source: SecretSource,
-    /// When the secret was resolved
+    /// When the secret was resolved (not sensitive)
+    #[zeroize(skip)]
     pub resolved_at: Instant,
-    /// Time-to-live for cached value
+    /// Time-to-live for cached value (not sensitive)
+    #[zeroize(skip)]
     pub ttl: Option<Duration>,
+}
+
+impl std::fmt::Debug for ResolvedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedSecret")
+            .field("value", &"[REDACTED]")
+            .field("source", &self.source)
+            .field("resolved_at", &self.resolved_at)
+            .field("ttl", &self.ttl)
+            .finish()
+    }
 }
 
 /// Source of a secret
@@ -482,12 +501,8 @@ pub async fn resolve_secrets(
     let mut resolved = HashMap::new();
 
     for (key, value) in config {
-        // Check if it looks like a secret reference
-        let secret_ref = if value.starts_with('$') {
-            SecretRef::String(value.clone())
-        } else {
-            SecretRef::String(value.clone())
-        };
+        // Create SecretRef - resolver will handle whether it's an env reference or raw value
+        let secret_ref = SecretRef::String(value.clone());
 
         match resolver.resolve(&secret_ref).await {
             Ok(resolved_value) => {
