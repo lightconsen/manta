@@ -44,6 +44,7 @@ pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
 pub mod session;
+pub mod session_store;
 pub mod todo;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
