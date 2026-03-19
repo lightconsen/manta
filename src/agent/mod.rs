@@ -40,15 +40,22 @@ pub type ProgressCallback = Arc<
 pub mod budget;
 pub mod compressor;
 pub mod context;
+pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
+pub mod session;
 pub mod todo;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
+pub use personality::{AgentPersonality, AgentRegistry, SharedAgentRegistry};
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
+pub use session::{
+    AgentInstanceStatus, MultiAgentSession, SessionAgent, SessionManager, SessionMessage,
+    SessionStatus, ThreadBinding,
+};
 pub use todo::{Task, TaskStatus, TodoStore};
 
 /// Fast check for obviously time-sensitive queries

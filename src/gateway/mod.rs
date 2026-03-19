@@ -357,6 +357,13 @@ pub struct GatewayState {
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
     /// Session routing table: session_id -> agent_id
     pub session_routing: Arc<RwLock<HashMap<String, String>>>,
+    /// Session to channel mapping: session_id -> (channel_name, channel_specific_id)
+    /// Used to route responses back to the correct channel endpoint
+    pub session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
+    /// Webhook session storage: platform_key -> session_uuid
+    /// Platform key format: "whatsapp:phone_number" or "feishu:user_id"
+    /// Used for UUID-based session management in webhook-based channels
+    pub webhook_sessions: Arc<RwLock<HashMap<String, String>>>,
     /// Model router for multi-provider support
     pub model_router: Arc<ModelRouter>,
     /// Tool registry for all agents
@@ -385,6 +392,10 @@ pub struct GatewayState {
     pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
     /// Skills manager for hot-reloadable skills
     pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
+    /// Agent registry for discovered personalities (OpenClaw-style)
+    pub agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
+    /// Multi-agent session manager (OpenClaw-style)
+    pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
 }
 
 /// Handle to a running agent
@@ -436,6 +447,8 @@ pub enum GatewayEvent {
         agent_id: String,
         content: String,
         channel: String,
+        /// Channel-specific conversation ID for routing responses
+        conversation_id: String,
     },
     /// Agent status changed
     AgentStatus {
@@ -602,6 +615,8 @@ impl Gateway {
             channels: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
+            session_channels: Arc::new(RwLock::new(HashMap::new())),
+            webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
             model_router: Arc::new(ModelRouter::new(model_router_config)),
             tool_registry,
             event_tx,
@@ -616,6 +631,8 @@ impl Gateway {
             rate_limiter,
             storage,
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
+            agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
+            session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
         });
 
         // Configure providers from config
@@ -832,6 +849,29 @@ impl Gateway {
             }
         }
 
+        // Discover agents from agents/ directory (OpenClaw-style auto-discovery)
+        {
+            let mut registry = self.state.agent_registry.write().await;
+            match registry.discover().await {
+                Ok(count) => {
+                    if count > 0 {
+                        info!("🔍 Discovered {} agents from agents/ directory", count);
+                        // List discovered agents
+                        for id in registry.list() {
+                            if let Some(personality) = registry.get(&id) {
+                                info!("  📋 Agent '{}' - {}", id, personality.display_name());
+                            }
+                        }
+                    } else {
+                        info!("🔍 No agents found in agents/ directory");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to discover agents: {}", e);
+                }
+            }
+        }
+
         // Initialize configured channels
         self.init_channels().await?;
 
@@ -897,6 +937,12 @@ impl Gateway {
                 "/api/v1/agents/:id",
                 get(get_agent_handler).delete(delete_agent_handler),
             )
+            // Spawn discovered agent from registry
+            .route("/api/v1/agents/:id/spawn", post(spawn_discovered_agent_handler))
+            // Spawn all discovered agents
+            .route("/api/v1/agents/spawn-all", post(spawn_all_discovered_agents_handler))
+            // List discovered agents in registry
+            .route("/api/v1/agents/discovered", get(list_discovered_agents_handler))
             // Channel management
             .route("/api/v1/channels", get(list_channels_handler))
             // Session messaging with provider override
@@ -1073,13 +1119,22 @@ impl Gateway {
                             }
                         };
 
+                        // Look up conversation_id for response routing
+                        let conversation_id = {
+                            let sessions = state.session_channels.read().await;
+                            sessions.get(&session_id)
+                                .map(|(_, cid)| cid.clone())
+                                .unwrap_or_else(|| session_id.clone())
+                        };
+
                         // Send response event
-                        info!("DEBUG: Agent {} sending AgentResponse for session {}", agent_id, session_id);
+                        info!("DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})", agent_id, session_id, conversation_id);
                         let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                             session_id: session_id.clone(),
                             agent_id: agent_id.clone(),
                             content: response_content,
                             channel: source_channel,
+                            conversation_id,
                         });
 
                         // Update status to idle
@@ -1122,6 +1177,99 @@ impl Gateway {
         });
 
         Ok(())
+    }
+
+    /// Spawn an agent from its personality (on-demand spawning)
+    /// Returns true if agent was spawned, false if already exists
+    pub async fn spawn_agent_from_personality(
+        &self,
+        agent_id: &str,
+    ) -> crate::Result<bool> {
+        // Check if agent already exists
+        {
+            let agents = self.state.agents.read().await;
+            if agents.contains_key(agent_id) {
+                return Ok(false);
+            }
+        }
+
+        // Get personality from registry
+        let personality = {
+            let registry = self.state.agent_registry.read().await;
+            match registry.get(agent_id) {
+                Some(p) => p.clone(),
+                None => {
+                    return Err(crate::error::MantaError::Validation(format!(
+                        "Agent '{}' not found in registry",
+                        agent_id
+                    )));
+                }
+            }
+        };
+
+        info!("🚀 On-demand spawning agent '{}' from personality", agent_id);
+
+        // Convert personality to config
+        let config = personality.to_agent_config();
+
+        // Spawn the agent
+        self.spawn_agent(agent_id.to_string(), config).await?;
+
+        Ok(true)
+    }
+
+    /// Spawn all discovered agents
+    pub async fn spawn_all_discovered_agents(&self) -> crate::Result<usize> {
+        let agent_ids: Vec<String> = {
+            let registry = self.state.agent_registry.read().await;
+            registry.list()
+        };
+
+        let mut spawned = 0;
+        for agent_id in agent_ids {
+            match self.spawn_agent_from_personality(&agent_id).await {
+                Ok(true) => {
+                    info!("✅ Auto-spawned agent '{}'", agent_id);
+                    spawned += 1;
+                }
+                Ok(false) => {
+                    debug!("Agent '{}' already spawned, skipping", agent_id);
+                }
+                Err(e) => {
+                    warn!("Failed to spawn agent '{}': {}", agent_id, e);
+                }
+            }
+        }
+
+        info!("Auto-spawned {} agents from registry", spawned);
+        Ok(spawned)
+    }
+
+    /// Get or spawn agent by ID (on-demand)
+    pub async fn get_or_spawn_agent(
+        &self,
+        agent_id: &str,
+    ) -> crate::Result<Option<AgentHandle>> {
+        // First check if already spawned
+        {
+            let agents = self.state.agents.read().await;
+            if let Some(handle) = agents.get(agent_id) {
+                return Ok(Some(handle.clone()));
+            }
+        }
+
+        // Try to spawn from personality
+        match self.spawn_agent_from_personality(agent_id).await {
+            Ok(true) | Ok(false) => {
+                // Now get the spawned agent
+                let agents = self.state.agents.read().await;
+                Ok(agents.get(agent_id).cloned())
+            }
+            Err(e) => {
+                warn!("Failed to get or spawn agent '{}': {}", agent_id, e);
+                Ok(None)
+            }
+        }
     }
 
     /// Initialize configured channels
@@ -1262,17 +1410,31 @@ impl Gateway {
             tokio::spawn(async move {
                 info!("DEBUG: Telegram message processing task started");
                 while let Some(message) = message_rx.recv().await {
+                    let session_id = message.conversation_id.0.clone();
+                    let chat_id = message.metadata
+                        .extra.get("telegram_chat_id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_else(|| {
+                            // Fallback: try to parse session_id as chat_id for backward compatibility
+                            session_id.parse().unwrap_or(0)
+                        });
+
                     info!(
-                        "DEBUG: Received message from Telegram queue: session={}, user={}, content={}",
-                        message.conversation_id.0,
-                        message.user_id.0,
-                        message.content
+                        "DEBUG: Received message from Telegram queue: session={}, chat_id={}, user={}, content={}",
+                        session_id, chat_id, message.user_id.0, message.content
                     );
+
+                    // Store session -> channel mapping for response routing
+                    {
+                        let mut session_channels = state_clone.session_channels.write().await;
+                        session_channels.insert(session_id.clone(), ("telegram".to_string(), chat_id.to_string()));
+                    }
+
                     if let Some(ref handle) = agent_for_task {
                         info!("DEBUG: Sending to agent via command channel");
                         // Send to agent via its command channel
                         let cmd = AgentCommand::ProcessMessage {
-                            session_id: message.conversation_id.0.clone(),
+                            session_id,
                             message: message.content.clone(),
                             user_id: message.user_id.0.clone(),
                             channel: "telegram".to_string(),
@@ -1293,6 +1455,7 @@ impl Gateway {
             let mut event_rx = self.state.event_tx.subscribe();
             let channel_for_telegram = channel.clone();
             let channel_name = name.to_string();
+            let state_for_responses = self.state.clone();
             tokio::spawn(async move {
                 info!("DEBUG: Telegram response handler task started");
                 loop {
@@ -1301,6 +1464,7 @@ impl Gateway {
                             session_id,
                             content,
                             channel: response_channel,
+                            conversation_id,
                             ..
                         }) => {
                             // Only handle responses from Telegram messages
@@ -1312,11 +1476,22 @@ impl Gateway {
                                 "DEBUG: Received AgentResponse event for Telegram session: {}",
                                 session_id
                             );
-                            // Send response back to Telegram
-                            let conversation_id =
-                                crate::channels::ConversationId::new(session_id.clone());
+
+                            // Look up the chat_id from session mapping
+                            let chat_id = {
+                                let sessions = state_for_responses.session_channels.read().await;
+                                sessions.get(&session_id)
+                                    .map(|(_, cid)| cid.clone())
+                                    .unwrap_or_else(|| {
+                                        // Fallback to conversation_id from event
+                                        conversation_id.clone()
+                                    })
+                            };
+
+                            // Send response back to Telegram using chat_id
+                            let conversation = crate::channels::ConversationId::new(chat_id);
                             let outgoing = crate::channels::OutgoingMessage::new(
-                                conversation_id,
+                                conversation,
                                 content.clone(),
                             );
                             info!("DEBUG: Sending response back to Telegram: {}", content);
@@ -1787,8 +1962,8 @@ async fn handle_web_terminal_websocket(
 ) {
     use axum::extract::ws::Message;
 
-    // Generate session ID
-    let session_id = if query.new == Some(true) {
+    // Generate session ID (mutable to allow /new command to change it)
+    let mut session_id = if query.new == Some(true) {
         uuid::Uuid::new_v4().to_string()
     } else if let Some(conv) = query.conversation {
         conv
@@ -1821,9 +1996,12 @@ async fn handle_web_terminal_websocket(
                         // Handle /new command
                         if text.trim() == "/new" {
                             let new_id = uuid::Uuid::new_v4().to_string();
+                            // Update session_id for subsequent messages
+                            session_id = new_id.clone();
                             let system_msg = serde_json::json!({
                                 "type": "system",
-                                "content": format!("🆕 Started new session: {}", new_id)
+                                "content": format!("🆕 Started new session: {}", new_id),
+                                "conversation_id": new_id
                             });
                             if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
                                 break;
@@ -2184,17 +2362,42 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: Arc<Gatew
 }
 
 async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let agents = state.agents.read().await;
-    let list: Vec<_> = agents
+    // Get running agents
+    let running_agents = state.agents.read().await;
+
+    // Get discovered personalities from registry
+    let registry = state.agent_registry.read().await;
+    let discovered: Vec<_> = registry.iter().map(|p| p.id.clone()).collect();
+
+    let list: Vec<_> = running_agents
         .iter()
         .map(|(id, handle)| {
+            let is_discovered = discovered.contains(id);
             serde_json::json!({
                 "id": id,
                 "busy": handle.busy,
+                "status": "running",
+                "discovered": is_discovered,
             })
         })
         .collect();
-    Json(list)
+
+    // Add discovered but not running agents
+    let not_running: Vec<_> = discovered
+        .into_iter()
+        .filter(|id| !running_agents.contains_key(id))
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "busy": false,
+                "status": "discovered",
+                "discovered": true,
+            })
+        })
+        .collect();
+
+    let combined: Vec<_> = list.into_iter().chain(not_running).collect();
+    Json(combined)
 }
 
 async fn create_agent_handler(
@@ -3351,4 +3554,273 @@ async fn acp_session_message_handler(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
     }
+}
+
+/// Handler to spawn a discovered agent from the registry
+async fn spawn_discovered_agent_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    info!("API request to spawn discovered agent: {}", id);
+
+    // Check if agent is already running
+    {
+        let agents = state.agents.read().await;
+        if agents.contains_key(&id) {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": format!("Agent '{}' is already running", id),
+                    "agent_id": id,
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Check if agent is in registry
+    {
+        let registry = state.agent_registry.read().await;
+        if !registry.has(&id) {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": format!("Agent '{}' not found in registry", id),
+                    "available_agents": registry.list(),
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Spawn the agent
+    // Note: This requires access to the Gateway, so we need to spawn manually
+    let personality = {
+        let registry = state.agent_registry.read().await;
+        registry.get(&id).cloned()
+    };
+
+    if let Some(personality) = personality {
+        let config = personality.to_agent_config();
+
+        // Create provider from model router
+        let provider = match state.model_router.create_default_provider().await {
+            Ok(p) => p,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("Failed to create provider: {}", e),
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+        let tools = state.tool_registry.clone();
+        let model = state.config.read().await.model.clone();
+        let (tx, mut rx) = mpsc::channel(100);
+
+        let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+
+        let handle = AgentHandle {
+            id: id.clone(),
+            config: config.clone(),
+            tx: tx.clone(),
+            busy: false,
+            agent: agent.clone(),
+        };
+
+        {
+            let mut agents = state.agents.write().await;
+            agents.insert(id.clone(), handle);
+        }
+
+        // Start agent processing loop
+        let state_clone = state.clone();
+        let agent_id_clone = id.clone();
+        tokio::spawn(async move {
+            info!("Agent {} processing loop started", agent_id_clone);
+            while let Some(cmd) = rx.recv().await {
+                match cmd {
+                    AgentCommand::Shutdown => {
+                        info!("Agent {} shutting down", agent_id_clone);
+                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                            agent_id: agent_id_clone.clone(),
+                            status: AgentStatus::Shutdown,
+                        });
+                        break;
+                    }
+                    AgentCommand::ProcessMessage {
+                        session_id,
+                        message,
+                        user_id,
+                        channel,
+                    } => {
+                        let incoming_msg = crate::channels::IncomingMessage::new(
+                            user_id.clone(),
+                            session_id.clone(),
+                            message.clone(),
+                        );
+
+                        match agent.process_message(incoming_msg).await {
+                            Ok(outgoing) => {
+                                // Route response back to channel
+                                let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                    session_id: session_id.clone(),
+                                    agent_id: agent_id_clone.clone(),
+                                    content: outgoing.content,
+                                    channel: channel.clone(),
+                                    conversation_id: session_id.clone(),
+                                });
+                            }
+                            Err(e) => {
+                                error!("Agent {} failed to process message: {}", agent_id_clone, e);
+                            }
+                        }
+                    }
+                    _ => {
+                        info!("Agent {} received command: {:?}", agent_id_clone, cmd);
+                    }
+                }
+            }
+            info!("Agent {} processing loop ended", agent_id_clone);
+        });
+
+        info!("✅ Spawned discovered agent '{}' from registry", id);
+        (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "agent_id": id,
+                "status": "spawned",
+                "source": "registry",
+            })),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("Agent '{}' not found in registry", id),
+            })),
+        )
+            .into_response()
+    }
+}
+
+/// Handler to spawn all discovered agents
+async fn spawn_all_discovered_agents_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    info!("API request to spawn all discovered agents");
+
+    let agent_ids: Vec<String> = {
+        let registry = state.agent_registry.read().await;
+        registry.list()
+    };
+
+    let mut spawned = 0;
+    let mut already_running = 0;
+    let mut failed = 0;
+
+    for agent_id in agent_ids {
+        // Check if already running
+        {
+            let agents = state.agents.read().await;
+            if agents.contains_key(&agent_id) {
+                already_running += 1;
+                continue;
+            }
+        }
+
+        // Spawn the agent
+        let personality = {
+            let registry = state.agent_registry.read().await;
+            registry.get(&agent_id).cloned()
+        };
+
+        if let Some(personality) = personality {
+            let config = personality.to_agent_config();
+
+            if let Ok(provider) = state.model_router.create_default_provider().await {
+                let tools = state.tool_registry.clone();
+                let model = state.config.read().await.model.clone();
+                let (tx, mut rx) = mpsc::channel(100);
+
+                let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+
+                let handle = AgentHandle {
+                    id: agent_id.clone(),
+                    config: config.clone(),
+                    tx: tx.clone(),
+                    busy: false,
+                    agent: agent.clone(),
+                };
+
+                {
+                    let mut agents = state.agents.write().await;
+                    agents.insert(agent_id.clone(), handle);
+                }
+
+                // Start processing loop
+                let state_clone = state.clone();
+                let agent_id_clone = agent_id.clone();
+                tokio::spawn(async move {
+                    while let Some(cmd) = rx.recv().await {
+                        if let AgentCommand::Shutdown = cmd {
+                            break;
+                        }
+                    }
+                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        agent_id: agent_id_clone,
+                        status: AgentStatus::Shutdown,
+                    });
+                });
+
+                spawned += 1;
+            } else {
+                failed += 1;
+            }
+        } else {
+            failed += 1;
+        }
+    }
+
+    info!(
+        "Spawned {} agents, {} already running, {} failed",
+        spawned, already_running, failed
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "spawned": spawned,
+            "already_running": already_running,
+            "failed": failed,
+        })),
+    )
+        .into_response()
+}
+
+/// Handler to list discovered agents in registry
+async fn list_discovered_agents_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let registry = state.agent_registry.read().await;
+    let agents = state.agents.read().await;
+
+    let list: Vec<_> = registry
+        .iter()
+        .map(|p| {
+            let is_running = agents.contains_key(&p.id);
+            serde_json::json!({
+                "id": p.id,
+                "name": p.display_name(),
+                "running": is_running,
+                "valid": p.is_valid,
+            })
+        })
+        .collect();
+
+    Json(list)
 }
