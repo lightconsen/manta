@@ -10,6 +10,10 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 pub mod formatter;
+pub mod health;
+pub mod lifecycle;
+pub mod metrics;
+pub mod state;
 
 /// Channel types supported by Manta
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -405,6 +409,26 @@ pub trait Channel: Send + Sync {
 
     /// Check if the channel is healthy
     async fn health_check(&self) -> crate::Result<bool>;
+
+    /// Get current state for persistence (optional)
+    async fn get_state(&self) -> Option<state::ChannelState> {
+        None // Default: no state to persist
+    }
+
+    /// Restore state on startup (optional)
+    async fn restore_state(&self, _state: state::ChannelState) -> crate::Result<()> {
+        Ok(()) // Default: no state to restore
+    }
+
+    /// Get detailed health status (optional)
+    async fn health_status(&self) -> health::HealthStatus {
+        // Default implementation uses health_check
+        match self.health_check().await {
+            Ok(true) => health::HealthStatus::Healthy,
+            Ok(false) => health::HealthStatus::Unhealthy,
+            Err(_) => health::HealthStatus::Unhealthy,
+        }
+    }
 }
 
 /// A boxed channel for storage
@@ -837,3 +861,9 @@ mod tests {
         assert!(caps.supports_attachments);
     }
 }
+
+// Re-exports for new channel management modules
+pub use health::{ChannelHealthMonitor, ChannelHealth, HealthStatus};
+pub use lifecycle::{ChannelLifecycle, ChannelStatus, LifecycleManager, RestartPolicy};
+pub use metrics::{ChannelMetrics, MetricsManager, MetricsSnapshot, LatencyWindow};
+pub use state::{ChannelState, ChannelStateStore};
