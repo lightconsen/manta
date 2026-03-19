@@ -95,6 +95,9 @@ hex = "0.4"
 base64 = "0.22"
 subtle = "2.5"
 
+# Secure secret handling
+zeroize = { version = "1.7", features = ["derive"] }
+
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
