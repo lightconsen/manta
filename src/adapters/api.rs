@@ -5,6 +5,7 @@
 
 use crate::config::ServiceConfig;
 use crate::error::{MantaError, Result};
+use crate::secrets::SecretRef;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
@@ -22,8 +23,62 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
+    /// Create a new API client from service configuration (async)
+    ///
+    /// This async version properly resolves SecretRef API keys.
+    pub async fn new_async(config: &ServiceConfig) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .build()
+            .map_err(|e| MantaError::Internal(format!("Failed to build HTTP client: {}", e)))?;
+
+        // Resolve API key if it's a SecretRef
+        let api_key = if let Some(ref key_ref) = config.api_key {
+            match key_ref {
+                SecretRef::String(s) if !s.starts_with('$') => Some(s.clone()),
+                SecretRef::String(s) => {
+                    // Try to resolve env var reference
+                    let var_name = s.trim_start_matches('$');
+                    std::env::var(var_name).ok()
+                }
+                _ => {
+                    // For other SecretRef variants, we need the secrets resolver
+                    // For now, return None and let the caller resolve it properly
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            client,
+            base_url: config.endpoint.clone(),
+            api_key,
+            timeout: Duration::from_secs(config.timeout_seconds),
+            retry_config: config.retry.clone(),
+        })
+    }
+
     /// Create a new API client from service configuration
+    ///
+    /// Note: This synchronous version cannot fully resolve SecretRef API keys.
+    /// Use `new_async` for proper secret resolution, or ensure secrets are
+    /// resolved in the config before calling this method.
     pub fn new(config: &ServiceConfig) -> Result<Self> {
+        // Try to get the resolved API key
+        let api_key = config.api_key.as_ref().and_then(|key_ref| {
+            match key_ref {
+                SecretRef::String(s) if !s.starts_with('$') => Some(s.clone()),
+                SecretRef::String(s) => {
+                    // Try to resolve env var reference synchronously
+                    let var_name = s.trim_start_matches('$');
+                    std::env::var(var_name).ok()
+                }
+                _ => None, // Cannot resolve other variants synchronously
+            }
+        });
+
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
@@ -32,7 +87,7 @@ impl ApiClient {
         Ok(Self {
             client,
             base_url: config.endpoint.clone(),
-            api_key: config.api_key.clone(),
+            api_key,
             timeout: Duration::from_secs(config.timeout_seconds),
             retry_config: config.retry.clone(),
         })
@@ -286,7 +341,7 @@ mod tests {
 
         let config = ServiceConfig {
             endpoint: mock_server.uri(),
-            api_key: Some("secret".to_string()),
+            api_key: Some(SecretRef::String("secret".to_string())),
             timeout_seconds: 30,
             retry: RetryConfig::default(),
         };

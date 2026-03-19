@@ -48,6 +48,7 @@ pub mod core;
 pub mod cron;
 pub mod daemon;
 pub mod dirs;
+pub mod secrets;
 pub mod error;
 pub mod gateway;
 pub mod logs;
