@@ -95,6 +95,23 @@ pub trait EmbeddingProvider: Send + Sync {
     }
 }
 
+/// Blanket impl so `Arc<dyn EmbeddingProvider>` can be passed where a concrete
+/// `EmbeddingProvider` is expected (e.g. as the inner of `CachedEmbeddingProvider`).
+#[async_trait]
+impl EmbeddingProvider for Arc<dyn EmbeddingProvider> {
+    fn model_name(&self) -> &str {
+        (**self).model_name()
+    }
+
+    fn dimension(&self) -> usize {
+        (**self).dimension()
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        (**self).embed_batch(texts).await
+    }
+}
+
 /// API-based embedding provider (OpenAI, etc.)
 pub struct ApiEmbeddingProvider {
     client: reqwest::Client,

@@ -30,8 +30,8 @@ use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
 use crate::memory::vector::{
-    ApiEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider, MemoryVectorStore,
-    VectorMemoryService,
+    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
+    MemoryVectorStore, VectorMemoryService,
 };
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
@@ -388,7 +388,8 @@ pub struct GatewayState {
     /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
-    pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::CronScheduler>>>>,
+    pub cron_scheduler:
+        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::advanced::AdvancedCronScheduler>>>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// Rate limiter for API protection
@@ -741,8 +742,11 @@ impl Gateway {
                     batch_size: 32,
                 };
 
+                // Wrap with a SHA-256 dedup cache (1 024-entry FIFO) to avoid
+                // re-embedding identical text across requests.
+                let cached_provider = CachedEmbeddingProvider::new(embedding_provider, 1024);
                 let service = Arc::new(VectorMemoryService::new(
-                    embedding_provider,
+                    Arc::new(cached_provider),
                     vector_store,
                     &embedding_config,
                 ));
@@ -777,20 +781,20 @@ impl Gateway {
 
         // Initialize cron scheduler if enabled
         if config.cron.enabled {
-            info!("Initializing cron scheduler...");
-            use crate::cron::CronScheduler;
-            let (cron_scheduler, command_rx) = CronScheduler::new();
+            info!("Initializing advanced cron scheduler...");
+            use crate::cron::advanced::AdvancedCronScheduler;
+            let (cron_scheduler, command_rx) = AdvancedCronScheduler::new();
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
             // Start the scheduler in a background task
             let cron_scheduler_clone = Arc::clone(&cron_scheduler);
             tokio::spawn(async move {
                 let mut scheduler = cron_scheduler_clone.lock().await;
                 if let Err(e) = scheduler.start(command_rx).await {
-                    warn!("Cron scheduler failed: {}", e);
+                    warn!("Advanced cron scheduler failed: {}", e);
                 }
             });
             *state.cron_scheduler.write().await = Some(cron_scheduler);
-            info!("✅ Cron scheduler initialized");
+            info!("✅ Advanced cron scheduler initialized");
         } else {
             info!("Cron scheduler disabled");
         }
@@ -2205,9 +2209,16 @@ async fn create_default_tool_registry(
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
 
-    // Register shell/execution tools
-    registry.register(Box::new(ShellTool::new()));
-    registry.register(Box::new(CodeExecutionTool::default()));
+    // Register shell/execution tools wrapped in sandbox for path & timeout enforcement.
+    // ShellTool needs network access (git, curl, etc.); CodeExecutionTool does not.
+    registry.register(Box::new(SandboxedTool::new(
+        ShellTool::new(),
+        SandboxConfig { allow_network_access: true, ..SandboxConfig::default() },
+    )));
+    registry.register(Box::new(SandboxedTool::new(
+        CodeExecutionTool::default(),
+        SandboxConfig::default(),
+    )));
 
     // Register web tools
     registry.register(Box::new(WebSearchTool::new()));
@@ -2241,6 +2252,28 @@ async fn create_default_tool_registry(
                 "Failed to initialize MemoryTool: {}. Memory functionality will not be available.",
                 e
             );
+        }
+    }
+
+    // Register semantic/hybrid memory search tool
+    match MemorySearchTool::new().await {
+        Ok(tool) => {
+            registry.register(Box::new(tool));
+            info!("MemorySearchTool registered successfully");
+        }
+        Err(e) => {
+            warn!("Failed to initialize MemorySearchTool: {}. Hybrid search unavailable.", e);
+        }
+    }
+
+    // Register memory get/CRUD tool
+    match MemoryGetTool::new().await {
+        Ok(tool) => {
+            registry.register(Box::new(tool));
+            info!("MemoryGetTool registered successfully");
+        }
+        Err(e) => {
+            warn!("Failed to initialize MemoryGetTool: {}. Memory CRUD unavailable.", e);
         }
     }
 
@@ -3961,10 +3994,17 @@ async fn disconnect_mcp_server_handler(
     Path(server_id): Path<String>,
 ) -> impl IntoResponse {
     match state.mcp_manager.disconnect(&server_id).await {
-        Ok(()) => (
-            axum::http::StatusCode::OK,
-            Json(serde_json::json!({ "disconnected": server_id })),
-        ),
+        Ok(()) => {
+            // Remove all `mcp__{server_id}__*` tools from the registry so
+            // they are no longer offered to agents.
+            let prefix = format!("mcp__{server_id}__");
+            state.tool_registry.deregister_prefix(&prefix);
+
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({ "disconnected": server_id })),
+            )
+        }
         Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
