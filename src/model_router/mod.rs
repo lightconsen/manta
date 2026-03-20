@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
 
@@ -448,21 +448,48 @@ impl ModelRouter {
         drop(providers);
 
         for name in provider_names {
-            // TODO: Implement actual health check with lightweight request
-            // For now, just update timestamp
-            let mut health = self.health.write().await;
-            if let Some(h) = health.get_mut(&name) {
-                h.last_health_check = Some(chrono::Utc::now());
+            // First handle circuit-breaker state transitions (Open → HalfOpen).
+            {
+                let mut health = self.health.write().await;
+                if let Some(h) = health.get_mut(&name) {
+                    h.last_health_check = Some(chrono::Utc::now());
 
-                // Check if we should transition from Open to HalfOpen
-                if h.state == CircuitState::Open {
-                    if let Some(last_failure) = h.last_failure {
-                        let elapsed = chrono::Utc::now() - last_failure;
-                        let config = self.config.read().await;
-                        if elapsed.num_seconds() >= config.circuit_breaker_reset_secs as i64 {
-                            info!("Circuit breaker half-open for provider: {}", name);
-                            h.state = CircuitState::HalfOpen;
+                    if h.state == CircuitState::Open {
+                        if let Some(last_failure) = h.last_failure {
+                            let elapsed = chrono::Utc::now() - last_failure;
+                            let config = self.config.read().await;
+                            if elapsed.num_seconds() >= config.circuit_breaker_reset_secs as i64 {
+                                info!("Circuit breaker half-open for provider: {}", name);
+                                h.state = CircuitState::HalfOpen;
+                            }
                         }
+                    }
+                }
+            }
+
+            // Send a lightweight real request to check liveness.
+            let provider = {
+                let providers = self.providers.read().await;
+                providers.get(&name).cloned()
+            };
+
+            if let Some(provider) = provider {
+                let request = crate::providers::CompletionRequest {
+                    model: None,
+                    messages: vec![crate::providers::Message::user("ping")],
+                    temperature: Some(0.0),
+                    max_tokens: Some(1),
+                    stream: false,
+                    tools: None,
+                    stop: None,
+                };
+
+                let start = std::time::Instant::now();
+                match provider.complete(request).await {
+                    Ok(_) => self.record_success(&name, start.elapsed()).await,
+                    Err(e) => {
+                        debug!("Health probe failed for {}: {}", name, e);
+                        self.record_failure(&name).await;
                     }
                 }
             }
