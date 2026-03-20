@@ -94,11 +94,10 @@ impl SandboxConfig {
 ///
 /// ```rust,no_run
 /// # use std::path::PathBuf;
-/// # use std::sync::Arc;
 /// # use std::time::Duration;
 /// # use manta::tools::sandbox::{SandboxConfig, SandboxedTool};
-/// # use manta::tools::{BoxedTool};
-/// # fn make_shell_tool() -> BoxedTool { todo!() }
+/// # use manta::tools::shell::ShellTool;
+/// # fn make_shell_tool() -> ShellTool { ShellTool::new() }
 /// let config = SandboxConfig {
 ///     allowed_paths: vec![
 ///         PathBuf::from("/home/user/projects"),
@@ -281,6 +280,7 @@ mod tests {
             cpu_limit: None,
             fd_limit: None,
             process_limit: None,
+            skill_trust: crate::tools::SkillTrust::Trusted,
         }
     }
 

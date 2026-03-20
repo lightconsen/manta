@@ -40,6 +40,7 @@ pub type ProgressCallback = Arc<
 pub mod budget;
 pub mod compressor;
 pub mod context;
+pub mod cost_guard;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
@@ -47,10 +48,12 @@ pub mod session;
 pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
+pub mod turns;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
+pub use cost_guard::CostGuard;
 pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
@@ -60,6 +63,7 @@ pub use session::{
 };
 pub use subagent_registry::{SubagentMetrics, SubagentRegistry, SubagentRun, SubagentStatus};
 pub use todo::{Task, TaskStatus, TodoStore};
+pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
 /// Fast check for obviously time-sensitive queries
 fn is_obviously_time_sensitive(message: &str) -> bool {
@@ -403,6 +407,8 @@ pub struct Agent {
     task_planner: Arc<TaskPlanner>,
     /// Active plans per conversation
     active_plans: Arc<RwLock<std::collections::HashMap<String, ActivePlan>>>,
+    /// Live cost guard — checked before every provider call.
+    cost_guard: Option<Arc<CostGuard>>,
 }
 
 impl Agent {
@@ -423,7 +429,16 @@ impl Agent {
             response_cache: Arc::new(ResponseCache::new(Duration::from_secs(3600))), // 1 hour TTL
             task_planner: Arc::new(TaskPlanner::new(provider_clone)),
             active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cost_guard: None,
         }
+    }
+
+    /// Attach a `CostGuard` to this agent.  When set, every provider call
+    /// first checks `cost_guard.is_exceeded()` and returns an error if the
+    /// budget has been exhausted.
+    pub fn with_cost_guard(mut self, guard: Arc<CostGuard>) -> Self {
+        self.cost_guard = Some(guard);
+        self
     }
 
     /// Set the model name to use for completions
@@ -992,8 +1007,30 @@ impl Agent {
             request.tools = Some(tools);
         }
 
+        // Check live cost guard before calling provider
+        if let Some(ref guard) = self.cost_guard {
+            if guard.is_exceeded() {
+                return Err(crate::error::MantaError::Validation(
+                    "Budget limit exceeded — refusing provider call. \
+                     Adjust daily_limit_cents or hourly_action_limit in config."
+                        .to_string(),
+                ));
+            }
+        }
+
         // Get completion
         let response = self.provider.complete(request).await?;
+
+        // Record token usage in cost guard
+        if let Some(ref guard) = self.cost_guard {
+            if let Some(ref usage) = response.usage {
+                guard.record_usage(
+                    usage.prompt_tokens as u64,
+                    usage.completion_tokens as u64,
+                    response.model.as_str(),
+                );
+            }
+        }
 
         // Handle tool calls if present
         if let Some(tool_calls) = &response.message.tool_calls {
@@ -1070,11 +1107,15 @@ impl Agent {
                 .await
             {
                 Ok(exec_result) => {
+                    // Reset circuit-breaker on success
+                    self.tools.reset_failure(&tool_call.function.name);
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     info!("Tool {} executed successfully", tool_call.function.name);
                     tool_result
                 }
                 Err(e) => {
+                    // Record failure for circuit-breaker
+                    self.tools.record_failure(&tool_call.function.name);
                     error!("Tool {} failed: {}", tool_call.function.name, e);
                     ToolResult::error(&tool_call.id, format!("Tool execution failed: {}", e))
                 }
@@ -1238,6 +1279,8 @@ impl Agent {
                 .await
             {
                 Ok(exec_result) => {
+                    // Reset circuit-breaker on success
+                    self.tools.reset_failure(&tool_name);
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     let result_str = tool_result.content.clone();
 
@@ -1252,6 +1295,8 @@ impl Agent {
                     tool_result
                 }
                 Err(e) => {
+                    // Record failure for circuit-breaker
+                    self.tools.record_failure(&tool_name);
                     let error_msg = format!("Tool execution failed: {}", e);
 
                     // Notify tool error
@@ -1290,6 +1335,63 @@ impl Agent {
         info!("Starting agent");
         // Agent is mostly stateless, but this could be used for background tasks
         Ok(())
+    }
+
+    /// Spawn a background self-repair task.
+    ///
+    /// Every `check_interval` the task:
+    /// 1. Evicts contexts that have been inactive longer than `stale_threshold`.
+    /// 2. Logs and reports any tools that are currently circuit-broken.
+    ///
+    /// The task runs until the `Agent` is dropped.
+    pub fn start_self_repair_loop(
+        &self,
+        check_interval: Duration,
+        stale_threshold: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let contexts = Arc::clone(&self.contexts);
+        let tools = Arc::clone(&self.tools);
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(check_interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                ticker.tick().await;
+
+                // ── 1. Evict stale contexts ───────────────────────────────────
+                let stale_ids: Vec<String> = {
+                    let guard = contexts.read().await;
+                    guard
+                        .iter()
+                        .filter(|(_, ctx)| ctx.is_stale(stale_threshold))
+                        .map(|(id, _)| id.clone())
+                        .collect()
+                };
+
+                if !stale_ids.is_empty() {
+                    let mut guard = contexts.write().await;
+                    for id in &stale_ids {
+                        guard.remove(id);
+                        warn!(
+                            conversation_id = id.as_str(),
+                            "Self-repair: evicted stale context (inactive >{:?})",
+                            stale_threshold
+                        );
+                    }
+                }
+
+                // ── 2. Report degraded tools ──────────────────────────────────
+                let degraded = tools.degraded_tools();
+                if !degraded.is_empty() {
+                    warn!(
+                        tools = ?degraded,
+                        "Self-repair: {} tool(s) are circuit-broken",
+                        degraded.len()
+                    );
+                }
+            }
+        })
     }
 
     /// Shutdown the agent

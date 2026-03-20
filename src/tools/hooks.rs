@@ -37,6 +37,7 @@ pub type AfterHookFn = Arc<
 /// let hooks = ToolHooks::new()
 ///     .before(|name, args| {
 ///         let name = name.to_string();
+///         let args = args.to_string(); // stringify before entering the async block
 ///         Box::pin(async move {
 ///             tracing::info!("Calling tool: {} with args: {}", name, args);
 ///         })

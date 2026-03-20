@@ -432,7 +432,10 @@ pub struct AdvancedCronScheduler {
     command_tx: mpsc::Sender<CronCommand>,
     timer_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    agent: Option<Arc<Agent>>,
+    /// Shared agent reference — wrapping in `Arc<RwLock<…>>` lets
+    /// `set_agent()` update the running scheduler's agent without
+    /// restarting any background tasks.
+    agent: Arc<RwLock<Option<Arc<Agent>>>>,
     store_path: Option<PathBuf>,
 }
 
@@ -441,7 +444,6 @@ impl std::fmt::Debug for AdvancedCronScheduler {
         f.debug_struct("AdvancedCronScheduler")
             .field("jobs", &self.jobs)
             .field("has_timer", &self.timer_handle.is_some())
-            .field("has_agent", &self.agent.is_some())
             .field("store_path", &self.store_path)
             .finish()
     }
@@ -456,7 +458,7 @@ impl AdvancedCronScheduler {
             command_tx,
             timer_handle: None,
             shutdown_tx: None,
-            agent: None,
+            agent: Arc::new(RwLock::new(None)),
             store_path: None,
         };
         (scheduler, command_rx)
@@ -470,10 +472,19 @@ impl AdvancedCronScheduler {
             command_tx,
             timer_handle: None,
             shutdown_tx: None,
-            agent: Some(agent),
+            agent: Arc::new(RwLock::new(Some(agent))),
             store_path: None,
         };
         (scheduler, command_rx)
+    }
+
+    /// Wire an `Agent` into a running scheduler.
+    ///
+    /// Because all background tasks hold an `Arc` to the same
+    /// `RwLock<Option<Arc<Agent>>>`, calling this after `start()` is safe
+    /// and immediately visible to any task that tries to execute an agent job.
+    pub async fn set_agent(&self, agent: Arc<Agent>) {
+        *self.agent.write().await = Some(agent);
     }
 
     /// Set the store path for persistence
@@ -494,7 +505,7 @@ impl AdvancedCronScheduler {
         }
 
         let jobs = Arc::clone(&self.jobs);
-        let agent = self.agent.clone();
+        let agent = Arc::clone(&self.agent);
         let store_path = self.store_path.clone();
 
         // Arm initial timer
@@ -506,7 +517,7 @@ impl AdvancedCronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, agent.as_ref(), &store_path, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, cmd).await;
                         }
                     }
                     _ = shutdown_rx.recv() => {
@@ -554,7 +565,7 @@ impl AdvancedCronScheduler {
 
             if delay.num_seconds() > 0 {
                 let jobs = Arc::clone(&self.jobs);
-                let agent = self.agent.clone();
+                let agent = Arc::clone(&self.agent);
                 let store_path = self.store_path.clone();
                 let job_id_clone = job_id.clone();
 
@@ -566,7 +577,7 @@ impl AdvancedCronScheduler {
                     if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
                         if job.should_run(Utc::now()) {
                             drop(jobs_lock);
-                            Self::execute_job(&jobs, &job_id_clone, agent.as_ref(), &store_path)
+                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path)
                                 .await;
                         }
                     }
@@ -577,12 +588,12 @@ impl AdvancedCronScheduler {
             } else {
                 // Job is overdue, run immediately
                 let jobs = Arc::clone(&self.jobs);
-                let agent = self.agent.clone();
+                let agent = Arc::clone(&self.agent);
                 let store_path = self.store_path.clone();
                 let job_id_clone = job_id.clone();
 
                 let handle = tokio::spawn(async move {
-                    Self::execute_job(&jobs, &job_id_clone, agent.as_ref(), &store_path).await;
+                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path).await;
                 });
 
                 self.timer_handle = Some(handle);
@@ -595,7 +606,7 @@ impl AdvancedCronScheduler {
     /// Handle scheduler commands
     async fn handle_command(
         jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
-        agent: Option<&Arc<Agent>>,
+        agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         cmd: CronCommand,
     ) {
@@ -666,7 +677,7 @@ impl AdvancedCronScheduler {
     async fn execute_job(
         jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
         job_id: &str,
-        agent: Option<&Arc<Agent>>,
+        agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
     ) {
         let mut job = {
@@ -698,10 +709,11 @@ impl AdvancedCronScheduler {
         let result = match &job.target {
             ExecutionTarget::Shell { command } => Self::execute_shell(command).await,
             ExecutionTarget::Agent { prompt, agent_id, .. } => {
-                if let Some(agent) = agent {
-                    Self::execute_agent(agent, &job, prompt, agent_id.as_deref()).await
+                let agent_guard = agent.read().await;
+                if let Some(ref agent_ref) = *agent_guard {
+                    Self::execute_agent(agent_ref, &job, prompt, agent_id.as_deref()).await
                 } else {
-                    Err(MantaError::Internal("No agent configured".to_string()))
+                    Err(MantaError::Internal("No agent configured for cron job".to_string()))
                 }
             }
         };

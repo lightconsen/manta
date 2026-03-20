@@ -10,6 +10,21 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+/// Skill trust level for tool access control.
+///
+/// The minimum trust across all active skills constrains the available
+/// tool set — a community skill mixed with a trusted one does not escalate
+/// privileges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillTrust {
+    /// Community / untrusted skill — read-only (non-privileged) tools only.
+    Community = 0,
+    /// Installed / trusted skill — full tool access.
+    #[default]
+    Trusted = 1,
+}
+
 /// A unique identifier for a tool
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolId(pub String);
@@ -54,6 +69,10 @@ pub struct ToolContext {
     pub fd_limit: Option<u64>,
     /// Maximum process count (for preventing fork bombs)
     pub process_limit: Option<u64>,
+    /// Minimum trust level from active skills.
+    /// When `Community`, privileged (write/exec) tools are excluded from
+    /// `get_available()`.
+    pub skill_trust: SkillTrust,
 }
 
 impl Default for ToolContext {
@@ -72,6 +91,7 @@ impl Default for ToolContext {
             cpu_limit: None,
             fd_limit: None,
             process_limit: None,
+            skill_trust: SkillTrust::Trusted,
         }
     }
 }
@@ -84,6 +104,12 @@ impl ToolContext {
             conversation_id: conversation_id.into(),
             ..Default::default()
         }
+    }
+
+    /// Set the minimum skill trust level (controls which tools are exposed).
+    pub fn with_skill_trust(mut self, trust: SkillTrust) -> Self {
+        self.skill_trust = trust;
+        self
     }
 
     /// Set the working directory
@@ -420,8 +446,7 @@ struct CacheEntry {
     timestamp: std::time::Instant,
 }
 
-/// Registry of tools with optional caching
-#[derive(Default)]
+/// Registry of tools with optional caching, circuit breaker, and trust-level filtering.
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
     /// Tool-name prefixes that have been logically deregistered (e.g. MCP
@@ -433,6 +458,17 @@ pub struct ToolRegistry {
     cache: std::sync::Mutex<HashMap<String, CacheEntry>>,
     cache_ttl: Option<Duration>,
     cache_enabled: bool,
+    /// Per-tool failure counts for circuit breaker logic.
+    failure_counts: std::sync::RwLock<HashMap<String, u32>>,
+    /// Tool names that require `SkillTrust::Trusted` access.
+    /// When a context has `skill_trust == Community` these tools are hidden.
+    privileged_tools: std::sync::RwLock<HashSet<String>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -444,6 +480,9 @@ impl std::fmt::Debug for ToolRegistry {
 }
 
 impl ToolRegistry {
+    /// Number of consecutive failures before a tool is circuit-broken.
+    pub const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+
     /// Create a new empty registry
     pub fn new() -> Self {
         Self {
@@ -452,6 +491,8 @@ impl ToolRegistry {
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: None,
             cache_enabled: false,
+            failure_counts: std::sync::RwLock::new(HashMap::new()),
+            privileged_tools: std::sync::RwLock::new(HashSet::new()),
         }
     }
 
@@ -463,7 +504,78 @@ impl ToolRegistry {
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: Some(ttl),
             cache_enabled: true,
+            failure_counts: std::sync::RwLock::new(HashMap::new()),
+            privileged_tools: std::sync::RwLock::new(HashSet::new()),
         }
+    }
+
+    // ── Circuit breaker ───────────────────────────────────────────────────────
+
+    /// Record a failure for `name`.  After `CIRCUIT_BREAKER_THRESHOLD`
+    /// consecutive failures the tool is considered degraded and excluded from
+    /// `get_available()`.
+    pub fn record_failure(&self, name: &str) {
+        if let Ok(mut counts) = self.failure_counts.write() {
+            let entry = counts.entry(name.to_string()).or_insert(0);
+            *entry += 1;
+            if *entry >= Self::CIRCUIT_BREAKER_THRESHOLD {
+                tracing::warn!(
+                    tool = name,
+                    failures = *entry,
+                    "Tool circuit-breaker tripped — marking as degraded"
+                );
+            }
+        }
+    }
+
+    /// Reset the failure count for `name` (e.g. after a successful execution).
+    pub fn reset_failure(&self, name: &str) {
+        if let Ok(mut counts) = self.failure_counts.write() {
+            counts.remove(name);
+        }
+    }
+
+    /// Returns `true` if the tool has been circuit-broken due to repeated
+    /// failures.
+    pub fn is_degraded(&self, name: &str) -> bool {
+        self.failure_counts
+            .read()
+            .map(|counts| {
+                counts.get(name).copied().unwrap_or(0) >= Self::CIRCUIT_BREAKER_THRESHOLD
+            })
+            .unwrap_or(false)
+    }
+
+    /// List all currently-degraded tool names.
+    pub fn degraded_tools(&self) -> Vec<String> {
+        self.failure_counts
+            .read()
+            .map(|counts| {
+                counts
+                    .iter()
+                    .filter(|(_, &v)| v >= Self::CIRCUIT_BREAKER_THRESHOLD)
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    // ── Privilege / trust-level filtering ────────────────────────────────────
+
+    /// Mark `name` as a privileged tool (shell execution, file writes, etc.).
+    /// Privileged tools are hidden when `context.skill_trust == Community`.
+    pub fn mark_privileged(&mut self, name: &str) {
+        if let Ok(mut set) = self.privileged_tools.write() {
+            set.insert(name.to_string());
+        }
+    }
+
+    /// Returns `true` if `name` is a privileged tool.
+    pub fn is_privileged(&self, name: &str) -> bool {
+        self.privileged_tools
+            .read()
+            .map(|set| set.contains(name))
+            .unwrap_or(false)
     }
 
     /// Returns `true` if `name` matches any blocked prefix.
@@ -472,6 +584,21 @@ impl ToolRegistry {
             .read()
             .map(|set| set.iter().any(|p| name.starts_with(p.as_str())))
             .unwrap_or(false)
+    }
+
+    /// Returns `true` if the tool should be excluded from availability checks,
+    /// considering blocked prefixes, circuit-breaker state, and trust level.
+    fn is_excluded(&self, name: &str, skill_trust: SkillTrust) -> bool {
+        if self.is_blocked(name) {
+            return true;
+        }
+        if self.is_degraded(name) {
+            return true;
+        }
+        if skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
+            return true;
+        }
+        false
     }
 
     /// Enable caching with the specified TTL
@@ -569,42 +696,49 @@ impl ToolRegistry {
         }
     }
 
-    /// Get a tool by name (returns `None` for blocked tools)
+    /// Get a tool by name (returns `None` for blocked or degraded tools)
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        if self.is_blocked(name) {
+        if self.is_blocked(name) || self.is_degraded(name) {
             return None;
         }
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    /// List available tool names (excludes blocked tools)
+    /// List available tool names (excludes blocked and degraded tools)
     pub fn list(&self) -> Vec<&str> {
         self.tools
             .keys()
-            .filter(|name| !self.is_blocked(name))
+            .filter(|name| !self.is_blocked(name) && !self.is_degraded(name))
             .map(|s| s.as_str())
             .collect()
     }
 
-    /// Check if a tool exists and is not blocked
+    /// Check if a tool exists, is not blocked, and is not degraded
     pub fn has(&self, name: &str) -> bool {
-        !self.is_blocked(name) && self.tools.contains_key(name)
+        !self.is_blocked(name) && !self.is_degraded(name) && self.tools.contains_key(name)
     }
 
-    /// Get all tools as function definitions (excludes blocked tools)
+    /// Get all tools as function definitions (excludes blocked and degraded tools)
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         self.tools
             .iter()
-            .filter(|(name, _)| !self.is_blocked(name))
+            .filter(|(name, _)| !self.is_blocked(name) && !self.is_degraded(name))
             .map(|(_, t)| t.to_function_definition())
             .collect()
     }
 
-    /// Get all available tools for a given context (excludes blocked tools)
+    /// Get all available tools for a given context.
+    ///
+    /// Excludes:
+    /// - Blocked-prefix tools (MCP server disconnected)
+    /// - Degraded tools (circuit-breaker tripped)
+    /// - Privileged tools when `context.skill_trust == Community`
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
         self.tools
             .iter()
-            .filter(|(name, t)| !self.is_blocked(name) && t.is_available(context))
+            .filter(|(name, t)| {
+                !self.is_excluded(name, context.skill_trust) && t.is_available(context)
+            })
             .map(|(_, t)| t.to_function_definition())
             .collect()
     }

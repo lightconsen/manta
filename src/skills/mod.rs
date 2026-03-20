@@ -91,7 +91,7 @@ pub struct SkillRequires {
 }
 
 /// OpenClaw-specific skill metadata
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenClawMetadata {
     /// Display emoji
     #[serde(default)]
@@ -114,6 +114,28 @@ pub struct OpenClawMetadata {
     /// Maximum skill file size in bytes (default: 256KB)
     #[serde(rename = "maxSize", default = "default_max_size")]
     pub max_size: usize,
+    /// Trust level for this skill.
+    ///
+    /// Community-trust skills restrict the agent to read-only (non-privileged)
+    /// tools so mixing a community skill with a trusted one doesn't escalate
+    /// privileges.
+    #[serde(default)]
+    pub trust: crate::tools::SkillTrust,
+}
+
+impl Default for OpenClawMetadata {
+    fn default() -> Self {
+        Self {
+            emoji: String::new(),
+            always: false,
+            requires: SkillRequires::default(),
+            install: Vec::new(),
+            skill_key: None,
+            primary_env: None,
+            max_size: default_max_size(),
+            trust: crate::tools::SkillTrust::Trusted,
+        }
+    }
 }
 
 fn default_max_size() -> usize {
@@ -632,6 +654,47 @@ impl SkillManager {
             .filter(|s| s.is_eligible && s.matches(input))
             .cloned()
             .collect()
+    }
+
+    /// Deterministic skill prefilter (no LLM call).
+    ///
+    /// Runs keyword / regex matching against eligible skills and returns at
+    /// most `max_skills` results.  Results are ordered by trust level
+    /// (highest first) so that `Trusted` skills are always preferred over
+    /// `Community` skills when the cap is reached.  This prevents prompt
+    /// injection through an unbounded number of community-skill system
+    /// prompts being injected into the agent context.
+    ///
+    /// Pass `max_skills = 0` to disable the cap (returns all matches).
+    pub async fn prefilter_skills(&self, input: &str, max_skills: usize) -> Vec<Skill> {
+        let skills = self.skills.read().await;
+        let mut matched: Vec<Skill> = skills
+            .values()
+            .filter(|s| s.is_eligible && s.matches(input))
+            .cloned()
+            .collect();
+
+        // Prefer higher-trust skills first.
+        matched.sort_by(|a, b| b.metadata.trust.cmp(&a.metadata.trust));
+
+        if max_skills > 0 {
+            matched.truncate(max_skills);
+        }
+
+        matched
+    }
+
+    /// Compute the minimum trust level across a slice of skills.
+    ///
+    /// The result constrains the tool set: if any active skill is
+    /// `Community`-trust the agent must restrict itself to non-privileged
+    /// tools.
+    pub fn min_trust(skills: &[Skill]) -> crate::tools::SkillTrust {
+        skills
+            .iter()
+            .map(|s| s.metadata.trust)
+            .min()
+            .unwrap_or(crate::tools::SkillTrust::Trusted)
     }
 
     /// Get skills as formatted prompt text
