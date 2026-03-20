@@ -442,7 +442,12 @@ impl Provider for AnthropicProvider {
             max_tokens: request.max_tokens.unwrap_or(4096),
             system,
             messages,
-            tools: None, // Tools not supported in streaming for now
+            tools: request.tools.as_ref().map(|tools| {
+                tools
+                    .iter()
+                    .map(|t| Self::to_anthropic_tool(&t.function))
+                    .collect::<Vec<_>>()
+            }),
             temperature: request.temperature,
             stream: Some(true),
         };

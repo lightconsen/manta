@@ -25,8 +25,7 @@ use crate::tools::hooks::ToolHooks;
 const MAX_CHILDREN: usize = 3;
 /// Maximum delegation depth
 const MAX_DEPTH: usize = 2;
-/// Tools blocked for child agents (for future use)
-#[allow(dead_code)]
+/// Tools blocked for child agents
 const BLOCKED_TOOLS: &[&str] = &[
     "delegate",
     "clarify",
@@ -530,18 +529,40 @@ impl DelegateTool {
                     crate::error::MantaError::Validation("task.prompt is required".to_string())
                 })?;
 
+                // Parse requested tools, then enforce BLOCKED_TOOLS by removing them
+                let requested_tools: Vec<String> = task_json["allowed_tools"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let blocked_requested: Vec<&str> = requested_tools
+                    .iter()
+                    .filter(|t| BLOCKED_TOOLS.contains(&t.as_str()))
+                    .map(|t| t.as_str())
+                    .collect();
+
+                if !blocked_requested.is_empty() {
+                    warn!(
+                        "Child agent spawn: removing {} blocked tool(s) from allowed list: {:?}",
+                        blocked_requested.len(),
+                        blocked_requested
+                    );
+                }
+
+                let allowed_tools: Vec<String> = requested_tools
+                    .into_iter()
+                    .filter(|t| !BLOCKED_TOOLS.contains(&t.as_str()))
+                    .collect();
+
                 let task = TaskSpec {
                     prompt: prompt.to_string(),
                     output_format: task_json["output_format"].as_str().map(String::from),
                     max_iterations: task_json["max_iterations"].as_u64().map(|v| v as usize),
-                    allowed_tools: task_json["allowed_tools"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
+                    allowed_tools,
                     context: HashMap::new(),
                 };
 
