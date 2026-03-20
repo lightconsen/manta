@@ -10,31 +10,20 @@
 #[macro_export]
 macro_rules! include_builtin_skills {
     () => {{
-        let mut skills: std::collections::HashMap<&'static str, &'static str> = std::collections::HashMap::new();
+        let mut skills: std::collections::HashMap<&'static str, &'static str> =
+            std::collections::HashMap::new();
 
         // Skill creator
-        skills.insert(
-            "skill-creator",
-            include_str!("builtin/skill-creator/SKILL.md")
-        );
+        skills.insert("skill-creator", include_str!("builtin/skill-creator/SKILL.md"));
 
         // Find skills
-        skills.insert(
-            "find-skills",
-            include_str!("builtin/find-skills/SKILL.md")
-        );
+        skills.insert("find-skills", include_str!("builtin/find-skills/SKILL.md"));
 
         // GitHub
-        skills.insert(
-            "github",
-            include_str!("builtin/github/SKILL.md")
-        );
+        skills.insert("github", include_str!("builtin/github/SKILL.md"));
 
         // Weather
-        skills.insert(
-            "weather",
-            include_str!("builtin/weather/SKILL.md")
-        );
+        skills.insert("weather", include_str!("builtin/weather/SKILL.md"));
 
         // TODO: Add remaining skills as they're converted
         // - cron
@@ -56,7 +45,7 @@ macro_rules! include_builtin_skills {
 macro_rules! load_builtin_skills {
     () => {{
         use $crate::skills::frontmatter::SkillFile;
-        use $crate::skills::{Skill, StorageLevel, TriggerType, SkillTrigger};
+        use $crate::skills::{Skill, SkillTrigger, StorageLevel, TriggerType};
 
         let skill_contents = $crate::include_builtin_skills!();
         let mut skills: std::collections::HashMap<String, Skill> = std::collections::HashMap::new();
@@ -75,7 +64,8 @@ macro_rules! load_builtin_skills {
                     skill.source_level = StorageLevel::Bundled;
                     skill.is_eligible = true;
                     skill.enabled = true;
-                    skill.source_path = std::path::PathBuf::from(format!("builtin/{}/SKILL.md", name));
+                    skill.source_path =
+                        std::path::PathBuf::from(format!("builtin/{}/SKILL.md", name));
 
                     // Convert frontmatter triggers to SkillTriggers
                     for trigger in &skill_file.frontmatter.triggers {

@@ -120,10 +120,7 @@ impl ChannelHealthMonitor {
 
     /// Create with default settings (30s check, 2min stale threshold)
     pub fn with_defaults() -> Self {
-        Self::new(
-            Duration::from_secs(30),
-            Duration::from_secs(120),
-        )
+        Self::new(Duration::from_secs(30), Duration::from_secs(120))
     }
 
     /// Register a channel for health monitoring
@@ -182,11 +179,7 @@ impl ChannelHealthMonitor {
 
         for (name, health) in channels.iter() {
             let h = health.read().await;
-            results.push((
-                name.clone(),
-                h.status,
-                h.message_count.load(Ordering::Relaxed),
-            ));
+            results.push((name.clone(), h.status, h.message_count.load(Ordering::Relaxed)));
         }
 
         results
@@ -211,10 +204,7 @@ impl ChannelHealthMonitor {
                     // Check staleness
                     if elapsed > stale_threshold {
                         if h.status != HealthStatus::Stale {
-                            warn!(
-                                "Channel {} is stale (no heartbeat for {:?})",
-                                name, elapsed
-                            );
+                            warn!("Channel {} is stale (no heartbeat for {:?})", name, elapsed);
                             h.status = HealthStatus::Stale;
                         }
                     } else if elapsed > degraded_threshold {
@@ -295,10 +285,7 @@ mod tests {
         health.record_message();
         health.record_message();
 
-        assert_eq!(
-            health.message_count.load(Ordering::Relaxed),
-            2
-        );
+        assert_eq!(health.message_count.load(Ordering::Relaxed), 2);
         assert!(health.last_message_at.is_some());
     }
 

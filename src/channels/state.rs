@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
-use tracing::{info};
+use tracing::info;
 
 /// Persisted channel state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +120,7 @@ impl ChannelStateStore {
     pub async fn save_state(&self, state: &ChannelState) -> Result<()> {
         let session_mappings_json =
             serde_json::to_string(&state.session_mappings).map_err(|e| {
-MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
+                MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
             })?;
 
         sqlx::query(
@@ -158,8 +158,10 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
         channel_name: &str,
         account_id: Option<&str>,
     ) -> Result<Option<ChannelState>> {
-        let row = sqlx::query_as::
-            <_, (String, String, Option<i64>, String, Option<String>, DateTime<Utc>)>(
+        let row = sqlx::query_as::<
+            _,
+            (String, String, Option<i64>, String, Option<String>, DateTime<Utc>),
+        >(
             r#"
             SELECT
                 channel_name,
@@ -184,13 +186,20 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
 
         match row {
             Some((name, account, offset, mappings, extra, activity)) => {
-                let session_mappings: HashMap<String, String> =
-                    serde_json::from_str(&mappings).map_err(|e| {
-                        MantaError::Internal(format!("Failed to deserialize session mappings: {}", e))
+                let session_mappings: HashMap<String, String> = serde_json::from_str(&mappings)
+                    .map_err(|e| {
+                        MantaError::Internal(format!(
+                            "Failed to deserialize session mappings: {}",
+                            e
+                        ))
                     })?;
 
                 // Normalize empty string sentinel back to None
-                let account_id = if account.is_empty() { None } else { Some(account) };
+                let account_id = if account.is_empty() {
+                    None
+                } else {
+                    Some(account)
+                };
 
                 Ok(Some(ChannelState {
                     channel_name: name,
@@ -206,11 +215,7 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
     }
 
     /// Delete channel state
-    pub async fn delete_state(
-        &self,
-        channel_name: &str,
-        account_id: Option<&str>,
-    ) -> Result<()> {
+    pub async fn delete_state(&self, channel_name: &str, account_id: Option<&str>) -> Result<()> {
         sqlx::query(
             r#"
             DELETE FROM channel_states
@@ -231,8 +236,10 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
 
     /// List all saved states for a channel
     pub async fn list_states(&self, channel_name: &str) -> Result<Vec<ChannelState>> {
-        let rows = sqlx::query_as::
-            <_, (String, String, Option<i64>, String, Option<String>, DateTime<Utc>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (String, String, Option<i64>, String, Option<String>, DateTime<Utc>),
+        >(
             r#"
             SELECT
                 channel_name,
@@ -256,11 +263,15 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
 
         let mut states = Vec::new();
         for (name, account, offset, mappings, extra, activity) in rows {
-            let session_mappings: HashMap<String, String> =
-                serde_json::from_str(&mappings).map_err(|e| {
+            let session_mappings: HashMap<String, String> = serde_json::from_str(&mappings)
+                .map_err(|e| {
                     MantaError::Internal(format!("Failed to deserialize session mappings: {}", e))
                 })?;
-            let account_id = if account.is_empty() { None } else { Some(account) };
+            let account_id = if account.is_empty() {
+                None
+            } else {
+                Some(account)
+            };
 
             states.push(ChannelState {
                 channel_name: name,
@@ -307,8 +318,7 @@ MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
         channel_name: &str,
         limit: i32,
     ) -> Result<Vec<(String, Option<String>, DateTime<Utc>)>> {
-        let rows = sqlx::query_as::
-            <_, (String, Option<String>, DateTime<Utc>)>(
+        let rows = sqlx::query_as::<_, (String, Option<String>, DateTime<Utc>)>(
             r#"
             SELECT status, message, recorded_at
             FROM channel_health_log
@@ -387,14 +397,8 @@ mod tests {
         state.add_session_mapping("chat_1", "session_1");
         state.add_session_mapping("chat_2", "session_2");
 
-        assert_eq!(
-            state.session_mappings.get("chat_1"),
-            Some(&"session_1".to_string())
-        );
-        assert_eq!(
-            state.session_mappings.get("chat_2"),
-            Some(&"session_2".to_string())
-        );
+        assert_eq!(state.session_mappings.get("chat_1"), Some(&"session_1".to_string()));
+        assert_eq!(state.session_mappings.get("chat_2"), Some(&"session_2".to_string()));
     }
 
     #[tokio::test]
@@ -429,10 +433,7 @@ mod tests {
         assert_eq!(loaded.channel_name, "telegram");
         assert_eq!(loaded.account_id, Some("bot123".to_string()));
         assert_eq!(loaded.update_offset, Some(12345));
-        assert_eq!(
-            loaded.session_mappings.get("chat_1"),
-            Some(&"session_abc".to_string())
-        );
+        assert_eq!(loaded.session_mappings.get("chat_1"), Some(&"session_abc".to_string()));
     }
 
     #[tokio::test]
@@ -464,13 +465,24 @@ mod tests {
         store.save_state(&state).await.unwrap();
 
         // Verify it exists
-        assert!(store.load_state("telegram", Some("bot123")).await.unwrap().is_some());
+        assert!(store
+            .load_state("telegram", Some("bot123"))
+            .await
+            .unwrap()
+            .is_some());
 
         // Delete it
-        store.delete_state("telegram", Some("bot123")).await.unwrap();
+        store
+            .delete_state("telegram", Some("bot123"))
+            .await
+            .unwrap();
 
         // Verify it's gone
-        assert!(store.load_state("telegram", Some("bot123")).await.unwrap().is_none());
+        assert!(store
+            .load_state("telegram", Some("bot123"))
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -480,9 +492,18 @@ mod tests {
         store.init_schema().await.unwrap();
 
         // Log some health changes
-        store.log_health_status("telegram", "healthy", None).await.unwrap();
-        store.log_health_status("telegram", "degraded", Some("Slow response")).await.unwrap();
-        store.log_health_status("telegram", "healthy", None).await.unwrap();
+        store
+            .log_health_status("telegram", "healthy", None)
+            .await
+            .unwrap();
+        store
+            .log_health_status("telegram", "degraded", Some("Slow response"))
+            .await
+            .unwrap();
+        store
+            .log_health_status("telegram", "healthy", None)
+            .await
+            .unwrap();
 
         // Get log
         let log = store.get_health_log("telegram", 10).await.unwrap();

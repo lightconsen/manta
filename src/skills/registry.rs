@@ -5,8 +5,8 @@
 
 use crate::dirs;
 use crate::error::{MantaError, Result};
-use crate::skills::{Skill, StorageLevel};
 use crate::skills::frontmatter::SkillFile;
+use crate::skills::{Skill, StorageLevel};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -101,7 +101,8 @@ impl SkillRegistry {
 
         debug!("Searching skills: {}", url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -114,10 +115,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response
-            .json()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
 
         info!("Found {} skills matching '{}'", listings.len(), query);
         Ok(listings)
@@ -130,7 +128,8 @@ impl SkillRegistry {
 
         debug!("Fetching popular skills");
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -143,10 +142,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response
-            .json()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
 
         Ok(listings)
     }
@@ -158,7 +154,8 @@ impl SkillRegistry {
 
         debug!("Fetching skill info: {}", name);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -177,10 +174,7 @@ impl SkillRegistry {
             });
         }
 
-        let listing: SkillListing = response
-            .json()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let listing: SkillListing = response.json().await.map_err(|e| MantaError::Http(e))?;
 
         Ok(listing)
     }
@@ -206,7 +200,8 @@ impl SkillRegistry {
 
         debug!("Downloading from: {}", url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -225,10 +220,7 @@ impl SkillRegistry {
             });
         }
 
-        let content = response
-            .bytes()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let content = response.bytes().await.map_err(|e| MantaError::Http(e))?;
 
         // Create skill directory
         fs::create_dir_all(&skill_dir)
@@ -252,7 +244,8 @@ impl SkillRegistry {
 
         let url = format!("{}/api/v1/skills/{}/download?version={}", self.url, name, version);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -269,10 +262,14 @@ impl SkillRegistry {
 
         let skill_dir = dirs::skills_dir().join(name);
 
-        fs::create_dir_all(&skill_dir).await.map_err(|e| MantaError::Io(e))?;
+        fs::create_dir_all(&skill_dir)
+            .await
+            .map_err(|e| MantaError::Io(e))?;
 
         let skill_file = skill_dir.join("SKILL.md");
-        fs::write(&skill_file, content).await.map_err(|e| MantaError::Io(e))?;
+        fs::write(&skill_file, content)
+            .await
+            .map_err(|e| MantaError::Io(e))?;
 
         info!("Skill '{}' v{} installed", name, version);
         Ok(skill_dir)
@@ -293,7 +290,9 @@ impl SkillRegistry {
         }
 
         let skill_file = skill_dir.join("SKILL.md");
-        let current_content = fs::read_to_string(&skill_file).await.map_err(|e| MantaError::Io(e))?;
+        let current_content = fs::read_to_string(&skill_file)
+            .await
+            .map_err(|e| MantaError::Io(e))?;
 
         // Parse current skill to get version
         let current_skill = SkillFile::parse(&current_content, skill_file.clone())
@@ -337,7 +336,9 @@ impl SkillRegistry {
         let mut updates = Vec::new();
 
         // List installed skills
-        let mut entries = fs::read_dir(&skill_dir).await.map_err(|e| MantaError::Io(e))?;
+        let mut entries = fs::read_dir(&skill_dir)
+            .await
+            .map_err(|e| MantaError::Io(e))?;
 
         while let Some(entry) = entries.next_entry().await.map_err(|e| MantaError::Io(e))? {
             let path = entry.path();
@@ -374,7 +375,8 @@ impl SkillRegistry {
     pub async fn list_by_category(&self, category: &str) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/category/{}", self.url, category);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -387,10 +389,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response
-            .json()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
 
         Ok(listings)
     }
@@ -400,7 +399,8 @@ impl SkillRegistry {
     pub async fn list_by_tag(&self, tag: &str) -> Result<Vec<SkillListing>> {
         let url = format!("{}/api/v1/skills/tag/{}", self.url, tag);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -413,10 +413,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response
-            .json()
-            .await
-            .map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
 
         Ok(listings)
     }

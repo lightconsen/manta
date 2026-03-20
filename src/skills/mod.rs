@@ -26,7 +26,10 @@ mod storage;
 mod watcher;
 
 pub use config::{SkillConfig, SkillEntryConfig};
-pub use frontmatter::{InstallSpec as SkillInstallSpec, SkillFile, SkillFrontmatter, SkillTriggerItem, OpenClawFrontmatter};
+pub use frontmatter::{
+    InstallSpec as SkillInstallSpec, OpenClawFrontmatter, SkillFile, SkillFrontmatter,
+    SkillTriggerItem,
+};
 pub use install::{install_all, install_binary, InstallResult};
 pub use registry::{SkillListing, SkillRegistry, SkillUpdate};
 pub use storage::SkillStorage;

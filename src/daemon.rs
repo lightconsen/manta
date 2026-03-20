@@ -142,8 +142,8 @@ impl DaemonManager {
         gateway_config.host = self.config.host.clone();
         gateway_config.port = self.config.port;
         gateway_config.web_port = self.config.web_port;
-        gateway_config.model = std::env::var("MANTA_MODEL")
-            .unwrap_or_else(|_| gateway_config.model.clone());
+        gateway_config.model =
+            std::env::var("MANTA_MODEL").unwrap_or_else(|_| gateway_config.model.clone());
         gateway_config.model_provider = std::env::var("MANTA_MODEL_PROVIDER")
             .unwrap_or_else(|_| gateway_config.model_provider.clone());
 

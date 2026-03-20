@@ -1,8 +1,8 @@
 //! Entity management commands for Manta
 
-use clap::Subcommand;
 use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use crate::error::Result;
+use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub enum EntityCommands {
@@ -95,23 +95,31 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
         EntityCommands::List { status, format } => {
             println!("Listing entities (status={:?}, format={:?})", status, format);
         }
-        EntityCommands::Create { name, entity_type, status, metadata } => {
-            println!("Creating entity {} (type={}, status={:?}, metadata={:?})",
-                name, entity_type, status, metadata);
+        EntityCommands::Create {
+            name,
+            entity_type,
+            status,
+            metadata,
+        } => {
+            println!(
+                "Creating entity {} (type={}, status={:?}, metadata={:?})",
+                name, entity_type, status, metadata
+            );
         }
         EntityCommands::Get { id, format } => {
             println!("Getting entity {} (format={:?})", id, format);
         }
         EntityCommands::Update { id, name, status, metadata } => {
-            println!("Updating entity {} (name={:?}, status={:?}, metadata={:?})",
-                id, name, status, metadata);
+            println!(
+                "Updating entity {} (name={:?}, status={:?}, metadata={:?})",
+                id, name, status, metadata
+            );
         }
         EntityCommands::Delete { id, force } => {
             println!("Deleting entity {} (force={})", id, force);
         }
         EntityCommands::Search { query, entity_type, format } => {
-            println!("Searching for '{}' (type={:?}, format={:?})",
-                query, entity_type, format);
+            println!("Searching for '{}' (type={:?}, format={:?})", query, entity_type, format);
         }
         EntityCommands::Export { output, entity_type } => {
             println!("Exporting entities to {:?} (type={:?})", output, entity_type);

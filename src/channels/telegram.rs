@@ -127,14 +127,22 @@ impl TelegramChannel {
 }
 
 /// Pre-compiled regex patterns for markdown parsing
-static RE_BOLD_DOUBLE_STAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*\*(.+?)\*\*").unwrap());
-static RE_BOLD_DOUBLE_UNDERSCORE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"__(.+?)__").unwrap());
-static RE_ITALIC_STAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
-static RE_ITALIC_UNDERSCORE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"_([^_]+)_").unwrap());
-static RE_CODE_INLINE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"`([^`]+)`").unwrap());
-static RE_CODE_BLOCK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap());
-static RE_STRIKETHROUGH: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"~~(.+?)~~").unwrap());
-static RE_LINK: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+static RE_BOLD_DOUBLE_STAR: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static RE_BOLD_DOUBLE_UNDERSCORE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"__(.+?)__").unwrap());
+static RE_ITALIC_STAR: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
+static RE_ITALIC_UNDERSCORE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"_([^_]+)_").unwrap());
+static RE_CODE_INLINE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"`([^`]+)`").unwrap());
+static RE_CODE_BLOCK: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap());
+static RE_STRIKETHROUGH: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"~~(.+?)~~").unwrap());
+static RE_LINK: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 
 impl TelegramChannel {
     /// Convert markdown to Telegram HTML
@@ -173,22 +181,32 @@ impl TelegramChannel {
 
         // Process italic
         result = RE_ITALIC_STAR.replace_all(&result, "<i>$1</i>").to_string();
-        result = RE_ITALIC_UNDERSCORE.replace_all(&result, "<i>$1</i>").to_string();
+        result = RE_ITALIC_UNDERSCORE
+            .replace_all(&result, "<i>$1</i>")
+            .to_string();
 
         // Restore bold placeholders with actual HTML tags
         result = result.replace(bold_placeholder, "<b>$1</b>");
 
         // Code: `text` -> <code>text</code>
-        result = RE_CODE_INLINE.replace_all(&result, "<code>$1</code>").to_string();
+        result = RE_CODE_INLINE
+            .replace_all(&result, "<code>$1</code>")
+            .to_string();
 
         // Code block: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
-        result = RE_CODE_BLOCK.replace_all(&result, "<pre><code>$2</code></pre>").to_string();
+        result = RE_CODE_BLOCK
+            .replace_all(&result, "<pre><code>$2</code></pre>")
+            .to_string();
 
         // Strikethrough: ~~text~~ -> <s>text</s>
-        result = RE_STRIKETHROUGH.replace_all(&result, "<s>$1</s>").to_string();
+        result = RE_STRIKETHROUGH
+            .replace_all(&result, "<s>$1</s>")
+            .to_string();
 
         // Links: [text](url) -> <a href="url">text</a>
-        result = RE_LINK.replace_all(&result, r#"<a href="$2">$1</a>"#).to_string();
+        result = RE_LINK
+            .replace_all(&result, r#"<a href="$2">$1</a>"#)
+            .to_string();
 
         result
     }
@@ -202,7 +220,11 @@ impl Channel for TelegramChannel {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
-            chat_types: vec![crate::channels::ChatType::Direct, crate::channels::ChatType::Group, crate::channels::ChatType::Channel],
+            chat_types: vec![
+                crate::channels::ChatType::Direct,
+                crate::channels::ChatType::Group,
+                crate::channels::ChatType::Channel,
+            ],
             supports_formatting: true,
             supports_attachments: true,
             supports_images: true,
@@ -240,16 +262,17 @@ impl Channel for TelegramChannel {
 
             // Spawn the update dispatcher with captured message sender
             tokio::spawn(async move {
-                let handler = dptree::entry().branch(
-                    Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
-                        let tx = message_tx.clone();
-                        let allowed = allowed_usernames.clone();
-                        let sessions = session_map.clone();
-                        async move {
-                            handle_message_with_sender(bot, msg, tx, allowed, sessions).await
-                        }
-                    }),
-                );
+                let handler =
+                    dptree::entry().branch(Update::filter_message().endpoint(
+                        move |bot: Bot, msg: Message| {
+                            let tx = message_tx.clone();
+                            let allowed = allowed_usernames.clone();
+                            let sessions = session_map.clone();
+                            async move {
+                                handle_message_with_sender(bot, msg, tx, allowed, sessions).await
+                            }
+                        },
+                    ));
 
                 let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
                     .enable_ctrlc_handler()
@@ -294,11 +317,10 @@ impl Channel for TelegramChannel {
             let chat_id_str = &message.conversation_id.0;
             info!("DEBUG: Telegram send - conversation_id='{}'", chat_id_str);
 
-            let chat_id: i64 =
-                chat_id_str.parse().map_err(|e| {
-                    error!("DEBUG: Failed to parse chat_id '{}': {:?}", chat_id_str, e);
-                    crate::error::MantaError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
-                })?;
+            let chat_id: i64 = chat_id_str.parse().map_err(|e| {
+                error!("DEBUG: Failed to parse chat_id '{}': {:?}", chat_id_str, e);
+                crate::error::MantaError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
+            })?;
 
             // Format content
             let (text, parse_mode) = match message.formatted_content {
@@ -515,11 +537,8 @@ async fn handle_message_with_sender(
 
             if !is_allowed {
                 warn!("User @{} is not in allowed usernames list", username);
-                bot.send_message(
-                    msg.chat.id,
-                    "Sorry, you're not authorized to use this bot.",
-                )
-                .await?;
+                bot.send_message(msg.chat.id, "Sorry, you're not authorized to use this bot.")
+                    .await?;
                 return Ok(());
             }
         }
@@ -534,7 +553,10 @@ async fn handle_message_with_sender(
             info!("🆕 New session started for @{}: {}", username, new_session);
             bot.send_message(
                 msg.chat.id,
-                format!("🆕 Started new session:\n`{}`\n\nYour conversation history is now fresh.", new_session),
+                format!(
+                    "🆕 Started new session:\n`{}`\n\nYour conversation history is now fresh.",
+                    new_session
+                ),
             )
             .parse_mode(ParseMode::MarkdownV2)
             .await?;

@@ -377,14 +377,15 @@ impl Channel for DiscordChannel {
             })?;
 
             // Look up the channel ID from our tracking map
-            let channel_id_num = self.get_message_channel(message_id_num).await.ok_or_else(
-                || crate::error::MantaError::NotFound {
-                    resource: format!(
+            let channel_id_num =
+                self.get_message_channel(message_id_num)
+                    .await
+                    .ok_or_else(|| crate::error::MantaError::NotFound {
+                        resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
                         message_id_num
                     ),
-                },
-            )?;
+                    })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
                 crate::error::MantaError::Internal("HTTP client not initialized".to_string())
@@ -424,14 +425,15 @@ impl Channel for DiscordChannel {
             })?;
 
             // Look up the channel ID from our tracking map
-            let channel_id_num = self.get_message_channel(message_id_num).await.ok_or_else(
-                || crate::error::MantaError::NotFound {
-                    resource: format!(
+            let channel_id_num =
+                self.get_message_channel(message_id_num)
+                    .await
+                    .ok_or_else(|| crate::error::MantaError::NotFound {
+                        resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
                         message_id_num
                     ),
-                },
-            )?;
+                    })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
                 crate::error::MantaError::Internal("HTTP client not initialized".to_string())

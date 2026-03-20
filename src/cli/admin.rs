@@ -88,7 +88,12 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
         AdminCommands::Agents => {
             println!("Listing agents...");
         }
-        AdminCommands::Send { session_id, message, provider, model } => {
+        AdminCommands::Send {
+            session_id,
+            message,
+            provider,
+            model,
+        } => {
             println!("Sending to {}: {}", session_id, message);
             if let Some(p) = provider {
                 println!("  Provider: {}", p);

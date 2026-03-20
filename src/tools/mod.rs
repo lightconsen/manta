@@ -386,8 +386,10 @@ pub mod cron_tool;
 pub mod delegate_tool;
 pub mod file;
 pub mod grep;
+pub mod hooks;
 pub mod mcp;
 pub mod memory;
+pub mod sandbox;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
@@ -401,8 +403,10 @@ pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;
+pub use hooks::ToolHooks;
 pub use mcp::McpConnectionTool;
-pub use memory::MemoryTool;
+pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
+pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use shell::ShellTool;
 pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
@@ -528,6 +532,19 @@ impl ToolRegistry {
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
         self.tools.insert(name, tool);
+    }
+
+    /// Remove a single tool by exact name.
+    pub fn remove(&mut self, name: &str) -> Option<BoxedTool> {
+        self.tools.remove(name)
+    }
+
+    /// Remove all tools whose names start with `prefix`.
+    ///
+    /// Used by the MCP subsystem to clean up `mcp__{server}__*` tools when a
+    /// server disconnects.
+    pub fn deregister_prefix(&mut self, prefix: &str) {
+        self.tools.retain(|name, _| !name.starts_with(prefix));
     }
 
     /// Get a tool by name

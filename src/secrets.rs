@@ -325,19 +325,12 @@ impl SecretResolver {
                 let snapshot = self.snapshot.read().await;
                 if let Some(cached) = snapshot.get(var) {
                     if self.degraded_mode {
-                        warn!(
-                            "Using cached value for {} (env var not available)",
-                            var
-                        );
+                        warn!("Using cached value for {} (env var not available)", var);
                         return Ok(cached.to_string());
                     }
                 }
 
-                Err(ConfigError::Missing(format!(
-                    "Environment variable {} not set",
-                    var
-                ))
-                .into())
+                Err(ConfigError::Missing(format!("Environment variable {} not set", var)).into())
             }
         }
     }
@@ -349,12 +342,7 @@ impl SecretResolver {
         // For async file operations in tokio
         let path = path.to_path_buf();
         let content = tokio::task::spawn_blocking(move || {
-            std::fs::read_to_string(&path).map_err(|e| {
-                ConfigError::FileRead {
-                    path,
-                    source: e,
-                }
-            })
+            std::fs::read_to_string(&path).map_err(|e| ConfigError::FileRead { path, source: e })
         })
         .await
         .map_err(|e| crate::error::MantaError::Internal(format!("Task join error: {}", e)))??;
@@ -427,12 +415,10 @@ impl SecretResolver {
                         SecretRef::Explicit { file: Some(path), .. } => {
                             SecretSource::File(path.clone())
                         }
-                        SecretRef::Explicit { exec: Some(cmd), .. } => {
-                            SecretSource::Exec {
-                                command: cmd.clone(),
-                                exit_code: 0,
-                            }
-                        }
+                        SecretRef::Explicit { exec: Some(cmd), .. } => SecretSource::Exec {
+                            command: cmd.clone(),
+                            exit_code: 0,
+                        },
                         _ => SecretSource::Inline,
                     };
 
@@ -494,9 +480,7 @@ pub fn is_secret_reference(value: &str) -> bool {
 }
 
 /// Resolve all secrets in a configuration map
-pub async fn resolve_secrets(
-    config: &HashMap<String, String>,
-) -> Result<HashMap<String, String>> {
+pub async fn resolve_secrets(config: &HashMap<String, String>) -> Result<HashMap<String, String>> {
     let resolver = SecretResolver::default();
     let mut resolved = HashMap::new();
 

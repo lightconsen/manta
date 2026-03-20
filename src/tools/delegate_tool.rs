@@ -2,6 +2,9 @@
 //!
 //! This tool allows an agent to spawn child agents for parallel task execution.
 //! Implements depth limiting, budget sharing, and tool restrictions for children.
+//!
+//! Integrates with [`SubagentRegistry`] for lifecycle tracking and metrics, and
+//! supports opt-in [`ToolHooks`] for audit/observability.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -15,6 +18,8 @@ use uuid::Uuid;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
+use crate::agent::subagent_registry::SubagentRegistry;
+use crate::tools::hooks::ToolHooks;
 
 /// Maximum number of concurrent child agents
 const MAX_CHILDREN: usize = 3;
@@ -176,6 +181,10 @@ pub struct DelegateTool {
     tracker: DelegationTracker,
     /// Optional agent for executing child tasks
     agent: Option<Arc<crate::agent::Agent>>,
+    /// Shared registry for cross-cutting subagent lifecycle tracking
+    registry: Arc<SubagentRegistry>,
+    /// Optional hooks for pre/post execution observability
+    hooks: ToolHooks,
 }
 
 impl std::fmt::Debug for DelegateTool {
@@ -183,6 +192,7 @@ impl std::fmt::Debug for DelegateTool {
         f.debug_struct("DelegateTool")
             .field("tracker", &self.tracker)
             .field("has_agent", &self.agent.is_some())
+            .field("hooks", &self.hooks)
             .finish()
     }
 }
@@ -193,6 +203,8 @@ impl DelegateTool {
         Self {
             tracker: DelegationTracker::new(depth),
             agent: None,
+            registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
+            hooks: ToolHooks::new(),
         }
     }
 
@@ -201,12 +213,31 @@ impl DelegateTool {
         Self {
             tracker: DelegationTracker::new(depth),
             agent: Some(agent),
+            registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
+            hooks: ToolHooks::new(),
         }
     }
 
     /// Create root-level delegate tool (depth 0)
     pub fn root() -> Self {
         Self::new(0)
+    }
+
+    /// Attach a shared [`SubagentRegistry`] (e.g. from a higher-level supervisor).
+    pub fn with_registry(mut self, registry: Arc<SubagentRegistry>) -> Self {
+        self.registry = registry;
+        self
+    }
+
+    /// Attach execution hooks.
+    pub fn with_hooks(mut self, hooks: ToolHooks) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// Access the underlying registry for metrics / status queries.
+    pub fn registry(&self) -> &Arc<SubagentRegistry> {
+        &self.registry
     }
 
     /// Spawn a child agent
@@ -229,7 +260,7 @@ impl DelegateTool {
 
         let child = ChildAgent {
             id: child_id.clone(),
-            parent_id,
+            parent_id: parent_id.clone(),
             task: task.clone(),
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),
@@ -239,7 +270,7 @@ impl DelegateTool {
             iterations: iterations.clone(),
         };
 
-        // Register the child
+        // Register the child with the local tracker
         self.tracker.register_child(child.clone()).await;
 
         info!(
@@ -248,28 +279,55 @@ impl DelegateTool {
             task.prompt.chars().take(50).collect::<String>()
         );
 
-        // Start the child agent execution in the background
-        let tracker = self.tracker.clone();
+        // Also register with the SubagentRegistry for cross-cutting tracking
+        let registry = Arc::clone(&self.registry);
+        let reg_child_id = child_id.clone();
+        let reg_task = task.clone();
+        let reg_tracker = self.tracker.clone();
         let agent = self.agent.clone();
-        tokio::spawn(async move {
-            execute_child_task(child_id, task, tracker, iterations, agent).await;
-        });
+        let iterations_bg = iterations.clone();
+
+        // Spawn via the registry so it participates in depth/metrics tracking.
+        // We use the registry's lower-level complete_run to report outcomes.
+        let registry_for_spawn = Arc::clone(&registry);
+        let _ = registry_for_spawn
+            .spawn(&parent_id, "delegate", &task.prompt, move |run_id, _task_str| async move {
+                execute_child_task(
+                    reg_child_id,
+                    reg_task,
+                    reg_tracker,
+                    iterations_bg,
+                    agent,
+                    Arc::clone(&registry),
+                    run_id,
+                )
+                .await;
+            })
+            .await
+            .unwrap_or_else(|e| {
+                // Registry spawn failure is non-fatal: the tracker already has the child.
+                warn!("SubagentRegistry::spawn failed (non-fatal): {}", e);
+                String::new()
+            });
 
         Ok(child)
     }
 }
 
-/// Execute a child task using the provided agent
+/// Execute a child task using the provided agent, reporting outcomes to both
+/// the local [`DelegationTracker`] and the shared [`SubagentRegistry`].
 async fn execute_child_task(
     child_id: String,
     task: TaskSpec,
     tracker: DelegationTracker,
     iterations: Arc<AtomicUsize>,
     agent: Option<Arc<crate::agent::Agent>>,
+    registry: Arc<SubagentRegistry>,
+    run_id: String,
 ) {
     tracker.update_status(&child_id, ChildStatus::Running).await;
 
-    debug!("Child {} starting execution", child_id);
+    debug!("Child {} starting execution (run_id={})", child_id, run_id);
 
     if let Some(agent) = agent {
         // Create incoming message for the child task
@@ -300,16 +358,21 @@ async fn execute_child_task(
                 let result = if let Some(format) = &task.output_format {
                     format!("Output format ({}): {}", format, response.content)
                 } else {
-                    response.content
+                    response.content.clone()
                 };
 
-                tracker.set_result(&child_id, result).await;
+                tracker.set_result(&child_id, result.clone()).await;
+                if !run_id.is_empty() {
+                    registry.complete_run(&run_id, Ok(result)).await;
+                }
             }
             Err(e) => {
                 error!("Child {} failed: {}", child_id, e);
-                tracker
-                    .set_error(&child_id, format!("Task execution failed: {}", e))
-                    .await;
+                let err_msg = format!("Task execution failed: {}", e);
+                tracker.set_error(&child_id, err_msg.clone()).await;
+                if !run_id.is_empty() {
+                    registry.complete_run(&run_id, Err(err_msg)).await;
+                }
             }
         }
     } else {
@@ -318,12 +381,14 @@ async fn execute_child_task(
             "No agent configured for child {}. Task would execute with prompt: {}",
             child_id, task.prompt
         );
-        tracker
-            .set_error(&child_id, "No agent configured for delegation".to_string())
-            .await;
+        let err_msg = "No agent configured for delegation".to_string();
+        tracker.set_error(&child_id, err_msg.clone()).await;
+        if !run_id.is_empty() {
+            registry.complete_run(&run_id, Err(err_msg)).await;
+        }
     }
 
-    debug!("Child {} execution completed", child_id);
+    debug!("Child {} execution completed (run_id={})", child_id, run_id);
 }
 
 #[async_trait]
@@ -356,7 +421,7 @@ Progress and results are relayed to the parent."#
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "status", "list", "cancel"],
+                    "enum": ["spawn", "status", "list", "cancel", "metrics"],
                     "description": "Action to perform"
                 },
                 "task": {
@@ -393,6 +458,28 @@ Progress and results are relayed to the parent."#
     }
 
     async fn execute(
+        &self,
+        args: serde_json::Value,
+        context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        // ── before hooks ─────────────────────────────────────────────────
+        self.hooks.run_before(self.name(), &args).await;
+
+        let result = self.execute_inner(args.clone(), context).await;
+
+        // ── after hooks ──────────────────────────────────────────────────
+        let exec_result = match &result {
+            Ok(r) => r.clone(),
+            Err(e) => ToolExecutionResult::error(e.to_string()),
+        };
+        self.hooks.run_after(self.name(), &args, &exec_result).await;
+
+        result
+    }
+}
+
+impl DelegateTool {
+    async fn execute_inner(
         &self,
         args: serde_json::Value,
         context: &ToolContext,
@@ -494,11 +581,28 @@ Progress and results are relayed to the parent."#
                 })?;
 
                 if let Some(_child) = self.tracker.remove_child(child_id).await {
+                    // Also kill in the registry so metrics stay correct.
+                    let _ = self.registry.kill(child_id).await;
                     info!("Cancelled child agent: {}", child_id);
                     Ok(ToolExecutionResult::success(format!("Cancelled child {}", child_id)))
                 } else {
                     Ok(ToolExecutionResult::error(format!("Child {} not found", child_id)))
                 }
+            }
+
+            "metrics" => {
+                let m = self.registry.metrics().await;
+                Ok(ToolExecutionResult::success(format!(
+                    "Subagent metrics: {} spawned, {} completed, {} failed, {} killed",
+                    m.total_spawned, m.total_completed, m.total_failed, m.total_killed
+                ))
+                .with_data(json!({
+                    "total_spawned": m.total_spawned,
+                    "total_completed": m.total_completed,
+                    "total_failed": m.total_failed,
+                    "total_killed": m.total_killed,
+                    "active_count": self.registry.active_count().await,
+                })))
             }
 
             _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
