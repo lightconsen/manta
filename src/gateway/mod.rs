@@ -506,6 +506,8 @@ pub enum GatewayEvent {
         channel: String,
         /// Channel-specific conversation ID for routing responses
         conversation_id: String,
+        /// Token usage (prompt, completion, total) if available
+        usage: Option<crate::providers::Usage>,
     },
     /// Agent status changed
     AgentStatus {
@@ -837,9 +839,32 @@ impl Gateway {
         // Initialize cron scheduler if enabled
         if config.cron.enabled {
             info!("Initializing advanced cron scheduler...");
-            use crate::cron::advanced::AdvancedCronScheduler;
+            use crate::cron::advanced::{AdvancedCronScheduler, AnnounceDelivery};
             let (cron_scheduler, command_rx) = AdvancedCronScheduler::new();
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
+
+            // Wire up announce delivery → SSE broadcast
+            let (announce_tx, mut announce_rx) = mpsc::channel::<AnnounceDelivery>(64);
+            {
+                let mut scheduler = cron_scheduler.lock().await;
+                scheduler.set_announce_tx(announce_tx);
+            }
+            let sse_tx_announce = state.sse_tx.clone();
+            tokio::spawn(async move {
+                while let Some(delivery) = announce_rx.recv().await {
+                    info!("Cron announce → {}:{}", delivery.channel, delivery.to);
+                    let _ = sse_tx_announce.send(SseEvent {
+                        event_type: "cron_announce".into(),
+                        data: serde_json::json!({
+                            "channel": delivery.channel,
+                            "to": delivery.to,
+                            "message": delivery.message,
+                        }),
+                        session_id: None,
+                    });
+                }
+            });
+
             // Start the scheduler in a background task
             let cron_scheduler_clone = Arc::clone(&cron_scheduler);
             tokio::spawn(async move {
@@ -1283,6 +1308,7 @@ impl Gateway {
                             content: response_content,
                             channel: source_channel,
                             conversation_id,
+                            usage: None, // TODO: plumb usage from process_message_with_progress result
                         });
 
                         // Update status to idle
@@ -2405,12 +2431,40 @@ async fn create_default_tool_registry(
 }
 
 // HTTP Handlers
-async fn health_handler() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "healthy",
+async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    // Check if default agent is available
+    let agents = state.agents.read().await;
+    let agent_ready = agents.get("default").is_some();
+    let agent_count = agents.len();
+    drop(agents);
+
+    // Check model router health (Closed = healthy/normal operation)
+    let router_health = state.model_router.get_health_status().await;
+    let healthy_providers = router_health.values().filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed)).count();
+    let total_providers = router_health.len();
+
+    let overall_healthy = agent_ready && healthy_providers > 0;
+
+    let status_code = if overall_healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    let body = Json(serde_json::json!({
+        "status": if overall_healthy { "healthy" } else { "degraded" },
         "version": crate::VERSION,
-        "agent": "ready",
-    }))
+        "agent": {
+            "ready": agent_ready,
+            "count": agent_count,
+        },
+        "providers": {
+            "healthy": healthy_providers,
+            "total": total_providers,
+        },
+    }));
+
+    (status_code, body)
 }
 
 /// Simple chat handler for backwards compatibility with DaemonClient
@@ -2662,25 +2716,105 @@ async fn create_agent_handler(
         agents.insert(agent_id.clone(), handle);
     }
 
-    // Start agent processing loop
+    // Start agent processing loop (mirrors spawn_agent behavior)
     let state_clone = state.clone();
     let agent_id_clone = agent_id.clone();
+    let agent_clone = agent.clone();
     tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id_clone);
         while let Some(cmd) = rx.recv().await {
             match cmd {
+                AgentCommand::ProcessMessage { session_id, message, user_id, channel } => {
+                    let source_channel = channel;
+                    info!("Agent {} processing message for session {}", agent_id_clone, session_id);
+
+                    // Update status
+                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        agent_id: agent_id_clone.clone(),
+                        status: AgentStatus::Processing { session_id: session_id.clone() },
+                    });
+
+                    // Create incoming message
+                    let incoming_msg = crate::channels::IncomingMessage::new(
+                        user_id.clone(), session_id.clone(), message.clone()
+                    );
+
+                    // Process with progress callbacks
+                    let progress_state = state_clone.clone();
+                    let progress_session = session_id.clone();
+                    let progress_agent = agent_id_clone.clone();
+                    let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+                        let state = progress_state.clone();
+                        let sid = progress_session.clone();
+                        let aid = progress_agent.clone();
+                        Box::pin(async move {
+                            match event {
+                                crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                    let _ = state.event_tx.send(GatewayEvent::ToolCalling {
+                                        session_id: sid.clone(), agent_id: aid.clone(),
+                                        tool_name: name.clone(), arguments: arguments.clone(),
+                                    });
+                                    let _ = state.sse_tx.send(SseEvent {
+                                        event_type: "tool_calling".into(),
+                                        data: serde_json::json!({"tool": name, "arguments": arguments, "agent_id": aid}),
+                                        session_id: Some(sid.clone()),
+                                    });
+                                }
+                                crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                    let _ = state.event_tx.send(GatewayEvent::ToolResult {
+                                        session_id: sid.clone(), agent_id: aid.clone(),
+                                        tool_name: name.clone(), result: result.clone(),
+                                    });
+                                    let _ = state.sse_tx.send(SseEvent {
+                                        event_type: "tool_result".into(),
+                                        data: serde_json::json!({"tool": name, "result": result, "agent_id": aid}),
+                                        session_id: Some(sid.clone()),
+                                    });
+                                }
+                                crate::agent::ProgressEvent::Completed { response } => {
+                                    let _ = state.sse_tx.send(SseEvent {
+                                        event_type: "agent_response".into(),
+                                        data: serde_json::json!({"content": response, "agent_id": aid}),
+                                        session_id: Some(sid.clone()),
+                                    });
+                                }
+                                crate::agent::ProgressEvent::Error { message } => {
+                                    let _ = state.sse_tx.send(SseEvent {
+                                        event_type: "agent_error".into(),
+                                        data: serde_json::json!({"error": message, "agent_id": aid}),
+                                        session_id: Some(sid.clone()),
+                                    });
+                                }
+                                _ => {}
+                            }
+                        })
+                    });
+
+                    match agent_clone.process_message_with_progress(incoming_msg, progress_cb).await {
+                        Ok(outgoing) => {
+                            let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
+                                content: outgoing.content, channel: source_channel.clone(),
+                                conversation_id: session_id.clone(), usage: outgoing.usage,
+                            });
+                        }
+                        Err(e) => {
+                            error!("Agent {} failed to process: {}", agent_id_clone, e);
+                        }
+                    }
+
+                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                        agent_id: agent_id_clone.clone(), status: AgentStatus::Idle,
+                    });
+                }
                 AgentCommand::Shutdown => {
                     info!("Agent {} shutting down", agent_id_clone);
                     let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
-                        agent_id: agent_id_clone.clone(),
-                        status: AgentStatus::Shutdown,
+                        agent_id: agent_id_clone.clone(), status: AgentStatus::Shutdown,
                     });
                     break;
                 }
-                _ => {
-                    // Handle other commands (simplified for API-created agents)
-                    info!("Agent {} received command: {:?}", agent_id_clone, cmd);
-                }
+                _ => info!("Agent {} received command: {:?}", agent_id_clone, cmd),
             }
         }
         info!("Agent {} processing loop ended", agent_id_clone);
@@ -3551,40 +3685,78 @@ async fn run_skill_handler(
     let skills_manager = state.skills_manager.read().await;
 
     // Check if skill exists and is eligible
-    match skills_manager.get_skill(&id).await {
-        Some(skill) => {
-            if !skill.enabled {
-                let error = serde_json::json!({
-                    "error": format!("Skill '{}' is disabled", id),
-                });
-                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-            }
-
-            if !skill.is_eligible {
-                let error = serde_json::json!({
-                    "error": format!("Skill '{}' is not eligible to run", id),
-                    "reasons": skill.eligibility_errors,
-                });
-                return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-            }
-
-            // Return the skill prompt that would be used
-            // In a full implementation, this would queue the skill for execution by an agent
-            let response = serde_json::json!({
-                "skill_id": id,
-                "status": "ready",
-                "prompt": skill.prompt,
-                "input": body.input,
-                "context": body.context.unwrap_or(serde_json::json!({})),
-                "note": "Skill is ready for execution. Send this prompt to an agent to execute.",
-            });
-            (StatusCode::OK, Json(response)).into_response()
-        }
+    let skill = match skills_manager.get_skill(&id).await {
+        Some(s) => s,
         None => {
             let error = serde_json::json!({
                 "error": format!("Skill '{}' not found", id),
             });
-            (StatusCode::NOT_FOUND, Json(error)).into_response()
+            return (StatusCode::NOT_FOUND, Json(error)).into_response();
+        }
+    };
+
+    if !skill.enabled {
+        let error = serde_json::json!({
+            "error": format!("Skill '{}' is disabled", id),
+        });
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    if !skill.is_eligible {
+        let error = serde_json::json!({
+            "error": format!("Skill '{}' is not eligible to run", id),
+            "reasons": skill.eligibility_errors,
+        });
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
+    // Build the message: skill system prompt + user input
+    let full_message = if skill.prompt.is_empty() {
+        body.input.clone()
+    } else {
+        format!("{}\n\nUser input: {}", skill.prompt, body.input)
+    };
+
+    // Drop read lock before acquiring agents lock
+    drop(skills_manager);
+
+    // Get the default agent to execute the skill
+    let agent = {
+        let agents = state.agents.read().await;
+        agents.get("default").map(|h| h.agent.clone())
+    };
+
+    let agent = match agent {
+        Some(a) => a,
+        None => {
+            let error = serde_json::json!({
+                "error": "No default agent available to run skill",
+            });
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+        }
+    };
+
+    // Execute via agent
+    let session_id = format!("skill-{}-{}", id, uuid::Uuid::new_v4());
+    let incoming = crate::channels::IncomingMessage::new("skill-runner", &session_id, full_message);
+
+    let no_op_cb: crate::agent::ProgressCallback = Arc::new(|_| Box::pin(async {}));
+    match agent.process_message_with_progress(incoming, no_op_cb).await {
+        Ok(outgoing) => {
+            let response = serde_json::json!({
+                "skill_id": id,
+                "session_id": session_id,
+                "status": "completed",
+                "result": outgoing.content,
+                "usage": outgoing.usage,
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Skill execution failed: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
     }
 }
@@ -3884,6 +4056,7 @@ async fn spawn_discovered_agent_handler(
                                     content: outgoing.content,
                                     channel: channel.clone(),
                                     conversation_id: session_id.clone(),
+                                    usage: outgoing.usage,
                                 });
                             }
                             Err(e) => {
@@ -4494,15 +4667,12 @@ struct OpenAiUsage {
 ///
 /// OpenAI-compatible chat completions endpoint. Routes the last user message
 /// through the default Manta agent and returns the result in OpenAI wire
-/// format. Streaming (`stream: true`) is not yet supported and is silently
-/// treated as a non-streaming request.
+/// format. Supports both streaming (`stream: true` → SSE) and non-streaming.
 async fn openai_chat_completions_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<OpenAiChatRequest>,
-) -> impl IntoResponse {
-    // Suppress unused-field warning for `stream` — streaming is not yet
-    // implemented but we accept the field so clients don't get parse errors.
-    let _ = req.stream;
+) -> axum::response::Response {
+    use axum::response::sse::{Event as SseEvt, KeepAlive, Sse};
 
     // Extract the last user message.
     let user_message = req
@@ -4564,58 +4734,124 @@ async fn openai_chat_completions_handler(
             .into_response();
     }
 
-    // Poll for the AgentResponse event (120 s timeout).
-    let timeout_dur = tokio::time::Duration::from_secs(120);
-    let start = tokio::time::Instant::now();
-    let mut response_content = String::new();
+    if req.stream {
+        // ── Streaming SSE response ──────────────────────────────────────────
+        let model = req.model.clone();
+        let (tx, rx) = mpsc::channel::<Result<SseEvt, std::convert::Infallible>>(64);
 
-    loop {
-        if start.elapsed() > timeout_dur {
-            return (
-                StatusCode::REQUEST_TIMEOUT,
-                Json(serde_json::json!({
-                    "error": {"message": "Request timed out", "type": "server_error"}
-                })),
-            )
-                .into_response();
-        }
+        tokio::spawn(async move {
+            let completion_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+            let created = chrono::Utc::now().timestamp();
+            let timeout_dur = tokio::time::Duration::from_secs(120);
+            let start = tokio::time::Instant::now();
 
-        match tokio::time::timeout(
-            tokio::time::Duration::from_millis(100),
-            event_rx.recv(),
-        )
-        .await
-        {
-            Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
-                if sid == session_id {
-                    response_content = content;
-                    break;
+            // Wait for the full agent response.
+            let response_content = loop {
+                if start.elapsed() > timeout_dur {
+                    break String::new();
                 }
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_millis(100),
+                    event_rx.recv(),
+                )
+                .await
+                {
+                    Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
+                        if sid == session_id {
+                            break content;
+                        }
+                    }
+                    Ok(Err(_)) | Err(_) => {}
+                    _ => {}
+                }
+            };
+
+            // Stream the response word-by-word.
+            for word in response_content.split_inclusive(|c: char| c.is_whitespace()) {
+                let chunk = serde_json::json!({
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"content": word}, "finish_reason": null}]
+                });
+                let _ = tx.send(Ok(SseEvt::default().data(chunk.to_string()))).await;
             }
-            Ok(Err(_)) | Err(_) => {
-                // Lagged or poll timeout — keep waiting.
+
+            // Final chunk with finish_reason = "stop".
+            let final_chunk = serde_json::json!({
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+            });
+            let _ = tx.send(Ok(SseEvt::default().data(final_chunk.to_string()))).await;
+            let _ = tx.send(Ok(SseEvt::default().data("[DONE]".to_string()))).await;
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    } else {
+        // ── Non-streaming JSON response ─────────────────────────────────────
+        let timeout_dur = tokio::time::Duration::from_secs(120);
+        let start = tokio::time::Instant::now();
+        let mut response_content = String::new();
+        let mut prompt_tokens = 0u32;
+        let mut completion_tokens = 0u32;
+        let mut total_tokens = 0u32;
+
+        loop {
+            if start.elapsed() > timeout_dur {
+                return (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(serde_json::json!({
+                        "error": {"message": "Request timed out", "type": "server_error"}
+                    })),
+                )
+                    .into_response();
             }
-            _ => {}
+
+            match tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                event_rx.recv(),
+            )
+            .await
+            {
+                Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, usage, .. })) => {
+                    if sid == session_id {
+                        response_content = content;
+                        if let Some(ref u) = usage {
+                            prompt_tokens = u.prompt_tokens;
+                            completion_tokens = u.completion_tokens;
+                            total_tokens = u.total_tokens;
+                        }
+                        break;
+                    }
+                }
+                Ok(Err(_)) | Err(_) => {}
+                _ => {}
+            }
         }
+
+        let resp = OpenAiChatResponse {
+            id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+            object: "chat.completion".to_string(),
+            created: chrono::Utc::now().timestamp(),
+            model: req.model.clone(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiResponseMessage {
+                    role: "assistant".to_string(),
+                    content: response_content,
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: OpenAiUsage { prompt_tokens, completion_tokens, total_tokens },
+        };
+
+        Json(resp).into_response()
     }
-
-    let resp = OpenAiChatResponse {
-        id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        object: "chat.completion".to_string(),
-        created: chrono::Utc::now().timestamp(),
-        model: req.model.clone(),
-        choices: vec![OpenAiChoice {
-            index: 0,
-            message: OpenAiResponseMessage {
-                role: "assistant".to_string(),
-                content: response_content,
-            },
-            finish_reason: "stop".to_string(),
-        }],
-        usage: OpenAiUsage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    };
-
-    Json(resp).into_response()
 }
 
 /// `GET /v1/models`

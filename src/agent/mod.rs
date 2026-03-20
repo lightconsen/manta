@@ -469,6 +469,14 @@ impl Agent {
         self
     }
 
+    /// Update agent configuration at runtime.
+    ///
+    /// Applies fields from `new_config` to the running agent.  The update is
+    /// applied immediately; in-flight requests use the previous values.
+    pub fn update_config(&mut self, new_config: AgentConfig) {
+        self.config = new_config;
+    }
+
     /// Get chat history for a conversation
     pub async fn get_chat_history(
         &self,
@@ -694,6 +702,8 @@ impl Agent {
 
         // Get or create context with dynamic prompt building
         let mut context = self.get_context(&conversation_id, &user_id, &content).await;
+        // Reset tool tracking for this turn
+        context.clear_tools_used();
 
         // Add user message to context
         context.add_message(Message::user(&content));
@@ -760,22 +770,29 @@ impl Agent {
 
         // Only cache the response if it should be cached
         if should_cache {
-            self.response_cache
-                .set(
-                    &user_id,
-                    &conversation_id,
-                    &content,
-                    response.message.content.clone(),
-                    vec![], // TODO: Track actual tools used
-                )
-                .await;
+            let tools_used = context.tools_used().to_vec();
+            // Check if tools used are cacheable (skip cache for time-sensitive tools)
+            if are_tools_cacheable(&tools_used) {
+                self.response_cache
+                    .set(
+                        &user_id,
+                        &conversation_id,
+                        &content,
+                        response.message.content.clone(),
+                        tools_used,
+                    )
+                    .await;
+            }
         }
 
-        // Create outgoing message
-        let outgoing = OutgoingMessage::new(
+        // Create outgoing message with usage tracking
+        let mut outgoing = OutgoingMessage::new(
             crate::channels::ConversationId(conversation_id),
             response.message.content.clone(),
         );
+        if let Some(ref usage) = response.usage {
+            outgoing.usage = Some(usage.clone());
+        }
 
         Ok(outgoing)
     }
@@ -885,6 +902,8 @@ impl Agent {
 
         // Get or create context with dynamic prompt building
         let mut context = self.get_context(&conversation_id, &user_id, &content).await;
+        // Reset tool tracking for this turn
+        context.clear_tools_used();
 
         // Add user message to context
         context.add_message(Message::user(&content));
@@ -939,9 +958,12 @@ impl Agent {
 
         // Only cache the response if it should be cached
         if should_cache {
-            self.response_cache
-                .set(&user_id, &conversation_id, &content, response.message.content.clone(), vec![])
-                .await;
+            let tools_used = context.tools_used().to_vec();
+            if are_tools_cacheable(&tools_used) {
+                self.response_cache
+                    .set(&user_id, &conversation_id, &content, response.message.content.clone(), tools_used)
+                    .await;
+            }
         }
 
         // Notify completed
@@ -965,10 +987,10 @@ impl Agent {
         &self,
         context: &mut Context,
     ) -> crate::Result<crate::providers::CompletionResponse> {
-        // If the context is over-budget and a compaction model is configured,
-        // use the LLM to summarise the mid-section of the history before sending.
+        // If the context is over-budget, try to reduce it before sending.
         if context.needs_pruning() {
             if let Some(ref compaction_model) = self.config.compaction_model {
+                // LLM-assisted compaction: produce a high-quality summary.
                 let compressor =
                     crate::agent::compressor::ContextCompressor::new(self.config.max_context_tokens);
                 let history = context.history().to_vec();
@@ -976,6 +998,10 @@ impl Agent {
                     .compact_with_llm(&history, &self.provider, Some(compaction_model.as_str()), 2, 6)
                     .await;
                 context.replace_messages(compacted);
+            } else {
+                // Fallback: drop middle messages and insert a placeholder summary.
+                // This keeps the context coherent without an extra LLM call.
+                context.summarize();
             }
         }
 

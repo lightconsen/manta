@@ -19,6 +19,21 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+/// Delivery event emitted for `DeliveryMode::Announce` jobs.
+///
+/// The gateway (or any consumer) receives these on the channel returned by
+/// `AdvancedCronScheduler::with_announce_tx` and forwards them to the
+/// appropriate messaging channel (Discord, Telegram, WhatsApp, etc.).
+#[derive(Debug, Clone)]
+pub struct AnnounceDelivery {
+    /// Target channel name (e.g. `"discord"`, `"telegram"`)
+    pub channel: String,
+    /// Recipient / room identifier (e.g. channel ID or user handle)
+    pub to: String,
+    /// Message content to deliver
+    pub message: String,
+}
+
 /// Execution target - what to run
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -437,6 +452,8 @@ pub struct AdvancedCronScheduler {
     /// restarting any background tasks.
     agent: Arc<RwLock<Option<Arc<Agent>>>>,
     store_path: Option<PathBuf>,
+    /// Optional sender for Announce-mode delivery events.
+    announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
 }
 
 impl std::fmt::Debug for AdvancedCronScheduler {
@@ -460,6 +477,7 @@ impl AdvancedCronScheduler {
             shutdown_tx: None,
             agent: Arc::new(RwLock::new(None)),
             store_path: None,
+            announce_tx: None,
         };
         (scheduler, command_rx)
     }
@@ -474,8 +492,18 @@ impl AdvancedCronScheduler {
             shutdown_tx: None,
             agent: Arc::new(RwLock::new(Some(agent))),
             store_path: None,
+            announce_tx: None,
         };
         (scheduler, command_rx)
+    }
+
+    /// Attach an announce delivery sender.
+    ///
+    /// When a cron job uses `DeliveryMode::Announce`, the scheduler sends an
+    /// [`AnnounceDelivery`] event on this channel.  The caller is responsible
+    /// for receiving the events and routing them to the correct messaging back-end.
+    pub fn set_announce_tx(&mut self, tx: mpsc::Sender<AnnounceDelivery>) {
+        self.announce_tx = Some(tx);
     }
 
     /// Wire an `Agent` into a running scheduler.
@@ -507,6 +535,7 @@ impl AdvancedCronScheduler {
         let jobs = Arc::clone(&self.jobs);
         let agent = Arc::clone(&self.agent);
         let store_path = self.store_path.clone();
+        let announce_tx = self.announce_tx.clone();
 
         // Arm initial timer
         self.arm_timer().await?;
@@ -517,7 +546,7 @@ impl AdvancedCronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, cmd).await;
                         }
                     }
                     _ = shutdown_rx.recv() => {
@@ -568,6 +597,7 @@ impl AdvancedCronScheduler {
                 let agent = Arc::clone(&self.agent);
                 let store_path = self.store_path.clone();
                 let job_id_clone = job_id.clone();
+                let announce_tx = self.announce_tx.clone();
 
                 let handle = tokio::spawn(async move {
                     sleep(delay.to_std().unwrap_or(Duration::from_secs(1))).await;
@@ -577,7 +607,7 @@ impl AdvancedCronScheduler {
                     if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
                         if job.should_run(Utc::now()) {
                             drop(jobs_lock);
-                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path)
+                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx)
                                 .await;
                         }
                     }
@@ -591,9 +621,10 @@ impl AdvancedCronScheduler {
                 let agent = Arc::clone(&self.agent);
                 let store_path = self.store_path.clone();
                 let job_id_clone = job_id.clone();
+                let announce_tx = self.announce_tx.clone();
 
                 let handle = tokio::spawn(async move {
-                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path).await;
+                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
                 });
 
                 self.timer_handle = Some(handle);
@@ -608,6 +639,7 @@ impl AdvancedCronScheduler {
         jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
+        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -653,7 +685,7 @@ impl AdvancedCronScheduler {
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
-                Self::execute_job(jobs, &id, agent, store_path).await;
+                Self::execute_job(jobs, &id, agent, store_path, announce_tx).await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -679,6 +711,7 @@ impl AdvancedCronScheduler {
         job_id: &str,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
+        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
     ) {
         let mut job = {
             let mut jobs_lock = jobs.write().await;
@@ -736,8 +769,12 @@ impl AdvancedCronScheduler {
 
                         // Deliver result if configured
                         if !matches!(j.delivery, DeliveryMode::None) {
-                            Self::deliver_result(&j.delivery, output).await;
+                            if let Err(e) = Self::deliver_result(&j.delivery, output, announce_tx).await {
+                                warn!("Delivery failed for job '{}': {}", j.name, e);
+                            }
                         }
+                        // Success - update next run normally
+                        j.update_next_run(completed_at);
                     }
                     Err(e) => {
                         let error_msg = format!("{}", e);
@@ -748,14 +785,15 @@ impl AdvancedCronScheduler {
                         // Check if we should retry
                         if j.state.consecutive_errors <= j.retry.max_retries {
                             let delay = j.retry.delay_for_attempt(j.state.consecutive_errors);
-                            warn!("Will retry job '{}' in {:?}", j.name, delay);
-                            // TODO: Schedule retry
+                            let retry_at = completed_at + chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::seconds(60));
+                            warn!("Scheduling retry for job '{}' at {:?}", j.name, retry_at);
+                            j.state.next_run_at = Some(retry_at);
+                        } else {
+                            // Max retries exceeded - update next run normally
+                            j.update_next_run(completed_at);
                         }
                     }
                 }
-
-                // Update next run time
-                j.update_next_run(completed_at);
 
                 // Remove one-shot jobs after execution
                 if j.schedule.is_one_shot() {
@@ -771,7 +809,7 @@ impl AdvancedCronScheduler {
         }
 
         // Log the run
-        let _ = Self::log_run(job_id, &run_id, started_at, completed_at, result).await;
+        let _ = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await;
     }
 
     /// Execute shell command
@@ -815,13 +853,26 @@ impl AdvancedCronScheduler {
     }
 
     /// Deliver result
-    async fn deliver_result(delivery: &DeliveryMode, output: &str) -> Result<()> {
+    async fn deliver_result(
+        delivery: &DeliveryMode,
+        output: &str,
+        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+    ) -> Result<()> {
         match delivery {
             DeliveryMode::None => Ok(()),
             DeliveryMode::Announce { channel, to } => {
                 info!("Delivering result to {}:{}", channel, to);
-                // TODO: Integrate with channel system
-                debug!("Output: {}", output.chars().take(100).collect::<String>());
+                if let Some(tx) = announce_tx {
+                    tx.send(AnnounceDelivery {
+                        channel: channel.clone(),
+                        to: to.clone(),
+                        message: output.to_string(),
+                    })
+                    .await
+                    .map_err(|_| MantaError::Internal("Announce channel closed".to_string()))?;
+                } else {
+                    debug!("No announce_tx configured; output: {}", output.chars().take(100).collect::<String>());
+                }
                 Ok(())
             }
             DeliveryMode::Webhook { url, headers } => {
@@ -848,6 +899,7 @@ impl AdvancedCronScheduler {
         started_at: DateTime<Utc>,
         completed_at: DateTime<Utc>,
         result: Result<String>,
+        store_path: &Option<PathBuf>,
     ) -> Result<()> {
         let entry = match result {
             Ok(output) => RunLogEntry {
@@ -874,8 +926,23 @@ impl AdvancedCronScheduler {
 
         debug!("Job run logged: {} - {:?}", entry.job_id, entry.status);
 
-        // TODO: Persist to JSONL file
-        let _ = entry;
+        // Persist to JSONL file if store_path is configured
+        if let Some(ref path) = store_path {
+            let log_path = path.with_extension("runs.jsonl");
+            let line = serde_json::to_string(&entry)
+                .map_err(|e| MantaError::Internal(format!("Failed to serialize run log: {}", e)))?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .await
+                .map_err(|e| MantaError::Internal(format!("Failed to open run log: {}", e)))?;
+            use tokio::io::AsyncWriteExt;
+            file.write_all(line.as_bytes()).await
+                .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
+            file.write_all(b"\n").await
+                .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
+        }
 
         Ok(())
     }
