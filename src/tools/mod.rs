@@ -7,7 +7,7 @@ use crate::providers::{FunctionCall, FunctionDefinition, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 /// A unique identifier for a tool
@@ -424,6 +424,12 @@ struct CacheEntry {
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
+    /// Tool-name prefixes that have been logically deregistered (e.g. MCP
+    /// server disconnect).  Tools matching any blocked prefix are excluded
+    /// from `get`, `list`, `has`, `get_definitions`, and `get_available`
+    /// without requiring `&mut self` — allowing this to be called through an
+    /// `Arc<ToolRegistry>`.
+    blocked_prefixes: std::sync::RwLock<HashSet<String>>,
     cache: std::sync::Mutex<HashMap<String, CacheEntry>>,
     cache_ttl: Option<Duration>,
     cache_enabled: bool,
@@ -442,6 +448,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            blocked_prefixes: std::sync::RwLock::new(HashSet::new()),
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: None,
             cache_enabled: false,
@@ -452,10 +459,19 @@ impl ToolRegistry {
     pub fn with_cache(ttl: Duration) -> Self {
         Self {
             tools: HashMap::new(),
+            blocked_prefixes: std::sync::RwLock::new(HashSet::new()),
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: Some(ttl),
             cache_enabled: true,
         }
+    }
+
+    /// Returns `true` if `name` matches any blocked prefix.
+    fn is_blocked(&self, name: &str) -> bool {
+        self.blocked_prefixes
+            .read()
+            .map(|set| set.iter().any(|p| name.starts_with(p.as_str())))
+            .unwrap_or(false)
     }
 
     /// Enable caching with the specified TTL
@@ -541,41 +557,55 @@ impl ToolRegistry {
 
     /// Remove all tools whose names start with `prefix`.
     ///
+    /// Uses interior mutability so it works through `Arc<ToolRegistry>` —
+    /// tools are hidden from all lookup methods immediately.  The underlying
+    /// map entries are lazily cleaned up (they remain allocated but invisible).
+    ///
     /// Used by the MCP subsystem to clean up `mcp__{server}__*` tools when a
     /// server disconnects.
-    pub fn deregister_prefix(&mut self, prefix: &str) {
-        self.tools.retain(|name, _| !name.starts_with(prefix));
+    pub fn deregister_prefix(&self, prefix: &str) {
+        if let Ok(mut set) = self.blocked_prefixes.write() {
+            set.insert(prefix.to_string());
+        }
     }
 
-    /// Get a tool by name
+    /// Get a tool by name (returns `None` for blocked tools)
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
+        if self.is_blocked(name) {
+            return None;
+        }
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    /// List available tool names
+    /// List available tool names (excludes blocked tools)
     pub fn list(&self) -> Vec<&str> {
-        self.tools.keys().map(|s| s.as_str()).collect()
-    }
-
-    /// Check if a tool exists
-    pub fn has(&self, name: &str) -> bool {
-        self.tools.contains_key(name)
-    }
-
-    /// Get all tools as function definitions
-    pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         self.tools
-            .values()
-            .map(|t| t.to_function_definition())
+            .keys()
+            .filter(|name| !self.is_blocked(name))
+            .map(|s| s.as_str())
             .collect()
     }
 
-    /// Get all available tools for a given context
+    /// Check if a tool exists and is not blocked
+    pub fn has(&self, name: &str) -> bool {
+        !self.is_blocked(name) && self.tools.contains_key(name)
+    }
+
+    /// Get all tools as function definitions (excludes blocked tools)
+    pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
+        self.tools
+            .iter()
+            .filter(|(name, _)| !self.is_blocked(name))
+            .map(|(_, t)| t.to_function_definition())
+            .collect()
+    }
+
+    /// Get all available tools for a given context (excludes blocked tools)
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
         self.tools
-            .values()
-            .filter(|t| t.is_available(context))
-            .map(|t| t.to_function_definition())
+            .iter()
+            .filter(|(name, t)| !self.is_blocked(name) && t.is_available(context))
+            .map(|(_, t)| t.to_function_definition())
             .collect()
     }
 

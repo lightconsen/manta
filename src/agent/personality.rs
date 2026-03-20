@@ -17,6 +17,19 @@ use crate::dirs;
 /// Maximum size for personality files (4KB default)
 const DEFAULT_MAX_FILE_SIZE: usize = 4096;
 
+/// Controls which personality files are included in the system prompt.
+///
+/// `Primary` produces the full prompt (Bootstrap + Identity + Soul + Agents + Tools).
+/// `Subagent` omits Bootstrap and User — these contain startup-only instructions
+/// that are irrelevant (and wasteful) for spawned subagents and cron jobs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonalityContext {
+    /// Full prompt for the primary interactive session.
+    Primary,
+    /// Reduced prompt for spawned subagents and cron jobs.
+    Subagent,
+}
+
 /// Agent personality loaded from markdown files
 #[derive(Debug, Clone, Default)]
 pub struct AgentPersonality {
@@ -105,9 +118,21 @@ impl AgentPersonality {
         }
     }
 
-    /// Convert personality to AgentConfig
+    /// Convert personality to AgentConfig using the full (Primary) prompt.
     pub fn to_agent_config(&self) -> AgentConfig {
-        let system_prompt = self.build_system_prompt();
+        self.to_agent_config_for(PersonalityContext::Primary)
+    }
+
+    /// Convert personality to AgentConfig for the given context.
+    ///
+    /// Use [`PersonalityContext::Subagent`] when spawning child agents or cron
+    /// jobs to omit startup-only sections (Bootstrap, User) and reduce token
+    /// usage.
+    pub fn to_agent_config_for(&self, ctx: PersonalityContext) -> AgentConfig {
+        let system_prompt = match ctx {
+            PersonalityContext::Primary => self.build_system_prompt(),
+            PersonalityContext::Subagent => self.build_subagent_prompt(),
+        };
 
         AgentConfig {
             system_prompt,
@@ -153,6 +178,36 @@ impl AgentPersonality {
 
         if sections.is_empty() {
             // Fallback to default
+            AgentConfig::default().system_prompt
+        } else {
+            sections.join("\n")
+        }
+    }
+
+    /// Build a reduced system prompt for subagents and cron jobs.
+    ///
+    /// Includes: Identity, Soul, Agents, Tools.
+    /// Excludes: Bootstrap (startup-only), User (irrelevant to subagents).
+    fn build_subagent_prompt(&self) -> String {
+        let mut sections = Vec::new();
+
+        if !self.identity.is_empty() {
+            sections.push(format!("## Identity\n{}\n", self.identity.trim()));
+        }
+
+        if !self.soul.is_empty() {
+            sections.push(format!("## Soul\n{}\n", self.soul.trim()));
+        }
+
+        if !self.agents.is_empty() {
+            sections.push(format!("## Agents\n{}\n", self.agents.trim()));
+        }
+
+        if !self.tools.is_empty() {
+            sections.push(format!("## Tools\n{}\n", self.tools.trim()));
+        }
+
+        if sections.is_empty() {
             AgentConfig::default().system_prompt
         } else {
             sections.join("\n")
@@ -354,5 +409,78 @@ mod tests {
 
         assert!(personality.can_handle("code"));
         assert!(personality.can_handle("debug"));
+    }
+
+    #[test]
+    fn test_personality_context_primary_includes_bootstrap() {
+        let personality = AgentPersonality {
+            id: "agent".to_string(),
+            bootstrap: "Start by greeting.".to_string(),
+            identity: "I am an agent.".to_string(),
+            soul: "Be helpful.".to_string(),
+            user: "User prefers terse replies.".to_string(),
+            agents: "Work with other agents.".to_string(),
+            tools: "Use tools wisely.".to_string(),
+            ..Default::default()
+        };
+
+        let config = personality.to_agent_config_for(PersonalityContext::Primary);
+        assert!(config.system_prompt.contains("Bootstrap"), "Primary should include Bootstrap");
+        assert!(config.system_prompt.contains("Identity"));
+        assert!(config.system_prompt.contains("Soul"));
+    }
+
+    #[test]
+    fn test_personality_context_subagent_excludes_bootstrap_and_user() {
+        let personality = AgentPersonality {
+            id: "agent".to_string(),
+            bootstrap: "Start by greeting.".to_string(),
+            identity: "I am an agent.".to_string(),
+            soul: "Be helpful.".to_string(),
+            user: "User prefers terse replies.".to_string(),
+            agents: "Work with other agents.".to_string(),
+            tools: "Use tools wisely.".to_string(),
+            ..Default::default()
+        };
+
+        let config = personality.to_agent_config_for(PersonalityContext::Subagent);
+        assert!(
+            !config.system_prompt.contains("Bootstrap"),
+            "Subagent should NOT include Bootstrap"
+        );
+        assert!(
+            !config.system_prompt.contains("User prefers terse"),
+            "Subagent should NOT include User section content"
+        );
+        assert!(config.system_prompt.contains("Identity"));
+        assert!(config.system_prompt.contains("Soul"));
+        assert!(config.system_prompt.contains("Agents"));
+        assert!(config.system_prompt.contains("Tools"));
+    }
+
+    #[test]
+    fn test_to_agent_config_delegates_to_primary() {
+        let personality = AgentPersonality {
+            id: "agent".to_string(),
+            bootstrap: "Boot!".to_string(),
+            soul: "Be nice.".to_string(),
+            ..Default::default()
+        };
+
+        let default_cfg = personality.to_agent_config();
+        let primary_cfg = personality.to_agent_config_for(PersonalityContext::Primary);
+        assert_eq!(default_cfg.system_prompt, primary_cfg.system_prompt);
+    }
+
+    #[test]
+    fn test_subagent_prompt_fallback_when_all_empty() {
+        let personality = AgentPersonality {
+            id: "empty".to_string(),
+            ..Default::default()
+        };
+
+        let config = personality.to_agent_config_for(PersonalityContext::Subagent);
+        // Should not panic and should return the default system prompt
+        assert!(!config.system_prompt.is_empty());
     }
 }

@@ -18,7 +18,10 @@ pub mod vector;
 pub mod local_embeddings;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
-pub use hybrid::{hybrid_search, HybridSearchConfig, HybridSearchResult};
+pub use hybrid::{
+    apply_temporal_decay, hybrid_search, HybridSearchConfig, HybridSearchResult,
+    TemporalDecayConfig,
+};
 pub use personality::{MemoryType, PersonalityMemory};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;

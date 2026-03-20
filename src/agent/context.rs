@@ -307,6 +307,16 @@ impl Context {
         None
     }
 
+    /// Replace the message history with a compacted set (e.g. after LLM-assisted compaction).
+    ///
+    /// The system prompt is stored separately and is unaffected.  Token count
+    /// is recalculated from the new message list.
+    pub fn replace_messages(&mut self, messages: Vec<Message>) {
+        self.messages = messages;
+        self.recalculate_tokens();
+        self.last_accessed = SystemTime::now();
+    }
+
     /// Recalculate token count from scratch
     fn recalculate_tokens(&mut self) {
         self.token_count = self.messages.iter().map(|m| m.content.len() / 4).sum();

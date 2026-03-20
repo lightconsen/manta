@@ -185,8 +185,14 @@ impl TelegramChannel {
             .replace_all(&result, "<i>$1</i>")
             .to_string();
 
-        // Restore bold placeholders with actual HTML tags
-        result = result.replace(bold_placeholder, "<b>$1</b>");
+        // Restore bold placeholders with actual HTML tags.
+        // The placeholder wraps content as: \x00BOLD\x00text\x00BOLD\x00
+        // Use a regex to capture the content between the two markers.
+        let re_bold_restore =
+            regex::Regex::new(r"\x00BOLD\x00(.+?)\x00BOLD\x00").expect("valid regex");
+        result = re_bold_restore
+            .replace_all(&result, "<b>$1</b>")
+            .to_string();
 
         // Code: `text` -> <code>text</code>
         result = RE_CODE_INLINE

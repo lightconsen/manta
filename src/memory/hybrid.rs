@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, NaiveDate, Utc};
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -130,15 +131,18 @@ pub async fn hybrid_search(
         session_search.search(fts_query),
     );
 
+    // Save owned results so they can be iterated twice (once for normalisation
+    // key extraction, once for entry population) without re-issuing queries.
+    let vector_chunks = vector_res.unwrap_or_default();
+    let fts_results = fts_res.unwrap_or_default();
+
     // ── Collect raw scores ────────────────────────────────────────────────────
-    let vector_pairs: Vec<(f32, String)> = vector_res
-        .unwrap_or_default()
+    let vector_pairs: Vec<(f32, String)> = vector_chunks
         .iter()
         .map(|(chunk, score)| (*score, content_key(&chunk.text)))
         .collect();
 
-    let fts_pairs: Vec<(f32, String)> = fts_res
-        .unwrap_or_default()
+    let fts_pairs: Vec<(f32, String)> = fts_results
         .iter()
         .map(|r| (r.score as f32, content_key(&r.content)))
         .collect();
@@ -150,33 +154,25 @@ pub async fn hybrid_search(
     // ── Accumulate entries keyed by content fingerprint ───────────────────────
     let mut entries: HashMap<String, Entry> = HashMap::new();
 
-    // Populate from vector results.
-    if let Ok(chunks) = vector_service.search(query, fetch_limit, threshold).await {
-        for (chunk, raw_score) in chunks {
-            let key = content_key(&chunk.text);
-            let norm = *vector_norm.get(&key).unwrap_or(&0.0);
-            let e = entries.entry(key.clone()).or_default();
-            e.vector_score = Some(norm);
-            if e.content.is_empty() {
-                e.content = chunk.text.clone();
-                e.citation = format!("vector:{}", &chunk.id);
-            }
-            let _ = raw_score; // already normalised
+    for (chunk, _raw_score) in vector_chunks {
+        let key = content_key(&chunk.text);
+        let norm = *vector_norm.get(&key).unwrap_or(&0.0);
+        let e = entries.entry(key.clone()).or_default();
+        e.vector_score = Some(norm);
+        if e.content.is_empty() {
+            e.content = chunk.text.clone();
+            e.citation = format!("vector:{}", &chunk.id);
         }
     }
 
-    // Populate from FTS results.
-    let fts_query2 = SessionSearchQuery::new(query).limit(fetch_limit);
-    if let Ok(results) = session_search.search(fts_query2).await {
-        for r in results {
-            let key = content_key(&r.content);
-            let norm = *fts_norm.get(&key).unwrap_or(&0.0);
-            let e = entries.entry(key.clone()).or_default();
-            e.fts_score = Some(norm);
-            if e.content.is_empty() {
-                e.content = r.content.clone();
-                e.citation = format!("session:{}#{}", r.conversation_id, r.message_id);
-            }
+    for r in fts_results {
+        let key = content_key(&r.content);
+        let norm = *fts_norm.get(&key).unwrap_or(&0.0);
+        let e = entries.entry(key.clone()).or_default();
+        e.fts_score = Some(norm);
+        if e.content.is_empty() {
+            e.content = r.content.clone();
+            e.citation = format!("session:{}#{}", r.conversation_id, r.message_id);
         }
     }
 
@@ -215,6 +211,80 @@ pub async fn hybrid_search(
     });
     merged.truncate(config.max_results);
     merged
+}
+
+// ── Temporal decay ────────────────────────────────────────────────────────────
+
+/// Configuration for exponential temporal decay applied to dated memory files.
+///
+/// Decay formula: `score *= e^(-λ * age_days)` where `λ = ln(2) / half_life_days`.
+///
+/// "Evergreen" files — those whose `citation` path does not contain a
+/// parseable `YYYY-MM-DD` date — are exempt from decay and returned unchanged.
+///
+/// Disabled by default (`enabled: false`) for backward compatibility.
+#[derive(Debug, Clone)]
+pub struct TemporalDecayConfig {
+    /// Whether temporal decay is applied. Default: `false`.
+    pub enabled: bool,
+    /// Exponential half-life in days. Default: 30.0.
+    pub half_life_days: f32,
+}
+
+impl Default for TemporalDecayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            half_life_days: 30.0,
+        }
+    }
+}
+
+/// Apply exponential temporal decay to `results` in-place, then re-sort
+/// descending by score.
+///
+/// Only results whose `citation` contains a `YYYY-MM-DD` date string (e.g.
+/// `"vector:memory/2025-01-15.md"`) are decayed; all others are left
+/// unchanged (evergreen).
+///
+/// This function is a no-op when `config.enabled == false`.
+pub fn apply_temporal_decay(results: &mut Vec<HybridSearchResult>, config: &TemporalDecayConfig) {
+    if !config.enabled {
+        return;
+    }
+
+    let lambda = std::f32::consts::LN_2 / config.half_life_days;
+    let now: DateTime<Utc> = Utc::now();
+
+    for result in results.iter_mut() {
+        if let Some(date) = parse_date_from_citation(&result.citation) {
+            let age_days = (now - date.and_hms_opt(0, 0, 0).unwrap().and_utc()).num_days() as f32;
+            let decay = (-lambda * age_days.max(0.0)).exp();
+            result.score *= decay;
+        }
+        // Evergreen: no date found → no decay.
+    }
+
+    // Re-sort descending after decay has shifted scores.
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
+/// Extract the first `YYYY-MM-DD` date from a citation string.
+///
+/// Returns `None` for evergreen files that carry no date.
+fn parse_date_from_citation(citation: &str) -> Option<NaiveDate> {
+    // Scan for a 10-char substring matching `YYYY-MM-DD`.
+    for i in 0..citation.len().saturating_sub(9) {
+        let slice = &citation[i..i + 10];
+        if let Ok(date) = NaiveDate::parse_from_str(slice, "%Y-%m-%d") {
+            return Some(date);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -262,5 +332,118 @@ mod tests {
         assert!((cfg.vector_weight + cfg.text_weight - 1.0).abs() < 1e-6);
         assert_eq!(cfg.max_results, 6);
         assert!(cfg.min_score > 0.0);
+    }
+
+    // ── Temporal decay tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_temporal_decay_disabled_is_noop() {
+        let config = TemporalDecayConfig {
+            enabled: false,
+            half_life_days: 30.0,
+        };
+
+        let mut results = vec![HybridSearchResult {
+            content: "old content".to_string(),
+            score: 0.8,
+            source: "vector".to_string(),
+            citation: "vector:memory/2020-01-01.md".to_string(),
+        }];
+
+        apply_temporal_decay(&mut results, &config);
+        assert!((results[0].score - 0.8).abs() < 1e-6, "Score should be unchanged when disabled");
+    }
+
+    #[test]
+    fn test_temporal_decay_reduces_old_scores() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        // A very old citation — score should be significantly reduced.
+        let mut results = vec![HybridSearchResult {
+            content: "old content".to_string(),
+            score: 1.0,
+            source: "vector".to_string(),
+            citation: "vector:memory/2000-01-01.md".to_string(),
+        }];
+
+        apply_temporal_decay(&mut results, &config);
+        assert!(results[0].score < 0.01, "Score for 25-year-old memory should approach 0");
+    }
+
+    #[test]
+    fn test_temporal_decay_spares_evergreen_files() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        let mut results = vec![HybridSearchResult {
+            content: "evergreen content".to_string(),
+            score: 0.9,
+            source: "vector".to_string(),
+            // No date in citation → evergreen.
+            citation: "vector:MEMORY.md".to_string(),
+        }];
+
+        apply_temporal_decay(&mut results, &config);
+        assert!(
+            (results[0].score - 0.9).abs() < 1e-6,
+            "Evergreen file score should not be decayed"
+        );
+    }
+
+    #[test]
+    fn test_temporal_decay_sorts_descending() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        // Fresh citation (today-ish year) vs very old.
+        let fresh_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut results = vec![
+            HybridSearchResult {
+                content: "old".to_string(),
+                score: 0.9,
+                source: "fts".to_string(),
+                citation: format!("vector:memory/2000-01-01.md"),
+            },
+            HybridSearchResult {
+                content: "fresh".to_string(),
+                score: 0.7,
+                source: "vector".to_string(),
+                citation: format!("vector:memory/{}.md", fresh_date),
+            },
+        ];
+
+        apply_temporal_decay(&mut results, &config);
+
+        // After decay, the fresh entry (even with lower initial score) should
+        // outrank the very old entry.
+        assert_eq!(results[0].content, "fresh", "Fresh result should rank first after decay");
+    }
+
+    #[test]
+    fn test_parse_date_from_citation_finds_date() {
+        let date = parse_date_from_citation("vector:memory/2025-03-15.md");
+        assert!(date.is_some());
+        let d = date.unwrap();
+        assert_eq!(d.to_string(), "2025-03-15");
+    }
+
+    #[test]
+    fn test_parse_date_from_citation_returns_none_for_evergreen() {
+        assert!(parse_date_from_citation("vector:MEMORY.md").is_none());
+        assert!(parse_date_from_citation("session:abc123#5").is_none());
+    }
+
+    #[test]
+    fn test_temporal_decay_config_defaults() {
+        let cfg = TemporalDecayConfig::default();
+        assert!(!cfg.enabled, "Decay should be disabled by default");
+        assert!((cfg.half_life_days - 30.0).abs() < 1e-6);
     }
 }

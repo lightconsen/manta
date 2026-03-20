@@ -51,7 +51,7 @@ pub mod todo;
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
-pub use personality::{AgentPersonality, AgentRegistry, SharedAgentRegistry};
+pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use session::{
@@ -531,6 +531,12 @@ impl Agent {
             self.config.max_context_tokens,
         );
 
+        // Apply turn cap from config so the agent never accumulates an
+        // unbounded conversation history.
+        if let Some(max_turns) = self.config.max_turns {
+            context = context.with_max_turns(max_turns);
+        }
+
         // Set dynamic tool iteration limit based on message complexity
         let dynamic_limit = Context::calculate_dynamic_limit(user_message);
         context.set_max_tool_iterations(dynamic_limit);
@@ -944,6 +950,20 @@ impl Agent {
         &self,
         context: &mut Context,
     ) -> crate::Result<crate::providers::CompletionResponse> {
+        // If the context is over-budget and a compaction model is configured,
+        // use the LLM to summarise the mid-section of the history before sending.
+        if context.needs_pruning() {
+            if let Some(ref compaction_model) = self.config.compaction_model {
+                let compressor =
+                    crate::agent::compressor::ContextCompressor::new(self.config.max_context_tokens);
+                let history = context.history().to_vec();
+                let compacted = compressor
+                    .compact_with_llm(&history, &self.provider, Some(compaction_model.as_str()), 2, 6)
+                    .await;
+                context.replace_messages(compacted);
+            }
+        }
+
         let messages = context.to_messages();
 
         // Get available tools
