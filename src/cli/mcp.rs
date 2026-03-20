@@ -1,7 +1,10 @@
 //! MCP (Model Context Protocol) CLI commands
 
-use crate::error::Result;
+use crate::error::{MantaError, Result};
 use clap::Subcommand;
+
+/// Default daemon base URL.
+const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 /// MCP subcommands
 #[derive(Debug, Subcommand)]
@@ -56,13 +59,22 @@ pub enum McpCommands {
 }
 
 pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
+    let client = reqwest::Client::new();
+
     match command {
         McpCommands::List => {
-            println!("Requesting MCP server list from daemon…");
-            // In a full implementation this would call the daemon REST API.
-            // For now, print a helpful message about the daemon endpoint.
-            println!("  GET http://localhost:18080/api/v1/mcp/servers");
-            println!("  (start the daemon with `manta start` first)");
+            let url = format!("{}/api/v1/mcp/servers", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
+                    eprintln!("Is the daemon running? Try: manta start");
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
 
         McpCommands::Connect {
@@ -73,42 +85,105 @@ pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
             transport,
             timeout,
         } => {
-            println!("Connecting to MCP server '{}' via {} transport…", server_id, transport);
-            if let Some(cmd) = command {
-                println!("  Command : {} {}", cmd, args.join(" "));
+            let endpoint = format!("{}/api/v1/mcp/servers/{}/connect", DAEMON_URL, server_id);
+            let body = serde_json::json!({
+                "command": command,
+                "args": args,
+                "url": url,
+                "transport": transport,
+                "timeout": timeout,
+            });
+            match client.post(&endpoint).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Connected to MCP server '{}'", server_id);
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to connect ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
             }
-            if let Some(u) = url {
-                println!("  URL     : {}", u);
-            }
-            println!("  Timeout : {}s", timeout);
-            println!();
-            println!("POST http://localhost:18080/api/v1/mcp/servers/{}/connect", server_id);
-            println!("(start the daemon with `manta start` first)");
         }
 
         McpCommands::Disconnect { server_id } => {
-            println!("Disconnecting MCP server '{}'…", server_id);
-            println!("DELETE http://localhost:18080/api/v1/mcp/servers/{}", server_id);
+            let endpoint = format!("{}/api/v1/mcp/servers/{}", DAEMON_URL, server_id);
+            match client.delete(&endpoint).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Disconnected MCP server '{}'", server_id);
+                    } else {
+                        eprintln!("Failed to disconnect ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
 
         McpCommands::Tools { server_id } => {
-            if let Some(sid) = server_id {
-                println!("GET http://localhost:18080/api/v1/mcp/servers/{}/tools", sid);
+            let endpoint = if let Some(sid) = server_id {
+                format!("{}/api/v1/mcp/servers/{}/tools", DAEMON_URL, sid)
             } else {
-                println!("GET http://localhost:18080/api/v1/mcp/servers");
+                format!("{}/api/v1/mcp/servers", DAEMON_URL)
+            };
+            match client.get(&endpoint).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
             }
         }
 
         McpCommands::Resources { server_id } => {
-            println!("GET http://localhost:18080/api/v1/mcp/servers/{}/resources", server_id);
+            let endpoint = format!("{}/api/v1/mcp/servers/{}/resources", DAEMON_URL, server_id);
+            match client.get(&endpoint).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
 
         McpCommands::Call { server_id, tool, args } => {
-            println!("Calling tool '{}' on server '{}' with args: {}", tool, server_id, args);
-            println!(
-                "POST http://localhost:18080/api/v1/mcp/servers/{}/tools/{}/call",
-                server_id, tool
+            let endpoint = format!(
+                "{}/api/v1/mcp/servers/{}/tools/{}/call",
+                DAEMON_URL, server_id, tool
             );
+            let parsed_args: serde_json::Value =
+                serde_json::from_str(args).unwrap_or(serde_json::json!({}));
+            match client.post(&endpoint).json(&parsed_args).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("{}", body);
+                    } else {
+                        eprintln!("Tool call failed ({}): {}", status, body);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
     }
 

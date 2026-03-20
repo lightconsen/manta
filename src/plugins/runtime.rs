@@ -308,21 +308,31 @@ impl PluginRuntime {
         }
     }
 
-    /// Call a tool provided by a plugin
+    /// Call a tool provided by a plugin.
     ///
-    /// Note: Full WASM execution is not yet implemented. This is a placeholder
-    /// that returns an error indicating WASM execution is not available.
+    /// The guest module is expected to export either:
+    ///  - `call_tool(name_ptr: i32, name_len: i32, params_ptr: i32, params_len: i32,
+    ///               out_ptr: i32, out_max: i32) -> i32`  (generic dispatcher), or
+    ///  - `{tool_name}(params_ptr: i32, params_len: i32, out_ptr: i32, out_max: i32) -> i32`
+    ///    (tool-specific function).
+    ///
+    /// The return value is the number of bytes written to `out_ptr`, or a negative
+    /// value on error.  Both the input params and the output buffer are managed via
+    /// the guest's `alloc(size: i32) -> i32` export when present.
+    ///
+    /// Params and results are JSON-encoded strings.
     pub async fn call_tool(
         &self,
         plugin_id: &str,
         tool_name: &str,
-        _params: serde_json::Value,
+        params: serde_json::Value,
     ) -> crate::Result<serde_json::Value> {
-        let plugins = self.plugins.read().await;
+        // We need a write lock so we can get `&mut Store` for WASM calls.
+        let mut plugins = self.plugins.write().await;
 
         let plugin =
             plugins
-                .get(plugin_id)
+                .get_mut(plugin_id)
                 .ok_or_else(|| crate::error::ConfigError::InvalidValue {
                     key: "plugin_id".to_string(),
                     message: format!("Plugin '{}' not found", plugin_id),
@@ -335,12 +345,162 @@ impl PluginRuntime {
             )));
         }
 
-        // For now, return a placeholder response
-        // Full WASM execution will be implemented in a future version
-        Ok(serde_json::json!({
-            "status": "not_implemented",
-            "message": format!("WASM execution for plugin '{}' tool '{}' is not yet implemented", plugin_id, tool_name)
-        }))
+        #[cfg(feature = "plugins")]
+        {
+            let (store, instance) =
+                match (&mut plugin.wasm_store, &plugin.instance) {
+                    (Some(s), Some(i)) => (s, i),
+                    _ => {
+                        return Err(crate::error::MantaError::Internal(format!(
+                            "Plugin '{}' has no WASM module loaded",
+                            plugin_id
+                        )));
+                    }
+                };
+
+            return Self::invoke_wasm_tool(store, instance, tool_name, params);
+        }
+
+        #[cfg(not(feature = "plugins"))]
+        Err(crate::error::MantaError::Internal(
+            "plugins feature is not enabled".to_string(),
+        ))
+    }
+
+    /// Low-level WASM tool invocation.
+    ///
+    /// Writes the tool name and JSON-encoded params into guest memory (via the
+    /// guest's `alloc` export), calls either the generic `call_tool` dispatcher
+    /// or a per-tool export, then reads the JSON result back from guest memory.
+    #[cfg(feature = "plugins")]
+    fn invoke_wasm_tool(
+        store: &mut wasmtime::Store<PluginState>,
+        instance: &wasmtime::Instance,
+        tool_name: &str,
+        params: serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        const OUT_MAX: i32 = 65_536; // 64 KiB output buffer
+
+        let params_json = serde_json::to_string(&params)
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+        let tool_bytes = tool_name.as_bytes();
+        let params_bytes = params_json.as_bytes();
+
+        // Resolve the guest's linear memory.
+        let memory = instance
+            .get_export(&mut *store, "memory")
+            .and_then(|e| e.into_memory())
+            .ok_or_else(|| {
+                crate::error::MantaError::Internal(
+                    "Plugin WASM module has no 'memory' export".to_string(),
+                )
+            })?;
+
+        // Resolve the optional `alloc` export.  TypedFunc is Copy so we can
+        // use it multiple times without re-borrowing.
+        let alloc_fn: Option<wasmtime::TypedFunc<i32, i32>> =
+            instance.get_typed_func::<i32, i32>(&mut *store, "alloc").ok();
+
+        // Allocate and write the tool name.
+        let name_len = tool_bytes.len() as i32;
+        let name_ptr = if let Some(ref f) = alloc_fn {
+            f.call(&mut *store, name_len)
+                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+        } else {
+            0i32
+        };
+        if name_ptr != 0 {
+            let data = memory.data_mut(&mut *store);
+            data[name_ptr as usize..name_ptr as usize + tool_bytes.len()]
+                .copy_from_slice(tool_bytes);
+        }
+
+        // Allocate and write the JSON params.
+        let params_len = params_bytes.len() as i32;
+        let params_ptr = if let Some(ref f) = alloc_fn {
+            f.call(&mut *store, params_len)
+                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+        } else {
+            0i32
+        };
+        if params_ptr != 0 {
+            let data = memory.data_mut(&mut *store);
+            data[params_ptr as usize..params_ptr as usize + params_bytes.len()]
+                .copy_from_slice(params_bytes);
+        }
+
+        // Allocate the output buffer.
+        let out_ptr = if let Some(ref f) = alloc_fn {
+            f.call(&mut *store, OUT_MAX)
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("alloc output: {}", e))
+                })?
+        } else {
+            0i32
+        };
+
+        // Try the generic `call_tool` dispatcher first.
+        let written: i32 = if let Ok(f) = instance.get_typed_func::<(i32, i32, i32, i32, i32, i32), i32>(
+            &mut *store,
+            "call_tool",
+        ) {
+            f.call(
+                &mut *store,
+                (name_ptr, name_len, params_ptr, params_len, out_ptr, OUT_MAX),
+            )
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("call_tool: {}", e))
+            })?
+        } else if let Ok(f) =
+            instance.get_typed_func::<(i32, i32, i32, i32), i32>(&mut *store, tool_name)
+        {
+            // Fall back to a per-tool export.
+            f.call(&mut *store, (params_ptr, params_len, out_ptr, OUT_MAX))
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!(
+                        "tool '{}': {}",
+                        tool_name, e
+                    ))
+                })?
+        } else {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Plugin does not export 'call_tool' or '{}' function",
+                tool_name
+            )));
+        };
+
+        if written < 0 {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Plugin tool '{}' returned error code {}",
+                tool_name, written
+            )));
+        }
+
+        // Read the result JSON from the output buffer.
+        let result_bytes = {
+            let data = memory.data(&store);
+            let start = out_ptr as usize;
+            let end = start + written as usize;
+            data[start..end].to_vec()
+        };
+
+        let result_str = std::str::from_utf8(&result_bytes).map_err(|e| {
+            crate::error::MantaError::Internal(format!(
+                "Plugin returned invalid UTF-8: {}",
+                e
+            ))
+        })?;
+
+        let result: serde_json::Value =
+            serde_json::from_str(result_str).unwrap_or_else(|_| {
+                serde_json::json!({ "output": result_str })
+            });
+
+        debug!(
+            "Plugin tool '{}' executed successfully ({} bytes)",
+            tool_name, written
+        );
+        Ok(result)
     }
 
     /// Shutdown all plugins
@@ -349,7 +509,6 @@ impl PluginRuntime {
 
         for (id, _plugin) in plugins.drain() {
             info!("Shutting down plugin '{}'", id);
-            // Note: WASM store cleanup would happen here when WASM execution is implemented
         }
 
         Ok(())

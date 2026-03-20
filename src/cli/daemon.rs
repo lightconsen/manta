@@ -50,10 +50,55 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
 }
 
 /// Run as an assistant process
+///
+/// Reads messages from stdin (one per line), sends each to the daemon's
+/// `/api/chat` endpoint, and writes the response to stdout.  Designed for
+/// use in shell pipelines and editor integrations.
 pub async fn run_assistant_process(_config_path: &PathBuf) -> Result<()> {
-    println!("🤖 Starting assistant process...");
-    println!("   Note: Assistant process mode is not yet fully implemented");
-    println!("   Use 'manta start --foreground' to run the daemon instead");
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    const DAEMON_URL: &str = "http://127.0.0.1:18080";
+    let client = reqwest::Client::new();
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        let url = format!("{}/api/chat", DAEMON_URL);
+        let body = serde_json::json!({
+            "session_id": session_id,
+            "message": line,
+        });
+
+        match client.post(&url).json(&body).send().await {
+            Ok(resp) => {
+                let text = resp.text().await.unwrap_or_default();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let content = json
+                        .get("response")
+                        .or_else(|| json.get("content"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&text);
+                    println!("{}", content);
+                } else {
+                    println!("{}", text);
+                }
+            }
+            Err(e) => {
+                eprintln!("Daemon error: {}", e);
+                eprintln!("Is the daemon running? Try: manta start");
+                return Err(crate::error::MantaError::Internal(e.to_string()));
+            }
+        }
+    }
+
     Ok(())
 }
 
