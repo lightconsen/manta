@@ -404,6 +404,12 @@ pub struct GatewayState {
     pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
     /// MCP manager for server connections (shared with McpConnectionTool)
     pub mcp_manager: Arc<McpManager>,
+    /// SSE broadcast channel for streaming progress events to web clients.
+    pub sse_tx: broadcast::Sender<SseEvent>,
+    /// Runtime settings store — mutable key/value pairs changeable without restart.
+    pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    /// Pending tool-approval requests (approval_id → PendingApproval).
+    pub pending_approvals: Arc<RwLock<HashMap<String, PendingApproval>>>,
 }
 
 /// Handle to a running agent
@@ -437,6 +443,49 @@ pub enum AgentCommand {
     UpdateConfig(AgentConfig),
     /// Shutdown agent
     Shutdown,
+}
+
+/// A single Server-Sent Event sent to `GET /api/events` subscribers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SseEvent {
+    /// Event type label (e.g. `"tool_calling"`, `"tool_result"`, `"completed"`).
+    pub event_type: String,
+    /// Arbitrary JSON payload.
+    pub data: serde_json::Value,
+    /// Session / conversation ID the event belongs to (if applicable).
+    pub session_id: Option<String>,
+}
+
+/// A pending tool-approval request inserted by a `BeforeHookFn` for
+/// high-risk tools.  Resolved via `POST /api/chat/approval`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingApproval {
+    /// Unique approval ID.
+    pub id: String,
+    /// Session that is waiting for approval.
+    pub session_id: String,
+    /// Tool name that triggered the approval gate.
+    pub tool_name: String,
+    /// Tool arguments (JSON string).
+    pub arguments: String,
+    /// When the request was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Resolution: `None` = pending, `Some(true)` = approved, `Some(false)` = rejected.
+    pub approved: Option<bool>,
+}
+
+impl PendingApproval {
+    /// Create a new approval request.
+    pub fn new(session_id: impl Into<String>, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.into(),
+            tool_name: tool_name.into(),
+            arguments: arguments.into(),
+            created_at: chrono::Utc::now(),
+            approved: None,
+        }
+    }
 }
 
 /// Events broadcast by gateway
@@ -646,6 +695,12 @@ impl Gateway {
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
             session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
             mcp_manager: mcp_manager.clone(),
+            sse_tx: {
+                let (tx, _) = broadcast::channel(256);
+                tx
+            },
+            runtime_settings: Arc::new(RwLock::new(HashMap::new())),
+            pending_approvals: Arc::new(RwLock::new(HashMap::new())),
         });
 
         // Configure providers from config
@@ -1015,6 +1070,16 @@ impl Gateway {
             .route("/api/v1/mcp/servers/:id/resources/read", post(read_mcp_resource_handler))
             // Manta as MCP server (9.9) – Streamable-HTTP endpoint
             .route("/mcp", post(manta_as_mcp_server_handler))
+            // ── SSE real-time event streaming ──────────────────────────────
+            .route("/api/events", get(sse_events_handler))
+            // ── OpenAI-compatible API ──────────────────────────────────────
+            .route("/v1/chat/completions", post(openai_chat_completions_handler))
+            .route("/v1/models", get(openai_list_models_handler))
+            // ── Runtime settings CRUD ──────────────────────────────────────
+            .route("/api/settings", get(list_settings_handler).post(set_setting_handler))
+            .route("/api/settings/:key", get(get_setting_handler).delete(delete_setting_handler))
+            // ── Pending tool approvals ─────────────────────────────────────
+            .route("/api/chat/approval", get(list_approvals_handler).post(resolve_approval_handler))
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
@@ -1044,6 +1109,17 @@ impl Gateway {
 
         // Create the actual Agent instance with model
         let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+
+        // Wire the new agent into the cron scheduler so routine (agent-target)
+        // jobs can run.  Only the first agent is wired; subsequent agents keep
+        // the first one active unless explicitly overwritten.
+        {
+            let cron_guard = self.state.cron_scheduler.read().await;
+            if let Some(ref cron_arc) = *cron_guard {
+                cron_arc.lock().await.set_agent(agent.clone()).await;
+                debug!("Routine engine: wired agent '{}' into cron scheduler", id);
+            }
+        }
 
         let handle = AgentHandle {
             id: id.clone(),
@@ -1090,6 +1166,7 @@ impl Gateway {
                         );
 
                         // Create progress callback that broadcasts tool events
+                        // and also fans them out to SSE subscribers.
                         let progress_state = state.clone();
                         let progress_session_id = session_id.clone();
                         let progress_agent_id = agent_id.clone();
@@ -1112,9 +1189,19 @@ impl Gateway {
                                                 state.event_tx.send(GatewayEvent::ToolCalling {
                                                     session_id: session_id.clone(),
                                                     agent_id: agent_id.clone(),
-                                                    tool_name: name,
+                                                    tool_name: name.clone(),
                                                     arguments: arguments.clone(),
                                                 });
+                                            // Fan out to SSE stream
+                                            let _ = state.sse_tx.send(SseEvent {
+                                                event_type: "tool_calling".to_string(),
+                                                data: serde_json::json!({
+                                                    "tool": name,
+                                                    "arguments": arguments,
+                                                    "agent_id": agent_id,
+                                                }),
+                                                session_id: Some(session_id.clone()),
+                                            });
                                         }
                                         crate::agent::ProgressEvent::ToolResult {
                                             name,
@@ -1127,11 +1214,42 @@ impl Gateway {
                                             let _ = state.event_tx.send(GatewayEvent::ToolResult {
                                                 session_id: session_id.clone(),
                                                 agent_id: agent_id.clone(),
-                                                tool_name: name,
+                                                tool_name: name.clone(),
                                                 result: result.clone(),
                                             });
+                                            // Fan out to SSE stream
+                                            let _ = state.sse_tx.send(SseEvent {
+                                                event_type: "tool_result".to_string(),
+                                                data: serde_json::json!({
+                                                    "tool": name,
+                                                    "result": result,
+                                                    "agent_id": agent_id,
+                                                }),
+                                                session_id: Some(session_id.clone()),
+                                            });
                                         }
-                                        _ => {} // Ignore other events for now
+                                        crate::agent::ProgressEvent::Completed { response } => {
+                                            // Fan completed events to SSE
+                                            let _ = state.sse_tx.send(SseEvent {
+                                                event_type: "completed".to_string(),
+                                                data: serde_json::json!({
+                                                    "response": response,
+                                                    "agent_id": agent_id,
+                                                }),
+                                                session_id: Some(session_id.clone()),
+                                            });
+                                        }
+                                        crate::agent::ProgressEvent::Error { message } => {
+                                            let _ = state.sse_tx.send(SseEvent {
+                                                event_type: "error".to_string(),
+                                                data: serde_json::json!({
+                                                    "message": message,
+                                                    "agent_id": agent_id,
+                                                }),
+                                                session_id: Some(session_id.clone()),
+                                            });
+                                        }
+                                        _ => {}
                                     }
                                 })
                             });
@@ -4292,4 +4410,328 @@ fn json_rpc_error_response(
         .header(axum::http::header::CONTENT_TYPE, "application/json")
         .body(axum::body::Body::from(body.to_string()))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+}
+
+// ── SSE event streaming ───────────────────────────────────────────────────────
+
+/// `GET /api/events`
+///
+/// Opens a Server-Sent Events stream. Each [`SseEvent`] is serialised to JSON
+/// and pushed to the client as `data: <json>\n\n` with the `event` field set
+/// to `SseEvent::event_type`.
+async fn sse_events_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> axum::response::sse::Sse<
+    impl futures_core::Stream<
+        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::wrappers::BroadcastStream;
+
+    let rx = state.sse_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+        match result {
+            Ok(evt) => {
+                let data = serde_json::to_string(&evt).unwrap_or_default();
+                Some(Ok(Event::default().data(data).event(evt.event_type.clone())))
+            }
+            // Receiver lagged — skip the dropped events rather than closing.
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ── OpenAI-compatible API ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct OpenAiMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChatRequest {
+    model: String,
+    messages: Vec<OpenAiMessage>,
+    #[serde(default)]
+    stream: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChatResponse {
+    id: String,
+    object: String,
+    created: i64,
+    model: String,
+    choices: Vec<OpenAiChoice>,
+    usage: OpenAiUsage,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChoice {
+    index: u32,
+    message: OpenAiResponseMessage,
+    finish_reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiResponseMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+}
+
+/// `POST /v1/chat/completions`
+///
+/// OpenAI-compatible chat completions endpoint. Routes the last user message
+/// through the default Manta agent and returns the result in OpenAI wire
+/// format. Streaming (`stream: true`) is not yet supported and is silently
+/// treated as a non-streaming request.
+async fn openai_chat_completions_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<OpenAiChatRequest>,
+) -> impl IntoResponse {
+    // Suppress unused-field warning for `stream` — streaming is not yet
+    // implemented but we accept the field so clients don't get parse errors.
+    let _ = req.stream;
+
+    // Extract the last user message.
+    let user_message = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    if user_message.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "No user message provided",
+                    "type": "invalid_request_error"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    // Grab the default agent handle.
+    let handle = {
+        let agents = state.agents.read().await;
+        match agents.get("default").cloned() {
+            Some(h) => h,
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": {"message": "No agent available", "type": "server_error"}
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    // Subscribe to events before sending the command to avoid a race.
+    let mut event_rx = state.event_tx.subscribe();
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    let cmd = AgentCommand::ProcessMessage {
+        session_id: session_id.clone(),
+        message: user_message,
+        user_id: "openai_api".to_string(),
+        channel: "api".to_string(),
+    };
+
+    if let Err(e) = handle.tx.send(cmd).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {"message": format!("Agent error: {}", e), "type": "server_error"}
+            })),
+        )
+            .into_response();
+    }
+
+    // Poll for the AgentResponse event (120 s timeout).
+    let timeout_dur = tokio::time::Duration::from_secs(120);
+    let start = tokio::time::Instant::now();
+    let mut response_content = String::new();
+
+    loop {
+        if start.elapsed() > timeout_dur {
+            return (
+                StatusCode::REQUEST_TIMEOUT,
+                Json(serde_json::json!({
+                    "error": {"message": "Request timed out", "type": "server_error"}
+                })),
+            )
+                .into_response();
+        }
+
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            event_rx.recv(),
+        )
+        .await
+        {
+            Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
+                if sid == session_id {
+                    response_content = content;
+                    break;
+                }
+            }
+            Ok(Err(_)) | Err(_) => {
+                // Lagged or poll timeout — keep waiting.
+            }
+            _ => {}
+        }
+    }
+
+    let resp = OpenAiChatResponse {
+        id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+        object: "chat.completion".to_string(),
+        created: chrono::Utc::now().timestamp(),
+        model: req.model.clone(),
+        choices: vec![OpenAiChoice {
+            index: 0,
+            message: OpenAiResponseMessage {
+                role: "assistant".to_string(),
+                content: response_content,
+            },
+            finish_reason: "stop".to_string(),
+        }],
+        usage: OpenAiUsage { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
+
+    Json(resp).into_response()
+}
+
+/// `GET /v1/models`
+///
+/// Returns available model aliases in OpenAI wire format.
+async fn openai_list_models_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let aliases = state.model_router.list_aliases().await;
+    let data: Vec<_> = aliases
+        .iter()
+        .map(|alias| {
+            serde_json::json!({
+                "id": alias,
+                "object": "model",
+                "created": 0,
+                "owned_by": "manta",
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "object": "list", "data": data }))
+}
+
+// ── Runtime settings CRUD ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SetSettingRequest {
+    key: String,
+    value: serde_json::Value,
+}
+
+/// `GET /api/settings` — list all runtime key/value settings.
+async fn list_settings_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let settings = state.runtime_settings.read().await.clone();
+    Json(settings)
+}
+
+/// `POST /api/settings` — upsert a runtime setting.
+async fn set_setting_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<SetSettingRequest>,
+) -> impl IntoResponse {
+    let mut settings = state.runtime_settings.write().await;
+    settings.insert(req.key.clone(), req.value.clone());
+    Json(serde_json::json!({ "ok": true, "key": req.key }))
+}
+
+/// `GET /api/settings/:key` — read one setting by key.
+async fn get_setting_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.runtime_settings.read().await;
+    match settings.get(&key) {
+        Some(val) => Json(serde_json::json!({ "key": key, "value": val })).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Setting '{}' not found", key) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `DELETE /api/settings/:key` — remove one setting.
+async fn delete_setting_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    let mut settings = state.runtime_settings.write().await;
+    if settings.remove(&key).is_some() {
+        Json(serde_json::json!({ "ok": true, "key": key })).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Setting '{}' not found", key) })),
+        )
+            .into_response()
+    }
+}
+
+// ── Pending tool approvals ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ResolveApprovalRequest {
+    id: String,
+    approved: bool,
+}
+
+/// `GET /api/chat/approval` — list all pending approval requests.
+async fn list_approvals_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let approvals: Vec<_> =
+        state.pending_approvals.read().await.values().cloned().collect();
+    Json(approvals)
+}
+
+/// `POST /api/chat/approval` — resolve (approve or reject) a pending request.
+async fn resolve_approval_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<ResolveApprovalRequest>,
+) -> impl IntoResponse {
+    let mut approvals = state.pending_approvals.write().await;
+    match approvals.get_mut(&req.id) {
+        Some(approval) => {
+            approval.approved = Some(req.approved);
+            let resp = approval.clone();
+            Json(resp).into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Approval '{}' not found", req.id) })),
+        )
+            .into_response(),
+    }
 }
