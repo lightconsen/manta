@@ -343,8 +343,34 @@ async fn execute_child_task(
                 .with_extra("allowed_tools", task.allowed_tools.join(",")),
         );
 
-        // Process the task through the agent
-        match agent.process_message(message).await {
+        // Build a debug-logging progress callback so child tool activity
+        // surfaces in logs even though there is no parent callback to forward to.
+        let child_id_cb = child_id.clone();
+        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+            let cid = child_id_cb.clone();
+            Box::pin(async move {
+                match event {
+                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                        debug!("Child {} calling tool {}: {}", cid, name, arguments);
+                    }
+                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                        debug!(
+                            "Child {} tool {} result: {} chars",
+                            cid,
+                            name,
+                            result.len()
+                        );
+                    }
+                    crate::agent::ProgressEvent::Error { message } => {
+                        warn!("Child {} progress error: {}", cid, message);
+                    }
+                    _ => {}
+                }
+            })
+        });
+
+        // Process the task through the agent with progress visibility
+        match agent.process_message_with_progress(message, progress_cb).await {
             Ok(response) => {
                 iterations.fetch_add(1, Ordering::SeqCst);
 

@@ -318,17 +318,59 @@ impl AcpControlPlane {
 
         tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
+            let mut agent = agent;
 
             while let Some(cmd) = command_rx.recv().await {
                 match cmd {
                     SubagentCommand::ProcessMessage { message, response_tx } => {
                         debug!("Subagent {} processing message", subagent_id_clone);
 
+                        // Build a debug-logging callback so tool activity inside
+                        // the subagent surfaces in logs.
+                        let sid_cb = subagent_id_clone.clone();
+                        let progress_cb: crate::agent::ProgressCallback =
+                            Arc::new(move |event| {
+                                let sid = sid_cb.clone();
+                                Box::pin(async move {
+                                    match event {
+                                        crate::agent::ProgressEvent::ToolCalling {
+                                            name,
+                                            arguments,
+                                        } => {
+                                            debug!(
+                                                "Subagent {} calling tool {}: {}",
+                                                sid, name, arguments
+                                            );
+                                        }
+                                        crate::agent::ProgressEvent::ToolResult {
+                                            name,
+                                            result,
+                                        } => {
+                                            debug!(
+                                                "Subagent {} tool {} result: {} chars",
+                                                sid,
+                                                name,
+                                                result.len()
+                                            );
+                                        }
+                                        crate::agent::ProgressEvent::Error { message } => {
+                                            warn!(
+                                                "Subagent {} progress error: {}",
+                                                sid, message
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                })
+                            });
+
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(timeout.unwrap_or(300)),
                             async {
-                                // Process the message through the agent
-                                agent.process_message(message).await
+                                // Process through the agent with progress visibility
+                                agent
+                                    .process_message_with_progress(message, progress_cb)
+                                    .await
                             },
                         )
                         .await;
@@ -348,8 +390,9 @@ impl AcpControlPlane {
                             break;
                         }
                     }
-                    SubagentCommand::UpdateConfig(_new_config) => {
+                    SubagentCommand::UpdateConfig(new_config) => {
                         debug!("Subagent {} config updated", subagent_id_clone);
+                        agent.update_config(new_config);
                     }
                     SubagentCommand::Cancel => {
                         debug!("Subagent {} cancelled", subagent_id_clone);

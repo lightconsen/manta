@@ -30,6 +30,8 @@ pub struct Context {
     max_tool_iterations: usize,
     /// Track tool calls to prevent duplicates (tool_name + params_hash)
     executed_tool_calls: HashSet<String>,
+    /// Track tool names used in this turn for cache tagging
+    tools_used: Vec<String>,
     /// Optional hard cap on the number of turns kept in history.
     /// When set, `add_message` enforces this limit by dropping the oldest
     /// user/assistant pairs before the token-based prune runs.
@@ -54,6 +56,7 @@ impl Context {
             tool_iterations: 0,
             max_tool_iterations: Self::DEFAULT_MAX_TOOL_ITERATIONS,
             executed_tool_calls: HashSet::new(),
+            tools_used: Vec::new(),
             max_turns: None,
         }
     }
@@ -121,6 +124,20 @@ impl Context {
     pub fn record_tool_call(&mut self, tool_name: &str, params: &str) {
         let key = format!("{}:{}", tool_name, params);
         self.executed_tool_calls.insert(key);
+        // Also track unique tool names for cache tagging
+        if !self.tools_used.contains(&tool_name.to_string()) {
+            self.tools_used.push(tool_name.to_string());
+        }
+    }
+
+    /// Get the list of tool names used in this turn
+    pub fn tools_used(&self) -> &[String] {
+        &self.tools_used
+    }
+
+    /// Clear the tools_used list (call at start of new turn)
+    pub fn clear_tools_used(&mut self) {
+        self.tools_used.clear();
     }
 
     /// Increment tool iteration counter

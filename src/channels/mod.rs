@@ -193,6 +193,8 @@ pub struct OutgoingMessage {
     pub reply_to: Option<Id>,
     /// Message options
     pub options: MessageOptions,
+    /// Token usage (prompt, completion, total) if tracked
+    pub usage: Option<crate::providers::Usage>,
 }
 
 impl OutgoingMessage {
@@ -205,7 +207,14 @@ impl OutgoingMessage {
             attachments: Vec::new(),
             reply_to: None,
             options: MessageOptions::default(),
+            usage: None,
         }
+    }
+
+    /// Add token usage information
+    pub fn with_usage(mut self, usage: crate::providers::Usage) -> Self {
+        self.usage = Some(usage);
+        self
     }
 
     /// Add formatted content
