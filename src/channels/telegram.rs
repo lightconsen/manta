@@ -606,10 +606,7 @@ async fn handle_message_with_sender(
                 .await?;
             }
         } else {
-            // No message handler configured, echo back for testing
-            info!("📤 No message handler configured, echoing back to @{}: {}", username, text);
-            let response = format!("Echo: {}", text);
-            bot.send_message(msg.chat.id, &response).await?;
+            warn!("No message_tx configured for Telegram channel — message from @{} dropped", username);
         }
     }
 

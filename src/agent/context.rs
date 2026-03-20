@@ -370,28 +370,52 @@ impl Context {
     }
 
     /// Summarize the conversation (for very long contexts)
+    ///
+    /// Keeps the first `keep_first` and last `keep_last` messages; replaces
+    /// the middle section with a heuristic summary that preserves key content.
+    /// For LLM-quality summarization use `ContextCompressor::compact_with_llm`.
     pub fn summarize(&mut self) {
-        // Keep first few and last few messages, summarize middle
-        if self.messages.len() > 10 {
-            let keep_first = 2;
-            let keep_last = 4;
-            let middle_start = keep_first;
-            let middle_end = self.messages.len() - keep_last;
+        const KEEP_FIRST: usize = 2;
+        const KEEP_LAST: usize = 4;
 
-            if middle_end > middle_start {
-                // Remove middle messages
-                let _middle: Vec<Message> = self.messages.drain(middle_start..middle_end).collect();
-
-                // Add summary placeholder
-                let summary_msg = Message::system(format!(
-                    "[{} earlier messages omitted]",
-                    middle_end - middle_start
-                ));
-                self.messages.insert(middle_start, summary_msg);
-
-                self.recalculate_tokens();
-            }
+        if self.messages.len() <= KEEP_FIRST + KEEP_LAST + 1 {
+            return; // Nothing to summarize
         }
+
+        let middle_start = KEEP_FIRST;
+        let middle_end = self.messages.len() - KEEP_LAST;
+
+        if middle_end <= middle_start {
+            return;
+        }
+
+        // Extract middle messages
+        let middle: Vec<Message> = self.messages.drain(middle_start..middle_end).collect();
+
+        // Build a concise heuristic summary that preserves key turns
+        let mut turns: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < middle.len() {
+            let msg = &middle[i];
+            if msg.content.is_empty() {
+                i += 1;
+                continue;
+            }
+            // Emit a compact turn line: role + first 200 chars
+            let preview: String = msg.content.chars().take(200).collect();
+            let ellipsis = if msg.content.len() > 200 { "…" } else { "" };
+            turns.push(format!("{}: {}{}", msg.role, preview, ellipsis));
+            i += 1;
+        }
+
+        let summary_content = format!(
+            "[Summary of {} earlier messages]\n{}",
+            middle.len(),
+            turns.join("\n")
+        );
+
+        self.messages.insert(middle_start, Message::system(summary_content));
+        self.recalculate_tokens();
     }
 }
 

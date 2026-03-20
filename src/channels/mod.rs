@@ -7,6 +7,7 @@ use crate::core::models::Id;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub mod formatter;
@@ -443,10 +444,13 @@ pub trait Channel: Send + Sync {
 /// A boxed channel for storage
 pub type BoxedChannel = Box<dyn Channel>;
 
+/// A shared (Arc-wrapped) channel for cloneable storage
+pub type SharedChannel = Arc<dyn Channel>;
+
 /// Registry of channels
 #[derive(Default)]
 pub struct ChannelRegistry {
-    channels: HashMap<String, BoxedChannel>,
+    channels: HashMap<String, SharedChannel>,
 }
 
 impl std::fmt::Debug for ChannelRegistry {
@@ -466,12 +470,12 @@ impl ChannelRegistry {
     /// Register a channel
     pub fn register(&mut self, channel: BoxedChannel) {
         let name = channel.name().to_string();
-        self.channels.insert(name, channel);
+        self.channels.insert(name, Arc::from(channel));
     }
 
     /// Get a channel by name
-    pub fn get(&self, name: &str) -> Option<&dyn Channel> {
-        self.channels.get(name).map(|c| c.as_ref())
+    pub fn get(&self, name: &str) -> Option<SharedChannel> {
+        self.channels.get(name).cloned()
     }
 
     /// List available channel names
@@ -732,18 +736,13 @@ impl ExtendedChannelRegistry {
     }
 
     /// Get a channel by name (checks native first, then plugins)
-    pub async fn get(&self, name: &str) -> Option<BoxedChannel> {
+    pub fn get(&self, name: &str) -> Option<SharedChannel> {
         // Check native channels first
         if let Some(channel) = self.native.get(name) {
-            // This is a bit awkward since we can't clone BoxedChannel
-            // In practice, you'd need to wrap channels in Arc or use a different approach
-            return None; // Placeholder - would need Arc<dyn Channel> in practice
+            return Some(channel);
         }
 
-        // Check plugin channels
-        // Note: Plugin channels are accessed by ID, not name
-        // This would need to be implemented differently
-
+        // Plugin channels don't support name-based lookup in this registry
         None
     }
 

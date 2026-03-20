@@ -221,6 +221,7 @@ async fn whatsapp_webhook_handler(
                                     content: text_body.to_string(),
                                     session_id, // Use UUID session
                                     timestamp: chrono::Utc::now(),
+                                    model_alias: None,
                                 };
 
                                 if let Err(e) = state.message_queue.send(queued_msg).await {
@@ -319,6 +320,7 @@ async fn telegram_webhook_handler(
                 content: text,
                 session_id: format!("telegram:{}", chat_id),
                 timestamp: chrono::Utc::now(),
+                model_alias: None,
             };
 
             if let Err(e) = state.message_queue.send(queued_msg).await {
@@ -433,6 +435,7 @@ async fn feishu_webhook_handler(
                     content: text.to_string(),
                     session_id, // Use UUID session
                     timestamp: chrono::Utc::now(),
+                    model_alias: None,
                 };
 
                 if let Err(e) = state.message_queue.send(queued_msg).await {
@@ -548,6 +551,7 @@ async fn generic_webhook_handler(
             content,
             session_id, // Use UUID session
             timestamp: chrono::Utc::now(),
+            model_alias: None,
         };
 
         drop(config); // Release read lock before await

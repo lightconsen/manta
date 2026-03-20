@@ -635,6 +635,8 @@ pub struct VectorMemoryService {
     vector_store: Arc<dyn VectorStore>,
     chunker: TextChunker,
     batch_processor: BatchEmbeddingProcessor,
+    /// Tracks the set of collections that have been written to
+    collections: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl VectorMemoryService {
@@ -651,11 +653,15 @@ impl VectorMemoryService {
             config.batch_size,
         );
 
+        let mut initial_collections = std::collections::HashSet::new();
+        initial_collections.insert("default".to_string());
+
         Self {
             embedding_provider,
             vector_store,
             chunker,
             batch_processor,
+            collections: std::sync::RwLock::new(initial_collections),
         }
     }
 
@@ -765,12 +771,24 @@ impl VectorMemoryService {
 
         self.vector_store.store_chunks(embedded_chunks).await?;
 
+        // Record the collection name so list_collections() returns it
+        if let Ok(mut cols) = self.collections.write() {
+            cols.insert(collection.to_string());
+        }
+
         Ok(doc_id)
     }
 
     /// List available collections
     pub fn list_collections(&self) -> Vec<String> {
-        vec!["default".to_string()]
+        self.collections
+            .read()
+            .map(|cols| {
+                let mut v: Vec<String> = cols.iter().cloned().collect();
+                v.sort();
+                v
+            })
+            .unwrap_or_else(|_| vec!["default".to_string()])
     }
 }
 
