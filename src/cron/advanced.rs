@@ -36,9 +36,7 @@ pub enum ExecutionTarget {
 impl ExecutionTarget {
     /// Create a shell execution target
     pub fn shell(command: impl Into<String>) -> Self {
-        Self::Shell {
-            command: command.into(),
-        }
+        Self::Shell { command: command.into() }
     }
 
     /// Create an agent execution target
@@ -83,10 +81,7 @@ pub enum DeliveryMode {
     /// No delivery (fire-and-forget)
     None,
     /// Send to messaging channel
-    Announce {
-        channel: String,
-        to: String,
-    },
+    Announce { channel: String, to: String },
     /// POST to webhook URL
     Webhook {
         url: String,
@@ -241,10 +236,10 @@ impl RetryConfig {
 
 /// Exponential backoff tiers
 const BACKOFF_TIERS: [u64; 5] = [
-    30_000,   // 30s - 1st error
-    60_000,   // 1m - 2nd error
-    300_000,  // 5m - 3rd error
-    900_000,  // 15m - 4th error
+    30_000,    // 30s - 1st error
+    60_000,    // 1m - 2nd error
+    300_000,   // 5m - 3rd error
+    900_000,   // 15m - 4th error
     3_600_000, // 1h - 5th+ error
 ];
 
@@ -571,7 +566,8 @@ impl AdvancedCronScheduler {
                     if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
                         if job.should_run(Utc::now()) {
                             drop(jobs_lock);
-                            Self::execute_job(&jobs, &job_id_clone, agent.as_ref(), &store_path).await;
+                            Self::execute_job(&jobs, &job_id_clone, agent.as_ref(), &store_path)
+                                .await;
                         }
                     }
                 });
@@ -700,9 +696,7 @@ impl AdvancedCronScheduler {
 
         // Execute based on target type
         let result = match &job.target {
-            ExecutionTarget::Shell { command } => {
-                Self::execute_shell(command).await
-            }
+            ExecutionTarget::Shell { command } => Self::execute_shell(command).await,
             ExecutionTarget::Agent { prompt, agent_id, .. } => {
                 if let Some(agent) = agent {
                     Self::execute_agent(agent, &job, prompt, agent_id.as_deref()).await
@@ -798,12 +792,11 @@ impl AdvancedCronScheduler {
             SessionTarget::Isolated => format!("cron:{}", job.id),
         };
 
-        let message = IncomingMessage::new("system", &session_id, prompt)
-            .with_metadata(
-                crate::channels::MessageMetadata::new()
-                    .with_extra("job_id", job.id.clone())
-                    .with_extra("job_name", job.name.clone()),
-            );
+        let message = IncomingMessage::new("system", &session_id, prompt).with_metadata(
+            crate::channels::MessageMetadata::new()
+                .with_extra("job_id", job.id.clone())
+                .with_extra("job_name", job.name.clone()),
+        );
 
         let response = agent.process_message(message).await?;
         Ok(response.content)
@@ -829,10 +822,7 @@ impl AdvancedCronScheduler {
                     request = request.header(key, value);
                 }
 
-                request
-                    .send()
-                    .await
-                    .map_err(|e| MantaError::Http(e))?;
+                request.send().await.map_err(|e| MantaError::Http(e))?;
 
                 Ok(())
             }
@@ -870,10 +860,7 @@ impl AdvancedCronScheduler {
             },
         };
 
-        debug!(
-            "Job run logged: {} - {:?}",
-            entry.job_id, entry.status
-        );
+        debug!("Job run logged: {} - {:?}", entry.job_id, entry.status);
 
         // TODO: Persist to JSONL file
         let _ = entry;
@@ -887,14 +874,12 @@ impl AdvancedCronScheduler {
             return Ok(());
         }
 
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            MantaError::Internal(format!("Failed to read jobs file: {}", e))
-        })?;
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| MantaError::Internal(format!("Failed to read jobs file: {}", e)))?;
 
-        let jobs: Vec<AdvancedCronJob> =
-            serde_json::from_str(&content).map_err(|e| {
-                MantaError::Internal(format!("Failed to parse jobs: {}", e))
-            })?;
+        let jobs: Vec<AdvancedCronJob> = serde_json::from_str(&content)
+            .map_err(|e| MantaError::Internal(format!("Failed to parse jobs: {}", e)))?;
 
         let mut jobs_lock = self.jobs.write().await;
         for job in jobs {
@@ -920,18 +905,17 @@ impl AdvancedCronScheduler {
         let jobs_lock = jobs.read().await;
         let jobs_vec: Vec<&AdvancedCronJob> = jobs_lock.values().collect();
 
-        let json = serde_json::to_string_pretty(&jobs_vec).map_err(|e| {
-            MantaError::Internal(format!("Failed to serialize jobs: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(&jobs_vec)
+            .map_err(|e| MantaError::Internal(format!("Failed to serialize jobs: {}", e)))?;
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.ok();
         }
 
-        tokio::fs::write(path, json).await.map_err(|e| {
-            MantaError::Internal(format!("Failed to write jobs file: {}", e))
-        })?;
+        tokio::fs::write(path, json)
+            .await
+            .map_err(|e| MantaError::Internal(format!("Failed to write jobs file: {}", e)))?;
 
         Ok(())
     }
@@ -1029,10 +1013,7 @@ mod tests {
         let now = Utc::now();
         let interval = Duration::from_secs(3600); // 1 hour
 
-        let schedule = Schedule::Every {
-            interval,
-            anchor: None,
-        };
+        let schedule = Schedule::Every { interval, anchor: None };
 
         let next = schedule.next_run(now);
         assert!(next.is_some());

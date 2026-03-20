@@ -180,12 +180,18 @@ impl ChannelMetrics {
 
     /// Get P95 latency
     pub async fn p95_latency(&self) -> Option<Duration> {
-        self.latency.percentile(95.0).await.map(Duration::from_millis)
+        self.latency
+            .percentile(95.0)
+            .await
+            .map(Duration::from_millis)
     }
 
     /// Get P99 latency
     pub async fn p99_latency(&self) -> Option<Duration> {
-        self.latency.percentile(99.0).await.map(Duration::from_millis)
+        self.latency
+            .percentile(99.0)
+            .await
+            .map(Duration::from_millis)
     }
 
     /// Get all metrics as a snapshot

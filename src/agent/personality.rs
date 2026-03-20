@@ -116,6 +116,8 @@ impl AgentPersonality {
             temperature: 0.7,
             max_tokens: 2048,
             skills_prompt: None,
+            max_turns: None,
+            compaction_model: None,
         }
     }
 
@@ -232,7 +234,8 @@ impl AgentRegistry {
             match AgentPersonality::load(&path).await {
                 Ok(personality) => {
                     if personality.is_valid {
-                        self.personalities.insert(personality.id.clone(), personality);
+                        self.personalities
+                            .insert(personality.id.clone(), personality);
                         count += 1;
                     }
                 }

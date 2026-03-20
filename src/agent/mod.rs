@@ -45,6 +45,7 @@ pub mod planner;
 pub mod prompt_builder;
 pub mod session;
 pub mod session_store;
+pub mod subagent_registry;
 pub mod todo;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
@@ -57,6 +58,7 @@ pub use session::{
     AgentInstanceStatus, MultiAgentSession, SessionAgent, SessionManager, SessionMessage,
     SessionStatus, ThreadBinding,
 };
+pub use subagent_registry::{SubagentMetrics, SubagentRegistry, SubagentRun, SubagentStatus};
 pub use todo::{Task, TaskStatus, TodoStore};
 
 /// Fast check for obviously time-sensitive queries
@@ -278,6 +280,16 @@ pub struct AgentConfig {
     pub max_tokens: u32,
     /// Skills prompt (appended to system prompt)
     pub skills_prompt: Option<String>,
+    /// Hard cap on conversation turns kept in context.
+    ///
+    /// When set, the oldest user+assistant pairs are dropped once this limit is
+    /// exceeded.  `None` disables turn-based limiting (default).
+    pub max_turns: Option<usize>,
+    /// Model to use for LLM-powered context compaction.
+    ///
+    /// When `None`, the agent's primary model is used.  Set to a cheaper/faster
+    /// model (e.g. `"claude-haiku-4-5-20251101"`) to reduce compaction costs.
+    pub compaction_model: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -327,6 +339,8 @@ The current time is provided in the context. When asked about time-sensitive inf
             temperature: 0.7,
             max_tokens: 2048,
             skills_prompt: None,
+            max_turns: None,
+            compaction_model: None,
         }
     }
 }

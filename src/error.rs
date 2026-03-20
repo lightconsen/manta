@@ -53,6 +53,34 @@ pub enum MantaError {
     /// Plugin errors (WASM extension errors)
     #[error("Plugin error: {0}")]
     Plugin(String),
+
+    /// Subagent exceeded maximum spawn depth
+    #[error("Maximum subagent spawn depth ({0}) exceeded")]
+    MaxSpawnDepth(u32),
+
+    /// Too many concurrent subagents
+    #[error("Maximum concurrent subagents ({0}) already active")]
+    MaxConcurrentSubagents(usize),
+
+    /// Subagent timed out waiting for completion
+    #[error("Subagent timed out waiting for completion")]
+    SubagentTimeout,
+
+    /// Subagent run not found
+    #[error("Subagent run not found")]
+    SubagentNotFound,
+
+    /// Subagent execution failed
+    #[error("Subagent failed: {0}")]
+    SubagentFailed(String),
+
+    /// Subagent was killed
+    #[error("Subagent was killed")]
+    SubagentKilled,
+
+    /// Sandbox policy violation
+    #[error("Sandbox violation: {0}")]
+    SandboxViolation(String),
 }
 
 /// Configuration-specific errors

@@ -1,7 +1,7 @@
 //! Agent personality management commands for Manta
 
-use clap::Subcommand;
 use crate::error::Result;
+use clap::Subcommand;
 use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]

@@ -298,6 +298,8 @@ impl AcpControlPlane {
             max_concurrent_tools: 5,
             temperature: config.temperature.unwrap_or(0.7),
             skills_prompt: None,
+            max_turns: None,
+            compaction_model: None,
         };
 
         // Create the agent

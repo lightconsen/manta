@@ -6,7 +6,7 @@
 use crate::error::{MantaError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -97,11 +97,16 @@ impl SessionStore {
             .max_lifetime(Duration::from_secs(3600))
             .connect(database_url)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to connect to database"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to connect to database"),
+                details: e.to_string(),
+            })?;
 
         let store = Self {
             pool,
-            cache: Arc::new(RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(1000).unwrap()))),
+            cache: Arc::new(RwLock::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(1000).unwrap(),
+            ))),
         };
 
         store.optimize().await?;
@@ -119,19 +124,28 @@ impl SessionStore {
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to enable WAL mode"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to enable WAL mode"),
+                details: e.to_string(),
+            })?;
 
         // Enable foreign keys
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to enable foreign keys"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to enable foreign keys"),
+                details: e.to_string(),
+            })?;
 
         // Set synchronous mode to NORMAL for better performance
         sqlx::query("PRAGMA synchronous = NORMAL")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to set synchronous mode"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to set synchronous mode"),
+                details: e.to_string(),
+            })?;
 
         Ok(())
     }
@@ -158,7 +172,10 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to create sessions table"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage {
+            context: format!("Failed to create sessions table"),
+            details: e.to_string(),
+        })?;
 
         // Session messages table - stores conversation history
         sqlx::query(
@@ -176,29 +193,28 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to create messages table"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage {
+            context: format!("Failed to create messages table"),
+            details: e.to_string(),
+        })?;
 
         // Indexes for common queries
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)"
+            "CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel, channel_id)",
         )
         .execute(&self.pool)
         .await
         .ok();
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel, channel_id)"
-        )
-        .execute(&self.pool)
-        .await
-        .ok();
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity)"
-        )
-        .execute(&self.pool)
-        .await
-        .ok();
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity)")
+            .execute(&self.pool)
+            .await
+            .ok();
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, created_at)"
@@ -281,8 +297,10 @@ impl SessionStore {
                     channel_id: row.get("channel_id"),
                     created_at: DateTime::from_timestamp_millis(row.get::<i64, _>("created_at"))
                         .unwrap_or_else(Utc::now),
-                    last_activity: DateTime::from_timestamp_millis(row.get::<i64, _>("last_activity"))
-                        .unwrap_or_else(Utc::now),
+                    last_activity: DateTime::from_timestamp_millis(
+                        row.get::<i64, _>("last_activity"),
+                    )
+                    .unwrap_or_else(Utc::now),
                     is_active: row.get::<i64, _>("is_active") != 0,
                     message_count: row.get::<i64, _>("message_count") as usize,
                 };
@@ -336,7 +354,8 @@ impl SessionStore {
 
         query.push_str(" ORDER BY last_activity DESC");
 
-        let mut sql_query = sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64)>(&query);
+        let mut sql_query =
+            sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64)>(&query);
 
         if let Some(agent) = agent_id {
             sql_query = sql_query.bind(agent);
@@ -351,22 +370,38 @@ impl SessionStore {
         let rows = sql_query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to find sessions"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to find sessions"),
+                details: e.to_string(),
+            })?;
 
         let sessions: Vec<SessionMetadata> = rows
             .into_iter()
-            .map(|(id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count)| {
-                SessionMetadata {
-                    session_id: id,
+            .map(
+                |(
+                    id,
                     agent_id,
                     channel,
                     channel_id,
-                    created_at: DateTime::from_timestamp_millis(created_at).unwrap_or_else(Utc::now),
-                    last_activity: DateTime::from_timestamp_millis(last_activity).unwrap_or_else(Utc::now),
-                    is_active: is_active != 0,
-                    message_count: message_count as usize,
-                }
-            })
+                    created_at,
+                    last_activity,
+                    is_active,
+                    message_count,
+                )| {
+                    SessionMetadata {
+                        session_id: id,
+                        agent_id,
+                        channel,
+                        channel_id,
+                        created_at: DateTime::from_timestamp_millis(created_at)
+                            .unwrap_or_else(Utc::now),
+                        last_activity: DateTime::from_timestamp_millis(last_activity)
+                            .unwrap_or_else(Utc::now),
+                        is_active: is_active != 0,
+                        message_count: message_count as usize,
+                    }
+                },
+            )
             .collect();
 
         debug!("Found {} sessions", sessions.len());
@@ -397,11 +432,14 @@ impl SessionStore {
         .bind(metadata_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to append message"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage {
+            context: format!("Failed to append message"),
+            details: e.to_string(),
+        })?;
 
         // Update message count
         sqlx::query(
-            "UPDATE sessions SET message_count = message_count + 1, last_activity = ? WHERE id = ?"
+            "UPDATE sessions SET message_count = message_count + 1, last_activity = ? WHERE id = ?",
         )
         .bind(now)
         .bind(session_id)
@@ -436,7 +474,10 @@ impl SessionStore {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to get messages"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage {
+            context: format!("Failed to get messages"),
+            details: e.to_string(),
+        })?;
 
         let messages: Vec<(String, String, DateTime<Utc>)> = rows
             .into_iter()
@@ -454,15 +495,16 @@ impl SessionStore {
 
     /// Set session active status
     pub async fn set_session_active(&self, session_id: &str, active: bool) -> Result<()> {
-        sqlx::query(
-            "UPDATE sessions SET is_active = ?, last_activity = ? WHERE id = ?"
-        )
-        .bind(if active { 1 } else { 0 })
-        .bind(Utc::now().timestamp_millis())
-        .bind(session_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to update session status"), details: e.to_string() })?;
+        sqlx::query("UPDATE sessions SET is_active = ?, last_activity = ? WHERE id = ?")
+            .bind(if active { 1 } else { 0 })
+            .bind(Utc::now().timestamp_millis())
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to update session status"),
+                details: e.to_string(),
+            })?;
 
         Ok(())
     }
@@ -474,7 +516,10 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage { context: format!("Failed to delete session"), details: e.to_string() })?;
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to delete session"),
+                details: e.to_string(),
+            })?;
 
         // Cache cleanup
         let mut cache = self.cache.write().await;
@@ -487,15 +532,17 @@ impl SessionStore {
     /// Cleanup old inactive sessions
     #[instrument(skip(self))]
     pub async fn cleanup_old_sessions(&self, older_than: Duration) -> Result<usize> {
-        let cutoff = Utc::now() - chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::days(30));
+        let cutoff = Utc::now()
+            - chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::days(30));
 
-        let result = sqlx::query(
-            "DELETE FROM sessions WHERE is_active = 0 AND last_activity < ?"
-        )
-        .bind(cutoff.timestamp_millis())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to cleanup sessions"), details: e.to_string() })?;
+        let result = sqlx::query("DELETE FROM sessions WHERE is_active = 0 AND last_activity < ?")
+            .bind(cutoff.timestamp_millis())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to cleanup sessions"),
+                details: e.to_string(),
+            })?;
 
         let deleted = result.rows_affected() as usize;
         info!("Cleaned up {} old sessions", deleted);
@@ -541,27 +588,26 @@ mod tests {
 
     async fn create_test_store() -> SessionStore {
         // Use in-memory SQLite for tests
-        SessionStore::new(":memory:").await.expect("Failed to create test store")
+        SessionStore::new(":memory:")
+            .await
+            .expect("Failed to create test store")
     }
 
     #[tokio::test]
     async fn test_save_and_load_session() {
         let store = create_test_store().await;
 
-        let metadata = SessionMetadata::new(
-            "test-session",
-            "main",
-            "discord",
-            "user123",
-        );
+        let metadata = SessionMetadata::new("test-session", "main", "discord", "user123");
 
         // Save session
-        store.save_session("test-session", &metadata, r#"{"key": "value"}"#)
+        store
+            .save_session("test-session", &metadata, r#"{"key": "value"}"#)
             .await
             .expect("Failed to save session");
 
         // Load session
-        let loaded = store.load_session("test-session")
+        let loaded = store
+            .load_session("test-session")
             .await
             .expect("Failed to load session")
             .expect("Session not found");
@@ -583,20 +629,23 @@ mod tests {
                 "discord",
                 format!("user{}", i),
             );
-            store.save_session(&format!("session-{}", i), &metadata, "{}")
+            store
+                .save_session(&format!("session-{}", i), &metadata, "{}")
                 .await
                 .expect("Failed to save session");
         }
 
         // Find by agent
-        let main_sessions = store.find_sessions(Some("main"), None, None, false)
+        let main_sessions = store
+            .find_sessions(Some("main"), None, None, false)
             .await
             .expect("Failed to find sessions");
         assert_eq!(main_sessions.len(), 1);
         assert_eq!(main_sessions[0].agent_id, "main");
 
         // Find by channel
-        let discord_sessions = store.find_sessions(None, Some("discord"), None, false)
+        let discord_sessions = store
+            .find_sessions(None, Some("discord"), None, false)
             .await
             .expect("Failed to find sessions");
         assert_eq!(discord_sessions.len(), 3);
@@ -608,21 +657,25 @@ mod tests {
 
         // Create session
         let metadata = SessionMetadata::new("msg-test", "main", "cli", "local");
-        store.save_session("msg-test", &metadata, "{}")
+        store
+            .save_session("msg-test", &metadata, "{}")
             .await
             .expect("Failed to save session");
 
         // Append messages
-        store.append_message("msg-test", "user", "Hello", None)
+        store
+            .append_message("msg-test", "user", "Hello", None)
             .await
             .expect("Failed to append message");
 
-        store.append_message("msg-test", "assistant", "Hi there!", None)
+        store
+            .append_message("msg-test", "assistant", "Hi there!", None)
             .await
             .expect("Failed to append message");
 
         // Get messages
-        let messages = store.get_messages("msg-test", 10, None)
+        let messages = store
+            .get_messages("msg-test", 10, None)
             .await
             .expect("Failed to get messages");
 

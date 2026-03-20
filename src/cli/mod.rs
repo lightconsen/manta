@@ -22,6 +22,7 @@ mod chat;
 mod cron;
 mod daemon;
 mod entity;
+mod mcp;
 mod plugin;
 mod skill;
 mod team;
@@ -31,6 +32,7 @@ pub use agent::AgentCommands;
 pub use channel::ChannelCommands;
 pub use cron::CronCommands;
 pub use entity::EntityCommands;
+pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
@@ -166,6 +168,12 @@ pub enum Commands {
         #[arg(short, long)]
         follow: bool,
     },
+    /// MCP (Model Context Protocol) management
+    Mcp {
+        /// MCP subcommand
+        #[command(subcommand)]
+        command: McpCommands,
+    },
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -272,12 +280,11 @@ impl Cli {
                 port,
                 web_port,
                 foreground,
-            } => {
-                daemon::run_start_daemon(host, *port, *web_port, *foreground, config).await
-            }
+            } => daemon::run_start_daemon(host, *port, *web_port, *foreground, config).await,
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
+            Commands::Mcp { command } => mcp::run_mcp_command(command).await,
         }
     }
 }

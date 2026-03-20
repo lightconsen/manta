@@ -2,9 +2,15 @@
 //!
 //! This module implements context window management by compressing
 //! messages when approaching token limits.
+//!
+//! In addition to the heuristic strategies (`OldestFirst`, `Summarize`,
+//! `SlidingWindow`), a `compact_with_llm` helper is provided that asks an
+//! LLM provider to write a concise summary of the mid-section of the history
+//! so recent context is preserved while tokens are freed.
 
-use crate::providers::{Message, Role};
-use tracing::{debug, info};
+use crate::providers::{Message, Provider, Role};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 /// Estimated tokens per character (approximation)
 const TOKENS_PER_CHAR: f32 = 0.25;
@@ -287,6 +293,108 @@ impl ContextCompressor {
             tool_calls: None,
             tool_call_id: None,
             metadata: None,
+        }
+    }
+
+    /// Compact `messages` using an LLM to summarise the mid-section.
+    ///
+    /// Keeps the first `keep_head` and last `keep_tail` messages intact and
+    /// asks `provider` to summarise everything in-between.  Returns the
+    /// compacted list on success; on any provider error the original messages
+    /// are returned unchanged (graceful degradation).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use manta::agent::compressor::ContextCompressor;
+    /// # async fn example(provider: Arc<dyn manta::providers::Provider>, messages: Vec<manta::providers::Message>) {
+    /// let compressor = ContextCompressor::new(4096);
+    /// let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 6).await;
+    /// # }
+    /// ```
+    pub async fn compact_with_llm(
+        &self,
+        messages: &[Message],
+        provider: &Arc<dyn Provider>,
+        model: Option<&str>,
+        keep_head: usize,
+        keep_tail: usize,
+    ) -> Vec<Message> {
+        let n = messages.len();
+
+        // Nothing to summarise if the history is too short.
+        let mid_start = keep_head;
+        let mid_end = n.saturating_sub(keep_tail);
+        if mid_start >= mid_end {
+            debug!("compact_with_llm: history too short to summarise, returning as-is");
+            return messages.to_vec();
+        }
+
+        let head = &messages[..mid_start];
+        let mid = &messages[mid_start..mid_end];
+        let tail = &messages[mid_end..];
+
+        // Build a compact transcript of the mid section for the LLM prompt.
+        let transcript: String = mid
+            .iter()
+            .filter(|m| !m.content.is_empty())
+            .map(|m| format!("{}: {}", m.role, m.content.chars().take(400).collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let prompt = format!(
+            "Summarise the following conversation excerpt in ≤150 words, preserving key \
+             facts, decisions, and named entities. Output only the summary text.\n\n{}",
+            transcript
+        );
+
+        let req = crate::providers::CompletionRequest {
+            model: model.map(str::to_string),
+            messages: vec![Message::user(prompt)],
+            max_tokens: Some(300),
+            temperature: Some(0.3),
+            tools: None,
+            stream: false,
+            stop: None,
+        };
+
+        match provider.complete(req).await {
+            Ok(response) => {
+                let summary_text = response.message.content;
+                if summary_text.is_empty() {
+                    warn!("compact_with_llm: provider returned empty summary, skipping");
+                    return messages.to_vec();
+                }
+
+                info!(
+                    "compact_with_llm: summarised {} messages into {} chars",
+                    mid.len(),
+                    summary_text.len()
+                );
+
+                let summary_msg = Message {
+                    role: Role::System,
+                    content: format!(
+                        "[Summary of {} earlier messages]\n{}",
+                        mid.len(),
+                        summary_text
+                    ),
+                    name: Some("compaction_summary".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    metadata: None,
+                };
+
+                let mut result = head.to_vec();
+                result.push(summary_msg);
+                result.extend_from_slice(tail);
+                result
+            }
+            Err(e) => {
+                warn!("compact_with_llm: provider error (returning original): {}", e);
+                messages.to_vec()
+            }
         }
     }
 

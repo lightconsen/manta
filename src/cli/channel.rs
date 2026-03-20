@@ -131,9 +131,7 @@ pub async fn run_channel_command(command: &ChannelCommands) -> Result<()> {
         ChannelCommands::Status { channel, agent } => {
             run_channel_status(*channel, agent.clone()).await
         }
-        ChannelCommands::Test { channel, agent } => {
-            run_channel_test(*channel, agent.clone()).await
-        }
+        ChannelCommands::Test { channel, agent } => run_channel_test(*channel, agent.clone()).await,
     }
 }
 
@@ -222,9 +220,14 @@ async fn run_channel_remove(channel: ChannelType, agent: Option<String>) -> Resu
         if let Some(ref agent_name) = agent {
             let channel_agent = channel_config.agent_id.as_deref().unwrap_or("default");
             if channel_agent != agent_name {
-                println!("⚠️  {} channel is routed to agent '{}' (not '{}')",
-                    channel_name, channel_agent, agent_name);
-                println!("   Use --agent {} to remove, or omit --agent to remove anyway", channel_agent);
+                println!(
+                    "⚠️  {} channel is routed to agent '{}' (not '{}')",
+                    channel_name, channel_agent, agent_name
+                );
+                println!(
+                    "   Use --agent {} to remove, or omit --agent to remove anyway",
+                    channel_agent
+                );
                 return Ok(());
             }
         }
@@ -234,7 +237,10 @@ async fn run_channel_remove(channel: ChannelType, agent: Option<String>) -> Resu
         save_gateway_config(&config).await?;
 
         if let Some(ref agent_name) = agent {
-            println!("✅ {} channel (agent: {}) removed from Gateway configuration", channel_name, agent_name);
+            println!(
+                "✅ {} channel (agent: {}) removed from Gateway configuration",
+                channel_name, agent_name
+            );
         } else {
             println!("✅ {} channel removed from Gateway configuration", channel_name);
         }
@@ -284,7 +290,9 @@ async fn add_telegram_channel(
         agent_id: agent,
     };
 
-    config.channels.insert("telegram".to_string(), channel_config);
+    config
+        .channels
+        .insert("telegram".to_string(), channel_config);
     save_gateway_config(&config).await?;
 
     println!("✅ Telegram channel configured in Gateway");
@@ -344,7 +352,9 @@ async fn add_discord_channel(
         agent_id: agent,
     };
 
-    config.channels.insert("discord".to_string(), channel_config);
+    config
+        .channels
+        .insert("discord".to_string(), channel_config);
     save_gateway_config(&config).await?;
 
     println!("✅ Discord channel configured in Gateway");
@@ -590,11 +600,14 @@ async fn add_feishu_channel(
 
     let app_id = match token {
         Some(t) => t,
-        None => std::env::var("LARK_APP_ID").or_else(|_| std::env::var("FEISHU_APP_ID")).map_err(|_| {
-            crate::error::ConfigError::Missing(
-                "LARK_APP_ID or FEISHU_APP_ID environment variable, or --token argument".to_string(),
-            )
-        })?,
+        None => std::env::var("LARK_APP_ID")
+            .or_else(|_| std::env::var("FEISHU_APP_ID"))
+            .map_err(|_| {
+                crate::error::ConfigError::Missing(
+                    "LARK_APP_ID or FEISHU_APP_ID environment variable, or --token argument"
+                        .to_string(),
+                )
+            })?,
     };
 
     let app_secret = std::env::var("LARK_APP_SECRET")
@@ -621,8 +634,8 @@ async fn add_feishu_channel(
     }
 
     // Optional: encrypt key for webhooks
-    if let Ok(encrypt_key) = std::env::var("LARK_ENCRYPT_KEY")
-        .or_else(|_| std::env::var("FEISHU_ENCRYPT_KEY"))
+    if let Ok(encrypt_key) =
+        std::env::var("LARK_ENCRYPT_KEY").or_else(|_| std::env::var("FEISHU_ENCRYPT_KEY"))
     {
         credentials.insert("encrypt_key".to_string(), encrypt_key);
     }
@@ -735,7 +748,11 @@ async fn run_channel_list(all: bool) -> Result<()> {
                     continue;
                 }
 
-                let status = if channel.enabled { "🟢 enabled" } else { "🟡 disabled" };
+                let status = if channel.enabled {
+                    "🟢 enabled"
+                } else {
+                    "🟡 disabled"
+                };
                 let agent = channel.agent_id.as_deref().unwrap_or("default");
                 println!("{:<15} {:<12} {:<20}", name, status, agent);
                 connected_count += 1;
@@ -807,7 +824,10 @@ async fn run_channel_list(all: bool) -> Result<()> {
 }
 
 /// Check channel status
-async fn run_channel_status(channel: Option<ChannelType>, agent_filter: Option<String>) -> Result<()> {
+async fn run_channel_status(
+    channel: Option<ChannelType>,
+    agent_filter: Option<String>,
+) -> Result<()> {
     let config = load_gateway_config().await;
 
     // If --agent is specified without a channel, show all channels for that agent
@@ -889,7 +909,10 @@ async fn run_channel_status(channel: Option<ChannelType>, agent_filter: Option<S
                     let channel_agent = channel_config.agent_id.as_deref().unwrap_or("default");
                     if let Some(ref agent_name) = agent_filter {
                         if channel_agent != agent_name {
-                            println!("⚠️  This channel is routed to agent '{}' (not '{}')", channel_agent, agent_name);
+                            println!(
+                                "⚠️  This channel is routed to agent '{}' (not '{}')",
+                                channel_agent, agent_name
+                            );
                             return Ok(());
                         }
                     }
@@ -902,8 +925,13 @@ async fn run_channel_status(channel: Option<ChannelType>, agent_filter: Option<S
 
                     println!("Agent: {}", channel_agent);
 
-                    println!("\nTo {} the channel:",
-                        if channel_config.enabled { "disable" } else { "enable" }
+                    println!(
+                        "\nTo {} the channel:",
+                        if channel_config.enabled {
+                            "disable"
+                        } else {
+                            "enable"
+                        }
                     );
                     if channel_config.enabled {
                         println!("  manta channel stop {}", channel_name);
@@ -1058,7 +1086,9 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
             } else {
                 println!("    ⚠️  LARK_APP_ID or FEISHU_APP_ID not set");
             }
-            if std::env::var("LARK_APP_SECRET").is_ok() || std::env::var("FEISHU_APP_SECRET").is_ok() {
+            if std::env::var("LARK_APP_SECRET").is_ok()
+                || std::env::var("FEISHU_APP_SECRET").is_ok()
+            {
                 println!("    ✅ LARK_APP_SECRET/FEISHU_APP_SECRET set");
             } else {
                 println!("    ⚠️  LARK_APP_SECRET or FEISHU_APP_SECRET not set");
@@ -1095,8 +1125,10 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
             // Check if agent filter matches
             if let Some(ref filter_agent) = agent {
                 if configured_agent != filter_agent {
-                    println!("    ⚠️  Warning: Configured agent '{}' doesn't match filter '{}'",
-                        configured_agent, filter_agent);
+                    println!(
+                        "    ⚠️  Warning: Configured agent '{}' doesn't match filter '{}'",
+                        configured_agent, filter_agent
+                    );
                 }
             }
         } else {

@@ -30,6 +30,10 @@ pub struct Context {
     max_tool_iterations: usize,
     /// Track tool calls to prevent duplicates (tool_name + params_hash)
     executed_tool_calls: HashSet<String>,
+    /// Optional hard cap on the number of turns kept in history.
+    /// When set, `add_message` enforces this limit by dropping the oldest
+    /// user/assistant pairs before the token-based prune runs.
+    max_turns: Option<usize>,
 }
 
 impl Context {
@@ -50,6 +54,60 @@ impl Context {
             tool_iterations: 0,
             max_tool_iterations: Self::DEFAULT_MAX_TOOL_ITERATIONS,
             executed_tool_calls: HashSet::new(),
+            max_turns: None,
+        }
+    }
+
+    /// Set a hard cap on conversation turns (user+assistant pairs).
+    ///
+    /// When the history grows beyond `turns` pairs the oldest pair is dropped
+    /// before the normal token-based pruning runs.  A "turn" is counted as one
+    /// user message (tool messages are not counted as separate turns).
+    pub fn with_max_turns(mut self, turns: usize) -> Self {
+        self.max_turns = Some(turns);
+        self
+    }
+
+    /// Enforce the turn limit by dropping oldest messages until the user-message
+    /// count is within `max_turns`.  Tool (result) messages paired with an
+    /// assistant message are removed together to keep the conversation coherent.
+    pub fn limit_turns(&mut self) {
+        let Some(max) = self.max_turns else { return };
+
+        loop {
+            // Count user-role messages as turn markers.
+            let user_count = self
+                .messages
+                .iter()
+                .filter(|m| m.role == crate::providers::Role::User)
+                .count();
+
+            if user_count <= max {
+                break;
+            }
+
+            // Find and remove the oldest user message plus any immediately
+            // following tool/assistant messages that belong to that turn.
+            if let Some(oldest_user) = self
+                .messages
+                .iter()
+                .position(|m| m.role == crate::providers::Role::User)
+            {
+                let removed = self.messages.remove(oldest_user);
+                self.token_count = self.token_count.saturating_sub(removed.content.len() / 4);
+
+                // Also remove the assistant reply that follows (if present).
+                if oldest_user < self.messages.len() {
+                    let next = &self.messages[oldest_user];
+                    if next.role == crate::providers::Role::Assistant {
+                        let removed = self.messages.remove(oldest_user);
+                        self.token_count =
+                            self.token_count.saturating_sub(removed.content.len() / 4);
+                    }
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -140,6 +198,9 @@ impl Context {
         self.token_count += estimated_tokens;
         self.messages.push(message);
         self.last_accessed = SystemTime::now();
+
+        // Enforce turn limit before token-based pruning.
+        self.limit_turns();
 
         // Prune if necessary
         self.prune_if_needed();
@@ -360,6 +421,36 @@ mod tests {
         // Should have pruned to keep under limit
         assert!(ctx.token_count() <= ctx.max_tokens);
         assert!(ctx.message_count() < 20);
+    }
+
+    #[test]
+    fn test_max_turns_limits_history() {
+        let mut ctx = Context::new("test", "System", 100_000).with_max_turns(2);
+
+        // Add 3 user+assistant pairs.
+        for i in 0..3 {
+            ctx.add_message(Message::user(format!("User {}", i)));
+            ctx.add_message(Message::assistant(format!("Assistant {}", i)));
+        }
+
+        // Only the 2 most recent user messages should remain.
+        let user_count = ctx
+            .history()
+            .iter()
+            .filter(|m| m.role == crate::providers::Role::User)
+            .count();
+        assert_eq!(user_count, 2);
+    }
+
+    #[test]
+    fn test_max_turns_none_no_drop() {
+        let mut ctx = Context::new("test", "System", 100_000);
+        // No max_turns set — all messages kept.
+        for i in 0..5 {
+            ctx.add_message(Message::user(format!("User {}", i)));
+            ctx.add_message(Message::assistant(format!("Assistant {}", i)));
+        }
+        assert_eq!(ctx.message_count(), 10);
     }
 
     #[test]

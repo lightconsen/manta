@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 pub mod db;
+pub mod hybrid;
 pub mod personality;
 pub mod session_search;
 pub mod sqlite;
@@ -17,13 +18,14 @@ pub mod vector;
 pub mod local_embeddings;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
+pub use hybrid::{hybrid_search, HybridSearchConfig, HybridSearchResult};
 pub use personality::{MemoryType, PersonalityMemory};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
 pub use vector::{
-    ApiEmbeddingProvider, BatchEmbeddingProcessor, EmbeddedChunk, EmbeddingConfig,
-    EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker, VectorBackend,
-    VectorMemoryService, VectorStore, VectorStoreStats,
+    ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
+    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
+    VectorBackend, VectorMemoryService, VectorStore, VectorStoreStats,
 };
 
 /// Unique identifier for a memory entry

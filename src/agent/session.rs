@@ -173,9 +173,7 @@ pub enum SessionMessage {
         binding: ThreadBinding,
     },
     /// Terminate agent
-    TerminateAgent {
-        agent_id: String,
-    },
+    TerminateAgent { agent_id: String },
     /// Get session status
     GetStatus {
         respond_to: oneshot::Sender<SessionStatus>,
@@ -227,12 +225,8 @@ impl MultiAgentSession {
             agent_id, self.id, binding
         );
 
-        let agent = SessionAgent::new(
-            agent_id.clone(),
-            personality,
-            binding,
-            &self.primary_thread_id,
-        );
+        let agent =
+            SessionAgent::new(agent_id.clone(), personality, binding, &self.primary_thread_id);
 
         self.agents.insert(agent_id.clone(), agent);
         self.last_activity = std::time::Instant::now();
@@ -321,7 +315,9 @@ impl MultiAgentSession {
             if keywords.iter().any(|kw| message_lower.contains(kw)) {
                 // Find an agent that can handle this intent
                 return self.agents.values().find(|a| {
-                    a.is_active && a.status == AgentInstanceStatus::Ready && a.personality.can_handle(intent)
+                    a.is_active
+                        && a.status == AgentInstanceStatus::Ready
+                        && a.personality.can_handle(intent)
                 });
             }
         }
@@ -339,7 +335,8 @@ impl MultiAgentSession {
 
     /// Cleanup terminated agents
     pub fn cleanup_terminated(&mut self) {
-        self.agents.retain(|_, a| a.is_active || a.status != AgentInstanceStatus::Terminated);
+        self.agents
+            .retain(|_, a| a.is_active || a.status != AgentInstanceStatus::Terminated);
     }
 }
 

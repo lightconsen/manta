@@ -160,7 +160,10 @@ impl ChannelLifecycle {
 
                     // Check if we should restart
                     if !self.should_restart().await {
-                        info!("Channel {} not restarting (stop requested or max restarts)", self.name);
+                        info!(
+                            "Channel {} not restarting (stop requested or max restarts)",
+                            self.name
+                        );
                         break;
                     }
 
@@ -252,10 +255,7 @@ impl ChannelLifecycle {
 
         // Check if we've exceeded max restarts
         if state.restart_count >= self.policy.max_restarts {
-            error!(
-                "Channel {} exceeded max restarts ({})",
-                self.name, self.policy.max_restarts
-            );
+            error!("Channel {} exceeded max restarts ({})", self.name, self.policy.max_restarts);
             return false;
         }
 
@@ -274,9 +274,7 @@ impl ChannelLifecycle {
         let delay_ms = (self.policy.initial_delay.as_millis() as f32
             * self.policy.backoff_factor.powi(attempts as i32)) as u64;
 
-        let delay = Duration::from_millis(
-            delay_ms.min(self.policy.max_delay.as_millis() as u64)
-        );
+        let delay = Duration::from_millis(delay_ms.min(self.policy.max_delay.as_millis() as u64));
 
         // Add jitter (±10%)
         let jitter = delay.as_millis() as f32 * 0.1;
@@ -335,10 +333,7 @@ impl LifecycleManager {
         policy: Option<RestartPolicy>,
     ) {
         let name = name.into();
-        let lifecycle = Arc::new(ChannelLifecycle::new(
-            channel,
-            policy.unwrap_or_default(),
-        ));
+        let lifecycle = Arc::new(ChannelLifecycle::new(channel, policy.unwrap_or_default()));
 
         let mut channels = self.channels.write().await;
         let mut new_channels = HashMap::clone(&channels);
@@ -373,11 +368,7 @@ impl LifecycleManager {
         let mut results = Vec::new();
 
         for (name, lifecycle) in channels.iter() {
-            results.push((
-                name.clone(),
-                lifecycle.status().await,
-                lifecycle.restart_count().await,
-            ));
+            results.push((name.clone(), lifecycle.status().await, lifecycle.restart_count().await));
         }
 
         results
@@ -406,8 +397,8 @@ impl Default for LifecycleManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::core::models::Id;
+    use async_trait::async_trait;
 
     struct MockChannel {
         name: String,
@@ -456,7 +447,10 @@ mod tests {
             Ok(Id::new())
         }
 
-        async fn send_typing(&self, _conversation_id: &crate::channels::ConversationId) -> Result<()> {
+        async fn send_typing(
+            &self,
+            _conversation_id: &crate::channels::ConversationId,
+        ) -> Result<()> {
             Ok(())
         }
 
@@ -498,7 +492,9 @@ mod tests {
         let manager = LifecycleManager::new();
         let channel = Arc::new(MockChannel::new("test-channel"));
 
-        manager.add_channel("test-channel", channel.clone(), None).await;
+        manager
+            .add_channel("test-channel", channel.clone(), None)
+            .await;
 
         let lifecycle = manager.get_lifecycle("test-channel").await;
         assert!(lifecycle.is_some());

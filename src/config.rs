@@ -492,10 +492,7 @@ impl Config {
                         service.api_key = Some(crate::secrets::SecretRef::String(resolved));
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to resolve API key for service '{}': {}",
-                            name, e
-                        );
+                        warn!("Failed to resolve API key for service '{}': {}", name, e);
                         // Continue with other services, don't fail completely
                     }
                 }
@@ -1099,10 +1096,7 @@ base_delay_ms = 500
         let config: Config = toml::from_str(toml_str).unwrap();
         let api_service = config.get_service("api").unwrap();
         assert_eq!(api_service.endpoint, "https://api.example.com");
-        assert_eq!(
-            api_service.api_key,
-            Some(SecretRef::String("secret123".to_string()))
-        );
+        assert_eq!(api_service.api_key, Some(SecretRef::String("secret123".to_string())));
         assert_eq!(api_service.timeout_seconds, 60);
         assert_eq!(api_service.retry.max_retries, 5);
         assert_eq!(api_service.retry.base_delay_ms, 500);
@@ -1119,10 +1113,7 @@ timeout_seconds = 60
 
         let config: Config = toml::from_str(toml_str).unwrap();
         let api_service = config.get_service("api").unwrap();
-        assert_eq!(
-            api_service.api_key,
-            Some(SecretRef::String("$API_KEY".to_string()))
-        );
+        assert_eq!(api_service.api_key, Some(SecretRef::String("$API_KEY".to_string())));
     }
 
     #[test]

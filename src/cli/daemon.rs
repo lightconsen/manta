@@ -18,16 +18,10 @@ pub async fn show_config(format: &crate::cli::ConfigFormat) -> Result<()> {
             println!("{:#?}", config);
         }
         crate::cli::ConfigFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&config).unwrap_or_default()
-            );
+            println!("{}", serde_json::to_string_pretty(&config).unwrap_or_default());
         }
         crate::cli::ConfigFormat::Yaml => {
-            println!(
-                "{}",
-                serde_yaml::to_string(&config).unwrap_or_default()
-            );
+            println!("{}", serde_yaml::to_string(&config).unwrap_or_default());
         }
     }
 
@@ -123,7 +117,7 @@ pub async fn run_daemon_status() -> Result<()> {
 /// Show and tail daemon logs
 pub async fn run_logs(lines: usize, follow: bool) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::time::{Duration, interval};
+    use tokio::time::{interval, Duration};
 
     let log_path = crate::logs::log_file_path();
 

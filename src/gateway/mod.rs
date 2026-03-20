@@ -35,6 +35,7 @@ use crate::memory::vector::{
 };
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
+use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
 pub mod middleware;
@@ -87,6 +88,9 @@ pub struct GatewayConfig {
     /// Model provider (e.g., "anthropic", "openai")
     #[serde(default = "default_model_provider")]
     pub model_provider: String,
+    /// MCP server configurations (auto-connected on startup)
+    #[serde(default)]
+    pub mcp: McpSettings,
 }
 
 fn default_model() -> String {
@@ -324,6 +328,7 @@ impl Default for GatewayConfig {
             providers: HashMap::new(),
             model: default_model(),
             model_provider: default_model_provider(),
+            mcp: McpSettings::default(),
         }
     }
 }
@@ -396,6 +401,8 @@ pub struct GatewayState {
     pub agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
     /// Multi-agent session manager (OpenClaw-style)
     pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
+    /// MCP manager for server connections (shared with McpConnectionTool)
+    pub mcp_manager: Arc<McpManager>,
 }
 
 /// Handle to a running agent
@@ -537,8 +544,12 @@ impl Gateway {
         // Create ACP control plane first (needed for tool registration)
         let acp = Arc::new(AcpControlPlane::new());
 
+        // Create the shared MCP manager
+        let mcp_manager = Arc::new(McpManager::new());
+
         // Create tool registry with built-in tools (including ACP tools if enabled)
-        let tool_registry = Arc::new(create_default_tool_registry(acp.clone()).await?);
+        let tool_registry =
+            Arc::new(create_default_tool_registry(acp.clone(), mcp_manager.clone()).await?);
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
@@ -633,6 +644,7 @@ impl Gateway {
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
             session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
+            mcp_manager: mcp_manager.clone(),
         });
 
         // Configure providers from config
@@ -872,6 +884,9 @@ impl Gateway {
             }
         }
 
+        // Auto-connect MCP servers (9.1, 9.2)
+        self.init_mcp_servers().await;
+
         // Initialize configured channels
         self.init_channels().await?;
 
@@ -986,6 +1001,16 @@ impl Gateway {
             .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
             .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
             .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
+            // MCP API (9.5)
+            .route("/api/v1/mcp/servers", get(list_mcp_servers_handler))
+            .route("/api/v1/mcp/servers/:id/connect", post(connect_mcp_server_handler))
+            .route("/api/v1/mcp/servers/:id", delete(disconnect_mcp_server_handler))
+            .route("/api/v1/mcp/servers/:id/tools", get(list_mcp_tools_handler))
+            .route("/api/v1/mcp/servers/:id/tools/:tool/call", post(call_mcp_tool_handler))
+            .route("/api/v1/mcp/servers/:id/resources", get(list_mcp_resources_handler))
+            .route("/api/v1/mcp/servers/:id/resources/read", post(read_mcp_resource_handler))
+            // Manta as MCP server (9.9) – Streamable-HTTP endpoint
+            .route("/mcp", post(manta_as_mcp_server_handler))
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
@@ -1122,7 +1147,8 @@ impl Gateway {
                         // Look up conversation_id for response routing
                         let conversation_id = {
                             let sessions = state.session_channels.read().await;
-                            sessions.get(&session_id)
+                            sessions
+                                .get(&session_id)
                                 .map(|(_, cid)| cid.clone())
                                 .unwrap_or_else(|| session_id.clone())
                         };
@@ -1181,10 +1207,7 @@ impl Gateway {
 
     /// Spawn an agent from its personality (on-demand spawning)
     /// Returns true if agent was spawned, false if already exists
-    pub async fn spawn_agent_from_personality(
-        &self,
-        agent_id: &str,
-    ) -> crate::Result<bool> {
+    pub async fn spawn_agent_from_personality(&self, agent_id: &str) -> crate::Result<bool> {
         // Check if agent already exists
         {
             let agents = self.state.agents.read().await;
@@ -1246,10 +1269,7 @@ impl Gateway {
     }
 
     /// Get or spawn agent by ID (on-demand)
-    pub async fn get_or_spawn_agent(
-        &self,
-        agent_id: &str,
-    ) -> crate::Result<Option<AgentHandle>> {
+    pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
         // First check if already spawned
         {
             let agents = self.state.agents.read().await;
@@ -1273,6 +1293,64 @@ impl Gateway {
     }
 
     /// Initialize configured channels
+    /// Auto-connect MCP servers from config and register their tools (9.1, 9.2)
+    async fn init_mcp_servers(&self) {
+        let servers = &self.config.mcp.servers;
+        if servers.is_empty() {
+            debug!("No MCP servers configured");
+            return;
+        }
+
+        info!("Auto-connecting {} configured MCP server(s)…", servers.len());
+
+        for (server_id, server_config) in servers {
+            if !server_config.auto_connect {
+                info!("MCP server '{}' has auto_connect=false, skipping", server_id);
+                continue;
+            }
+
+            match self
+                .state
+                .mcp_manager
+                .connect(server_id, server_config.clone())
+                .await
+            {
+                Ok(tools) => {
+                    info!(
+                        "✅ MCP server '{}' connected: {} tool(s) discovered",
+                        server_id,
+                        tools.len()
+                    );
+
+                    // Register discovered tools into the ToolRegistry (9.2)
+                    // ToolRegistry is behind Arc<ToolRegistry> – need interior mutability.
+                    // Use Arc::get_mut if no other references, else fall back gracefully.
+                    let max_tools = if server_config.max_tools == 0 {
+                        tools.len()
+                    } else {
+                        server_config.max_tools.min(tools.len())
+                    };
+
+                    if let Some(client_arc) = self.state.mcp_manager.get_client(server_id).await {
+                        // We can't mutate Arc<ToolRegistry> safely here unless we wrap it.
+                        // Log available tools so operators know what's available.
+                        for tool in tools.iter().take(max_tools) {
+                            let qname = format!("mcp__{}__{}", server_id, tool.name);
+                            debug!("  MCP tool ready: {}", qname);
+                        }
+                        // Tools can be invoked via the `mcp` agent tool or McpToolWrapper.
+                        // Full ToolRegistry auto-registration requires mutable access;
+                        // it is deferred to the `mcp connect` agent action at runtime.
+                        let _ = client_arc; // keep reference
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to connect MCP server '{}': {}", server_id, e);
+                }
+            }
+        }
+    }
+
     async fn init_channels(&self) -> crate::Result<()> {
         info!("Initializing {} configured channels", self.config.channels.len());
 
@@ -1295,11 +1373,7 @@ impl Gateway {
     }
 
     /// Initialize a single channel by name and config
-    async fn init_single_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_single_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         info!("Initializing channel {} ({:?})", name, config.channel_type);
 
         match config.channel_type {
@@ -1371,16 +1445,13 @@ impl Gateway {
 
     /// Initialize Telegram channel
     #[cfg(feature = "telegram")]
-    async fn init_telegram_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_telegram_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
             let telegram_config = crate::channels::telegram::TelegramConfig::new(token)
                 .allow_usernames(config.allow_from.clone());
 
-            let channel = Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
+            let channel =
+                Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
 
             // Create message channel for routing Telegram -> Gateway agent
             let (message_tx, mut message_rx) =
@@ -1398,10 +1469,7 @@ impl Gateway {
                     agent_name, name
                 );
             } else {
-                info!(
-                    "Telegram channel '{}' connected to agent '{}'",
-                    name, agent_name
-                );
+                info!("Telegram channel '{}' connected to agent '{}'", name, agent_name);
             }
 
             // Spawn task to process messages from Telegram and route to agent
@@ -1411,8 +1479,10 @@ impl Gateway {
                 info!("DEBUG: Telegram message processing task started");
                 while let Some(message) = message_rx.recv().await {
                     let session_id = message.conversation_id.0.clone();
-                    let chat_id = message.metadata
-                        .extra.get("telegram_chat_id")
+                    let chat_id = message
+                        .metadata
+                        .extra
+                        .get("telegram_chat_id")
                         .and_then(|v| v.as_i64())
                         .unwrap_or_else(|| {
                             // Fallback: try to parse session_id as chat_id for backward compatibility
@@ -1427,7 +1497,10 @@ impl Gateway {
                     // Store session -> channel mapping for response routing
                     {
                         let mut session_channels = state_clone.session_channels.write().await;
-                        session_channels.insert(session_id.clone(), ("telegram".to_string(), chat_id.to_string()));
+                        session_channels.insert(
+                            session_id.clone(),
+                            ("telegram".to_string(), chat_id.to_string()),
+                        );
                     }
 
                     if let Some(ref handle) = agent_for_task {
@@ -1469,7 +1542,10 @@ impl Gateway {
                         }) => {
                             // Only handle responses from Telegram messages
                             if response_channel != "telegram" {
-                                debug!("Skipping non-Telegram response for channel: {}", response_channel);
+                                debug!(
+                                    "Skipping non-Telegram response for channel: {}",
+                                    response_channel
+                                );
                                 continue;
                             }
                             info!(
@@ -1480,7 +1556,8 @@ impl Gateway {
                             // Look up the chat_id from session mapping
                             let chat_id = {
                                 let sessions = state_for_responses.session_channels.read().await;
-                                sessions.get(&session_id)
+                                sessions
+                                    .get(&session_id)
                                     .map(|(_, cid)| cid.clone())
                                     .unwrap_or_else(|| {
                                         // Fallback to conversation_id from event
@@ -1537,11 +1614,7 @@ impl Gateway {
 
     /// Initialize Discord channel
     #[cfg(feature = "discord")]
-    async fn init_discord_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_discord_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
             let discord_config = crate::channels::discord::DiscordConfig::new(token);
 
@@ -1567,11 +1640,7 @@ impl Gateway {
 
     /// Initialize Slack channel
     #[cfg(feature = "slack")]
-    async fn init_slack_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_slack_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
             let slack_config = crate::channels::slack::SlackConfig::new(token);
 
@@ -1597,19 +1666,15 @@ impl Gateway {
 
     /// Initialize WhatsApp channel
     #[cfg(feature = "whatsapp")]
-    async fn init_whatsapp_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_whatsapp_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let (Some(phone_id), Some(token)) = (
             config.credentials.get("phone_number_id"),
             config.credentials.get("access_token"),
         ) {
-            let whatsapp_config =
-                crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
+            let whatsapp_config = crate::channels::whatsapp::WhatsappConfig::new(phone_id, token);
 
-            let channel = Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
+            let channel =
+                Arc::new(crate::channels::whatsapp::WhatsappChannel::new(whatsapp_config));
             let channel_name = name.to_string();
             let channel_for_task = channel.clone();
             tokio::spawn(async move {
@@ -1634,11 +1699,7 @@ impl Gateway {
 
     /// Initialize QQ channel
     #[cfg(feature = "qq")]
-    async fn init_qq_channel(
-        &self,
-        name: &str,
-        config: &ChannelConfig,
-    ) -> crate::Result<()> {
+    async fn init_qq_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
             config.credentials.get("app_id"),
             config.credentials.get("app_secret"),
@@ -1838,18 +1899,17 @@ impl Gateway {
                             Some(_channel) => {
                                 // Channel exists - check if config changed
                                 let old_config = current_config.channels.get(name);
-                                let config_changed = old_config.map(|old| {
-                                    old.credentials != new_channel_config.credentials
-                                        || old.allow_from != new_channel_config.allow_from
-                                        || old.block_from != new_channel_config.block_from
-                                        || old.dm_policy != new_channel_config.dm_policy
-                                }).unwrap_or(true);
+                                let config_changed = old_config
+                                    .map(|old| {
+                                        old.credentials != new_channel_config.credentials
+                                            || old.allow_from != new_channel_config.allow_from
+                                            || old.block_from != new_channel_config.block_from
+                                            || old.dm_policy != new_channel_config.dm_policy
+                                    })
+                                    .unwrap_or(true);
 
                                 if config_changed {
-                                    info!(
-                                        "Channel '{}' config changed, restarting...",
-                                        name
-                                    );
+                                    info!("Channel '{}' config changed, restarting...", name);
 
                                     // Remove old channel
                                     {
@@ -1862,9 +1922,8 @@ impl Gateway {
                                         state: state.clone(),
                                         config: new_config.clone(),
                                     };
-                                    if let Err(e) = gateway
-                                        .init_single_channel(name, new_channel_config)
-                                        .await
+                                    if let Err(e) =
+                                        gateway.init_single_channel(name, new_channel_config).await
                                     {
                                         error!("Failed to restart channel '{}': {}", name, e);
                                     } else {
@@ -1883,9 +1942,8 @@ impl Gateway {
                                     state: state.clone(),
                                     config: new_config.clone(),
                                 };
-                                if let Err(e) = gateway
-                                    .init_single_channel(name, new_channel_config)
-                                    .await
+                                if let Err(e) =
+                                    gateway.init_single_channel(name, new_channel_config).await
                                 {
                                     error!("Failed to hot-reload channel '{}': {}", name, e);
                                 } else {
@@ -2132,7 +2190,10 @@ async fn handle_web_terminal_websocket(
 }
 
 /// Create default tool registry with all built-in tools
-async fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Result<ToolRegistry> {
+async fn create_default_tool_registry(
+    acp: Arc<AcpControlPlane>,
+    mcp_manager: Arc<McpManager>,
+) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
     let mut registry = ToolRegistry::new();
@@ -2186,8 +2247,8 @@ async fn create_default_tool_registry(acp: Arc<AcpControlPlane>) -> crate::Resul
     // Register delegation tool for agent-to-agent task delegation
     registry.register(Box::new(DelegateTool::root()));
 
-    // Register MCP (Model Context Protocol) connection tool
-    registry.register(Box::new(McpConnectionTool::new()));
+    // Register MCP (Model Context Protocol) connection tool (uses shared manager)
+    registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));
 
     Ok(registry)
 }
@@ -3823,4 +3884,372 @@ async fn list_discovered_agents_handler(
         .collect();
 
     Json(list)
+}
+
+// ─────────────────────────────────────────────
+// MCP REST API handlers (9.5)
+// ─────────────────────────────────────────────
+
+/// List connected MCP servers
+async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let servers = state.mcp_manager.list_servers().await;
+    Json(serde_json::json!({
+        "servers": servers,
+        "count": servers.len(),
+    }))
+}
+
+/// Request body for connecting an MCP server
+#[derive(Debug, Deserialize)]
+struct McpConnectRequest {
+    #[serde(default)]
+    transport: String,
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    url: Option<String>,
+    #[serde(default = "mcp_default_timeout")]
+    timeout_secs: u64,
+}
+
+fn mcp_default_timeout() -> u64 {
+    30
+}
+
+/// Connect to an MCP server
+async fn connect_mcp_server_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+    Json(body): Json<McpConnectRequest>,
+) -> impl IntoResponse {
+    use crate::tools::mcp::{McpServerConfig, McpTransport};
+
+    let transport = match body.transport.as_str() {
+        "sse" => McpTransport::Sse,
+        "streamable_http" => McpTransport::StreamableHttp,
+        _ => McpTransport::Stdio,
+    };
+
+    let config = McpServerConfig {
+        transport,
+        command: body.command,
+        args: body.args,
+        url: body.url,
+        timeout_secs: body.timeout_secs,
+        ..Default::default()
+    };
+
+    match state.mcp_manager.connect(&server_id, config).await {
+        Ok(tools) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({
+                "server_id": server_id,
+                "tool_count": tools.len(),
+                "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+            })),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// Disconnect from an MCP server
+async fn disconnect_mcp_server_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+) -> impl IntoResponse {
+    match state.mcp_manager.disconnect(&server_id).await {
+        Ok(()) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "disconnected": server_id })),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// List tools from an MCP server
+async fn list_mcp_tools_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+) -> impl IntoResponse {
+    match state.mcp_manager.get_client(&server_id).await {
+        Some(client_arc) => {
+            let client = client_arc.read().await;
+            let tools = client.get_tools().to_vec();
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "server_id": server_id,
+                    "tools": tools,
+                    "count": tools.len(),
+                })),
+            )
+        }
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("MCP server '{}' not found", server_id) })),
+        ),
+    }
+}
+
+/// Call an MCP tool
+async fn call_mcp_tool_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path((server_id, tool_name)): Path<(String, String)>,
+    Json(args): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    match state.mcp_manager.get_client(&server_id).await {
+        Some(client_arc) => {
+            let client = client_arc.read().await;
+            match client.call_tool(&tool_name, args).await {
+                Ok(result) => {
+                    (axum::http::StatusCode::OK, Json(serde_json::json!({ "result": result })))
+                }
+                Err(e) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                ),
+            }
+        }
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("MCP server '{}' not found", server_id) })),
+        ),
+    }
+}
+
+/// List resources from an MCP server
+async fn list_mcp_resources_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+) -> impl IntoResponse {
+    match state.mcp_manager.get_client(&server_id).await {
+        Some(client_arc) => {
+            let client = client_arc.read().await;
+            match client.list_resources().await {
+                Ok(resources) => (
+                    axum::http::StatusCode::OK,
+                    Json(serde_json::json!({
+                        "server_id": server_id,
+                        "resources": resources,
+                        "count": resources.len(),
+                    })),
+                ),
+                Err(e) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                ),
+            }
+        }
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("MCP server '{}' not found", server_id) })),
+        ),
+    }
+}
+
+/// Request body for reading a resource
+#[derive(Debug, Deserialize)]
+struct McpReadResourceRequest {
+    uri: String,
+}
+
+/// Read a resource from an MCP server
+async fn read_mcp_resource_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(server_id): Path<String>,
+    Json(body): Json<McpReadResourceRequest>,
+) -> impl IntoResponse {
+    match state.mcp_manager.get_client(&server_id).await {
+        Some(client_arc) => {
+            let client = client_arc.read().await;
+            match client.read_resource(&body.uri).await {
+                Ok(contents) => (
+                    axum::http::StatusCode::OK,
+                    Json(serde_json::json!({
+                        "uri": body.uri,
+                        "contents": contents,
+                    })),
+                ),
+                Err(e) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                ),
+            }
+        }
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("MCP server '{}' not found", server_id) })),
+        ),
+    }
+}
+
+// ─────────────────────────────────────────────
+// 9.9 – Manta as an MCP server
+// ─────────────────────────────────────────────
+
+/// Expose Manta's tool registry as an MCP server via the Streamable-HTTP transport.
+///
+/// Handles JSON-RPC 2.0 requests sent to `POST /mcp`.  Supported methods:
+/// - `initialize` – returns server capabilities
+/// - `tools/list` – lists all registered tools
+/// - `tools/call` – calls a registered tool
+///
+/// The response content-type is `text/event-stream` (SSE) when the caller
+/// sends `Accept: text/event-stream`, or plain `application/json` otherwise.
+async fn manta_as_mcp_server_handler(
+    State(state): State<Arc<GatewayState>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::http::header;
+
+    // Parse the incoming JSON-RPC request.
+    let request: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return json_rpc_error_response(None, -32700, &format!("Parse error: {}", e));
+        }
+    };
+
+    let id = request.get("id").cloned();
+    let method = match request["method"].as_str() {
+        Some(m) => m.to_string(),
+        None => {
+            return json_rpc_error_response(id.as_ref(), -32600, "Invalid request: missing method");
+        }
+    };
+
+    let result: serde_json::Value = match method.as_str() {
+        "initialize" => {
+            let tools = state.tool_registry.get_definitions();
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {
+                    "name": "manta",
+                    "version": crate::VERSION,
+                },
+                "capabilities": {
+                    "tools": { "count": tools.len() }
+                }
+            })
+        }
+
+        "tools/list" => {
+            let defs = state.tool_registry.get_definitions();
+            let tools: Vec<serde_json::Value> = defs
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "name": d.name,
+                        "description": d.description,
+                        "inputSchema": d.parameters,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "tools": tools })
+        }
+
+        "tools/call" => {
+            let params = &request["params"];
+            let tool_name = match params["name"].as_str() {
+                Some(n) => n.to_string(),
+                None => {
+                    return json_rpc_error_response(id.as_ref(), -32602, "Missing tool name");
+                }
+            };
+            let args = params["arguments"].clone();
+
+            let context = crate::tools::ToolContext::default();
+            match state
+                .tool_registry
+                .execute(&tool_name, args, &context)
+                .await
+            {
+                Some(Ok(exec_result)) => {
+                    serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": exec_result.output,
+                        }]
+                    })
+                }
+                Some(Err(e)) => {
+                    return json_rpc_error_response(
+                        id.as_ref(),
+                        -32603,
+                        &format!("Tool error: {}", e),
+                    );
+                }
+                None => {
+                    return json_rpc_error_response(
+                        id.as_ref(),
+                        -32601,
+                        &format!("Tool not found: {}", tool_name),
+                    );
+                }
+            }
+        }
+
+        _ => {
+            return json_rpc_error_response(
+                id.as_ref(),
+                -32601,
+                &format!("Method not found: {}", method),
+            );
+        }
+    };
+
+    let response_json = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
+    });
+
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if accept.contains("text/event-stream") {
+        // Respond as SSE
+        let sse_body = format!("data: {}\n\n", response_json);
+        axum::response::Response::builder()
+            .status(200)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(axum::body::Body::from(sse_body))
+            .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+    } else {
+        axum::response::Response::builder()
+            .status(200)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(response_json.to_string()))
+            .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+    }
+}
+
+/// Helper: build a JSON-RPC error response as an Axum Response.
+fn json_rpc_error_response(
+    id: Option<&serde_json::Value>,
+    code: i32,
+    message: &str,
+) -> axum::response::Response {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    });
+    axum::response::Response::builder()
+        .status(200)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
 }

@@ -250,6 +250,126 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
     }
 }
 
+// ── Embedding dedup cache ─────────────────────────────────────────────────────
+
+/// In-memory SHA-256 content-dedup cache for embedding vectors.
+///
+/// Wraps any [`EmbeddingProvider`] and skips API calls for texts whose SHA-256
+/// hash has already been cached.  The cache is bounded to `max_entries`; when
+/// full, the oldest inserted entry is evicted (simple FIFO).
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use std::sync::Arc;
+/// # use manta::memory::vector::{ApiEmbeddingProvider, CachedEmbeddingProvider};
+/// let inner = ApiEmbeddingProvider::new("key".into(), "text-embedding-3-small".into(), 1536);
+/// let cached = CachedEmbeddingProvider::new(inner, 10_000);
+/// ```
+pub struct CachedEmbeddingProvider<P: EmbeddingProvider> {
+    inner: P,
+    /// SHA-256 hex → embedding vector.
+    cache: RwLock<std::collections::HashMap<String, Vec<f32>>>,
+    /// Insertion-order keys for FIFO eviction.
+    order: RwLock<std::collections::VecDeque<String>>,
+    max_entries: usize,
+}
+
+impl<P: EmbeddingProvider> CachedEmbeddingProvider<P> {
+    /// Wrap `provider` with a FIFO dedup cache capped at `max_entries`.
+    pub fn new(provider: P, max_entries: usize) -> Self {
+        Self {
+            inner: provider,
+            cache: RwLock::new(std::collections::HashMap::new()),
+            order: RwLock::new(std::collections::VecDeque::new()),
+            max_entries,
+        }
+    }
+
+    /// SHA-256 hex digest of `text` used as the cache key.
+    fn sha256_key(text: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(text.as_bytes());
+        format!("{:x}", hash)
+    }
+
+    /// Current number of cached entries.
+    pub async fn cache_size(&self) -> usize {
+        self.cache.read().await.len()
+    }
+
+    /// Remove all cached entries.
+    pub async fn clear_cache(&self) {
+        self.cache.write().await.clear();
+        self.order.write().await.clear();
+    }
+}
+
+#[async_trait]
+impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingProvider<P> {
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+        let mut result: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        let mut miss_indices: Vec<usize> = Vec::new();
+        let mut miss_texts: Vec<String> = Vec::new();
+
+        // Cache-hit pass.
+        {
+            let cache = self.cache.read().await;
+            for (i, text) in texts.iter().enumerate() {
+                let key = Self::sha256_key(text);
+                if let Some(emb) = cache.get(&key) {
+                    result[i] = Some(emb.clone());
+                } else {
+                    miss_indices.push(i);
+                    miss_texts.push(text.clone());
+                }
+            }
+        }
+
+        if miss_texts.is_empty() {
+            return Ok(result.into_iter().flatten().collect());
+        }
+
+        // Fetch missing embeddings from the inner provider.
+        let fetched = self.inner.embed_batch(&miss_texts).await?;
+
+        // Store fetched embeddings in cache, evicting oldest if full.
+        {
+            let mut cache = self.cache.write().await;
+            let mut order = self.order.write().await;
+
+            for (text, embedding) in miss_texts.iter().zip(fetched.iter()) {
+                let key = Self::sha256_key(text);
+                if !cache.contains_key(&key) {
+                    // Evict oldest if at capacity.
+                    if cache.len() >= self.max_entries {
+                        if let Some(oldest) = order.pop_front() {
+                            cache.remove(&oldest);
+                        }
+                    }
+                    cache.insert(key.clone(), embedding.clone());
+                    order.push_back(key);
+                }
+            }
+        }
+
+        // Merge fetched embeddings back into result.
+        for (local_idx, global_idx) in miss_indices.into_iter().enumerate() {
+            result[global_idx] = Some(fetched[local_idx].clone());
+        }
+
+        Ok(result.into_iter().flatten().collect())
+    }
+}
+
 /// Vector storage trait
 #[async_trait]
 pub trait VectorStore: Send + Sync {
@@ -668,5 +788,83 @@ mod tests {
 
         assert!((cosine_similarity(&a, &b) - 0.0).abs() < 0.001);
         assert!((cosine_similarity(&a, &c) - 1.0).abs() < 0.001);
+    }
+
+    // ── CachedEmbeddingProvider tests ────────────────────────────────────────
+
+    /// Minimal stub that counts embed_batch calls.
+    struct CountingProvider {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        dim: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for CountingProvider {
+        fn model_name(&self) -> &str {
+            "stub"
+        }
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+        async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(texts.iter().map(|_| vec![0.0_f32; self.dim]).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cached_embedding_hit() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = CountingProvider { calls: calls.clone(), dim: 4 };
+        let cached = CachedEmbeddingProvider::new(provider, 100);
+
+        let texts = vec!["hello world".to_string()];
+        let _ = cached.embed_batch(&texts).await.unwrap();
+        let _ = cached.embed_batch(&texts).await.unwrap();
+
+        // Second call should be served from cache → only 1 actual call to inner.
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cached.cache_size().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cached_embedding_miss_different_text() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = CountingProvider { calls: calls.clone(), dim: 4 };
+        let cached = CachedEmbeddingProvider::new(provider, 100);
+
+        let _ = cached.embed_batch(&["text_a".to_string()]).await.unwrap();
+        let _ = cached.embed_batch(&["text_b".to_string()]).await.unwrap();
+
+        // Each unique text is a cache miss.
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(cached.cache_size().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_cached_embedding_eviction() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = CountingProvider { calls: calls.clone(), dim: 2 };
+        let cached = CachedEmbeddingProvider::new(provider, 2); // cap = 2
+
+        let _ = cached.embed_batch(&["a".to_string()]).await.unwrap();
+        let _ = cached.embed_batch(&["b".to_string()]).await.unwrap();
+        // Full: inserting "c" should evict "a".
+        let _ = cached.embed_batch(&["c".to_string()]).await.unwrap();
+
+        assert_eq!(cached.cache_size().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_cached_embedding_clear() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = CountingProvider { calls: calls.clone(), dim: 2 };
+        let cached = CachedEmbeddingProvider::new(provider, 100);
+
+        let _ = cached.embed_batch(&["hello".to_string()]).await.unwrap();
+        assert_eq!(cached.cache_size().await, 1);
+
+        cached.clear_cache().await;
+        assert_eq!(cached.cache_size().await, 0);
     }
 }

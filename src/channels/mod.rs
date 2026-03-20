@@ -740,7 +740,12 @@ impl ExtendedChannelRegistry {
 
     /// List all available channel names
     pub async fn list(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.native.list().into_iter().map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = self
+            .native
+            .list()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
 
         if let Some(ref plugins) = self.plugins {
             names.extend(plugins.list_loaded().await);
@@ -750,7 +755,11 @@ impl ExtendedChannelRegistry {
     }
 
     /// Load a WASM plugin
-    pub async fn load_plugin(&self, name: &str, config: Option<serde_json::Value>) -> crate::Result<()> {
+    pub async fn load_plugin(
+        &self,
+        name: &str,
+        config: Option<serde_json::Value>,
+    ) -> crate::Result<()> {
         if let Some(ref plugins) = self.plugins {
             plugins.load_plugin(name, config).await?;
         }
@@ -863,7 +872,7 @@ mod tests {
 }
 
 // Re-exports for new channel management modules
-pub use health::{ChannelHealthMonitor, ChannelHealth, HealthStatus};
+pub use health::{ChannelHealth, ChannelHealthMonitor, HealthStatus};
 pub use lifecycle::{ChannelLifecycle, ChannelStatus, LifecycleManager, RestartPolicy};
-pub use metrics::{ChannelMetrics, MetricsManager, MetricsSnapshot, LatencyWindow};
+pub use metrics::{ChannelMetrics, LatencyWindow, MetricsManager, MetricsSnapshot};
 pub use state::{ChannelState, ChannelStateStore};

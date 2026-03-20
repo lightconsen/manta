@@ -1,7 +1,7 @@
 //! Cron job management commands for Manta
 
-use clap::Subcommand;
 use crate::error::Result;
+use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub enum CronCommands {
