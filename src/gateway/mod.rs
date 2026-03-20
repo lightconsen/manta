@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     response::{Html, IntoResponse, Json},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -1084,6 +1084,34 @@ impl Gateway {
             .route("/api/v1/skills/:id/enable", post(enable_skill_handler))
             .route("/api/v1/skills/:id/disable", post(disable_skill_handler))
             .route("/api/v1/skills/:id/run", post(run_skill_handler))
+            // Cron job management API
+            .route("/api/v1/cron", get(list_cron_jobs_handler).post(add_cron_job_handler))
+            .route("/api/v1/cron/:id", delete(remove_cron_job_handler))
+            .route("/api/v1/cron/:id/enable", post(enable_cron_job_handler))
+            .route("/api/v1/cron/:id/disable", post(disable_cron_job_handler))
+            .route("/api/v1/cron/:id/run", post(trigger_cron_job_handler))
+            .route("/api/v1/cron/:id/logs", get(cron_job_logs_handler))
+            // Entity management API
+            .route("/api/v1/entities", get(list_entities_handler).post(create_entity_handler))
+            .route("/api/v1/entities/search", post(search_entities_handler))
+            .route("/api/v1/entities/export", get(export_entities_handler))
+            .route("/api/v1/entities/import", post(import_entities_handler))
+            .route(
+                "/api/v1/entities/:id",
+                get(get_entity_handler).put(update_entity_handler).delete(delete_entity_handler),
+            )
+            // Team management API
+            .route("/api/v1/teams", get(list_teams_handler).post(create_team_handler))
+            .route("/api/v1/teams/:id", get(get_team_handler).delete(delete_team_handler))
+            .route(
+                "/api/v1/teams/:id/members",
+                get(list_team_members_handler).post(add_team_member_handler),
+            )
+            .route(
+                "/api/v1/teams/:id/members/:agent",
+                delete(remove_team_member_handler),
+            )
+            .route("/api/v1/teams/:id/tasks", post(assign_team_task_handler))
             // ACP (Agent Control Plane) API
             .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
             .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
@@ -1974,6 +2002,14 @@ impl Gateway {
         let state = self.state.clone();
         let current_config = self.config.clone();
 
+        // Pre-clone for handlers registered after the main handler
+        // (the main handler's `move` closure will consume `state` and `current_config`)
+        let state_agent = state.clone();
+        let state_channel = state.clone();
+        let current_config_channel = current_config.clone();
+        let state_plugin = state.clone();
+        let state_gateway = state.clone();
+
         // Handler for main config changes (includes manta.toml)
         hot_reload
             .register_handler(ConfigFileType::Main, move |_event| {
@@ -2111,40 +2147,249 @@ impl Gateway {
             .await;
 
         // Handler for agent config changes
-        hot_reload
-            .register_handler(ConfigFileType::Agent, |event| async move {
-                info!("Agent config changed: {:?} - reloading agent settings", event.path);
-                // Would update agent configurations dynamically
-                Ok(())
-            })
-            .await;
+        {
+            let state = state_agent;
+            hot_reload
+                .register_handler(ConfigFileType::Agent, move |event| {
+                    let state = state.clone();
+                    async move {
+                        let agent_name = event
+                            .path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        info!(
+                            "Agent config changed for '{}': {:?}",
+                            agent_name, event.path
+                        );
+
+                        let content = match tokio::fs::read_to_string(&event.path).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!("Failed to read agent config {:?}: {}", event.path, e);
+                                return Ok(());
+                            }
+                        };
+
+                        let new_config: AgentConfig = match toml::from_str(&content) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    "Failed to parse agent config for '{}': {}",
+                                    agent_name, e
+                                );
+                                return Ok(());
+                            }
+                        };
+
+                        // Send UpdateConfig to the running agent if it exists
+                        let agents = state.agents.read().await;
+                        if let Some(handle) = agents.get(&agent_name) {
+                            match handle.tx.send(AgentCommand::UpdateConfig(new_config)).await {
+                                Ok(_) => {
+                                    info!("✅ Sent config update to agent '{}'", agent_name)
+                                }
+                                Err(e) => warn!(
+                                    "Failed to send config update to agent '{}': {}",
+                                    agent_name, e
+                                ),
+                            }
+                        } else {
+                            info!(
+                                "Agent '{}' not currently running; config will apply on next start",
+                                agent_name
+                            );
+                        }
+
+                        Ok(())
+                    }
+                })
+                .await;
+        }
 
         // Handler for channel config changes
-        hot_reload
-            .register_handler(ConfigFileType::Channel, |event| async move {
-                info!("Channel config changed: {:?} - updating channel settings", event.path);
-                // Would update channel configurations dynamically
-                Ok(())
-            })
-            .await;
+        {
+            let state = state_channel;
+            let current_config = current_config_channel;
+            hot_reload
+                .register_handler(ConfigFileType::Channel, move |event| {
+                    let state = state.clone();
+                    let current_config = current_config.clone();
+                    async move {
+                        let channel_name = event
+                            .path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        info!(
+                            "Channel config changed for '{}': {:?}",
+                            channel_name, event.path
+                        );
+
+                        let content = match tokio::fs::read_to_string(&event.path).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    "Failed to read channel config {:?}: {}",
+                                    event.path, e
+                                );
+                                return Ok(());
+                            }
+                        };
+
+                        let new_channel_config: ChannelConfig = match toml::from_str(&content) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    "Failed to parse channel config for '{}': {}",
+                                    channel_name, e
+                                );
+                                return Ok(());
+                            }
+                        };
+
+                        if !new_channel_config.enabled {
+                            let mut channels = state.channels.write().await;
+                            if channels.remove(&channel_name).is_some() {
+                                info!("✅ Stopped disabled channel '{}'", channel_name);
+                            }
+                            return Ok(());
+                        }
+
+                        // Stop existing channel
+                        {
+                            let mut channels = state.channels.write().await;
+                            channels.remove(&channel_name);
+                        }
+
+                        // Re-initialize with new config
+                        let gateway =
+                            Gateway { state: state.clone(), config: current_config.clone() };
+                        match gateway
+                            .init_single_channel(&channel_name, &new_channel_config)
+                            .await
+                        {
+                            Ok(_) => info!(
+                                "✅ Hot-reloaded channel '{}' with updated config",
+                                channel_name
+                            ),
+                            Err(e) => {
+                                error!("Failed to hot-reload channel '{}': {}", channel_name, e)
+                            }
+                        }
+
+                        Ok(())
+                    }
+                })
+                .await;
+        }
 
         // Handler for plugin config changes
-        hot_reload
-            .register_handler(ConfigFileType::Plugin, |event| async move {
-                info!("Plugin config changed: {:?} - reloading plugins", event.path);
-                // Would reload plugin configurations
-                Ok(())
-            })
-            .await;
+        {
+            let state = state_plugin;
+            hot_reload
+                .register_handler(ConfigFileType::Plugin, move |event| {
+                    let state = state.clone();
+                    async move {
+                        // The plugin config file lives inside the plugin dir:
+                        // ~/.manta/plugins/<plugin_id>/manifest.json (or similar)
+                        let plugin_dir = event.path.parent().unwrap_or(&event.path).to_path_buf();
+                        let plugin_id = plugin_dir
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_default()
+                            .to_string();
+
+                        info!(
+                            "Plugin config changed for '{}': {:?}",
+                            plugin_id, event.path
+                        );
+
+                        if plugin_id.is_empty() {
+                            warn!("Could not determine plugin ID from path {:?}", event.path);
+                            return Ok(());
+                        }
+
+                        // Unload existing instance, then reload from plugin dir
+                        match state.plugin_manager.unload_plugin(&plugin_id).await {
+                            Ok(true) => {
+                                info!("Unloaded plugin '{}' for reload", plugin_id);
+                                match state.plugin_manager.load_plugin(&plugin_dir).await {
+                                    Ok(loaded_id) => {
+                                        info!("✅ Reloaded plugin '{}' (id={})", plugin_id, loaded_id)
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to reload plugin '{}': {}", plugin_id, e)
+                                    }
+                                }
+                            }
+                            Ok(false) => {
+                                // Plugin wasn't loaded, try a fresh load
+                                match state.plugin_manager.load_plugin(&plugin_dir).await {
+                                    Ok(loaded_id) => {
+                                        info!("✅ Loaded new plugin '{}' (id={})", plugin_id, loaded_id)
+                                    }
+                                    Err(e) => {
+                                        warn!("Could not load plugin '{}': {}", plugin_id, e)
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to unload plugin '{}': {}", plugin_id, e)
+                            }
+                        }
+
+                        Ok(())
+                    }
+                })
+                .await;
+        }
 
         // Handler for gateway config changes
-        hot_reload
-            .register_handler(ConfigFileType::Gateway, |event| async move {
-                info!("Gateway config changed: {:?} - updating gateway settings", event.path);
-                // Would update gateway routes, security settings, etc.
-                Ok(())
-            })
-            .await;
+        {
+            let state = state_gateway;
+            hot_reload
+                .register_handler(ConfigFileType::Gateway, move |event| {
+                    let state = state.clone();
+                    async move {
+                        info!("Gateway config changed: {:?}", event.path);
+
+                        let content = match tokio::fs::read_to_string(&event.path).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    "Failed to read gateway config {:?}: {}",
+                                    event.path, e
+                                );
+                                return Ok(());
+                            }
+                        };
+
+                        let new_config: GatewayConfig = match toml::from_str(&content) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!("Failed to parse gateway config: {}", e);
+                                return Ok(());
+                            }
+                        };
+
+                        // Apply hot-reloadable fields (those that don't require server restart)
+                        let mut config = state.config.write().await;
+                        config.security = new_config.security;
+                        config.providers = new_config.providers;
+                        config.mcp = new_config.mcp;
+                        config.hot_reload = new_config.hot_reload;
+                        info!(
+                            "✅ Applied gateway config updates (security, providers, mcp settings)"
+                        );
+
+                        Ok(())
+                    }
+                })
+                .await;
+        }
 
         info!("Registered hot reload handlers for all config types");
     }
@@ -4970,6 +5215,708 @@ async fn resolve_approval_handler(
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": format!("Approval '{}' not found", req.id) })),
+        )
+            .into_response(),
+    }
+}
+
+// ── Cron job management ───────────────────────────────────────────────────────
+
+/// `GET /api/v1/cron` — list all scheduled jobs.
+async fn list_cron_jobs_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => {
+            let jobs = scheduler.lock().await.list_jobs().await;
+            Json(serde_json::json!({ "jobs": jobs, "count": jobs.len() })).into_response()
+        }
+        None => Json(serde_json::json!({ "jobs": [], "count": 0 })).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AddCronJobRequest {
+    name: String,
+    schedule: String,
+    command: String,
+}
+
+/// `POST /api/v1/cron` — create a new cron job.
+async fn add_cron_job_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<AddCronJobRequest>,
+) -> impl IntoResponse {
+    use crate::cron::advanced::{AdvancedCronJob, ExecutionTarget, Schedule as CronSchedule};
+    use std::str::FromStr;
+
+    let schedule = match cron::Schedule::from_str(&req.schedule) {
+        Ok(_) => CronSchedule::Cron {
+            expression: req.schedule.clone(),
+            timezone: None,
+            stagger_ms: None,
+        },
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Invalid cron expression: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let job = AdvancedCronJob::new(
+        job_id.clone(),
+        req.name.clone(),
+        schedule,
+        ExecutionTarget::shell(req.command),
+    );
+
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.add_job(job).await {
+            Ok(()) => Json(serde_json::json!({
+                "success": true,
+                "id": job_id,
+                "name": req.name,
+            }))
+            .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to add job: {}", e) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// `DELETE /api/v1/cron/:id` — remove a cron job.
+async fn remove_cron_job_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.remove_job(&id).await {
+            Ok(()) => Json(serde_json::json!({ "success": true, "id": id })).into_response(),
+            Err(e) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/v1/cron/:id/enable` — enable a cron job.
+async fn enable_cron_job_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, true).await {
+            Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": true }))
+                .into_response(),
+            Err(e) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/v1/cron/:id/disable` — disable a cron job.
+async fn disable_cron_job_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, false).await {
+            Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": false }))
+                .into_response(),
+            Err(e) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/v1/cron/:id/run` — trigger a cron job immediately.
+async fn trigger_cron_job_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.trigger_job(&id).await {
+            Ok(()) => {
+                Json(serde_json::json!({ "success": true, "id": id, "triggered": true }))
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/cron/:id/logs` — return job state / last-run info.
+async fn cron_job_logs_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let guard = state.cron_scheduler.read().await;
+    match guard.as_ref() {
+        Some(scheduler) => match scheduler.lock().await.get_job(&id).await {
+            Some(job) => Json(serde_json::json!({
+                "id": job.id,
+                "name": job.name,
+                "enabled": job.enabled,
+                "run_count": job.state.run_count,
+                "last_run_at": job.state.last_run_at,
+                "next_run_at": job.state.next_run_at,
+                "last_error": job.state.last_error,
+                "consecutive_errors": job.state.consecutive_errors,
+            }))
+            .into_response(),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("Job '{}' not found", id) })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Cron scheduler not running" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── Entity management ─────────────────────────────────────────────────────────
+
+/// `GET /api/v1/entities` — list all entities.
+async fn list_entities_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let storage = state.storage.read().await;
+    match storage.list().await {
+        Ok(entities) => Json(serde_json::json!({
+            "entities": entities,
+            "count": entities.len(),
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateEntityRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+/// `POST /api/v1/entities` — create a new entity.
+async fn create_entity_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<CreateEntityRequest>,
+) -> impl IntoResponse {
+    use crate::core::models::{Entity, Status};
+
+    let mut entity = Entity::new(req.name);
+    if let Some(desc) = req.description {
+        entity = entity.with_description(desc);
+    }
+    if let Some(tags) = req.tags {
+        entity = entity.with_tags(tags);
+    }
+    if let Some(status_str) = req.status {
+        if let Ok(s) = status_str.parse::<Status>() {
+            entity = entity.with_status(s);
+        }
+    }
+
+    let storage = state.storage.read().await;
+    match storage.create(&entity).await {
+        Ok(()) => (StatusCode::CREATED, Json(entity)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/entities/:id` — get a single entity.
+async fn get_entity_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    use crate::core::models::Id;
+
+    let entity_id = match Id::parse(&id) {
+        Ok(i) => i,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Invalid ID: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let storage = state.storage.read().await;
+    match storage.get(entity_id).await {
+        Ok(entity) => Json(entity).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateEntityRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+/// `PUT /api/v1/entities/:id` — update an entity.
+async fn update_entity_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<UpdateEntityRequest>,
+) -> impl IntoResponse {
+    use crate::core::models::{Id, Status};
+
+    let entity_id = match Id::parse(&id) {
+        Ok(i) => i,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Invalid ID: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let storage = state.storage.read().await;
+    let mut entity = match storage.get(entity_id).await {
+        Ok(e) => e,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(name) = req.name {
+        entity.set_name(name);
+    }
+    if let Some(desc) = req.description {
+        entity.description = Some(desc);
+    }
+    if let Some(tags) = req.tags {
+        entity.tags = Some(tags);
+    }
+    if let Some(status_str) = req.status {
+        if let Ok(s) = status_str.parse::<Status>() {
+            entity.status = s;
+        }
+    }
+    entity.metadata.touch();
+
+    match storage.update(&entity).await {
+        Ok(()) => Json(entity).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `DELETE /api/v1/entities/:id` — delete an entity.
+async fn delete_entity_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    use crate::core::models::Id;
+
+    let entity_id = match Id::parse(&id) {
+        Ok(i) => i,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Invalid ID: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let storage = state.storage.read().await;
+    match storage.delete(entity_id).await {
+        Ok(()) => Json(serde_json::json!({ "success": true, "id": id })).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchEntitiesRequest {
+    query: String,
+    #[serde(default)]
+    entity_type: Option<String>,
+}
+
+/// `POST /api/v1/entities/search` — search entities by name.
+async fn search_entities_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<SearchEntitiesRequest>,
+) -> impl IntoResponse {
+    let storage = state.storage.read().await;
+    match storage.list().await {
+        Ok(entities) => {
+            let query_lower = req.query.to_lowercase();
+            let results: Vec<_> = entities
+                .into_iter()
+                .filter(|e| {
+                    e.name.to_lowercase().contains(&query_lower)
+                        || e.description
+                            .as_deref()
+                            .map(|d| d.to_lowercase().contains(&query_lower))
+                            .unwrap_or(false)
+                })
+                .collect();
+            Json(serde_json::json!({ "results": results, "count": results.len() })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/entities/export` — export all entities as JSON.
+async fn export_entities_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let storage = state.storage.read().await;
+    match storage.list().await {
+        Ok(entities) => Json(serde_json::json!({ "entities": entities, "count": entities.len() }))
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportEntitiesRequest {
+    entities: Vec<serde_json::Value>,
+}
+
+/// `POST /api/v1/entities/import` — bulk import entities.
+async fn import_entities_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<ImportEntitiesRequest>,
+) -> impl IntoResponse {
+    use crate::core::models::Entity;
+
+    let storage = state.storage.read().await;
+    let mut imported = 0usize;
+    let mut errors = Vec::<String>::new();
+
+    for val in req.entities {
+        match serde_json::from_value::<Entity>(val) {
+            Ok(entity) => match storage.create(&entity).await {
+                Ok(()) => imported += 1,
+                Err(e) => errors.push(format!("{}: {}", entity.name, e)),
+            },
+            Err(e) => errors.push(format!("Parse error: {}", e)),
+        }
+    }
+
+    Json(serde_json::json!({
+        "imported": imported,
+        "errors": errors,
+    }))
+    .into_response()
+}
+
+// ── Team management ───────────────────────────────────────────────────────────
+
+/// `GET /api/v1/teams` — list all teams.
+async fn list_teams_handler(_state: State<Arc<GatewayState>>) -> impl IntoResponse {
+    match crate::team::Team::list_all().await {
+        Ok(names) => Json(serde_json::json!({ "teams": names, "count": names.len() }))
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTeamRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+/// `POST /api/v1/teams` — create a new team.
+async fn create_team_handler(
+    _state: State<Arc<GatewayState>>,
+    Json(req): Json<CreateTeamRequest>,
+) -> impl IntoResponse {
+    let mut team = crate::team::Team::new(req.name.clone());
+    team.description = req.description;
+    team.active = true;
+
+    match team.save().await {
+        Ok(()) => (StatusCode::CREATED, Json(team)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/teams/:id` — get team details.
+async fn get_team_handler(
+    Path(id): Path<String>,
+    _state: State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match crate::team::Team::load(&id).await {
+        Ok(team) => Json(team).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `DELETE /api/v1/teams/:id` — delete a team.
+async fn delete_team_handler(
+    Path(id): Path<String>,
+    _state: State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match crate::team::Team::load(&id).await {
+        Ok(team) => match team.delete().await {
+            Ok(()) => Json(serde_json::json!({ "success": true, "name": id })).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response(),
+        },
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/teams/:id/members` — list team members.
+async fn list_team_members_handler(
+    Path(id): Path<String>,
+    _state: State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match crate::team::Team::load(&id).await {
+        Ok(team) => {
+            let members: Vec<_> = team.members.values().collect();
+            Json(serde_json::json!({ "members": members, "count": members.len() })).into_response()
+        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AddTeamMemberRequest {
+    agent: String,
+    #[serde(default = "default_member_role")]
+    role: String,
+}
+
+fn default_member_role() -> String {
+    "member".to_string()
+}
+
+/// `POST /api/v1/teams/:id/members` — add a member to the team.
+async fn add_team_member_handler(
+    Path(id): Path<String>,
+    _state: State<Arc<GatewayState>>,
+    Json(req): Json<AddTeamMemberRequest>,
+) -> impl IntoResponse {
+    match crate::team::Team::load(&id).await {
+        Ok(mut team) => {
+            team.add_member(req.agent.clone(), req.role);
+            match team.save().await {
+                Ok(()) => Json(serde_json::json!({
+                    "success": true,
+                    "team": id,
+                    "agent": req.agent,
+                }))
+                .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("{}", e) })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// `DELETE /api/v1/teams/:id/members/:agent` — remove a member from the team.
+async fn remove_team_member_handler(
+    Path((id, agent)): Path<(String, String)>,
+    _state: State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match crate::team::Team::load(&id).await {
+        Ok(mut team) => {
+            team.remove_member(&agent);
+            match team.save().await {
+                Ok(()) => Json(serde_json::json!({
+                    "success": true,
+                    "team": id,
+                    "agent": agent,
+                }))
+                .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("{}", e) })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("{}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AssignTeamTaskRequest {
+    task: String,
+    #[serde(default = "default_task_priority")]
+    priority: String,
+}
+
+fn default_task_priority() -> String {
+    "normal".to_string()
+}
+
+/// `POST /api/v1/teams/:id/tasks` — assign a task to the team via the mesh.
+async fn assign_team_task_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<AssignTeamTaskRequest>,
+) -> impl IntoResponse {
+    // Verify team exists
+    let team = match crate::team::Team::load(&id).await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    // Route the task through the message queue using the team as a session
+    let session_id = format!("team:{}", id);
+    let queued = crate::gateway::QueuedMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        channel: "team".to_string(),
+        user_id: format!("team:{}", team.name),
+        content: format!("[priority:{}] {}", req.priority, req.task),
+        session_id,
+        timestamp: chrono::Utc::now(),
+        model_alias: None,
+    };
+
+    match state.message_queue.send(queued).await {
+        Ok(()) => Json(serde_json::json!({
+            "success": true,
+            "team": id,
+            "task": req.task,
+            "priority": req.priority,
+            "queued": true,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to queue task: {}", e) })),
         )
             .into_response(),
     }

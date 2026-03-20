@@ -148,8 +148,7 @@ Reply with ONLY "CACHE" or "NOCACHE"."#,
     }
 }
 
-/// Determine if tools used are cacheable
-#[allow(dead_code)]
+/// Determine if tools used are cacheable (time-sensitive tools skip caching)
 fn are_tools_cacheable(tool_names: &[String]) -> bool {
     // Non-cacheable tools that return time-sensitive or real-time data
     let non_cacheable = [
@@ -180,7 +179,6 @@ fn are_tools_cacheable(tool_names: &[String]) -> bool {
 pub struct CachedResponse {
     pub response: String,
     pub created_at: SystemTime,
-    #[allow(dead_code)]
     pub tools_used: Vec<String>,
 }
 

@@ -58,10 +58,22 @@ impl SlackConfig {
 }
 
 /// Slack channel implementation
-#[derive(Debug)]
 pub struct SlackChannel {
     config: SlackConfig,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Maps our internal message ID -> (slack_channel_id, slack_ts) for edit/delete
+    message_ids: std::sync::Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, (String, String)>>,
+    >,
+}
+
+impl std::fmt::Debug for SlackChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlackChannel")
+            .field("config", &self.config)
+            .field("running", &self.running)
+            .finish()
+    }
 }
 
 impl SlackChannel {
@@ -70,6 +82,9 @@ impl SlackChannel {
         Self {
             config,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            message_ids: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -289,13 +304,28 @@ impl Channel for SlackChannel {
                     crate::error::MantaError::Internal(format!("Slack send failed: {}", e))
                 })?;
 
-            if resp.status().is_success() {
+            let resp_status = resp.status();
+            let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
+
+            if resp_status.is_success() && resp_json["ok"].as_bool().unwrap_or(false) {
+                let slack_ts =
+                    resp_json["ts"].as_str().unwrap_or("").to_string();
+                let slack_channel = resp_json["channel"]
+                    .as_str()
+                    .unwrap_or(&channel_id)
+                    .to_string();
+                let msg_id = Id::new();
+                if !slack_ts.is_empty() {
+                    let mut map = self.message_ids.write().await;
+                    map.insert(msg_id.to_string(), (slack_channel, slack_ts));
+                }
                 debug!("Slack message sent successfully");
-                Ok(Id::new())
+                Ok(msg_id)
             } else {
                 Err(crate::error::MantaError::Internal(format!(
-                    "Slack API error: {}",
-                    resp.status()
+                    "Slack API error: {} — {}",
+                    resp_status,
+                    resp_json["error"].as_str().unwrap_or("unknown")
                 )))
             }
         }
@@ -315,9 +345,46 @@ impl Channel for SlackChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         #[cfg(feature = "slack")]
         {
-            let _ = (message_id, new_content);
-            // Would use chat.update API
-            // Requires channel_id and timestamp
+            let msg_key = message_id.to_string();
+            let (slack_channel, slack_ts) = {
+                let map = self.message_ids.read().await;
+                map.get(&msg_key).cloned().ok_or_else(|| {
+                    crate::error::MantaError::NotFound {
+                        resource: format!(
+                            "Slack message {} not found in tracking (may have been sent before bot started)",
+                            msg_key
+                        ),
+                    }
+                })?
+            };
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .post("https://slack.com/api/chat.update")
+                .header("Authorization", format!("Bearer {}", self.config.bot_token))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "channel": slack_channel,
+                    "ts": slack_ts,
+                    "text": new_content,
+                }))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Slack edit request failed: {}", e))
+                })?;
+
+            let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
+            if !resp_json["ok"].as_bool().unwrap_or(false) {
+                return Err(crate::error::MantaError::ExternalService {
+                    source: format!(
+                        "Slack chat.update failed: {}",
+                        resp_json["error"].as_str().unwrap_or("unknown")
+                    ),
+                    cause: None,
+                });
+            }
+
             Ok(())
         }
 
@@ -331,8 +398,52 @@ impl Channel for SlackChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         #[cfg(feature = "slack")]
         {
-            let _ = message_id;
-            // Would use chat.delete API
+            let msg_key = message_id.to_string();
+            let (slack_channel, slack_ts) = {
+                let map = self.message_ids.read().await;
+                map.get(&msg_key).cloned().ok_or_else(|| {
+                    crate::error::MantaError::NotFound {
+                        resource: format!(
+                            "Slack message {} not found in tracking (may have been sent before bot started)",
+                            msg_key
+                        ),
+                    }
+                })?
+            };
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .post("https://slack.com/api/chat.delete")
+                .header("Authorization", format!("Bearer {}", self.config.bot_token))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "channel": slack_channel,
+                    "ts": slack_ts,
+                }))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!(
+                        "Slack delete request failed: {}",
+                        e
+                    ))
+                })?;
+
+            let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
+            if !resp_json["ok"].as_bool().unwrap_or(false) {
+                return Err(crate::error::MantaError::ExternalService {
+                    source: format!(
+                        "Slack chat.delete failed: {}",
+                        resp_json["error"].as_str().unwrap_or("unknown")
+                    ),
+                    cause: None,
+                });
+            }
+
+            // Remove from tracking map
+            let mut map = self.message_ids.write().await;
+            map.remove(&msg_key);
+
             Ok(())
         }
 

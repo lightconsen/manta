@@ -1,7 +1,10 @@
 //! Admin commands for Gateway management
 
-use crate::error::Result;
+use crate::error::{MantaError, Result};
 use clap::Subcommand;
+
+/// Default daemon base URL.
+const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
 pub enum AdminCommands {
@@ -57,49 +60,178 @@ pub enum AdminCommands {
 
 /// Run admin commands
 pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
+    let client = reqwest::Client::new();
+
     match command {
         AdminCommands::Status => {
-            println!("Gateway status...");
+            let url = format!("{}/api/v1/status", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
+                    eprintln!("Is the daemon running? Try: manta start");
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Providers => {
-            println!("Listing providers...");
+            let url = format!("{}/api/v1/providers", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Models => {
-            println!("Listing models...");
+            let url = format!("{}/api/v1/models", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Default => {
-            println!("Showing default model...");
+            let url = format!("{}/api/v1/models/default", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Switch { model } => {
-            println!("Switching to model: {}", model);
+            let url = format!("{}/api/v1/providers/switch", DAEMON_URL);
+            let body = serde_json::json!({ "model": model });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Switched to model alias '{}'", model);
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to switch model ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Enable { provider } => {
-            println!("Enabling provider: {}", provider);
+            let url = format!("{}/api/v1/providers/{}/enable", DAEMON_URL, provider);
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Provider '{}' enabled", provider);
+                    } else {
+                        eprintln!("Failed to enable provider ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Disable { provider } => {
-            println!("Disabling provider: {}", provider);
+            let url = format!("{}/api/v1/providers/{}/disable", DAEMON_URL, provider);
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Provider '{}' disabled", provider);
+                    } else {
+                        eprintln!("Failed to disable provider ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Health { provider } => {
-            println!("Checking health for: {}", provider);
+            let url = format!("{}/api/v1/providers/{}/health", DAEMON_URL, provider);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Fallback { alias } => {
-            println!("Showing fallback for: {}", alias);
+            let url = format!("{}/api/v1/providers/fallback/{}", DAEMON_URL, alias);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         AdminCommands::Agents => {
-            println!("Listing agents...");
-        }
-        AdminCommands::Send {
-            session_id,
-            message,
-            provider,
-            model,
-        } => {
-            println!("Sending to {}: {}", session_id, message);
-            if let Some(p) = provider {
-                println!("  Provider: {}", p);
+            let url = format!("{}/api/v1/agents", DAEMON_URL);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
             }
-            if let Some(m) = model {
-                println!("  Model: {}", m);
+        }
+        AdminCommands::Send { session_id, message, provider, model } => {
+            let url = format!("{}/api/v1/sessions/{}/messages", DAEMON_URL, session_id);
+            let body = serde_json::json!({
+                "content": message,
+                "provider": provider,
+                "model": model,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to send message ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
             }
         }
     }

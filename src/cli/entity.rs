@@ -1,8 +1,11 @@
 //! Entity management commands for Manta
 
-use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
-use crate::error::Result;
+use crate::core::models::Status;
+use crate::error::{MantaError, Result};
 use clap::Subcommand;
+
+/// Default daemon base URL.
+const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
 pub enum EntityCommands {
@@ -91,41 +94,182 @@ pub enum EntityCommands {
 
 /// Run entity commands
 pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
+    let client = reqwest::Client::new();
+
     match command {
-        EntityCommands::List { status, format } => {
-            println!("Listing entities (status={:?}, format={:?})", status, format);
+        EntityCommands::List { status, format: _ } => {
+            let mut url = format!("{}/api/v1/entities", DAEMON_URL);
+            if let Some(s) = status {
+                url = format!("{}?status={:?}", url, s);
+            }
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
+                    eprintln!("Is the daemon running? Try: manta start");
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
-        EntityCommands::Create {
-            name,
-            entity_type,
-            status,
-            metadata,
-        } => {
-            println!(
-                "Creating entity {} (type={}, status={:?}, metadata={:?})",
-                name, entity_type, status, metadata
-            );
+        EntityCommands::Create { name, entity_type, status, metadata } => {
+            let url = format!("{}/api/v1/entities", DAEMON_URL);
+            let meta_value: serde_json::Value = metadata
+                .as_deref()
+                .and_then(|m| serde_json::from_str(m).ok())
+                .unwrap_or(serde_json::Value::Null);
+            let body = serde_json::json!({
+                "name": name,
+                "entity_type": entity_type,
+                "status": format!("{:?}", status).to_lowercase(),
+                "metadata": meta_value,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status_code.is_success() {
+                        println!("Entity '{}' created", name);
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to create entity ({}): {}", status_code, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
-        EntityCommands::Get { id, format } => {
-            println!("Getting entity {} (format={:?})", id, format);
+        EntityCommands::Get { id, format: _ } => {
+            let url = format!("{}/api/v1/entities/{}", DAEMON_URL, id);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         EntityCommands::Update { id, name, status, metadata } => {
-            println!(
-                "Updating entity {} (name={:?}, status={:?}, metadata={:?})",
-                id, name, status, metadata
-            );
+            let url = format!("{}/api/v1/entities/{}", DAEMON_URL, id);
+            let meta_value: Option<serde_json::Value> = metadata
+                .as_deref()
+                .and_then(|m| serde_json::from_str(m).ok());
+            let body = serde_json::json!({
+                "name": name,
+                "status": status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                "metadata": meta_value,
+            });
+            match client.put(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status_code.is_success() {
+                        println!("Entity '{}' updated", id);
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to update entity ({}): {}", status_code, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         EntityCommands::Delete { id, force } => {
-            println!("Deleting entity {} (force={})", id, force);
+            if !force {
+                println!("Delete entity '{}'? Use --force to confirm.", id);
+                return Ok(());
+            }
+            let url = format!("{}/api/v1/entities/{}", DAEMON_URL, id);
+            match client.delete(&url).send().await {
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status_code.is_success() {
+                        println!("Entity '{}' deleted", id);
+                    } else {
+                        eprintln!("Failed to delete entity ({}): {}", status_code, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
-        EntityCommands::Search { query, entity_type, format } => {
-            println!("Searching for '{}' (type={:?}, format={:?})", query, entity_type, format);
+        EntityCommands::Search { query, entity_type, format: _ } => {
+            let url = format!("{}/api/v1/entities/search", DAEMON_URL);
+            let body = serde_json::json!({
+                "query": query,
+                "entity_type": entity_type,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         EntityCommands::Export { output, entity_type } => {
-            println!("Exporting entities to {:?} (type={:?})", output, entity_type);
+            let mut url = format!("{}/api/v1/entities/export", DAEMON_URL);
+            if let Some(et) = entity_type {
+                url = format!("{}?entity_type={}", url, et);
+            }
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    if let Some(path) = output {
+                        tokio::fs::write(path, &body).await.map_err(|e| {
+                            MantaError::Internal(format!("Failed to write export file: {}", e))
+                        })?;
+                        println!("Entities exported to {:?}", path);
+                    } else {
+                        println!("{}", body);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
         EntityCommands::Import { path, no_validate } => {
-            println!("Importing entities from {:?} (validate={})", path, !no_validate);
+            let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+                MantaError::Internal(format!("Failed to read file {:?}: {}", path, e))
+            })?;
+            let url = format!("{}/api/v1/entities/import", DAEMON_URL);
+            let body = serde_json::json!({
+                "data": content,
+                "validate": !no_validate,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status_code.is_success() {
+                        println!("Entities imported from {:?}", path);
+                        println!("{}", text);
+                    } else {
+                        eprintln!("Failed to import entities ({}): {}", status_code, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
     }
     Ok(())
