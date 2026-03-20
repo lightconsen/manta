@@ -550,6 +550,8 @@ pub struct QueuedMessage {
     pub content: String,
     pub session_id: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Optional model alias hint for agent routing
+    pub model_alias: Option<String>,
 }
 
 /// Query parameters for WebSocket connection
@@ -573,6 +575,8 @@ pub struct SwitchModelRequest {
 pub struct SendMessageRequest {
     /// Message content
     pub message: String,
+    /// Optional caller user ID (falls back to "api_user")
+    pub user_id: Option<String>,
     /// Optional provider override (e.g., "anthropic", "openai")
     pub provider_override: Option<String>,
     /// Optional model alias override (e.g., "fast", "smart")
@@ -1280,14 +1284,14 @@ impl Gateway {
                             });
 
                         // Process message with progress callbacks
-                        let response_content = match agent
+                        let (response_content, response_usage) = match agent
                             .process_message_with_progress(incoming_msg, progress_cb)
                             .await
                         {
-                            Ok(outgoing) => outgoing.content,
+                            Ok(outgoing) => (outgoing.content, outgoing.usage),
                             Err(e) => {
                                 error!("Agent {} failed to process message: {}", agent_id, e);
-                                format!("Error processing message: {}", e)
+                                (format!("Error processing message: {}", e), None)
                             }
                         };
 
@@ -1308,7 +1312,7 @@ impl Gateway {
                             content: response_content,
                             channel: source_channel,
                             conversation_id,
-                            usage: None, // TODO: plumb usage from process_message_with_progress result
+                            usage: response_usage,
                         });
 
                         // Update status to idle
@@ -2913,7 +2917,6 @@ async fn send_message_handler(
 ) -> impl IntoResponse {
     // Check if provider override is specified
     let provider_override = body.provider_override.clone();
-    let _model_alias = body.model_alias.clone();
 
     // Queue message for processing with provider override
     let message_id = uuid::Uuid::new_v4().to_string();
@@ -2952,14 +2955,14 @@ async fn send_message_handler(
     }
 
     // Otherwise, queue for normal agent processing
-    // TODO: Implement proper message queue processing with model_alias support
     let queued_msg = QueuedMessage {
         id: message_id.clone(),
         channel: "api".to_string(),
-        user_id: "api_user".to_string(),
+        user_id: body.user_id.clone().unwrap_or_else(|| "api_user".to_string()),
         content: body.message,
         session_id: session_id.clone(),
         timestamp: chrono::Utc::now(),
+        model_alias: body.model_alias.clone(),
     };
 
     if let Err(e) = state.message_queue.send(queued_msg).await {

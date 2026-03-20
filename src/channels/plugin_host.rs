@@ -300,15 +300,44 @@ impl PluginChannel {
                 },
             ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define receive_message: {}", e)))?;
 
-            // Define host.get_config function - returns (ptr, len)
+            // Define host.get_config function - returns packed i64: high 32 = len, low 32 = ptr
             linker.func_wrap(
                 "host",
                 "get-config",
                 |mut caller: wasmtime::Caller<'_, HostState>| -> i64 {
-                    let config = caller.data().config.clone();
-                    // Return packed i64: high 32 bits = len, low 32 bits = ptr
-                    // This is a simplified version - in reality we'd need to allocate
-                    0i64 // Placeholder
+                    let config_bytes = caller.data().config.as_bytes().to_vec();
+                    let len = config_bytes.len() as i32;
+
+                    // Obtain alloc function from guest (Func is Copy — no borrow retained)
+                    let alloc_fn = caller
+                        .get_export("alloc")
+                        .and_then(|e| e.into_func());
+                    let alloc_typed = alloc_fn
+                        .and_then(|f| f.typed::<i32, i32>(&caller).ok());
+
+                    // Call guest alloc to reserve a buffer
+                    let ptr = match alloc_typed {
+                        Some(f) => match f.call(&mut caller, len) {
+                            Ok(p) => p,
+                            Err(_) => return 0i64,
+                        },
+                        None => return 0i64,
+                    };
+
+                    // Write config bytes into guest linear memory
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return 0i64,
+                    };
+                    let data = memory.data_mut(&mut caller);
+                    let start = ptr as usize;
+                    let end = start + config_bytes.len();
+                    if end <= data.len() {
+                        data[start..end].copy_from_slice(&config_bytes);
+                        ((len as i64) << 32) | (ptr as i64)
+                    } else {
+                        0i64
+                    }
                 },
             ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define get_config: {}", e)))?;
 

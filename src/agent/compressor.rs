@@ -271,19 +271,56 @@ impl ContextCompressor {
         result
     }
 
-    /// Create a summary message from a set of messages
+    /// Create a heuristic summary message from a set of messages.
+    ///
+    /// Groups turns into user-request / assistant-response pairs and produces a
+    /// compact digest that preserves the key intent of each exchange.  This is a
+    /// best-effort sync fallback; for LLM-quality summarization use
+    /// [`compact_with_llm`].
     fn create_summary(&self, messages: &[Message]) -> Message {
-        let summary_points: Vec<String> = messages
+        let mut lines: Vec<String> = Vec::new();
+
+        let non_empty: Vec<&Message> = messages
             .iter()
             .filter(|m| !m.content.is_empty())
-            .take(10)
-            .map(|m| format!("- {}: {}", m.role, m.content.chars().take(100).collect::<String>()))
             .collect();
+
+        let mut i = 0;
+        while i < non_empty.len() {
+            let msg = non_empty[i];
+            match msg.role {
+                Role::User => {
+                    // User turn: capture the request intent (up to 150 chars)
+                    let preview: String = msg.content.chars().take(150).collect();
+                    let ellipsis = if msg.content.len() > 150 { "…" } else { "" };
+                    lines.push(format!("Q: {}{}", preview, ellipsis));
+
+                    // Peek at the following assistant turn if present
+                    if i + 1 < non_empty.len() && non_empty[i + 1].role == Role::Assistant {
+                        let resp = non_empty[i + 1];
+                        let preview: String = resp.content.chars().take(250).collect();
+                        let ellipsis = if resp.content.len() > 250 { "…" } else { "" };
+                        lines.push(format!("A: {}{}", preview, ellipsis));
+                        i += 2;
+                        continue;
+                    }
+                }
+                Role::Assistant => {
+                    let preview: String = msg.content.chars().take(250).collect();
+                    let ellipsis = if msg.content.len() > 250 { "…" } else { "" };
+                    lines.push(format!("A: {}{}", preview, ellipsis));
+                }
+                _ => {
+                    // Skip tool calls and other roles in the summary
+                }
+            }
+            i += 1;
+        }
 
         let content = format!(
             "[Summary of {} previous messages]\n{}",
             messages.len(),
-            summary_points.join("\n")
+            lines.join("\n")
         );
 
         Message {

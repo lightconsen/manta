@@ -592,16 +592,12 @@ impl EventHandler for DiscordHandler {
                     .with_extra("discord_channel_id", channel_id),
             );
 
-            // Send to handler if configured
+            // Send to handler if configured; responses arrive via Channel::send()
             if let Some(tx) = &self.config.message_tx {
                 let _ = tx.send(incoming);
+            } else {
+                warn!("No message_tx configured for Discord channel — message dropped");
             }
-
-            // Echo for now (replace with agent integration)
-            let _ = msg
-                .channel_id
-                .say(&ctx.http, format!("Echo: {}", msg.content))
-                .await;
         }
     }
 

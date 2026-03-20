@@ -25,16 +25,32 @@ macro_rules! include_builtin_skills {
         // Weather
         skills.insert("weather", include_str!("builtin/weather/SKILL.md"));
 
-        // TODO: Add remaining skills as they're converted
-        // - cron
-        // - clawhub
-        // - summarize
-        // - tmux
-        // - agent-browser
-        // - api-gateway
-        // - nano-pdf
-        // - self-improving-agent
-        // - agent-creator
+        // Cron
+        skills.insert("cron", include_str!("builtin/cron/SKILL.md"));
+
+        // ClaW Hub
+        skills.insert("clawhub", include_str!("builtin/clawhub/SKILL.md"));
+
+        // Summarize
+        skills.insert("summarize", include_str!("builtin/summarize/SKILL.md"));
+
+        // Tmux
+        skills.insert("tmux", include_str!("builtin/tmux/SKILL.md"));
+
+        // Agent Browser
+        skills.insert("agent-browser", include_str!("builtin/agent-browser/SKILL.md"));
+
+        // API Gateway
+        skills.insert("api-gateway", include_str!("builtin/api-gateway/SKILL.md"));
+
+        // Nano PDF
+        skills.insert("nano-pdf", include_str!("builtin/nano-pdf/SKILL.md"));
+
+        // Self-Improving Agent
+        skills.insert("self-improving-agent", include_str!("builtin/self-improving-agent/SKILL.md"));
+
+        // Agent Creator
+        skills.insert("agent-creator", include_str!("builtin/agent-creator/SKILL.md"));
 
         skills
     }};
@@ -115,5 +131,15 @@ mod tests {
         assert!(skills.contains_key("find-skills"));
         assert!(skills.contains_key("github"));
         assert!(skills.contains_key("weather"));
+        assert!(skills.contains_key("cron"));
+        assert!(skills.contains_key("clawhub"));
+        assert!(skills.contains_key("summarize"));
+        assert!(skills.contains_key("tmux"));
+        assert!(skills.contains_key("agent-browser"));
+        assert!(skills.contains_key("api-gateway"));
+        assert!(skills.contains_key("nano-pdf"));
+        assert!(skills.contains_key("self-improving-agent"));
+        assert!(skills.contains_key("agent-creator"));
+        assert_eq!(skills.len(), 13);
     }
 }
