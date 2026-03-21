@@ -5,10 +5,12 @@
 //! same Tokio runtime — no external processes.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::path::Path;
+use std::time::{Duration, Instant, SystemTime};
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::error::MantaError;
@@ -67,6 +69,41 @@ pub struct SubagentMetrics {
     pub total_failed: u64,
     /// Runs that were killed.
     pub total_killed: u64,
+}
+
+// ── Persistence types ─────────────────────────────────────────────────────────
+
+/// Terminal outcome for a persisted run record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RunOutcome {
+    /// The run completed successfully with this output.
+    Completed(String),
+    /// The run failed with this error message.
+    Failed(String),
+}
+
+/// A serializable snapshot of a completed subagent run, used for crash recovery.
+///
+/// Uses `SystemTime` (wall clock) instead of `Instant` so it can be stored
+/// to disk and loaded on restart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunRecord {
+    /// Unique run identifier.
+    pub run_id: String,
+    /// Session that spawned this run.
+    pub parent_session: String,
+    /// Session allocated for the child.
+    pub child_session: String,
+    /// Agent that handled the task.
+    pub target_agent: String,
+    /// Nesting depth at the time of spawn.
+    pub spawn_depth: u32,
+    /// Wall-clock time the run started.
+    pub started_at: SystemTime,
+    /// Wall-clock time the run finished.
+    pub completed_at: SystemTime,
+    /// Terminal outcome.
+    pub outcome: RunOutcome,
 }
 
 /// Registry for in-process subagent lifecycle management.
@@ -343,6 +380,74 @@ impl SubagentRegistry {
             matches!(run.status, SubagentStatus::Running)
                 || run.completed_at.map(|t| t > cutoff).unwrap_or(true)
         });
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    /// Persist completed/failed runs to `path` as newline-delimited JSON.
+    ///
+    /// Running and killed runs are omitted — only terminal states are written
+    /// so the file can be used to reconstruct crash history on restart.
+    pub async fn persist_to(&self, path: &Path) -> std::io::Result<()> {
+        let runs = self.runs.read().await;
+        let now_instant = Instant::now();
+        let now_system = SystemTime::now();
+
+        let records: Vec<RunRecord> = runs
+            .values()
+            .filter_map(|r| {
+                // Only persist terminal states.
+                let outcome = match &r.status {
+                    SubagentStatus::Completed(out) => RunOutcome::Completed(out.clone()),
+                    SubagentStatus::Failed(err) => RunOutcome::Failed(err.clone()),
+                    _ => return None,
+                };
+
+                // Convert Instant durations to SystemTime for serialization.
+                let elapsed_started = now_instant
+                    .checked_duration_since(r.started_at)
+                    .unwrap_or_default();
+                let started_at = now_system
+                    .checked_sub(elapsed_started)
+                    .unwrap_or(now_system);
+
+                let elapsed_completed = r
+                    .completed_at
+                    .and_then(|t| now_instant.checked_duration_since(t))
+                    .unwrap_or_default();
+                let completed_at = now_system.checked_sub(elapsed_completed).unwrap_or(now_system);
+
+                Some(RunRecord {
+                    run_id: r.run_id.clone(),
+                    parent_session: r.parent_session.clone(),
+                    child_session: r.child_session.clone(),
+                    target_agent: r.target_agent.clone(),
+                    spawn_depth: r.spawn_depth,
+                    started_at,
+                    completed_at,
+                    outcome,
+                })
+            })
+            .collect();
+
+        let json = serde_json::to_string(&records)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        tokio::fs::write(path, json).await?;
+        debug!(path = %path.display(), count = records.len(), "Persisted subagent run records");
+        Ok(())
+    }
+
+    /// Load crash-recovery records from `path`.
+    ///
+    /// Returns the deserialized records without inserting them into the
+    /// live registry (they're historical, not active runs).
+    pub async fn load_from(path: &Path) -> std::io::Result<Vec<RunRecord>> {
+        let bytes = tokio::fs::read(path).await?;
+        let records: Vec<RunRecord> = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        info!(path = %path.display(), count = records.len(), "Loaded subagent run records");
+        Ok(records)
     }
 }
 
