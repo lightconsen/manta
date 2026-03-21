@@ -39,6 +39,7 @@ use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
 pub mod middleware;
+pub mod send_policy;
 pub mod webhooks;
 
 /// Gateway configuration

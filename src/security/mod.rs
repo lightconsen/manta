@@ -1436,6 +1436,9 @@ mod header_tests {
 /// Security audit module
 pub mod audit;
 
+/// DM pairing and access control
+pub mod pairing;
+
 /// Penetration testing module
 pub mod pentest;
 

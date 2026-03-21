@@ -4,15 +4,9 @@
 //! using the `clap` crate.
 
 use crate::config::Config;
-use crate::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
-use crate::core::Engine;
 use crate::error::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tracing::{debug, info, instrument, warn};
 
 // Subcommand modules
 mod admin;
@@ -24,6 +18,7 @@ mod daemon;
 mod entity;
 mod mcp;
 mod plugin;
+mod security;
 mod skill;
 mod team;
 
@@ -34,6 +29,7 @@ pub use cron::CronCommands;
 pub use entity::EntityCommands;
 pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
+pub use security::SecurityCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 
@@ -174,6 +170,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: McpCommands,
     },
+    /// Security audit, DM pairing, and access control
+    Security {
+        /// Security subcommand
+        #[command(subcommand)]
+        command: SecurityCommands,
+    },
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -285,6 +287,7 @@ impl Cli {
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
+            Commands::Security { command } => security::run_security_command(command).await,
         }
     }
 }
