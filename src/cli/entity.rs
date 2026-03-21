@@ -97,10 +97,22 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
-        EntityCommands::List { status, format: _ } => {
-            let mut url = format!("{}/api/v1/entities", DAEMON_URL);
+        EntityCommands::List { status, format } => {
+            let mut params = Vec::new();
             if let Some(s) = status {
-                url = format!("{}?status={:?}", url, s);
+                params.push(format!("status={:?}", s).to_lowercase());
+            }
+            let fmt_str = match format {
+                crate::cli::OutputFormat::Table => "table",
+                crate::cli::OutputFormat::Json => "json",
+                crate::cli::OutputFormat::Yaml => "yaml",
+                crate::cli::OutputFormat::Plain => "plain",
+            };
+            params.push(format!("format={}", fmt_str));
+            let mut url = format!("{}/api/v1/entities", DAEMON_URL);
+            if !params.is_empty() {
+                url.push('?');
+                url.push_str(&params.join("&"));
             }
             match client.get(&url).send().await {
                 Ok(resp) => {
@@ -143,8 +155,14 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
             }
         }
-        EntityCommands::Get { id, format: _ } => {
-            let url = format!("{}/api/v1/entities/{}", DAEMON_URL, id);
+        EntityCommands::Get { id, format } => {
+            let fmt_str = match format {
+                crate::cli::OutputFormat::Table => "table",
+                crate::cli::OutputFormat::Json => "json",
+                crate::cli::OutputFormat::Yaml => "yaml",
+                crate::cli::OutputFormat::Plain => "plain",
+            };
+            let url = format!("{}/api/v1/entities/{}?format={}", DAEMON_URL, id, fmt_str);
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let body = resp.text().await.unwrap_or_default();
@@ -205,8 +223,14 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
             }
         }
-        EntityCommands::Search { query, entity_type, format: _ } => {
-            let url = format!("{}/api/v1/entities/search", DAEMON_URL);
+        EntityCommands::Search { query, entity_type, format } => {
+            let fmt_str = match format {
+                crate::cli::OutputFormat::Table => "table",
+                crate::cli::OutputFormat::Json => "json",
+                crate::cli::OutputFormat::Yaml => "yaml",
+                crate::cli::OutputFormat::Plain => "plain",
+            };
+            let url = format!("{}/api/v1/entities/search?format={}", DAEMON_URL, fmt_str);
             let body = serde_json::json!({
                 "query": query,
                 "entity_type": entity_type,

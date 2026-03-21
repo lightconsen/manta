@@ -222,14 +222,19 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
         }
 
         PluginCommands::Reload => {
-            // There is no live-reload endpoint; show current loaded plugins.
-            println!("Note: live plugin reload requires a daemon restart (manta restart).");
-            println!("Current plugin state:");
-            let url = format!("{}/api/v1/plugins", DAEMON_URL);
-            match client.get(&url).send().await {
+            let url = format!("{}/api/v1/plugins/reload", DAEMON_URL);
+            match client.post(&url).send().await {
                 Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Plugins reloaded successfully.");
+                        if !text.is_empty() {
+                            println!("{}", text);
+                        }
+                    } else {
+                        eprintln!("Reload failed ({}): {}", status, text);
+                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);

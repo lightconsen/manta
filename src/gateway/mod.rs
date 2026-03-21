@@ -1075,6 +1075,7 @@ impl Gateway {
             .route("/api/v1/memory/collections", get(list_memory_collections_handler))
             // Plugin management API
             .route("/api/v1/plugins", get(list_plugins_handler))
+            .route("/api/v1/plugins/reload", post(reload_plugins_handler))
             .route("/api/v1/plugins/:id/enable", post(enable_plugin_handler))
             .route("/api/v1/plugins/:id/disable", post(disable_plugin_handler))
             .route("/api/v1/plugins/:id/unload", delete(unload_plugin_handler))
@@ -1512,16 +1513,17 @@ impl Gateway {
                     };
 
                     if let Some(client_arc) = self.state.mcp_manager.get_client(server_id).await {
-                        // We can't mutate Arc<ToolRegistry> safely here unless we wrap it.
-                        // Log available tools so operators know what's available.
                         for tool in tools.iter().take(max_tools) {
-                            let qname = format!("mcp__{}__{}", server_id, tool.name);
-                            debug!("  MCP tool ready: {}", qname);
+                            let wrapper = Arc::new(McpToolWrapper::new(
+                                client_arc.clone(),
+                                server_id,
+                                tool,
+                            ));
+                            self.state.tool_registry.register_dynamic(wrapper);
+                            debug!(
+                                "  Registered MCP tool: mcp__{}__{}", server_id, tool.name
+                            );
                         }
-                        // Tools can be invoked via the `mcp` agent tool or McpToolWrapper.
-                        // Full ToolRegistry auto-registration requires mutable access;
-                        // it is deferred to the `mcp connect` agent action at runtime.
-                        let _ = client_arc; // keep reference
                     }
                 }
                 Err(e) => {
@@ -3349,7 +3351,8 @@ async fn handle_canvas_websocket(
     info!("Canvas WebSocket connected: {}", canvas_id.0);
 
     // Get or create canvas session
-    let (event_tx, mut event_rx) = mpsc::channel::<CanvasEvent>(100);
+    let (event_tx, _event_rx) = mpsc::channel::<CanvasEvent>(100);
+    let event_tx_client = event_tx.clone();
 
     let canvas_session = match state.canvas_manager.get_session(&canvas_id).await {
         Some(session) => session,
@@ -3372,12 +3375,14 @@ async fn handle_canvas_websocket(
         }
     });
 
-    // Task to receive client events
+    // Task to receive client events and forward them into the canvas session
     let event_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(text) = msg {
                 if let Ok(event) = serde_json::from_str::<CanvasEvent>(&text) {
-                    let _ = event_rx.recv().await;
+                    if event_tx_client.send(event).await.is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -3813,6 +3818,35 @@ async fn unload_plugin_handler(
         Err(e) => {
             let error = serde_json::json!({
                 "error": format!("Failed to unload plugin: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+async fn reload_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    // Unload all currently loaded plugins, then re-initialize from disk.
+    let plugins = state.plugin_manager.list_plugins().await;
+    let ids: Vec<String> = plugins.iter().map(|p| p.id().to_string()).collect();
+    let mut unloaded = 0usize;
+    for id in &ids {
+        match state.plugin_manager.unload_plugin(id).await {
+            Ok(_) => unloaded += 1,
+            Err(e) => warn!("Failed to unload plugin '{}' during reload: {}", id, e),
+        }
+    }
+    match state.plugin_manager.initialize().await {
+        Ok(loaded) => {
+            let response = serde_json::json!({
+                "success": true,
+                "unloaded": unloaded,
+                "loaded": loaded,
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Reload failed: {}", e),
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }

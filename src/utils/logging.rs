@@ -56,10 +56,16 @@ where
             .with_span_list(true)
             .with_writer(io::stdout);
 
-        if config.logging.file.is_some() {
-            // For simplicity, just log to stdout when both are configured
-            // A production app would need more sophisticated file handling
-            registry.with(stdout_layer).init();
+        if let Some(ref log_file) = config.logging.file {
+            let file = create_log_file(log_file)?;
+            let file_layer = tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_current_span(true)
+                .with_span_list(true)
+                .with_writer(file);
+            registry.with(stdout_layer).with(file_layer).init();
         } else {
             registry.with(stdout_layer).init();
         }
@@ -92,7 +98,17 @@ where
             .with_thread_ids(true)
             .with_writer(io::stdout);
 
-        registry.with(stdout_layer).init();
+        if let Some(ref log_file) = config.logging.file {
+            let file = create_log_file(log_file)?;
+            let file_layer = tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_writer(file);
+            registry.with(stdout_layer).with(file_layer).init();
+        } else {
+            registry.with(stdout_layer).init();
+        }
     } else if let Some(ref log_file) = config.logging.file {
         let file = create_log_file(log_file)?;
         let file_layer = tracing_subscriber::fmt::layer()
@@ -120,7 +136,17 @@ where
             .with_thread_ids(false)
             .with_writer(io::stdout);
 
-        registry.with(stdout_layer).init();
+        if let Some(ref log_file) = config.logging.file {
+            let file = create_log_file(log_file)?;
+            let file_layer = tracing_subscriber::fmt::layer()
+                .compact()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_writer(file);
+            registry.with(stdout_layer).with(file_layer).init();
+        } else {
+            registry.with(stdout_layer).init();
+        }
     } else if let Some(ref log_file) = config.logging.file {
         let file = create_log_file(log_file)?;
         let file_layer = tracing_subscriber::fmt::layer()

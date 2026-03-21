@@ -74,8 +74,23 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
-        SkillCommands::List { all: _, format: _ } => {
-            let url = format!("{}/api/v1/skills", DAEMON_URL);
+        SkillCommands::List { all, format } => {
+            let mut url = format!("{}/api/v1/skills", DAEMON_URL);
+            let mut params = Vec::new();
+            if *all {
+                params.push("all=true".to_string());
+            }
+            let fmt_str = match format {
+                crate::cli::OutputFormat::Table => "table",
+                crate::cli::OutputFormat::Json => "json",
+                crate::cli::OutputFormat::Yaml => "yaml",
+                crate::cli::OutputFormat::Plain => "plain",
+            };
+            params.push(format!("format={}", fmt_str));
+            if !params.is_empty() {
+                url.push('?');
+                url.push_str(&params.join("&"));
+            }
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let body = resp.text().await.unwrap_or_default();
