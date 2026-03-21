@@ -42,3 +42,5 @@ DIFF.md
 
 # Local development scripts with sensitive data
 start-local-*.sh
+
+DIFF.md
