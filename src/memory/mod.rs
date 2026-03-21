@@ -19,8 +19,8 @@ pub mod local_embeddings;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 pub use hybrid::{
-    apply_temporal_decay, hybrid_search, HybridSearchConfig, HybridSearchResult,
-    TemporalDecayConfig,
+    apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
+    MmrConfig, TemporalDecayConfig,
 };
 pub use personality::{MemoryType, PersonalityMemory};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
