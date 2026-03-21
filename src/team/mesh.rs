@@ -17,6 +17,8 @@ pub struct TeamMeshManager {
     mesh: AssistantMesh,
     /// Active team sessions (team_id -> TeamMeshSession)
     team_sessions: Arc<RwLock<HashMap<String, TeamMeshSession>>>,
+    /// Per-agent inbox queues: "{team_id}:{agent_name}" -> pending messages
+    agent_inboxes: Arc<RwLock<HashMap<String, Vec<MeshMessage>>>>,
 }
 
 /// Team mesh session - tracks active team communication state
@@ -57,6 +59,7 @@ impl TeamMeshManager {
         Self {
             mesh: AssistantMesh::new(),
             team_sessions: Arc::new(RwLock::new(HashMap::new())),
+            agent_inboxes: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -106,16 +109,28 @@ impl TeamMeshManager {
 
         // Register all agents with the mesh
         for agent_name in &session.agents {
-            let rx = self
-                .mesh
-                .register(format!("{}:{}", team_id, agent_name))
-                .await;
+            let inbox_key = format!("{}:{}", team_id, agent_name);
+
+            // Initialize inbox for this agent
+            {
+                let mut inboxes = self.agent_inboxes.write().await;
+                inboxes.entry(inbox_key.clone()).or_insert_with(Vec::new);
+            }
+
+            let rx = self.mesh.register(inbox_key.clone()).await;
 
             // Spawn message receiver for this agent
             let team_id_clone = team_id.clone();
             let agent_name_clone = agent_name.clone();
+            let inboxes_clone = Arc::clone(&self.agent_inboxes);
             tokio::spawn(async move {
-                Self::agent_message_receiver(team_id_clone, agent_name_clone, rx).await;
+                Self::agent_message_receiver(
+                    team_id_clone,
+                    agent_name_clone,
+                    rx,
+                    inboxes_clone,
+                )
+                .await;
             });
 
             info!("Registered agent '{}' with team '{}' mesh", agent_name, team_id);
@@ -148,6 +163,8 @@ impl TeamMeshManager {
             for agent_name in &session.agents {
                 let mesh_id = format!("{}:{}", team_id, agent_name);
                 self.mesh.unregister(&mesh_id).await;
+                // Clean up inbox
+                self.agent_inboxes.write().await.remove(&mesh_id);
                 info!("Unregistered agent '{}' from team '{}' mesh", agent_name, team_id);
             }
 
@@ -417,13 +434,15 @@ impl TeamMeshManager {
             .collect()
     }
 
-    /// Message receiver for an agent
+    /// Message receiver for an agent — stores incoming messages in the agent's inbox.
     async fn agent_message_receiver(
         team_id: String,
         agent_name: String,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<MeshMessage>,
+        inboxes: Arc<RwLock<HashMap<String, Vec<MeshMessage>>>>,
     ) {
-        debug!("Started message receiver for {}:{} ", team_id, agent_name);
+        let inbox_key = format!("{}:{}", team_id, agent_name);
+        debug!("Started message receiver for {}", inbox_key);
 
         while let Some(msg) = rx.recv().await {
             info!(
@@ -434,16 +453,27 @@ impl TeamMeshManager {
                 msg.content.len()
             );
 
-            // Here you could:
-            // 1. Store in agent's incoming message queue
-            // 2. Trigger agent processing
-            // 3. Notify via WebSocket/Channel
-
-            // For now, just log - the agent would need to poll or have a callback
-            debug!("Message content: {}", msg.content);
+            // Store in agent's inbox for retrieval via `receive_messages_for`
+            let mut inboxes = inboxes.write().await;
+            inboxes.entry(inbox_key.clone()).or_insert_with(Vec::new).push(msg);
         }
 
-        debug!("Message receiver for {}:{} stopped", team_id, agent_name);
+        debug!("Message receiver for {} stopped", inbox_key);
+    }
+
+    /// Retrieve and drain all pending messages for an agent.
+    ///
+    /// Returns messages in FIFO order and clears the inbox.  The agent (or
+    /// `TeamCommunicateTool`) can call this to get messages sent to it by
+    /// other team members.
+    pub async fn receive_messages_for(
+        &self,
+        team_id: &str,
+        agent_name: &str,
+    ) -> Vec<MeshMessage> {
+        let inbox_key = format!("{}:{}", team_id, agent_name);
+        let mut inboxes = self.agent_inboxes.write().await;
+        inboxes.remove(&inbox_key).unwrap_or_default()
     }
 }
 

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+use crate::channels::{ConversationId, OutgoingMessage};
 use super::GatewayState;
 
 /// Query params for webhook verification (used by some platforms)
@@ -196,7 +197,17 @@ async fn whatsapp_webhook_handler(
                                         "🆕 New WhatsApp session started for {}: {}",
                                         from, new_session
                                     );
-                                    // Send confirmation message back (would need channel.send here)
+                                    // Send confirmation message back to user
+                                    let channels = state.channels.read().await;
+                                    if let Some(channel) = channels.get("whatsapp") {
+                                        let confirmation = OutgoingMessage::new(
+                                            ConversationId(from.to_string()),
+                                            "✅ New session started. How can I help you?",
+                                        );
+                                        if let Err(e) = channel.send(confirmation).await {
+                                            warn!("Failed to send /new confirmation to {}: {}", from, e);
+                                        }
+                                    }
                                     new_session
                                 } else {
                                     // Get or create session UUID

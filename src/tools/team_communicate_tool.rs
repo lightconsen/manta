@@ -57,7 +57,7 @@ Examples:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["send", "broadcast", "status", "list", "history"],
+                    "enum": ["send", "broadcast", "status", "list", "history", "receive"],
                     "description": "Action to perform"
                 },
                 "to": {
@@ -285,8 +285,38 @@ Examples:
                 }
             }
 
+            "receive" => {
+                let messages = mesh_manager
+                    .receive_messages_for(&team_name, &sender_agent)
+                    .await;
+
+                if messages.is_empty() {
+                    Ok(ToolExecutionResult::success("No pending messages")
+                        .with_data(json!({"messages": [], "count": 0})))
+                } else {
+                    let formatted: Vec<serde_json::Value> = messages
+                        .into_iter()
+                        .map(|m| {
+                            json!({
+                                "id": m.id,
+                                "from": m.from,
+                                "content": m.content,
+                                "type": format!("{:?}", m.msg_type),
+                                "timestamp": m.timestamp
+                            })
+                        })
+                        .collect();
+                    let count = formatted.len();
+                    Ok(ToolExecutionResult::success(format!(
+                        "Retrieved {} pending message(s)",
+                        count
+                    ))
+                    .with_data(json!({"messages": formatted, "count": count})))
+                }
+            }
+
             _ => Err(crate::error::MantaError::Validation(format!(
-                "Unknown action: '{}'. Use: send, broadcast, status, list, history",
+                "Unknown action: '{}'. Use: send, broadcast, status, list, history, receive",
                 action
             ))),
         }

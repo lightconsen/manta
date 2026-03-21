@@ -449,6 +449,9 @@ struct CacheEntry {
 /// Registry of tools with optional caching, circuit breaker, and trust-level filtering.
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
+    /// Dynamically registered tools (e.g. MCP auto-discovered tools).
+    /// Uses interior mutability so tools can be added through `Arc<ToolRegistry>`.
+    dynamic_tools: std::sync::RwLock<HashMap<String, std::sync::Arc<dyn Tool>>>,
     /// Tool-name prefixes that have been logically deregistered (e.g. MCP
     /// server disconnect).  Tools matching any blocked prefix are excluded
     /// from `get`, `list`, `has`, `get_definitions`, and `get_available`
@@ -487,6 +490,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            dynamic_tools: std::sync::RwLock::new(HashMap::new()),
             blocked_prefixes: std::sync::RwLock::new(HashSet::new()),
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: None,
@@ -500,6 +504,7 @@ impl ToolRegistry {
     pub fn with_cache(ttl: Duration) -> Self {
         Self {
             tools: HashMap::new(),
+            dynamic_tools: std::sync::RwLock::new(HashMap::new()),
             blocked_prefixes: std::sync::RwLock::new(HashSet::new()),
             cache: std::sync::Mutex::new(HashMap::new()),
             cache_ttl: Some(ttl),
@@ -694,9 +699,34 @@ impl ToolRegistry {
         if let Ok(mut set) = self.blocked_prefixes.write() {
             set.insert(prefix.to_string());
         }
+        // Also remove matching dynamic tools immediately
+        if let Ok(mut map) = self.dynamic_tools.write() {
+            map.retain(|k, _| !k.starts_with(prefix));
+        }
     }
 
-    /// Get a tool by name (returns `None` for blocked or degraded tools)
+    /// Dynamically register a tool without requiring `&mut self`.
+    ///
+    /// This allows tools to be added through an `Arc<ToolRegistry>` — used by
+    /// the MCP subsystem to register auto-discovered tools at startup.
+    pub fn register_dynamic(&self, tool: std::sync::Arc<dyn Tool>) {
+        let name = tool.name().to_string();
+        if let Ok(mut map) = self.dynamic_tools.write() {
+            map.insert(name, tool);
+        }
+    }
+
+    /// Remove a single dynamically-registered tool by exact name.
+    pub fn deregister_dynamic(&self, name: &str) {
+        if let Ok(mut map) = self.dynamic_tools.write() {
+            map.remove(name);
+        }
+    }
+
+    /// Get a tool by name (returns `None` for blocked or degraded tools).
+    ///
+    /// Only covers statically-registered tools.  For dynamic tools use
+    /// `execute()` or `execute_call()` which check both registries.
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         if self.is_blocked(name) || self.is_degraded(name) {
             return None;
@@ -704,27 +734,59 @@ impl ToolRegistry {
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    /// List available tool names (excludes blocked and degraded tools)
-    pub fn list(&self) -> Vec<&str> {
-        self.tools
+    /// List available tool names (excludes blocked and degraded tools).
+    /// Includes both statically- and dynamically-registered tools.
+    pub fn list(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.tools
             .keys()
             .filter(|name| !self.is_blocked(name) && !self.is_degraded(name))
-            .map(|s| s.as_str())
-            .collect()
+            .cloned()
+            .collect();
+
+        if let Ok(dynamic) = self.dynamic_tools.read() {
+            for name in dynamic.keys() {
+                if !self.is_blocked(name) && !self.is_degraded(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+
+        names
     }
 
-    /// Check if a tool exists, is not blocked, and is not degraded
+    /// Check if a tool exists, is not blocked, and is not degraded.
+    /// Checks both static and dynamic registries.
     pub fn has(&self, name: &str) -> bool {
-        !self.is_blocked(name) && !self.is_degraded(name) && self.tools.contains_key(name)
+        if self.is_blocked(name) || self.is_degraded(name) {
+            return false;
+        }
+        if self.tools.contains_key(name) {
+            return true;
+        }
+        self.dynamic_tools
+            .read()
+            .map(|map| map.contains_key(name))
+            .unwrap_or(false)
     }
 
-    /// Get all tools as function definitions (excludes blocked and degraded tools)
+    /// Get all tools as function definitions (excludes blocked and degraded tools).
+    /// Includes both statically- and dynamically-registered tools.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
-        self.tools
+        let mut defs: Vec<FunctionDefinition> = self.tools
             .iter()
             .filter(|(name, _)| !self.is_blocked(name) && !self.is_degraded(name))
             .map(|(_, t)| t.to_function_definition())
-            .collect()
+            .collect();
+
+        if let Ok(dynamic) = self.dynamic_tools.read() {
+            for (name, tool) in dynamic.iter() {
+                if !self.is_blocked(name) && !self.is_degraded(name) {
+                    defs.push(tool.to_function_definition());
+                }
+            }
+        }
+
+        defs
     }
 
     /// Get all available tools for a given context.
@@ -733,17 +795,30 @@ impl ToolRegistry {
     /// - Blocked-prefix tools (MCP server disconnected)
     /// - Degraded tools (circuit-breaker tripped)
     /// - Privileged tools when `context.skill_trust == Community`
+    ///
+    /// Includes both statically- and dynamically-registered tools.
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
-        self.tools
+        let mut defs: Vec<FunctionDefinition> = self.tools
             .iter()
             .filter(|(name, t)| {
                 !self.is_excluded(name, context.skill_trust) && t.is_available(context)
             })
             .map(|(_, t)| t.to_function_definition())
-            .collect()
+            .collect();
+
+        if let Ok(dynamic) = self.dynamic_tools.read() {
+            for (name, tool) in dynamic.iter() {
+                if !self.is_excluded(name, context.skill_trust) && tool.is_available(context) {
+                    defs.push(tool.to_function_definition());
+                }
+            }
+        }
+
+        defs
     }
 
-    /// Execute a tool by name with optional caching
+    /// Execute a tool by name with optional caching.
+    /// Checks both static and dynamic registries.
     pub async fn execute(
         &self,
         name: &str,
@@ -757,15 +832,33 @@ impl ToolRegistry {
             return Some(Ok(cached_result));
         }
 
-        let tool = self.get(name)?;
-        let result = tool.execute(args, context).await;
-
-        // Cache successful results
-        if let Ok(ref exec_result) = result {
-            self.store_cached(cache_key, exec_result.clone());
+        // Try static tools first
+        if let Some(tool) = self.get(name) {
+            let result = tool.execute(args, context).await;
+            if let Ok(ref exec_result) = result {
+                self.store_cached(cache_key, exec_result.clone());
+            }
+            return Some(result);
         }
 
-        Some(result)
+        // Try dynamic tools
+        let dynamic_tool = self
+            .dynamic_tools
+            .read()
+            .ok()
+            .and_then(|map| map.get(name).cloned());
+
+        if let Some(tool) = dynamic_tool {
+            if !self.is_blocked(name) && !self.is_degraded(name) {
+                let result = tool.execute(args, context).await;
+                if let Ok(ref exec_result) = result {
+                    self.store_cached(cache_key, exec_result.clone());
+                }
+                return Some(result);
+            }
+        }
+
+        None
     }
 
     /// Execute a tool by name without caching
@@ -775,20 +868,31 @@ impl ToolRegistry {
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
-        let tool = self.get(name)?;
-        Some(tool.execute(args, context).await)
+        // Try static tools first
+        if let Some(tool) = self.get(name) {
+            return Some(tool.execute(args, context).await);
+        }
+        // Try dynamic tools
+        let dynamic_tool = self
+            .dynamic_tools
+            .read()
+            .ok()
+            .and_then(|map| map.get(name).cloned());
+        if let Some(tool) = dynamic_tool {
+            if !self.is_blocked(name) && !self.is_degraded(name) {
+                return Some(tool.execute(args, context).await);
+            }
+        }
+        None
     }
 
-    /// Execute a function call from an LLM
+    /// Execute a function call from an LLM.
+    /// Checks both static and dynamic registries.
     pub async fn execute_call(
         &self,
         call: &FunctionCall,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let tool = self.get(&call.name).ok_or_else(|| {
-            crate::error::MantaError::Validation(format!("Unknown tool: {}", call.name))
-        })?;
-
         let args: Value = serde_json::from_str(&call.arguments).map_err(|e| {
             crate::error::MantaError::Validation(format!(
                 "Invalid arguments for tool {}: {}",
@@ -796,7 +900,25 @@ impl ToolRegistry {
             ))
         })?;
 
-        tool.execute(args, context).await
+        // Try static tools first
+        if let Some(tool) = self.get(&call.name) {
+            return tool.execute(args, context).await;
+        }
+
+        // Try dynamic tools
+        let dynamic_tool = self
+            .dynamic_tools
+            .read()
+            .ok()
+            .and_then(|map| map.get(&call.name).cloned());
+
+        if let Some(tool) = dynamic_tool {
+            if !self.is_blocked(&call.name) && !self.is_degraded(&call.name) {
+                return tool.execute(args, context).await;
+            }
+        }
+
+        Err(crate::error::MantaError::Validation(format!("Unknown tool: {}", call.name)))
     }
 }
 
@@ -1065,7 +1187,7 @@ impl ToolRegistrar {
     }
 
     /// List available tool names
-    pub fn list(&self) -> Vec<&str> {
+    pub fn list(&self) -> Vec<String> {
         self.registry.list()
     }
 
@@ -1081,8 +1203,8 @@ impl ToolRegistrar {
             .into_iter()
             .filter_map(|name| {
                 self.registry
-                    .get(name)
-                    .map(|t| (name.to_string(), t.description().to_string()))
+                    .get(&name)
+                    .map(|t| (name.clone(), t.description().to_string()))
             })
             .collect()
     }

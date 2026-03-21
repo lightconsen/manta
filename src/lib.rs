@@ -29,8 +29,7 @@
 //! ```
 
 #![warn(rust_2018_idioms)]
-// Documentation warnings temporarily allowed due to large volume
-// TODO: Add documentation gradually as code stabilizes
+// Documentation warnings allowed - public APIs are documented as needed
 #![allow(missing_docs)]
 // Unsafe code is allowed only for platform-specific resource limits
 // All unsafe blocks are documented and justified

@@ -455,18 +455,17 @@ fn calculate_next_run(schedule: &str, from: DateTime<Utc>) -> Option<DateTime<Ut
     }
 }
 
-/// Simple cron expression parser
+/// Parse a standard 5-field cron expression using the `cron` crate.
 fn parse_cron_expression(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let parts: Vec<&str> = expr.split_whitespace().collect();
+    use std::str::FromStr;
 
-    if parts.len() != 5 {
-        warn!("Invalid cron expression: {}", expr);
-        return None;
+    match cron::Schedule::from_str(expr) {
+        Ok(schedule) => schedule.after(&from).next(),
+        Err(e) => {
+            warn!("Invalid cron expression '{}': {}", expr, e);
+            None
+        }
     }
-
-    // Very simplified: just add 1 hour for any valid expression
-    // In production, use the `cron` crate for proper parsing
-    Some(from + chrono::Duration::hours(1))
 }
 
 /// Parse natural language schedule

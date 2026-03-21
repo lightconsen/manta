@@ -44,7 +44,7 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
         pid_file: crate::dirs::manta_dir().join("manta.pid"),
     };
     let daemon = DaemonManager::new(daemon_config)?;
-    let _ = daemon.status().await;
+    daemon.status().await?;
 
     Ok(())
 }

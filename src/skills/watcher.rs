@@ -52,8 +52,10 @@ pub type FileChangeCallback = Box<dyn Fn(String) + Send + Sync>;
 
 /// Skill file watcher for hot reloading
 pub struct SkillWatcher {
-    /// Active watcher instance
-    _watcher: RecommendedWatcher,
+    /// Active watcher instance (replaced on rebuild)
+    watcher: RecommendedWatcher,
+    /// Sender end kept to create new watcher closures on rebuild
+    tx: mpsc::UnboundedSender<FileChange>,
     /// Channel for change events
     rx: mpsc::UnboundedReceiver<FileChange>,
     /// Set of watched paths
@@ -111,7 +113,8 @@ impl SkillWatcher {
         }
 
         Ok(Self {
-            _watcher: watcher,
+            watcher,
+            tx,
             rx,
             watched_paths,
             _callback: Arc::new(RwLock::new(None)),
@@ -156,12 +159,44 @@ impl SkillWatcher {
         Ok(())
     }
 
-    /// Rebuild the watcher with current paths
+    /// Rebuild the watcher with current paths, replacing the OS watcher.
     async fn rebuild_watcher(&mut self) -> crate::Result<()> {
-        // In a full implementation, this would recreate the watcher
-        // For now, we'll just log that paths changed
         let paths = self.watched_paths.read().await;
         debug!("Rebuilding watcher with {} paths", paths.len());
+
+        let tx_clone = self.tx.clone();
+        let mut new_watcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+                Ok(event) => {
+                    let kind: ChangeKind = (&event.kind).into();
+                    for path in event.paths {
+                        if path.to_string_lossy().ends_with("SKILL.md") {
+                            if let Err(e) = tx_clone.send(FileChange { path, kind }) {
+                                warn!("Failed to send file change event: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => error!("File watcher error: {}", e),
+            })
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!(
+                    "Failed to recreate file watcher: {}",
+                    e
+                ))
+            })?;
+
+        for path in paths.iter() {
+            if path.exists() {
+                if let Err(e) = new_watcher.watch(path, RecursiveMode::Recursive) {
+                    warn!("Failed to re-watch path {:?}: {}", path, e);
+                } else {
+                    info!("Re-watching skill directory: {:?}", path);
+                }
+            }
+        }
+
+        self.watcher = new_watcher;
         Ok(())
     }
 
