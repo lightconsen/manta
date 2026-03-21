@@ -408,6 +408,7 @@ pub type BoxedTool = Box<dyn Tool>;
 pub mod acp_tool;
 pub mod browser;
 pub mod code_exec;
+pub mod command_gate;
 pub mod cron_tool;
 pub mod delegate_tool;
 pub mod file;
