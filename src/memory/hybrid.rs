@@ -273,6 +273,116 @@ pub fn apply_temporal_decay(results: &mut Vec<HybridSearchResult>, config: &Temp
     });
 }
 
+// ── MMR Re-ranking ────────────────────────────────────────────────────────────
+
+/// Configuration for Maximal Marginal Relevance re-ranking.
+///
+/// MMR selects results that are both relevant to the query and diverse
+/// relative to each other, reducing redundancy in search results.
+///
+/// Formula per step:
+/// ```text
+/// MMR(d) = λ * relevance(d, query) - (1 - λ) * max_{d' ∈ S} sim(d, d')
+/// ```
+/// where `S` is the set of already-selected results.
+#[derive(Debug, Clone)]
+pub struct MmrConfig {
+    /// Trade-off between relevance and diversity.
+    ///
+    /// `1.0` = pure relevance ranking (no diversity benefit).
+    /// `0.0` = maximum diversity, ignoring relevance.
+    /// Default: `0.7`.
+    pub lambda: f32,
+    /// Maximum number of results to return after re-ranking. Default: 5.
+    pub top_k: usize,
+}
+
+impl Default for MmrConfig {
+    fn default() -> Self {
+        Self { lambda: 0.7, top_k: 5 }
+    }
+}
+
+/// Re-rank `results` using Maximal Marginal Relevance.
+///
+/// Requires that `results` are already sorted by relevance score (descending).
+/// Uses word-level Jaccard similarity as the inter-document similarity
+/// measure, making it embedding-free and fast.
+///
+/// # Example
+///
+/// ```rust
+/// use manta::memory::hybrid::{HybridSearchResult, MmrConfig, mmr_rerank};
+///
+/// let results = vec![
+///     HybridSearchResult { content: "Rust ownership model".into(), score: 0.9,
+///                          source: "vector".into(), citation: "doc:1".into() },
+///     HybridSearchResult { content: "Rust borrowing rules".into(), score: 0.85,
+///                          source: "fts".into(), citation: "doc:2".into() },
+///     HybridSearchResult { content: "Python async programming".into(), score: 0.7,
+///                          source: "vector".into(), citation: "doc:3".into() },
+/// ];
+/// let reranked = mmr_rerank(results, &MmrConfig::default());
+/// assert!(!reranked.is_empty());
+/// ```
+pub fn mmr_rerank(candidates: Vec<HybridSearchResult>, config: &MmrConfig) -> Vec<HybridSearchResult> {
+    if candidates.is_empty() {
+        return candidates;
+    }
+
+    let n = candidates.len();
+    let mut selected: Vec<usize> = Vec::with_capacity(config.top_k);
+    let mut remaining: Vec<usize> = (0..n).collect();
+
+    while selected.len() < config.top_k && !remaining.is_empty() {
+        let mut best_idx_in_remaining: usize = 0;
+        let mut best_score = f32::NEG_INFINITY;
+
+        for (rem_pos, &cand_idx) in remaining.iter().enumerate() {
+            let relevance = candidates[cand_idx].score;
+
+            // Max similarity to any already-selected document.
+            let max_sim = selected
+                .iter()
+                .map(|&sel_idx| {
+                    jaccard_similarity(&candidates[cand_idx].content, &candidates[sel_idx].content)
+                })
+                .fold(0.0_f32, f32::max);
+
+            let mmr_score = config.lambda * relevance - (1.0 - config.lambda) * max_sim;
+
+            if mmr_score > best_score {
+                best_score = mmr_score;
+                best_idx_in_remaining = rem_pos;
+            }
+        }
+
+        let chosen = remaining.remove(best_idx_in_remaining);
+        selected.push(chosen);
+    }
+
+    selected.into_iter().map(|i| candidates[i].clone()).collect()
+}
+
+/// Word-level Jaccard similarity: |A ∩ B| / |A ∪ B|.
+///
+/// Operates on the set of unique words (lowercased, split on whitespace).
+fn jaccard_similarity(a: &str, b: &str) -> f32 {
+    use std::collections::HashSet;
+
+    let words_a: HashSet<&str> = a.split_whitespace().collect();
+    let words_b: HashSet<&str> = b.split_whitespace().collect();
+
+    let intersection = words_a.intersection(&words_b).count();
+    let union = words_a.union(&words_b).count();
+
+    if union == 0 {
+        return 1.0; // Both empty → identical.
+    }
+
+    intersection as f32 / union as f32
+}
+
 /// Extract the first `YYYY-MM-DD` date from a citation string.
 ///
 /// Returns `None` for evergreen files that carry no date.
@@ -445,5 +555,87 @@ mod tests {
         let cfg = TemporalDecayConfig::default();
         assert!(!cfg.enabled, "Decay should be disabled by default");
         assert!((cfg.half_life_days - 30.0).abs() < 1e-6);
+    }
+
+    // ── MMR tests ─────────────────────────────────────────────────────────────
+
+    fn make_result(content: &str, score: f32) -> HybridSearchResult {
+        HybridSearchResult {
+            content: content.to_string(),
+            score,
+            source: "vector".to_string(),
+            citation: format!("doc:{}", content),
+        }
+    }
+
+    #[test]
+    fn test_mmr_empty_input() {
+        let results = mmr_rerank(vec![], &MmrConfig::default());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_mmr_top_k_limits_output() {
+        let results = vec![
+            make_result("a b c", 0.9),
+            make_result("d e f", 0.8),
+            make_result("g h i", 0.7),
+            make_result("j k l", 0.6),
+        ];
+        let cfg = MmrConfig { lambda: 0.7, top_k: 2 };
+        let reranked = mmr_rerank(results, &cfg);
+        assert_eq!(reranked.len(), 2);
+    }
+
+    #[test]
+    fn test_mmr_promotes_diversity() {
+        // Two near-identical results plus one diverse result.
+        // With lambda < 1.0, the diverse result should be preferred over the
+        // duplicate even if it has a lower relevance score.
+        let results = vec![
+            make_result("rust ownership borrow move copy", 0.9),
+            make_result("rust ownership borrow move copy clone", 0.85), // near-duplicate
+            make_result("python async await coroutine", 0.7),           // diverse
+        ];
+        let cfg = MmrConfig { lambda: 0.5, top_k: 2 };
+        let reranked = mmr_rerank(results, &cfg);
+        // First result: highest score "rust ownership..."
+        assert!(reranked[0].content.starts_with("rust ownership borrow move copy"));
+        // Second result should be the diverse Python one, not the near-duplicate.
+        assert_eq!(reranked.len(), 2);
+        let has_diverse = reranked.iter().any(|r| r.content.starts_with("python"));
+        assert!(has_diverse, "MMR should promote the diverse result over the near-duplicate");
+    }
+
+    #[test]
+    fn test_mmr_pure_relevance_with_lambda_one() {
+        let results = vec![
+            make_result("aaa bbb ccc", 0.9),
+            make_result("ddd eee fff", 0.8),
+            make_result("ggg hhh iii", 0.7),
+        ];
+        let cfg = MmrConfig { lambda: 1.0, top_k: 3 };
+        let reranked = mmr_rerank(results, &cfg);
+        // With lambda=1.0, order should be purely by relevance score.
+        assert_eq!(reranked[0].score, 0.9);
+        assert_eq!(reranked[1].score, 0.8);
+        assert_eq!(reranked[2].score, 0.7);
+    }
+
+    #[test]
+    fn test_jaccard_similarity_identical() {
+        assert!((jaccard_similarity("hello world", "hello world") - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_jaccard_similarity_disjoint() {
+        assert!((jaccard_similarity("hello world", "foo bar")).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_jaccard_similarity_partial_overlap() {
+        // "a b c" ∩ "b c d" = {b, c}, union = {a, b, c, d} → 2/4 = 0.5
+        let sim = jaccard_similarity("a b c", "b c d");
+        assert!((sim - 0.5).abs() < 1e-6);
     }
 }
