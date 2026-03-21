@@ -282,6 +282,11 @@ impl PluginChannel {
                                                     .to_string(),
                                                 attachments: vec![],
                                                 metadata: MessageMetadata::new(),
+                                                provenance: crate::channels::InputProvenance::ExternalUser {
+                                                    channel: "plugin".to_string(),
+                                                    is_direct: true,
+                                                },
+                                                mention: crate::channels::MentionState::DirectMessage,
                                             };
                                             if let Err(e) = tx.send(incoming) {
                                                 eprintln!("[WARN] Plugin receive_message: failed to send: {}", e);

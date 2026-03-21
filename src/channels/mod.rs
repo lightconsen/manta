@@ -63,6 +63,85 @@ pub use formatter::{
     DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
 };
 
+// ── Input Provenance ──────────────────────────────────────────────────────────
+
+/// Describes the origin of an incoming message.
+///
+/// Provenance lets the agent apply different trust levels and policies
+/// depending on where the message came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputProvenance {
+    /// Message sent by a human user over an external channel (Telegram, Discord, …).
+    ExternalUser {
+        /// The channel type (e.g. `"telegram"`, `"discord"`).
+        channel: String,
+        /// Whether this was a direct message (not a group/room).
+        is_direct: bool,
+    },
+    /// Message injected from another agent session (inter-agent communication).
+    InterSession {
+        /// The source session ID.
+        source_session: String,
+    },
+    /// Message generated internally by the system (scheduled tasks, hooks, …).
+    InternalSystem {
+        /// A label identifying the internal source (e.g. `"cron"`, `"webhook"`).
+        source: String,
+    },
+}
+
+impl InputProvenance {
+    /// Return `true` if the message originated from a human external user.
+    pub fn is_external(&self) -> bool {
+        matches!(self, InputProvenance::ExternalUser { .. })
+    }
+
+    /// Return `true` if the message is a direct message (not a group).
+    pub fn is_direct(&self) -> bool {
+        matches!(self, InputProvenance::ExternalUser { is_direct: true, .. })
+    }
+
+    /// Return `true` if the message is from an internal system source.
+    pub fn is_internal(&self) -> bool {
+        matches!(self, InputProvenance::InternalSystem { .. })
+    }
+}
+
+impl Default for InputProvenance {
+    fn default() -> Self {
+        InputProvenance::ExternalUser {
+            channel: "unknown".to_string(),
+            is_direct: false,
+        }
+    }
+}
+
+// ── Mention Gating ────────────────────────────────────────────────────────────
+
+/// Mention state for a message received in a group/room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MentionState {
+    /// The message was sent in a direct conversation (mention not required).
+    DirectMessage,
+    /// The bot was mentioned in this group message.
+    Mentioned,
+    /// The bot was not mentioned in this group message.
+    NotMentioned,
+}
+
+impl MentionState {
+    /// Return `true` if the message should be processed (either DM or explicit mention).
+    pub fn should_process(&self, require_mention: bool) -> bool {
+        match self {
+            MentionState::DirectMessage => true,
+            MentionState::Mentioned => true,
+            MentionState::NotMentioned => !require_mention,
+        }
+    }
+}
+
+// ── User identifier ───────────────────────────────────────────────────────────
+
 /// A user identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub String);
@@ -147,6 +226,10 @@ pub struct IncomingMessage {
     pub attachments: Vec<Attachment>,
     /// Message metadata
     pub metadata: MessageMetadata,
+    /// Where this message originated from.
+    pub provenance: InputProvenance,
+    /// Mention state (relevant for group channels).
+    pub mention: MentionState,
 }
 
 impl IncomingMessage {
@@ -163,7 +246,27 @@ impl IncomingMessage {
             content: content.into(),
             attachments: Vec::new(),
             metadata: MessageMetadata::new(),
+            provenance: InputProvenance::default(),
+            mention: MentionState::DirectMessage,
         }
+    }
+
+    /// Set the input provenance.
+    pub fn with_provenance(mut self, provenance: InputProvenance) -> Self {
+        self.provenance = provenance;
+        self
+    }
+
+    /// Set the mention state.
+    pub fn with_mention(mut self, mention: MentionState) -> Self {
+        self.mention = mention;
+        self
+    }
+
+    /// Return `true` if this message should be processed given the channel's
+    /// mention requirement setting.
+    pub fn should_process(&self, require_mention_in_groups: bool) -> bool {
+        self.mention.should_process(require_mention_in_groups)
     }
 
     /// Add an attachment
