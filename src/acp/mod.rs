@@ -149,8 +149,10 @@ pub enum SubagentStatus {
     Busy,
     /// Shutting down
     ShuttingDown,
-    /// Terminated
+    /// Terminated normally
     Terminated,
+    /// Terminated due to a panic — detected by the watchdog task
+    Crashed,
 }
 
 /// Commands that can be sent to a subagent
@@ -316,7 +318,7 @@ impl AcpControlPlane {
         let mode = config.mode;
         let timeout = config.timeout_seconds;
 
-        tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
             let mut agent = agent;
 
@@ -405,6 +407,34 @@ impl AcpControlPlane {
             }
 
             info!("Subagent {} task ended", subagent_id_clone);
+        });
+
+        // Watchdog: await the JoinHandle and update status on exit or panic.
+        let subagents_ref = Arc::clone(&self.subagents);
+        let watch_id = subagent_id.clone();
+        tokio::spawn(async move {
+            match join_handle.await {
+                Ok(()) => {
+                    let mut map = subagents_ref.write().await;
+                    if let Some(h) = map.get_mut(&watch_id) {
+                        h.status = SubagentStatus::Terminated;
+                    }
+                }
+                Err(e) if e.is_panic() => {
+                    warn!("Subagent {} panicked — marking Crashed", watch_id);
+                    let mut map = subagents_ref.write().await;
+                    if let Some(h) = map.get_mut(&watch_id) {
+                        h.status = SubagentStatus::Crashed;
+                    }
+                }
+                Err(_) => {
+                    // Aborted externally
+                    let mut map = subagents_ref.write().await;
+                    if let Some(h) = map.get_mut(&watch_id) {
+                        h.status = SubagentStatus::Terminated;
+                    }
+                }
+            }
         });
 
         let handle = SubagentHandle {
@@ -496,10 +526,12 @@ impl AcpControlPlane {
 
     /// Shutdown a subagent
     pub async fn shutdown_subagent(&self, subagent_id: &str) -> crate::Result<bool> {
-        let subagents = self.subagents.read().await;
+        let mut subagents = self.subagents.write().await;
 
-        if let Some(subagent) = subagents.get(subagent_id) {
+        if let Some(subagent) = subagents.get_mut(subagent_id) {
+            subagent.status = SubagentStatus::ShuttingDown;
             let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
+            // Watchdog task will update status to Terminated once the task exits.
             Ok(true)
         } else {
             Ok(false)

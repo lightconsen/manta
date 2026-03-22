@@ -461,12 +461,12 @@ pub struct AgentHandle {
     pub id: String,
     /// Agent configuration
     pub config: AgentConfig,
-    /// Communication channel
+    /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig, Shutdown)
     pub tx: mpsc::Sender<AgentCommand>,
+    /// Request/response query channel (introspection + skill invocations)
+    pub query_tx: mpsc::Sender<AgentQuery>,
     /// Whether agent is currently processing
     pub busy: bool,
-    /// The actual agent instance
-    pub agent: Arc<Agent>,
 }
 
 /// Commands sent to agents
@@ -485,6 +485,33 @@ pub enum AgentCommand {
     UpdateConfig(AgentConfig),
     /// Shutdown agent
     Shutdown,
+}
+
+/// Query messages that require a typed response via oneshot channel.
+/// Kept separate from AgentCommand because oneshot::Sender<T> cannot implement
+/// the Clone/Serialize/Deserialize derives that AgentCommand carries.
+pub enum AgentQuery {
+    /// Return all thread summaries for this agent's session store.
+    GetThreadSummaries {
+        response_tx: tokio::sync::oneshot::Sender<Vec<(String, String, usize, String)>>,
+    },
+    /// Return the turns for a specific conversation/thread.
+    GetThreadTurns {
+        conv_id: String,
+        response_tx: tokio::sync::oneshot::Sender<Option<Vec<(usize, String, String, String)>>>,
+    },
+    /// Undo the last turn in a conversation.
+    UndoLastTurn {
+        conv_id: String,
+        response_tx: tokio::sync::oneshot::Sender<bool>,
+    },
+    /// Process a message as a skill invocation (request/response pattern).
+    RunSkill {
+        session_id: String,
+        message: String,
+        user_id: String,
+        response_tx: tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
+    },
 }
 
 /// A single Server-Sent Event sent to `GET /api/events` subscribers.
@@ -1232,12 +1259,14 @@ impl Gateway {
             }
         }
 
+        let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+
         let handle = AgentHandle {
             id: id.clone(),
             config: config.clone(),
             tx: tx.clone(),
+            query_tx: query_tx.clone(),
             busy: false,
-            agent: agent.clone(),
         };
 
         {
@@ -1252,7 +1281,9 @@ impl Gateway {
         tokio::spawn(async move {
             info!("Agent {} processing loop started", agent_id);
 
-            while let Some(cmd) = rx.recv().await {
+            loop { tokio::select! {
+                cmd = rx.recv() => {
+                let cmd = match cmd { Some(c) => c, None => break };
                 match cmd {
                     AgentCommand::ProcessMessage {
                         session_id,
@@ -1431,7 +1462,32 @@ impl Gateway {
                         break;
                     }
                 }
-            }
+                } // cmd = rx.recv() arm
+                query = query_rx.recv() => {
+                    let query = match query { Some(q) => q, None => break };
+                    match query {
+                        AgentQuery::GetThreadSummaries { response_tx } => {
+                            let _ = response_tx.send(agent.thread_summaries().await);
+                        }
+                        AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                        }
+                        AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                            let incoming = crate::channels::IncomingMessage::new(
+                                user_id, &session_id, message,
+                            );
+                            let no_op: crate::agent::ProgressCallback =
+                                Arc::new(|_| Box::pin(async {}));
+                            let result =
+                                agent.process_message_with_progress(incoming, no_op).await;
+                            let _ = response_tx.send(result);
+                        }
+                    }
+                }
+            }} // end tokio::select! and loop
 
             info!("Agent {} processing loop ended", agent_id);
         });
@@ -3005,13 +3061,15 @@ async fn create_agent_handler(
     // Create agent instance
     let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
 
+    let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+
     // Create agent handle
     let handle = AgentHandle {
         id: agent_id.clone(),
         config: config.clone(),
         tx: tx.clone(),
+        query_tx: query_tx.clone(),
         busy: false,
-        agent: agent.clone(),
     };
 
     // Insert into agents map
@@ -3026,7 +3084,9 @@ async fn create_agent_handler(
     let agent_clone = agent.clone();
     tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id_clone);
-        while let Some(cmd) = rx.recv().await {
+        loop { tokio::select! {
+            cmd = rx.recv() => {
+            let cmd = match cmd { Some(c) => c, None => break };
             match cmd {
                 AgentCommand::ProcessMessage { session_id, message, user_id, channel } => {
                     let source_channel = channel;
@@ -3120,7 +3180,32 @@ async fn create_agent_handler(
                 }
                 _ => info!("Agent {} received command: {:?}", agent_id_clone, cmd),
             }
-        }
+            } // cmd = rx.recv() arm
+            query = query_rx.recv() => {
+                let query = match query { Some(q) => q, None => break };
+                match query {
+                    AgentQuery::GetThreadSummaries { response_tx } => {
+                        let _ = response_tx.send(agent_clone.thread_summaries().await);
+                    }
+                    AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent_clone.thread_turns_for(&conv_id).await);
+                    }
+                    AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
+                    }
+                    AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                        let incoming = crate::channels::IncomingMessage::new(
+                            user_id, &session_id, message,
+                        );
+                        let no_op: crate::agent::ProgressCallback =
+                            Arc::new(|_| Box::pin(async {}));
+                        let result =
+                            agent_clone.process_message_with_progress(incoming, no_op).await;
+                        let _ = response_tx.send(result);
+                    }
+                }
+            }
+        }} // end tokio::select! and loop
         info!("Agent {} processing loop ended", agent_id_clone);
     });
 
@@ -4055,14 +4140,14 @@ async fn run_skill_handler(
     // Drop read lock before acquiring agents lock
     drop(skills_manager);
 
-    // Get the default agent to execute the skill
-    let agent = {
+    // Get the default agent's query channel to execute the skill
+    let query_tx = {
         let agents = state.agents.read().await;
-        agents.get("default").map(|h| h.agent.clone())
+        agents.get("default").map(|h| h.query_tx.clone())
     };
 
-    let agent = match agent {
-        Some(a) => a,
+    let query_tx = match query_tx {
+        Some(tx) => tx,
         None => {
             let error = serde_json::json!({
                 "error": "No default agent available to run skill",
@@ -4071,13 +4156,28 @@ async fn run_skill_handler(
         }
     };
 
-    // Execute via agent
+    // Execute via actor channel
     let session_id = format!("skill-{}-{}", id, uuid::Uuid::new_v4());
-    let incoming = crate::channels::IncomingMessage::new("skill-runner", &session_id, full_message);
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if query_tx
+        .send(AgentQuery::RunSkill {
+            session_id: session_id.clone(),
+            message: full_message,
+            user_id: "skill-runner".to_string(),
+            response_tx: resp_tx,
+        })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "agent unavailable"})),
+        )
+            .into_response();
+    }
 
-    let no_op_cb: crate::agent::ProgressCallback = Arc::new(|_| Box::pin(async {}));
-    match agent.process_message_with_progress(incoming, no_op_cb).await {
-        Ok(outgoing) => {
+    match resp_rx.await {
+        Ok(Ok(outgoing)) => {
             let response = serde_json::json!({
                 "skill_id": id,
                 "session_id": session_id,
@@ -4087,12 +4187,17 @@ async fn run_skill_handler(
             });
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             let error = serde_json::json!({
                 "error": format!("Skill execution failed: {}", e),
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "agent response channel closed"})),
+        )
+            .into_response(),
     }
 }
 
@@ -4342,12 +4447,14 @@ async fn spawn_discovered_agent_handler(
 
         let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
 
+        let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+
         let handle = AgentHandle {
             id: id.clone(),
             config: config.clone(),
             tx: tx.clone(),
+            query_tx: query_tx.clone(),
             busy: false,
-            agent: agent.clone(),
         };
 
         {
@@ -4360,7 +4467,9 @@ async fn spawn_discovered_agent_handler(
         let agent_id_clone = id.clone();
         tokio::spawn(async move {
             info!("Agent {} processing loop started", agent_id_clone);
-            while let Some(cmd) = rx.recv().await {
+            loop { tokio::select! {
+                cmd = rx.recv() => {
+                let cmd = match cmd { Some(c) => c, None => break };
                 match cmd {
                     AgentCommand::Shutdown => {
                         info!("Agent {} shutting down", agent_id_clone);
@@ -4403,7 +4512,31 @@ async fn spawn_discovered_agent_handler(
                         info!("Agent {} received command: {:?}", agent_id_clone, cmd);
                     }
                 }
-            }
+                } // cmd = rx.recv() arm
+                query = query_rx.recv() => {
+                    let query = match query { Some(q) => q, None => break };
+                    match query {
+                        AgentQuery::GetThreadSummaries { response_tx } => {
+                            let _ = response_tx.send(agent.thread_summaries().await);
+                        }
+                        AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                        }
+                        AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                            let incoming = crate::channels::IncomingMessage::new(
+                                user_id, &session_id, message,
+                            );
+                            let no_op: crate::agent::ProgressCallback =
+                                Arc::new(|_| Box::pin(async {}));
+                            let result = agent.process_message_with_progress(incoming, no_op).await;
+                            let _ = response_tx.send(result);
+                        }
+                    }
+                }
+            }} // end tokio::select! and loop
             info!("Agent {} processing loop ended", agent_id_clone);
         });
 
@@ -4469,12 +4602,14 @@ async fn spawn_all_discovered_agents_handler(
 
                 let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
 
+                let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+
                 let handle = AgentHandle {
                     id: agent_id.clone(),
                     config: config.clone(),
                     tx: tx.clone(),
+                    query_tx: query_tx.clone(),
                     busy: false,
-                    agent: agent.clone(),
                 };
 
                 {
@@ -4486,11 +4621,35 @@ async fn spawn_all_discovered_agents_handler(
                 let state_clone = state.clone();
                 let agent_id_clone = agent_id.clone();
                 tokio::spawn(async move {
-                    while let Some(cmd) = rx.recv().await {
-                        if let AgentCommand::Shutdown = cmd {
-                            break;
+                    loop { tokio::select! {
+                        cmd = rx.recv() => {
+                            let cmd = match cmd { Some(c) => c, None => break };
+                            if let AgentCommand::Shutdown = cmd { break; }
                         }
-                    }
+                        query = query_rx.recv() => {
+                            let query = match query { Some(q) => q, None => break };
+                            match query {
+                                AgentQuery::GetThreadSummaries { response_tx } => {
+                                    let _ = response_tx.send(agent.thread_summaries().await);
+                                }
+                                AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                                    let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                                }
+                                AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                                    let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                                }
+                                AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                                    let incoming = crate::channels::IncomingMessage::new(
+                                        user_id, &session_id, message,
+                                    );
+                                    let no_op: crate::agent::ProgressCallback =
+                                        Arc::new(|_| Box::pin(async {}));
+                                    let result = agent.process_message_with_progress(incoming, no_op).await;
+                                    let _ = response_tx.send(result);
+                                }
+                            }
+                        }
+                    }}
                     let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
                         agent_id: agent_id_clone,
                         status: AgentStatus::Shutdown,
@@ -6030,13 +6189,13 @@ async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl I
     }))
 }
 
-/// Resolve session_id → Arc<Agent>, returning a 404 response on failure.
+/// Resolve session_id → query sender, returning a 404 response on failure.
 ///
 /// The caller must NOT hold any lock when invoking this helper.
-async fn resolve_session_agent(
+async fn resolve_session_query_tx(
     state: &Arc<GatewayState>,
     session_id: &str,
-) -> Result<Arc<Agent>, axum::response::Response> {
+) -> Result<mpsc::Sender<AgentQuery>, axum::response::Response> {
     let agent_id = {
         let routing = state.session_routing.read().await;
         match routing.get(session_id) {
@@ -6055,7 +6214,7 @@ async fn resolve_session_agent(
 
     let agents = state.agents.read().await;
     match agents.get(&agent_id) {
-        Some(handle) => Ok(handle.agent.clone()),
+        Some(handle) => Ok(handle.query_tx.clone()),
         None => Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -6071,12 +6230,33 @@ async fn list_threads_handler(
     Path(session_id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let agent = match resolve_session_agent(&state, &session_id).await {
-        Ok(a) => a,
+    let qtx = match resolve_session_query_tx(&state, &session_id).await {
+        Ok(tx) => tx,
         Err(resp) => return resp,
     };
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if qtx
+        .send(AgentQuery::GetThreadSummaries { response_tx: resp_tx })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "agent unavailable"})),
+        )
+            .into_response();
+    }
+    let summaries = match resp_rx.await {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "agent response channel closed"})),
+            )
+                .into_response()
+        }
+    };
 
-    let summaries = agent.thread_summaries().await;
     let threads: Vec<_> = summaries
         .into_iter()
         .map(|(thread_id, label, turn_count, conv_id)| {
@@ -6104,17 +6284,29 @@ async fn list_turns_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let agent = match resolve_session_agent(&state, &session_id).await {
-        Ok(a) => a,
+    let qtx = match resolve_session_query_tx(&state, &session_id).await {
+        Ok(tx) => tx,
         Err(resp) => return resp,
     };
 
     // Thread map key is `conversation_id`; the CLI passes `thread_id` with a
     // "thread-" prefix. Strip it to get the correct map key.
-    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id);
+    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
 
-    match agent.thread_turns_for(conv_id).await {
-        Some(turns) => {
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if qtx
+        .send(AgentQuery::GetThreadTurns { conv_id, response_tx: resp_tx })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "agent unavailable"})),
+        )
+            .into_response();
+    }
+    match resp_rx.await {
+        Ok(Some(turns)) => {
             let turns_json: Vec<_> = turns
                 .into_iter()
                 .map(|(index, turn_state, user_preview, asst_preview)| {
@@ -6136,11 +6328,16 @@ async fn list_turns_handler(
             )
                 .into_response()
         }
-        None => (
+        Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": format!("Thread '{}' not found", thread_id),
             })),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "agent response channel closed"})),
         )
             .into_response(),
     }
@@ -6151,15 +6348,27 @@ async fn undo_turn_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let agent = match resolve_session_agent(&state, &session_id).await {
-        Ok(a) => a,
+    let qtx = match resolve_session_query_tx(&state, &session_id).await {
+        Ok(tx) => tx,
         Err(resp) => return resp,
     };
 
-    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id);
+    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
 
-    if agent.undo_last_turn(conv_id).await {
-        (
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if qtx
+        .send(AgentQuery::UndoLastTurn { conv_id, response_tx: resp_tx })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "agent unavailable"})),
+        )
+            .into_response();
+    }
+    match resp_rx.await {
+        Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "success": true,
@@ -6168,9 +6377,8 @@ async fn undo_turn_handler(
                 "message": "Last turn undone successfully",
             })),
         )
-            .into_response()
-    } else {
-        (
+            .into_response(),
+        Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": format!(
@@ -6179,6 +6387,11 @@ async fn undo_turn_handler(
                 ),
             })),
         )
-            .into_response()
+            .into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "agent response channel closed"})),
+        )
+            .into_response(),
     }
 }
