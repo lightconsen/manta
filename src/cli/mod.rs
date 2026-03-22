@@ -29,7 +29,7 @@ pub use cron::CronCommands;
 pub use entity::EntityCommands;
 pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
-pub use security::SecurityCommands;
+pub use security::{PairingCommands, SecurityCommands};
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 

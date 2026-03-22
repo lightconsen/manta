@@ -7,6 +7,7 @@ use crate::channels::{
     MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,6 +63,12 @@ pub struct TelegramChannel {
     message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
     /// Session mapping: chat_id -> session_uuid (for /new command support)
     session_map: Arc<RwLock<HashMap<i64, String>>>,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for users (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 impl std::fmt::Debug for TelegramChannel {
@@ -73,6 +80,8 @@ impl std::fmt::Debug for TelegramChannel {
             .field("message_map", &self.message_map)
             .field("shutdown_notify", &self.shutdown_notify)
             .field("has_message_queue", &"<async>")
+            .field("dm_policy", &"<async>")
+            .field("has_pairing_store", &"<async>")
             .finish()
     }
 }
@@ -88,7 +97,28 @@ impl TelegramChannel {
             shutdown_notify: Arc::new(Notify::new()),
             message_tx: Arc::new(RwLock::new(None)),
             session_map: Arc::new(RwLock::new(HashMap::new())),
+            pairing_store: Arc::new(RwLock::new(None)),
+            dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
+            allow_from: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Set the pairing store for DM access control
+    pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
+        let mut ps = self.pairing_store.write().await;
+        *ps = Some(store);
+    }
+
+    /// Set the DM policy
+    pub async fn set_dm_policy(&self, policy: DmPolicy) {
+        let mut policy_guard = self.dm_policy.write().await;
+        *policy_guard = policy;
+    }
+
+    /// Set the allowlist
+    pub async fn set_allow_from(&self, allow_from: Vec<String>) {
+        let mut af = self.allow_from.write().await;
+        *af = allow_from;
     }
 
     /// Get or create a session UUID for a chat
@@ -263,6 +293,9 @@ impl Channel for TelegramChannel {
             let shutdown_notify = self.shutdown_notify.clone();
             let message_tx = self.get_message_sender().await;
             let session_map = self.session_map.clone();
+            let pairing_store = self.pairing_store.clone();
+            let dm_policy = self.dm_policy.clone();
+            let allow_from = self.allow_from.clone();
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
@@ -274,8 +307,11 @@ impl Channel for TelegramChannel {
                             let tx = message_tx.clone();
                             let allowed = allowed_usernames.clone();
                             let sessions = session_map.clone();
+                            let ps = pairing_store.clone();
+                            let policy = dm_policy.clone();
+                            let af = allow_from.clone();
                             async move {
-                                handle_message_with_sender(bot, msg, tx, allowed, sessions).await
+                                handle_message_with_sender(bot, msg, tx, allowed, sessions, ps, policy, af).await
                             }
                         },
                     ));
@@ -523,6 +559,9 @@ async fn handle_message_with_sender(
     message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
     allowed_usernames: Vec<String>,
     session_map: Arc<RwLock<HashMap<i64, String>>>,
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    allow_from: Arc<RwLock<Vec<String>>>,
 ) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
         let user = msg.from();
@@ -531,8 +570,95 @@ async fn handle_message_with_sender(
             .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
             .unwrap_or_else(|| "unknown".to_string());
         let chat_id = msg.chat.id.0;
+        let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
 
-        // Check if user is allowed
+        // Check DM policy
+        let policy = *dm_policy.read().await;
+
+        match policy {
+            DmPolicy::Open => {
+                // Allow all - no checks needed
+            }
+            DmPolicy::Allowlist => {
+                // Check if user is in allowlist
+                let allow_list = allow_from.read().await;
+                let is_allowed = allow_list.iter().any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
+
+                if !is_allowed {
+                    warn!("User @{} ({}) is not in allowlist", username, user_id);
+                    bot.send_message(msg.chat.id, "🔒 This bot is private. You're not authorized to use it.")
+                        .await?;
+                    return Ok(());
+                }
+            }
+            DmPolicy::Pairing => {
+                // Check if user is authorized via pairing
+                if let Some(store) = pairing_store.read().await.as_ref() {
+                    if !store.is_authorized("telegram", &user_id).await {
+                        // Not authorized - check if they already have a pending request
+                        match store.request_access("telegram", &user_id, Some(&username)).await {
+                            Ok(RequestAccessResult::AlreadyAuthorized) => {
+                                // Shouldn't happen since we just checked, but allow through
+                            }
+                            Ok(RequestAccessResult::NewRequest { code }) => {
+                                info!("New pairing request from @{} ({}): code={}", username, user_id, code);
+                                bot.send_message(
+                                    msg.chat.id,
+                                    format!(
+                                        "🔒 This bot requires pairing.\n\n\
+                                        Your pairing code: **{}**\n\n\
+                                        Please share this code with an admin to get access.\n\
+                                        Or ask an admin to run:\n\
+                                        `manta pairing approve telegram {}`",
+                                        code, code
+                                    ),
+                                )
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                                return Ok(());
+                            }
+                            Ok(RequestAccessResult::AlreadyPending { code, created_at: _ }) => {
+                                bot.send_message(
+                                    msg.chat.id,
+                                    format!(
+                                        "⏳ Your pairing request is still pending.\n\n\
+                                        Code: **{}**\n\n\
+                                        Please wait for an admin to approve your request.",
+                                        code
+                                    ),
+                                )
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                                return Ok(());
+                            }
+                            Ok(RequestAccessResult::RateLimited { .. }) => {
+                                bot.send_message(
+                                    msg.chat.id,
+                                    "⏳ Too many pairing requests. Please try again later.",
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                            Err(_) => {
+                                bot.send_message(
+                                    msg.chat.id,
+                                    "❌ Error processing pairing request. Please try again later.",
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                } else {
+                    warn!("Pairing policy set but no pairing store configured");
+                    bot.send_message(msg.chat.id, "🔒 Pairing is not configured. Please contact the admin.")
+                        .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // Legacy: Also check allowed_usernames if not empty (for backward compatibility)
         if !allowed_usernames.is_empty() {
             let is_allowed = user
                 .as_ref()

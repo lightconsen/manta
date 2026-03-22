@@ -7,9 +7,11 @@ use crate::channels::{
     OutgoingMessage,
 };
 use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
-use tokio::sync::mpsc;
-use tracing::{debug, info};
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]
@@ -65,6 +67,12 @@ pub struct SlackChannel {
     message_ids: std::sync::Arc<
         tokio::sync::RwLock<std::collections::HashMap<String, (String, String)>>,
     >,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for users (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 impl std::fmt::Debug for SlackChannel {
@@ -85,10 +93,86 @@ impl SlackChannel {
             message_ids: std::sync::Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             )),
+            pairing_store: Arc::new(RwLock::new(None)),
+            dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
+            allow_from: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    /// Check if user is allowed
+    /// Set pairing store for DM access control
+    pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
+        let mut s = self.pairing_store.write().await;
+        *s = Some(store);
+    }
+
+    /// Set DM policy
+    pub async fn set_dm_policy(&self, policy: DmPolicy) {
+        let mut p = self.dm_policy.write().await;
+        *p = policy;
+    }
+
+    /// Set allowlist of user IDs
+    pub async fn set_allow_from(&self, users: Vec<String>) {
+        let mut a = self.allow_from.write().await;
+        *a = users;
+    }
+
+    /// Check if a Slack user is authorized to interact.
+    ///
+    /// Returns `(is_authorized, optional_reply_message)`. Callers should send
+    /// the reply message to the user when `is_authorized` is false.
+    pub async fn check_access(
+        &self,
+        user_id: &str,
+        user_name: Option<&str>,
+    ) -> (bool, Option<String>) {
+        let policy = self.dm_policy.read().await.clone();
+        match policy {
+            DmPolicy::Open => (true, None),
+            DmPolicy::Allowlist => {
+                let allow_from = self.allow_from.read().await;
+                if allow_from.contains(&user_id.to_string()) {
+                    (true, None)
+                } else {
+                    (false, Some("You are not authorized to use this bot.".to_string()))
+                }
+            }
+            DmPolicy::Pairing => {
+                let store_guard = self.pairing_store.read().await;
+                if let Some(store) = store_guard.as_ref() {
+                    match store.request_access("slack", user_id, user_name).await {
+                        Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
+                        Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
+                            false,
+                            Some(format!(
+                                "Your access request is pending admin approval. Your pairing code: `{}`",
+                                code
+                            )),
+                        ),
+                        Ok(RequestAccessResult::NewRequest { code }) => (
+                            false,
+                            Some(format!(
+                                "Access requested. An admin will approve your request.\nYour pairing code: `{}`",
+                                code
+                            )),
+                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => (
+                            false,
+                            Some("Too many requests. Please try again later.".to_string()),
+                        ),
+                        Err(_) => (
+                            false,
+                            Some("An error occurred processing your request.".to_string()),
+                        ),
+                    }
+                } else {
+                    (false, Some("Access control is not configured.".to_string()))
+                }
+            }
+        }
+    }
+
+    /// Check if user is allowed (legacy; prefer `check_access` for policy-aware checks)
     #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: &str) -> bool {
         if self.config.allowed_user_ids.is_empty() {

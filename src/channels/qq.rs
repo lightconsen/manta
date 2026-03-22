@@ -7,6 +7,7 @@ use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -136,6 +137,12 @@ pub struct QqChannel {
     message_map: Arc<RwLock<HashMap<String, String>>>,
     /// Current access token (may be refreshed)
     current_token: Arc<RwLock<String>>,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for QQ numbers (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 impl std::fmt::Debug for QqChannel {
@@ -163,10 +170,87 @@ impl QqChannel {
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             message_map: Arc::new(RwLock::new(HashMap::new())),
             current_token: Arc::new(RwLock::new(initial_token)),
+            pairing_store: Arc::new(RwLock::new(None)),
+            dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
+            allow_from: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    /// Check if QQ number is allowed
+    /// Set pairing store for DM access control
+    pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
+        let mut s = self.pairing_store.write().await;
+        *s = Some(store);
+    }
+
+    /// Set DM policy
+    pub async fn set_dm_policy(&self, policy: DmPolicy) {
+        let mut p = self.dm_policy.write().await;
+        *p = policy;
+    }
+
+    /// Set allowlist of QQ numbers
+    pub async fn set_allow_from(&self, qqs: Vec<String>) {
+        let mut a = self.allow_from.write().await;
+        *a = qqs;
+    }
+
+    /// Check if a QQ user is authorized to interact.
+    ///
+    /// Returns `(is_authorized, optional_reply_message)`. Callers (webhook/event handlers)
+    /// should send the reply to the user when `is_authorized` is false.
+    pub async fn check_access(
+        &self,
+        user_id: &str,
+        user_name: Option<&str>,
+    ) -> (bool, Option<String>) {
+        let policy = self.dm_policy.read().await.clone();
+        match policy {
+            DmPolicy::Open => (true, None),
+            DmPolicy::Allowlist => {
+                let allow_from = self.allow_from.read().await;
+                if allow_from.contains(&user_id.to_string()) {
+                    (true, None)
+                } else {
+                    (false, Some("您无权使用此机器人。".to_string()))
+                }
+            }
+            DmPolicy::Pairing => {
+                let store_guard = self.pairing_store.read().await;
+                if let Some(store) = store_guard.as_ref() {
+                    match store.request_access("qq", user_id, user_name).await {
+                        Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
+                        Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
+                            false,
+                            Some(format!(
+                                "您的接入申请正在等待管理员审批。配对码：{}",
+                                code
+                            )),
+                        ),
+                        Ok(RequestAccessResult::NewRequest { code }) => (
+                            false,
+                            Some(format!(
+                                "已提交接入申请，请等待管理员审批。\n您的配对码：{}",
+                                code
+                            )),
+                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => (
+                            false,
+                            Some("请求过于频繁，请稍后再试。".to_string()),
+                        ),
+                        Err(_) => (
+                            false,
+                            Some("处理请求时发生错误。".to_string()),
+                        ),
+                    }
+                } else {
+                    (false, Some("访问控制未配置。".to_string()))
+                }
+            }
+        }
+    }
+
+    /// Check if QQ number is allowed (legacy; prefer `check_access` for policy-aware checks)
+    #[allow(dead_code)]
     fn is_qq_allowed(&self, qq: &str) -> bool {
         if self.config.allowed_qqs.is_empty() {
             return true;
