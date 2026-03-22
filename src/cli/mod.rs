@@ -19,6 +19,7 @@ mod entity;
 mod mcp;
 mod plugin;
 mod security;
+mod session;
 mod skill;
 mod team;
 
@@ -30,6 +31,7 @@ pub use entity::EntityCommands;
 pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
 pub use security::{PairingCommands, SecurityCommands};
+pub use session::SessionCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 
@@ -176,6 +178,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: SecurityCommands,
     },
+    /// Session, thread, and turn management (introspect & undo)
+    Session {
+        /// Session subcommand
+        #[command(subcommand)]
+        command: SessionCommands,
+    },
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -288,6 +296,7 @@ impl Cli {
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
+            Commands::Session { command } => session::run_session_command(command).await,
         }
     }
 }

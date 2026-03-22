@@ -127,6 +127,26 @@ impl Thread {
         }
     }
 
+    /// Create a Thread from a pre-built Context (used by Agent integration).
+    ///
+    /// Unlike [`Thread::new`], which constructs its own `Context`, this
+    /// constructor accepts an existing `Context` that already contains a system
+    /// prompt, token limits, and any initial messages.  The turn log starts
+    /// empty regardless.
+    pub fn from_context(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        context: super::context::Context,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            turns: Vec::new(),
+            context,
+            created_at: SystemTime::now(),
+        }
+    }
+
     /// Number of turns recorded.
     pub fn turn_count(&self) -> usize {
         self.turns.len()
