@@ -7,6 +7,7 @@ use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
 };
 use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -141,6 +142,12 @@ pub struct WhatsappChannel {
     running: Arc<std::sync::atomic::AtomicBool>,
     /// Track message IDs for context
     message_context: Arc<RwLock<HashMap<String, String>>>,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for users (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 impl std::fmt::Debug for WhatsappChannel {
@@ -165,6 +172,89 @@ impl WhatsappChannel {
             http_client,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             message_context: Arc::new(RwLock::new(HashMap::new())),
+            pairing_store: Arc::new(RwLock::new(None)),
+            dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
+            allow_from: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Set the pairing store for DM access control
+    pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
+        let mut ps = self.pairing_store.write().await;
+        *ps = Some(store);
+    }
+
+    /// Set the DM policy
+    pub async fn set_dm_policy(&self, policy: DmPolicy) {
+        let mut policy_guard = self.dm_policy.write().await;
+        *policy_guard = policy;
+    }
+
+    /// Set the allowlist
+    pub async fn set_allow_from(&self, allow_from: Vec<String>) {
+        let mut af = self.allow_from.write().await;
+        *af = allow_from;
+    }
+
+    /// Check if a user is authorized to use the bot (for webhook handler)
+    /// Returns (is_authorized, response_message)
+    pub async fn check_access(&self, phone_number: &str, name: Option<&str>) -> (bool, Option<String>) {
+        let policy = *self.dm_policy.read().await;
+
+        match policy {
+            DmPolicy::Open => (true, None),
+            DmPolicy::Allowlist => {
+                let allow_list = self.allow_from.read().await;
+                let normalized = phone_number.trim_start_matches('+');
+                let is_allowed = allow_list.iter().any(|n| {
+                    n.trim_start_matches('+') == normalized
+                });
+
+                if is_allowed {
+                    (true, None)
+                } else {
+                    (false, Some("🔒 This bot is private. You're not authorized to use it.".to_string()))
+                }
+            }
+            DmPolicy::Pairing => {
+                if let Some(store) = self.pairing_store.read().await.as_ref() {
+                    let normalized = phone_number.trim_start_matches('+');
+                    if store.is_authorized("whatsapp", normalized).await {
+                        return (true, None);
+                    }
+
+                    // Not authorized - create or get pending request
+                    match store.request_access("whatsapp", normalized, name).await {
+                        Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
+                        Ok(RequestAccessResult::NewRequest { code }) => {
+                            info!("New WhatsApp pairing request from {}: code={}", phone_number, code);
+                            (false, Some(format!(
+                                "🔒 This bot requires pairing.\n\n\
+                                Your pairing code: *{}*\n\n\
+                                Please share this code with an admin to get access.",
+                                code
+                            )))
+                        }
+                        Ok(RequestAccessResult::AlreadyPending { code, .. }) => {
+                            (false, Some(format!(
+                                "⏳ Your pairing request is still pending.\n\n\
+                                Code: *{}*\n\n\
+                                Please wait for an admin to approve your request.",
+                                code
+                            )))
+                        }
+                        Ok(RequestAccessResult::RateLimited { .. }) => {
+                            (false, Some("⏳ Too many pairing requests. Please try again later.".to_string()))
+                        }
+                        Err(_) => {
+                            (false, Some("❌ Error processing pairing request. Please try again later.".to_string()))
+                        }
+                    }
+                } else {
+                    warn!("Pairing policy set but no pairing store configured");
+                    (false, Some("🔒 Pairing is not configured. Please contact the admin.".to_string()))
+                }
+            }
         }
     }
 

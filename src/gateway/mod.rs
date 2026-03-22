@@ -29,6 +29,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::security::pairing::DmPolicy;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
     MemoryVectorStore, VectorMemoryService,
@@ -343,14 +344,54 @@ pub struct ChannelConfig {
     pub enabled: bool,
     /// Channel-specific credentials/tokens
     pub credentials: HashMap<String, String>,
-    /// DM policy: "open" | "pairing" | "blocked"
-    pub dm_policy: String,
-    /// Allowlist of users/numbers
+    /// DM policy: open, pairing, or allowlist
+    #[serde(default)]
+    pub dm_policy: DmPolicy,
+    /// Allowlist of users/numbers (for allowlist policy)
+    #[serde(default)]
     pub allow_from: Vec<String>,
     /// Blocklist of users/numbers
+    #[serde(default)]
     pub block_from: Vec<String>,
     /// Agent ID to route to (None = default)
     pub agent_id: Option<String>,
+}
+
+impl ChannelConfig {
+    /// Create a new channel config with open policy (default).
+    pub fn new(channel_type: ChannelType) -> Self {
+        Self {
+            channel_type,
+            enabled: true,
+            credentials: HashMap::new(),
+            dm_policy: DmPolicy::Open,
+            allow_from: Vec::new(),
+            block_from: Vec::new(),
+            agent_id: None,
+        }
+    }
+
+    /// Set the DM policy.
+    pub fn with_dm_policy(mut self, policy: DmPolicy) -> Self {
+        self.dm_policy = policy;
+        self
+    }
+
+    /// Set the allowlist.
+    pub fn with_allow_from(mut self, allow_from: Vec<String>) -> Self {
+        self.allow_from = allow_from;
+        self
+    }
+
+    /// Check if a user is in the allowlist.
+    pub fn is_in_allowlist(&self, user_id: &str) -> bool {
+        self.allow_from.iter().any(|a| a == user_id)
+    }
+
+    /// Check if a user is blocked.
+    pub fn is_blocked(&self, user_id: &str) -> bool {
+        self.block_from.iter().any(|b| b == user_id)
+    }
 }
 
 /// Gateway state shared across handlers

@@ -5,6 +5,7 @@
 
 use crate::cli::ChannelType;
 use crate::error::Result;
+use crate::security::pairing::DmPolicy;
 use clap::Subcommand;
 use std::collections::HashMap;
 
@@ -284,7 +285,7 @@ async fn add_telegram_channel(
         enabled: true,
         channel_type: GatewayChannelType::Telegram,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -346,7 +347,7 @@ async fn add_discord_channel(
         enabled: true,
         channel_type: GatewayChannelType::Discord,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -414,7 +415,7 @@ async fn add_slack_channel(
         enabled: true,
         channel_type: GatewayChannelType::Slack,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -488,7 +489,7 @@ async fn add_whatsapp_channel(
         enabled: true,
         channel_type: GatewayChannelType::Whatsapp,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -561,7 +562,7 @@ async fn add_qq_channel(
         enabled: true,
         channel_type: GatewayChannelType::Qq,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -648,7 +649,7 @@ async fn add_feishu_channel(
         enabled: true,
         channel_type: GatewayChannelType::Feishu,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,
@@ -695,7 +696,7 @@ async fn add_websocket_channel(
         enabled: true,
         channel_type: crate::channels::ChannelType::Websocket,
         credentials,
-        dm_policy: "open".to_string(),
+        dm_policy: DmPolicy::Open,
         allow_from: vec![],
         block_from: vec![],
         agent_id: agent,

@@ -7,9 +7,10 @@ use crate::channels::{
     MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
+use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "discord")]
@@ -84,6 +85,12 @@ pub struct DiscordChannel {
     /// Session mapping: channel_id -> session_uuid (for /new command support)
     #[cfg(feature = "discord")]
     session_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, String>>>,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for users (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -114,7 +121,28 @@ impl DiscordChannel {
             )),
             #[cfg(feature = "discord")]
             session_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            pairing_store: Arc::new(RwLock::new(None)),
+            dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
+            allow_from: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Set the pairing store for DM access control
+    pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
+        let mut ps = self.pairing_store.write().await;
+        *ps = Some(store);
+    }
+
+    /// Set the DM policy
+    pub async fn set_dm_policy(&self, policy: DmPolicy) {
+        let mut policy_guard = self.dm_policy.write().await;
+        *policy_guard = policy;
+    }
+
+    /// Set the allowlist
+    pub async fn set_allow_from(&self, allow_from: Vec<String>) {
+        let mut af = self.allow_from.write().await;
+        *af = allow_from;
     }
 
     #[cfg(feature = "discord")]
@@ -247,10 +275,16 @@ impl Channel for DiscordChannel {
                 | GatewayIntents::DIRECT_MESSAGE_REACTIONS;
 
             let session_map = self.session_map.clone();
+            let pairing_store = self.pairing_store.clone();
+            let dm_policy = self.dm_policy.clone();
+            let allow_from = self.allow_from.clone();
             let mut client = Client::builder(&self.config.token, intents)
                 .event_handler(DiscordHandler {
                     config: self.config.clone(),
                     session_map,
+                    pairing_store,
+                    dm_policy,
+                    allow_from,
                 })
                 .await
                 .map_err(|e| {
@@ -498,6 +532,12 @@ struct DiscordHandler {
     config: DiscordConfig,
     /// Session mapping: channel_id -> session_uuid (for /new command support)
     session_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, String>>>,
+    /// Pairing store for DM access control
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    /// DM policy for access control
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    /// Allowlist for users (used with Allowlist policy)
+    allow_from: Arc<RwLock<Vec<String>>>,
 }
 
 #[cfg(feature = "discord")]
@@ -535,7 +575,91 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
-        // Check if user is allowed
+        let user_id = msg.author.id.get().to_string();
+        let username = msg.author.name.clone();
+        let is_dm = msg.guild_id.is_none();
+
+        // Check DM policy
+        let policy = *self.dm_policy.read().await;
+
+        match policy {
+            DmPolicy::Open => {
+                // Allow all - no checks needed
+            }
+            DmPolicy::Allowlist => {
+                // Check if user is in allowlist
+                let allow_list = self.allow_from.read().await;
+                let is_allowed = allow_list.iter().any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
+
+                if !is_allowed {
+                    warn!("User @{} ({}) is not in allowlist", username, user_id);
+                    let _ = msg.channel_id.say(&ctx.http, "🔒 This bot is private. You're not authorized to use it.").await;
+                    return;
+                }
+            }
+            DmPolicy::Pairing => {
+                // Only enforce pairing in DMs
+                if is_dm {
+                    if let Some(store) = self.pairing_store.read().await.as_ref() {
+                        if !store.is_authorized("discord", &user_id).await {
+                            // Not authorized - check if they already have a pending request
+                            match store.request_access("discord", &user_id, Some(&username)).await {
+                                Ok(RequestAccessResult::AlreadyAuthorized) => {
+                                    // Shouldn't happen since we just checked, but allow through
+                                }
+                                Ok(RequestAccessResult::NewRequest { code }) => {
+                                    info!("New pairing request from @{} ({}): code={}", username, user_id, code);
+                                    let _ = msg.channel_id.say(
+                                        &ctx.http,
+                                        format!(
+                                            "🔒 This bot requires pairing.\n\n\
+                                            Your pairing code: **{}**\n\n\
+                                            Please share this code with an admin to get access.\n\
+                                            Or ask an admin to run:\n\
+                                            `manta pairing approve discord {}`",
+                                            code, code
+                                        ),
+                                    ).await;
+                                    return;
+                                }
+                                Ok(RequestAccessResult::AlreadyPending { code, created_at: _ }) => {
+                                    let _ = msg.channel_id.say(
+                                        &ctx.http,
+                                        format!(
+                                            "⏳ Your pairing request is still pending.\n\n\
+                                            Code: **{}**\n\n\
+                                            Please wait for an admin to approve your request.",
+                                            code
+                                        ),
+                                    ).await;
+                                    return;
+                                }
+                                Ok(RequestAccessResult::RateLimited { .. }) => {
+                                    let _ = msg.channel_id.say(
+                                        &ctx.http,
+                                        "⏳ Too many pairing requests. Please try again later."
+                                    ).await;
+                                    return;
+                                }
+                                Err(_) => {
+                                    let _ = msg.channel_id.say(
+                                        &ctx.http,
+                                        "❌ Error processing pairing request. Please try again later."
+                                    ).await;
+                                    return;
+                                }
+                            }
+                        }
+                    } else {
+                        warn!("Pairing policy set but no pairing store configured");
+                        let _ = msg.channel_id.say(&ctx.http, "🔒 Pairing is not configured. Please contact the admin.").await;
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Legacy: Also check allowed_user_ids if not empty (for backward compatibility)
         if !self.config.allowed_user_ids.is_empty()
             && !self.config.allowed_user_ids.contains(&msg.author.id.get())
         {
