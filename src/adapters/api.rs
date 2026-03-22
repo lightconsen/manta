@@ -29,6 +29,7 @@ impl ApiClient {
     pub async fn new_async(config: &ServiceConfig) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
+            .no_proxy()
             .build()
             .map_err(|e| MantaError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
@@ -81,6 +82,7 @@ impl ApiClient {
 
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
+            .no_proxy()
             .build()
             .map_err(|e| MantaError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
@@ -316,8 +318,8 @@ mod tests {
         let config = ServiceConfig {
             endpoint: mock_server.uri(),
             api_key: None,
-            timeout_seconds: 30,
-            retry: RetryConfig::default(),
+            timeout_seconds: 5,
+            retry: RetryConfig { max_retries: 0, base_delay_ms: 0, max_delay_ms: 0 },
         };
 
         let client = ApiClient::new(&config).unwrap();
@@ -342,8 +344,8 @@ mod tests {
         let config = ServiceConfig {
             endpoint: mock_server.uri(),
             api_key: Some(SecretRef::String("secret".to_string())),
-            timeout_seconds: 30,
-            retry: RetryConfig::default(),
+            timeout_seconds: 5,
+            retry: RetryConfig { max_retries: 0, base_delay_ms: 0, max_delay_ms: 0 },
         };
 
         let client = ApiClient::new(&config).unwrap();
@@ -366,8 +368,8 @@ mod tests {
         let config = ServiceConfig {
             endpoint: mock_server.uri(),
             api_key: None,
-            timeout_seconds: 30,
-            retry: RetryConfig::default(),
+            timeout_seconds: 5,
+            retry: RetryConfig { max_retries: 0, base_delay_ms: 0, max_delay_ms: 0 },
         };
 
         let client = ApiClient::new(&config).unwrap();
