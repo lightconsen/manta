@@ -223,6 +223,77 @@ impl SessionStore {
         .await
         .ok();
 
+        // ── Thread / Turn additions ───────────────────────────────────────────
+
+        // Threads table: one row per named conversation branch.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id          TEXT    NOT NULL,
+                session_id  TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                label       TEXT    NOT NULL DEFAULT '',
+                created_at  INTEGER NOT NULL,
+                PRIMARY KEY (id, session_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to create threads table".to_string(),
+            details: e.to_string(),
+        })?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
+        // Migrate existing session_messages rows: add thread_id, turn_index,
+        // turn_state columns if they are not already present.
+        // SQLite does not support ADD COLUMN IF NOT EXISTS, so we check
+        // pragma_table_info first.
+        let has_thread_id: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name='thread_id'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0) > 0;
+
+        if !has_thread_id {
+            sqlx::query("ALTER TABLE session_messages ADD COLUMN thread_id   TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| MantaError::Storage {
+                    context: "Failed to add thread_id column".to_string(),
+                    details: e.to_string(),
+                })?;
+            sqlx::query("ALTER TABLE session_messages ADD COLUMN turn_index  INTEGER")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| MantaError::Storage {
+                    context: "Failed to add turn_index column".to_string(),
+                    details: e.to_string(),
+                })?;
+            sqlx::query("ALTER TABLE session_messages ADD COLUMN turn_state  TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| MantaError::Storage {
+                    context: "Failed to add turn_state column".to_string(),
+                    details: e.to_string(),
+                })?;
+            debug!("Migrated session_messages: added thread_id, turn_index, turn_state columns");
+        }
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_thread ON session_messages(session_id, thread_id, turn_index)"
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         info!("Session storage schema initialized");
         Ok(())
     }
@@ -547,6 +618,220 @@ impl SessionStore {
         let deleted = result.rows_affected() as usize;
         info!("Cleaned up {} old sessions", deleted);
         Ok(deleted)
+    }
+
+    // ── Thread / Turn methods ─────────────────────────────────────────────────
+
+    /// Upsert a thread record.  Call when a Thread is first created for a session.
+    pub async fn save_thread(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        label: &str,
+        created_at_ms: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO threads (id, session_id, label, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id, session_id) DO UPDATE SET label = excluded.label
+            "#,
+        )
+        .bind(thread_id)
+        .bind(session_id)
+        .bind(label)
+        .bind(created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to save thread".to_string(),
+            details: e.to_string(),
+        })?;
+
+        debug!("Thread saved: {} / {}", session_id, thread_id);
+        Ok(())
+    }
+
+    /// Append a completed turn as two rows (user + assistant) tagged with
+    /// thread and turn metadata.
+    pub async fn append_turn(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        turn_index: i64,
+        user_msg: &str,
+        assistant_msg: &str,
+        state: &str,
+    ) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+
+        // Insert user message row.
+        sqlx::query(
+            r#"
+            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
+            VALUES (?, 'user', ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_msg)
+        .bind(now)
+        .bind(thread_id)
+        .bind(turn_index)
+        .bind(state)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to insert turn user message".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // Insert assistant message row.
+        sqlx::query(
+            r#"
+            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
+            VALUES (?, 'assistant', ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(assistant_msg)
+        .bind(now + 1) // ensure deterministic ordering
+        .bind(thread_id)
+        .bind(turn_index)
+        .bind(state)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to insert turn assistant message".to_string(),
+            details: e.to_string(),
+        })?;
+
+        // Keep session message_count in sync.
+        sqlx::query(
+            "UPDATE sessions SET message_count = message_count + 2, last_activity = ? WHERE id = ?",
+        )
+        .bind(now)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .ok();
+
+        debug!("Turn appended: {}/{} index={}", session_id, thread_id, turn_index);
+        Ok(())
+    }
+
+    /// Load all threads for a session together with their turns.
+    ///
+    /// Returns `Vec<(thread_id, label, created_at_ms, Vec<(turn_index, user_msg, asst_msg, state)>)>`.
+    pub async fn load_threads_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<(String, String, i64, Vec<(i64, String, String, String)>)>> {
+        // Load thread rows.
+        let thread_rows = sqlx::query(
+            "SELECT id, label, created_at FROM threads WHERE session_id = ? ORDER BY created_at",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to load threads".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut result = Vec::new();
+
+        for trow in thread_rows {
+            let tid: String = trow.get("id");
+            let label: String = trow.get("label");
+            let created_at: i64 = trow.get("created_at");
+
+            // Load user-half of each turn (role='user') ordered by turn_index.
+            // We join with the assistant row by matching (session_id, thread_id, turn_index).
+            let turn_rows = sqlx::query(
+                r#"
+                SELECT u.turn_index,
+                       u.content      AS user_msg,
+                       COALESCE(a.content, '') AS asst_msg,
+                       COALESCE(u.turn_state, 'complete') AS state
+                FROM session_messages u
+                LEFT JOIN session_messages a
+                    ON  a.session_id = u.session_id
+                    AND a.thread_id  = u.thread_id
+                    AND a.turn_index = u.turn_index
+                    AND a.role       = 'assistant'
+                WHERE u.session_id = ?
+                  AND u.thread_id  = ?
+                  AND u.role       = 'user'
+                ORDER BY u.turn_index
+                "#,
+            )
+            .bind(session_id)
+            .bind(&tid)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: "Failed to load turns".to_string(),
+                details: e.to_string(),
+            })?;
+
+            let turns: Vec<(i64, String, String, String)> = turn_rows
+                .into_iter()
+                .map(|r| {
+                    let idx: i64 = r.get("turn_index");
+                    let user: String = r.get("user_msg");
+                    let asst: String = r.get("asst_msg");
+                    let st: String = r.get("state");
+                    (idx, user, asst, st)
+                })
+                .collect();
+
+            result.push((tid, label, created_at, turns));
+        }
+
+        debug!(
+            "Loaded {} threads for session {}",
+            result.len(),
+            session_id
+        );
+        Ok(result)
+    }
+
+    /// Hard-delete all rows for a specific turn (used by undo persistence).
+    pub async fn delete_turn(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        turn_index: i64,
+    ) -> Result<()> {
+        let affected = sqlx::query(
+            "DELETE FROM session_messages WHERE session_id = ? AND thread_id = ? AND turn_index = ?",
+        )
+        .bind(session_id)
+        .bind(thread_id)
+        .bind(turn_index)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| MantaError::Storage {
+            context: "Failed to delete turn".to_string(),
+            details: e.to_string(),
+        })?
+        .rows_affected();
+
+        // Adjust session message_count (deleted rows are usually 2).
+        sqlx::query(
+            "UPDATE sessions SET message_count = MAX(0, message_count - ?) WHERE id = ?",
+        )
+        .bind(affected as i64)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .ok();
+
+        debug!(
+            "Deleted turn {}/{}/{}: {} rows",
+            session_id, thread_id, turn_index, affected
+        );
+        Ok(())
     }
 
     /// Get session statistics

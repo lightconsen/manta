@@ -1180,6 +1180,17 @@ impl Gateway {
             .route("/api/settings/:key", get(get_setting_handler).delete(delete_setting_handler))
             // ── Pending tool approvals ─────────────────────────────────────
             .route("/api/chat/approval", get(list_approvals_handler).post(resolve_approval_handler))
+            // ── Session / Thread / Turn introspection ──────────────────────
+            .route("/api/sessions", get(list_sessions_handler))
+            .route("/api/sessions/:id/threads", get(list_threads_handler))
+            .route(
+                "/api/sessions/:id/threads/:thread_id/turns",
+                get(list_turns_handler),
+            )
+            .route(
+                "/api/sessions/:id/threads/:thread_id/undo",
+                post(undo_turn_handler),
+            )
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
@@ -5995,5 +6006,179 @@ async fn assign_team_task_handler(
             Json(serde_json::json!({ "error": format!("Failed to queue task: {}", e) })),
         )
             .into_response(),
+    }
+}
+
+// ── Session / Thread / Turn API ───────────────────────────────────────────────
+
+/// `GET /api/sessions` — list all active sessions and their routing info.
+async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let routing = state.session_routing.read().await;
+    let sessions: Vec<_> = routing
+        .iter()
+        .map(|(session_id, agent_id)| {
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+            })
+        })
+        .collect();
+    let count = sessions.len();
+    Json(serde_json::json!({
+        "sessions": sessions,
+        "count": count,
+    }))
+}
+
+/// Resolve session_id → Arc<Agent>, returning a 404 response on failure.
+///
+/// The caller must NOT hold any lock when invoking this helper.
+async fn resolve_session_agent(
+    state: &Arc<GatewayState>,
+    session_id: &str,
+) -> Result<Arc<Agent>, axum::response::Response> {
+    let agent_id = {
+        let routing = state.session_routing.read().await;
+        match routing.get(session_id) {
+            Some(id) => id.clone(),
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": format!("Session '{}' not found", session_id)
+                    })),
+                )
+                    .into_response());
+            }
+        }
+    };
+
+    let agents = state.agents.read().await;
+    match agents.get(&agent_id) {
+        Some(handle) => Ok(handle.agent.clone()),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("Agent '{}' for session '{}' not found", agent_id, session_id)
+            })),
+        )
+            .into_response()),
+    }
+}
+
+/// `GET /api/sessions/:id/threads` — list threads for a session's agent.
+async fn list_threads_handler(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let agent = match resolve_session_agent(&state, &session_id).await {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+
+    let summaries = agent.thread_summaries().await;
+    let threads: Vec<_> = summaries
+        .into_iter()
+        .map(|(thread_id, label, turn_count, conv_id)| {
+            serde_json::json!({
+                "thread_id": thread_id,
+                "label": label,
+                "turn_count": turn_count,
+                "conversation_id": conv_id,
+            })
+        })
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "session_id": session_id,
+            "threads": threads,
+        })),
+    )
+        .into_response()
+}
+
+/// `GET /api/sessions/:id/threads/:thread_id/turns` — list turns for a thread.
+async fn list_turns_handler(
+    Path((session_id, thread_id)): Path<(String, String)>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let agent = match resolve_session_agent(&state, &session_id).await {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+
+    // Thread map key is `conversation_id`; the CLI passes `thread_id` with a
+    // "thread-" prefix. Strip it to get the correct map key.
+    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id);
+
+    match agent.thread_turns_for(conv_id).await {
+        Some(turns) => {
+            let turns_json: Vec<_> = turns
+                .into_iter()
+                .map(|(index, turn_state, user_preview, asst_preview)| {
+                    serde_json::json!({
+                        "index": index,
+                        "state": turn_state,
+                        "user_preview": user_preview,
+                        "assistant_preview": asst_preview,
+                    })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": session_id,
+                    "thread_id": thread_id,
+                    "turns": turns_json,
+                })),
+            )
+                .into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("Thread '{}' not found", thread_id),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/sessions/:id/threads/:thread_id/undo` — undo the last turn of a thread.
+async fn undo_turn_handler(
+    Path((session_id, thread_id)): Path<(String, String)>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let agent = match resolve_session_agent(&state, &session_id).await {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+
+    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id);
+
+    if agent.undo_last_turn(conv_id).await {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "session_id": session_id,
+                "thread_id": thread_id,
+                "message": "Last turn undone successfully",
+            })),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!(
+                    "Thread '{}' not found or has no turns to undo",
+                    thread_id
+                ),
+            })),
+        )
+            .into_response()
     }
 }

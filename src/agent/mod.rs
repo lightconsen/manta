@@ -12,7 +12,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Progress events during message processing
@@ -64,6 +64,8 @@ pub use session::{
 pub use subagent_registry::{SubagentMetrics, SubagentRegistry, SubagentRun, SubagentStatus};
 pub use todo::{Task, TaskStatus, TodoStore};
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
+
+use self::session_store::SessionStore;
 
 /// Fast check for obviously time-sensitive queries
 fn is_obviously_time_sensitive(message: &str) -> bool {
@@ -389,8 +391,13 @@ pub struct Agent {
     model: Option<String>,
     /// Tool registry
     tools: Arc<ToolRegistry>,
-    /// Context storage
-    contexts: Arc<RwLock<std::collections::HashMap<String, Context>>>,
+    /// Per-conversation Thread (replaces flat `contexts` map).
+    /// Thread owns the Context AND the turn log — conversation continuity lives here.
+    thread_map: Arc<Mutex<HashMap<String, Thread>>>,
+    /// Session store for turn persistence (optional).
+    session_store: Option<Arc<SessionStore>>,
+    /// Session ID used as namespace for turn persistence.
+    session_id: Option<String>,
     /// Shutdown signal
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
     /// Memory store for persistence
@@ -419,7 +426,9 @@ impl Agent {
             provider,
             model: None,
             tools,
-            contexts: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            thread_map: Arc::new(Mutex::new(HashMap::new())),
+            session_store: None,
+            session_id: None,
             shutdown_tx: Arc::new(RwLock::new(None)),
             memory_store: None,
             chat_history: None,
@@ -429,6 +438,17 @@ impl Agent {
             active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             cost_guard: None,
         }
+    }
+
+    /// Attach a `SessionStore` for turn persistence.
+    ///
+    /// When set, every completed turn is persisted asynchronously and the
+    /// conversation history can be restored across restarts via
+    /// [`Agent::restore_threads`].
+    pub fn with_session_store(mut self, store: Arc<SessionStore>, session_id: impl Into<String>) -> Self {
+        self.session_store = Some(store);
+        self.session_id = Some(session_id.into());
+        self
     }
 
     /// Attach a `CostGuard` to this agent.  When set, every provider call
@@ -499,28 +519,24 @@ impl Agent {
         }
     }
 
-    /// Get or create a context for a conversation with dynamic prompt building
-    pub async fn get_context(
+    /// Build a fresh `Context` for a new conversation thread.
+    ///
+    /// This is called only when no existing [`Thread`] is found for a
+    /// `conversation_id`.  It constructs the system prompt, applies token limits
+    /// and dynamic tool iteration caps, but does NOT store anything — callers
+    /// are responsible for wrapping the returned `Context` in a `Thread` and
+    /// inserting it into `thread_map`.
+    async fn build_fresh_context(
         &self,
         conversation_id: &str,
         user_id: &str,
         user_message: &str,
     ) -> Context {
-        let mut contexts = self.contexts.write().await;
-
-        // Check if context already exists - if so, we may update it dynamically
-        let existing_context = contexts.get(conversation_id).cloned();
-
         // Build dynamic prompt context
         let mut prompt_ctx = PromptContext::new(user_message);
         prompt_ctx.detect_task_type();
-
-        // Set phase based on existing context or new conversation
-        let history_len = existing_context
-            .as_ref()
-            .map(|c| c.history().len())
-            .unwrap_or(0);
-        prompt_ctx = prompt_ctx.set_phase(history_len);
+        // New thread → no prior history; phase starts at Initial.
+        prompt_ctx = prompt_ctx.set_phase(0);
 
         // Check for active plan
         let active_plans = self.active_plans.read().await;
@@ -566,7 +582,6 @@ impl Agent {
             dynamic_limit, conversation_id
         );
 
-        contexts.insert(conversation_id.to_string(), context.clone());
         context
     }
 
@@ -698,13 +713,48 @@ impl Agent {
             }
         }
 
-        // Get or create context with dynamic prompt building
-        let mut context = self.get_context(&conversation_id, &user_id, &content).await;
-        // Reset tool tracking for this turn
-        context.clear_tools_used();
+        // ── Thread take-out ───────────────────────────────────────────────────
+        // Acquire the Thread for this conversation (or create a new one).
+        // The lock is dropped before the LLM call to avoid holding it during
+        // a long-running async operation.
+        let mut thread = {
+            let mut map = self.thread_map.lock().await;
+            match map.remove(&conversation_id) {
+                Some(t) => t,
+                None => {
+                    // First message for this conversation — build initial Context.
+                    let ctx =
+                        self.build_fresh_context(&conversation_id, &user_id, &content).await;
+                    let thread_id = format!("thread-{}", &conversation_id);
+                    // Persist the new thread record (fire-and-forget).
+                    if let (Some(store), Some(sid)) =
+                        (self.session_store.clone(), self.session_id.clone())
+                    {
+                        let tid = thread_id.clone();
+                        let label = conversation_id.clone();
+                        tokio::spawn(async move {
+                            let _ = store
+                                .save_thread(
+                                    &sid,
+                                    &tid,
+                                    &label,
+                                    chrono::Utc::now().timestamp_millis(),
+                                )
+                                .await;
+                        });
+                    }
+                    Thread::from_context(thread_id, &conversation_id, ctx)
+                }
+            }
+        };
 
-        // Add user message to context
-        context.add_message(Message::user(&content));
+        // Reset tool tracking and add user message for this turn.
+        thread.context.clear_tools_used();
+        thread.context.add_message(Message::user(&content));
+
+        // Track this turn in the turn log.
+        let turn_idx = thread.push_turn(&content);
+        thread.turns[turn_idx].start();
 
         // Check if we're executing an active plan
         let active_plan_check = {
@@ -718,8 +768,45 @@ impl Agent {
             info!("Executing plan: {}% - Task: {}", progress, current_task);
         }
 
-        // Get response from LLM
-        let response = self.get_completion(&mut context).await?;
+        // Get response from LLM (lock NOT held during this await).
+        let llm_result = self.get_completion(&mut thread.context).await;
+
+        // Complete or interrupt the turn based on result.
+        let llm_result = match llm_result {
+            Ok(resp) => {
+                let asst_text = resp.message.content.clone();
+                thread.turns[turn_idx].complete(asst_text.clone());
+                // Persist the turn asynchronously (fire-and-forget).
+                if let (Some(store), Some(sid)) =
+                    (self.session_store.clone(), self.session_id.clone())
+                {
+                    let tid = thread.id.clone();
+                    let user_c = content.clone();
+                    let t_idx = turn_idx as i64;
+                    tokio::spawn(async move {
+                        let _ = store
+                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
+                            .await;
+                    });
+                }
+                Ok(resp)
+            }
+            Err(e) => {
+                thread.turns[turn_idx].mark_error();
+                Err(e)
+            }
+        };
+
+        // Collect tools_used BEFORE putting thread back (needed for cache logic below).
+        let tools_used_this_turn = thread.context.tools_used().to_vec();
+
+        // ── Put thread back ───────────────────────────────────────────────────
+        {
+            let mut map = self.thread_map.lock().await;
+            map.insert(conversation_id.clone(), thread);
+        }
+
+        let response = llm_result?;
 
         // Store assistant response in chat history and index for search
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
@@ -768,16 +855,15 @@ impl Agent {
 
         // Only cache the response if it should be cached
         if should_cache {
-            let tools_used = context.tools_used().to_vec();
             // Check if tools used are cacheable (skip cache for time-sensitive tools)
-            if are_tools_cacheable(&tools_used) {
+            if are_tools_cacheable(&tools_used_this_turn) {
                 self.response_cache
                     .set(
                         &user_id,
                         &conversation_id,
                         &content,
                         response.message.content.clone(),
-                        tools_used,
+                        tools_used_this_turn,
                     )
                     .await;
             }
@@ -898,18 +984,83 @@ impl Agent {
             }
         }
 
-        // Get or create context with dynamic prompt building
-        let mut context = self.get_context(&conversation_id, &user_id, &content).await;
-        // Reset tool tracking for this turn
-        context.clear_tools_used();
+        // ── Thread take-out (same pattern as process_message) ────────────────
+        let mut thread = {
+            let mut map = self.thread_map.lock().await;
+            match map.remove(&conversation_id) {
+                Some(t) => t,
+                None => {
+                    let ctx =
+                        self.build_fresh_context(&conversation_id, &user_id, &content).await;
+                    let thread_id = format!("thread-{}", &conversation_id);
+                    if let (Some(store), Some(sid)) =
+                        (self.session_store.clone(), self.session_id.clone())
+                    {
+                        let tid = thread_id.clone();
+                        let label = conversation_id.clone();
+                        tokio::spawn(async move {
+                            let _ = store
+                                .save_thread(
+                                    &sid,
+                                    &tid,
+                                    &label,
+                                    chrono::Utc::now().timestamp_millis(),
+                                )
+                                .await;
+                        });
+                    }
+                    Thread::from_context(thread_id, &conversation_id, ctx)
+                }
+            }
+        };
 
-        // Add user message to context
-        context.add_message(Message::user(&content));
+        // Reset tool tracking and add user message for this turn.
+        thread.context.clear_tools_used();
+        thread.context.add_message(Message::user(&content));
 
-        // Get response from LLM with progress
-        let response = self
-            .get_completion_with_progress(&mut context, progress_cb.clone())
-            .await?;
+        // Track this turn.
+        let turn_idx = thread.push_turn(&content);
+        thread.turns[turn_idx].start();
+
+        // Get response from LLM with progress (lock NOT held).
+        let llm_result = self
+            .get_completion_with_progress(&mut thread.context, progress_cb.clone())
+            .await;
+
+        // Complete or interrupt the turn.
+        let llm_result = match llm_result {
+            Ok(resp) => {
+                let asst_text = resp.message.content.clone();
+                thread.turns[turn_idx].complete(asst_text.clone());
+                if let (Some(store), Some(sid)) =
+                    (self.session_store.clone(), self.session_id.clone())
+                {
+                    let tid = thread.id.clone();
+                    let user_c = content.clone();
+                    let t_idx = turn_idx as i64;
+                    tokio::spawn(async move {
+                        let _ = store
+                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
+                            .await;
+                    });
+                }
+                Ok(resp)
+            }
+            Err(e) => {
+                thread.turns[turn_idx].mark_error();
+                Err(e)
+            }
+        };
+
+        let tools_used_this_turn = thread.context.tools_used().to_vec();
+
+        // ── Put thread back ───────────────────────────────────────────────────
+        {
+            let mut map = self.thread_map.lock().await;
+            map.insert(conversation_id.clone(), thread);
+        }
+
+        let response = llm_result?;
 
         // Store assistant response
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
@@ -956,10 +1107,15 @@ impl Agent {
 
         // Only cache the response if it should be cached
         if should_cache {
-            let tools_used = context.tools_used().to_vec();
-            if are_tools_cacheable(&tools_used) {
+            if are_tools_cacheable(&tools_used_this_turn) {
                 self.response_cache
-                    .set(&user_id, &conversation_id, &content, response.message.content.clone(), tools_used)
+                    .set(
+                        &user_id,
+                        &conversation_id,
+                        &content,
+                        response.message.content.clone(),
+                        tools_used_this_turn,
+                    )
                     .await;
             }
         }
@@ -1373,7 +1529,7 @@ impl Agent {
         check_interval: Duration,
         stale_threshold: Duration,
     ) -> tokio::task::JoinHandle<()> {
-        let contexts = Arc::clone(&self.contexts);
+        let thread_map = Arc::clone(&self.thread_map);
         let tools = Arc::clone(&self.tools);
 
         tokio::spawn(async move {
@@ -1383,18 +1539,18 @@ impl Agent {
             loop {
                 ticker.tick().await;
 
-                // ── 1. Evict stale contexts ───────────────────────────────────
+                // ── 1. Evict stale threads ────────────────────────────────────
                 let stale_ids: Vec<String> = {
-                    let guard = contexts.read().await;
+                    let guard = thread_map.lock().await;
                     guard
                         .iter()
-                        .filter(|(_, ctx)| ctx.is_stale(stale_threshold))
+                        .filter(|(_, t)| t.context.is_stale(stale_threshold))
                         .map(|(id, _)| id.clone())
                         .collect()
                 };
 
                 if !stale_ids.is_empty() {
-                    let mut guard = contexts.write().await;
+                    let mut guard = thread_map.lock().await;
                     for id in &stale_ids {
                         guard.remove(id);
                         warn!(
@@ -1416,6 +1572,106 @@ impl Agent {
                 }
             }
         })
+    }
+
+    /// Return a summary of all active threads:
+    /// `(thread_id, label, turn_count, conversation_id)`.
+    pub async fn thread_summaries(&self) -> Vec<(String, String, usize, String)> {
+        let map = self.thread_map.lock().await;
+        map.iter()
+            .map(|(conv_id, t)| (t.id.clone(), t.label.clone(), t.turns.len(), conv_id.clone()))
+            .collect()
+    }
+
+    /// Return turn details for a conversation, identified by its
+    /// `conversation_id` (the `thread_map` key).
+    ///
+    /// Each element is `(index, state_str, user_preview, asst_preview)`.
+    /// Returns `None` if no thread exists for that conversation.
+    pub async fn thread_turns_for(
+        &self,
+        conv_id: &str,
+    ) -> Option<Vec<(usize, String, String, String)>> {
+        let map = self.thread_map.lock().await;
+        map.get(conv_id).map(|t| {
+            t.turns
+                .iter()
+                .map(|turn| {
+                    let state = format!("{:?}", turn.state).to_lowercase();
+                    let user_preview: String = turn.user_message.chars().take(80).collect();
+                    let asst_preview: String = turn.assistant_response.chars().take(80).collect();
+                    (turn.index, state, user_preview, asst_preview)
+                })
+                .collect()
+        })
+    }
+
+    /// Undo the last turn for a conversation.
+    ///
+    /// Removes the most recent `Turn` from the in-memory `Thread` and strips
+    /// the corresponding messages from the context window.  If a
+    /// `SessionStore` is attached the turn rows are also hard-deleted from
+    /// SQLite (fire-and-forget).
+    ///
+    /// Returns `true` if a turn was undone, `false` if the thread was empty or
+    /// not found.
+    pub async fn undo_last_turn(&self, conversation_id: &str) -> bool {
+        let mut map = self.thread_map.lock().await;
+        if let Some(thread) = map.get_mut(conversation_id) {
+            let last_idx = thread.turns.len().saturating_sub(1) as i64;
+            let undone = thread.undo_last_turn();
+            if undone {
+                if let (Some(store), Some(sid)) =
+                    (self.session_store.clone(), self.session_id.clone())
+                {
+                    let tid = thread.id.clone();
+                    tokio::spawn(async move {
+                        let _ = store.delete_turn(&sid, &tid, last_idx).await;
+                    });
+                }
+            }
+            undone
+        } else {
+            false
+        }
+    }
+
+    /// Restore threads from the `SessionStore` for the current `session_id`.
+    ///
+    /// This rebuilds each persisted `Thread` (system prompt + accumulated
+    /// history) so conversation continuity survives a restart.  Call once
+    /// during agent startup, after `with_session_store` has been configured.
+    pub async fn restore_threads(&self) -> crate::Result<()> {
+        let store = self
+            .session_store
+            .as_ref()
+            .ok_or_else(|| crate::error::MantaError::Internal("no session store".into()))?;
+        let sid = self
+            .session_id
+            .as_deref()
+            .ok_or_else(|| crate::error::MantaError::Internal("no session id".into()))?;
+
+        let thread_rows = store.load_threads_for_session(sid).await?;
+        let mut map = self.thread_map.lock().await;
+
+        for (tid, label, _created_ms, turns) in thread_rows {
+            // Build a fresh context (system prompt, token limits) — history
+            // is replayed via push_turn / complete below.
+            let ctx = self.build_fresh_context(&tid, "restore", "").await;
+            let mut thread = Thread::from_context(&tid, &label, ctx);
+            for (_idx, user_msg, asst_msg, _state) in turns {
+                let i = thread.push_turn(&user_msg);
+                thread.context.add_message(Message::user(&user_msg));
+                thread.turns[i].complete(asst_msg.clone());
+                thread.context.add_message(Message::assistant(&asst_msg));
+            }
+            // Thread is keyed by conversation_id; the thread_id is "thread-{conv_id}".
+            let conv_id = tid.trim_start_matches("thread-").to_string();
+            map.insert(conv_id, thread);
+        }
+
+        info!("Restored {} thread(s) from session {}", map.len(), sid);
+        Ok(())
     }
 
     /// Shutdown the agent
