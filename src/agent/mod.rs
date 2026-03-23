@@ -420,6 +420,10 @@ pub struct Agent {
     /// 0 = Community, 1 = Trusted (default).
     /// Set by the gateway before RunSkill invocations; reset to Trusted afterward.
     active_skill_trust: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    /// Skill manager for deterministic skill prefiltering.
+    /// When set, skills are dynamically filtered based on user message triggers
+    /// before being included in the system prompt.
+    skill_manager: Option<Arc<crate::skills::SkillManager>>,
 }
 
 impl Agent {
@@ -445,6 +449,7 @@ impl Agent {
             active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             cost_guard: None,
             active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
+            skill_manager: None,
         }
     }
 
@@ -521,6 +526,17 @@ impl Agent {
     /// memory_store and chat_history fields.
     pub fn with_memory_manager(mut self, manager: Arc<crate::memory::MemoryManager>) -> Self {
         self.memory_manager = Some(manager);
+        self
+    }
+
+    /// Set the skill manager for deterministic skill prefiltering.
+    ///
+    /// When set, the agent will dynamically filter skills based on trigger patterns
+    /// (regex, keywords, commands) before including them in the system prompt.
+    /// This reduces token usage and improves relevance by only including skills
+    /// that match the user's message.
+    pub fn with_skill_manager(mut self, manager: Arc<crate::skills::SkillManager>) -> Self {
+        self.skill_manager = Some(manager);
         self
     }
 
@@ -616,11 +632,44 @@ impl Agent {
             None
         };
 
-        // Combine base prompt with memory context
-        let full_prompt = if let Some(ref mem_ctx) = memory_context {
-            format!("{}\n\n{}", base_prompt, mem_ctx)
-        } else {
-            base_prompt
+        // Combine base prompt with memory context and skills
+        let full_prompt = {
+            let mut prompt = base_prompt;
+
+            // Add memory context if available
+            if let Some(ref mem_ctx) = memory_context {
+                prompt = format!("{}\n\n{}", prompt, mem_ctx);
+            }
+
+            // Add dynamically filtered skills based on user message
+            if let Some(ref skill_manager) = self.skill_manager {
+                let matching_skills = skill_manager.prefilter_skills(user_message, 5).await;
+                if !matching_skills.is_empty() {
+                    let skills_text = matching_skills
+                        .iter()
+                        .map(|s| {
+                            let triggers: Vec<String> = s
+                                .triggers
+                                .iter()
+                                .map(|t| format!("{:?}: {}", t.trigger_type, t.pattern))
+                                .collect();
+                            format!(
+                                "- {}: {} (triggers: {})",
+                                s.name,
+                                s.description,
+                                triggers.join(", ")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    prompt = format!("{}\n\n## Available Skills\n\n{}", prompt, skills_text);
+                }
+            } else if let Some(ref static_skills) = self.config.skills_prompt {
+                // Fallback to static skills prompt if skill_manager not set
+                prompt = format!("{}\n\n{}", prompt, static_skills);
+            }
+
+            prompt
         };
 
         // Build dynamic system prompt

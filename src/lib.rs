@@ -50,6 +50,7 @@ pub mod dirs;
 pub mod error;
 pub mod gateway;
 pub mod logs;
+pub mod media;
 pub mod memory;
 pub mod model_router;
 pub mod plugins;

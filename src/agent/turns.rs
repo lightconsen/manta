@@ -176,13 +176,14 @@ impl Thread {
         match self.turns.pop() {
             None => false,
             Some(turn) => {
+                // Clone the user message before moving turn to redo_stack
+                let user_message = turn.user_message.clone();
                 // Preserve the undone turn for potential redo
                 self.redo_stack.push(turn);
                 // Mirror the undo in the context by stripping the last
                 // user message plus any subsequent messages (assistant reply
                 // and tool call/result pairs).
-                let turn_ref = self.redo_stack.last().unwrap();
-                self.remove_turn_from_context(&turn_ref.user_message);
+                self.remove_turn_from_context(&user_message);
                 true
             }
         }

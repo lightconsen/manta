@@ -26,6 +26,7 @@ rustyline = { version = "14.0", default-features = false }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
 toml = "0.8"
 
 # Logging
@@ -93,6 +94,9 @@ shellexpand = "3.1"
 
 # LRU cache for session caching
 lru = "0.12"
+
+# Concurrent hashmap for rate limiter
+dashmap = "6.0"
 
 # Webhook signature verification
 hmac = "0.12"

@@ -1442,5 +1442,8 @@ pub mod pairing;
 /// Penetration testing module
 pub mod pentest;
 
+/// Sliding window rate limiter for per-user, per-endpoint rate limiting
+pub mod sliding_window;
+
 // Re-export SecurityValidator and validation types from tools module for use in security tests
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
