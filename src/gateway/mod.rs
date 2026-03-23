@@ -1174,6 +1174,28 @@ impl Gateway {
             });
         }
 
+        // Bridge: forward every GatewayEvent on the internal bus to the SSE broadcast channel.
+        // This ensures that ALL typed events (AgentStatus, ApprovalRequired, RepairAction,
+        // ChannelStatus, MessageReceived, AgentResponse, ToolCalling, ToolResult) are streamed
+        // to web clients subscribed to GET /api/events.
+        {
+            let mut gateway_rx = self.state.event_tx.subscribe();
+            let sse_tx = self.state.sse_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    match gateway_rx.recv().await {
+                        Ok(evt) => {
+                            let _ = sse_tx.send(gateway_event_to_sse(evt));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("SSE bridge lagged, dropped {} gateway events", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+
         // Start gateway-level self-repair watchdog (60 s interval)
         tokio::spawn(run_repair_loop(self.state.clone()));
 
@@ -1467,17 +1489,7 @@ async fn spawn_agent_inner(
                                                     agent_id: agent_id.clone(),
                                                     tool_name: name.clone(),
                                                     arguments: arguments.clone(),
-                                                });
-                                            // Fan out to SSE stream
-                                            let _ = state.sse_tx.send(SseEvent {
-                                                event_type: "tool_calling".to_string(),
-                                                data: serde_json::json!({
-                                                    "tool": name,
-                                                    "arguments": arguments,
-                                                    "agent_id": agent_id,
-                                                }),
-                                                session_id: Some(session_id.clone()),
-                                            });
+                                                }); // bridge forwards to sse_tx
                                         }
                                         crate::agent::ProgressEvent::ToolResult {
                                             name,
@@ -1492,17 +1504,7 @@ async fn spawn_agent_inner(
                                                 agent_id: agent_id.clone(),
                                                 tool_name: name.clone(),
                                                 result: result.clone(),
-                                            });
-                                            // Fan out to SSE stream
-                                            let _ = state.sse_tx.send(SseEvent {
-                                                event_type: "tool_result".to_string(),
-                                                data: serde_json::json!({
-                                                    "tool": name,
-                                                    "result": result,
-                                                    "agent_id": agent_id,
-                                                }),
-                                                session_id: Some(session_id.clone()),
-                                            });
+                                            }); // bridge forwards to sse_tx
                                         }
                                         crate::agent::ProgressEvent::Completed { response } => {
                                             // Fan completed events to SSE
@@ -3475,23 +3477,13 @@ async fn create_agent_handler(
                                     let _ = state.event_tx.send(GatewayEvent::ToolCalling {
                                         session_id: sid.clone(), agent_id: aid.clone(),
                                         tool_name: name.clone(), arguments: arguments.clone(),
-                                    });
-                                    let _ = state.sse_tx.send(SseEvent {
-                                        event_type: "tool_calling".into(),
-                                        data: serde_json::json!({"tool": name, "arguments": arguments, "agent_id": aid}),
-                                        session_id: Some(sid.clone()),
-                                    });
+                                    }); // bridge forwards to sse_tx
                                 }
                                 crate::agent::ProgressEvent::ToolResult { name, result } => {
                                     let _ = state.event_tx.send(GatewayEvent::ToolResult {
                                         session_id: sid.clone(), agent_id: aid.clone(),
                                         tool_name: name.clone(), result: result.clone(),
-                                    });
-                                    let _ = state.sse_tx.send(SseEvent {
-                                        event_type: "tool_result".into(),
-                                        data: serde_json::json!({"tool": name, "result": result, "agent_id": aid}),
-                                        session_id: Some(sid.clone()),
-                                    });
+                                    }); // bridge forwards to sse_tx
                                 }
                                 crate::agent::ProgressEvent::Completed { response } => {
                                     let _ = state.sse_tx.send(SseEvent {
@@ -5495,6 +5487,92 @@ fn json_rpc_error_response(
 }
 
 // ── SSE event streaming ───────────────────────────────────────────────────────
+
+/// Convert an internal [`GatewayEvent`] to the wire-format [`SseEvent`] that is
+/// pushed to web clients on `GET /api/events`.
+///
+/// This mapping is used by the bridge task in [`Gateway::start`] to forward every
+/// event on the internal bus to the SSE broadcast channel.
+fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
+    match evt {
+        GatewayEvent::MessageReceived { channel, user_id, content, timestamp } => SseEvent {
+            event_type: "message_received".into(),
+            data: serde_json::json!({
+                "channel": channel,
+                "user_id": user_id,
+                "content": content,
+                "timestamp": timestamp,
+            }),
+            session_id: None,
+        },
+        GatewayEvent::AgentResponse { session_id, agent_id, content, channel, conversation_id, usage } => SseEvent {
+            event_type: "agent_response".into(),
+            data: serde_json::json!({
+                "agent_id": agent_id,
+                "content": content,
+                "channel": channel,
+                "conversation_id": conversation_id,
+                "usage": usage,
+            }),
+            session_id: Some(session_id),
+        },
+        GatewayEvent::AgentStatus { agent_id, status } => SseEvent {
+            event_type: "agent_status".into(),
+            data: serde_json::json!({
+                "agent_id": agent_id,
+                "status": status,
+            }),
+            session_id: None,
+        },
+        GatewayEvent::ChannelStatus { channel, connected } => SseEvent {
+            event_type: "channel_status".into(),
+            data: serde_json::json!({
+                "channel": channel,
+                "connected": connected,
+            }),
+            session_id: None,
+        },
+        GatewayEvent::ToolCalling { session_id, agent_id, tool_name, arguments } => SseEvent {
+            event_type: "tool_calling".into(),
+            data: serde_json::json!({
+                "agent_id": agent_id,
+                "tool": tool_name,
+                "arguments": arguments,
+            }),
+            session_id: Some(session_id),
+        },
+        GatewayEvent::ToolResult { session_id, agent_id, tool_name, result } => SseEvent {
+            event_type: "tool_result".into(),
+            data: serde_json::json!({
+                "agent_id": agent_id,
+                "tool": tool_name,
+                "result": result,
+            }),
+            session_id: Some(session_id),
+        },
+        GatewayEvent::ApprovalRequired { approval_id, tool_name, requested_by, risk_level, message } => SseEvent {
+            event_type: "approval_required".into(),
+            data: serde_json::json!({
+                "approval_id": approval_id,
+                "tool_name": tool_name,
+                "requested_by": requested_by,
+                "risk_level": risk_level,
+                "message": message,
+            }),
+            session_id: None,
+        },
+        GatewayEvent::RepairAction { kind, target_id, description, restart_count } => SseEvent {
+            event_type: "repair_action".into(),
+            data: serde_json::json!({
+                "kind": kind,
+                "target_id": target_id,
+                "description": description,
+                "restart_count": restart_count,
+            }),
+            session_id: None,
+        },
+    }
+}
 
 /// `GET /api/events`
 ///
