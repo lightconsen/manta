@@ -1042,6 +1042,8 @@ impl MemoryStore for SqliteStorage {
                     created_at,
                     expires_at,
                     metadata,
+                    importance_score: 0.5,
+                    source: "agent".to_string(),
                 }))
             }
             None => Ok(None),
@@ -1138,6 +1140,8 @@ impl MemoryStore for SqliteStorage {
                     created_at,
                     expires_at,
                     metadata,
+                    importance_score: 0.5,
+                    source: "agent".to_string(),
                 })
             })
             .collect();

@@ -427,6 +427,10 @@ pub struct GatewayState {
     pub acp: Arc<AcpControlPlane>,
     /// Vector memory service for semantic search (RwLock for late initialization)
     pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
+    /// Session search for FTS5 conversation indexing (RwLock for late initialization)
+    pub session_search: RwLock<Option<Arc<crate::memory::SessionSearch>>>,
+    /// Memory manager — unified orchestrator with hybrid search (RwLock for late init)
+    pub memory_manager: RwLock<Option<Arc<crate::memory::MemoryManager>>>,
     /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
@@ -699,11 +703,12 @@ impl Gateway {
             config.security.rate_limit.refill_rate,
         ));
 
-        // Initialize storage adapter
+        // Initialize storage adapter and shared SQLite pool (for SessionSearch)
         // For unified storage (sqlite), we keep a separate Arc to use for VectorStore/MemoryStore
-        let (storage, unified_vector_store): (
+        let (storage, unified_vector_store, sqlite_pool): (
             Arc<RwLock<dyn crate::adapters::Storage>>,
             Option<Arc<dyn crate::memory::VectorStore>>,
+            Option<sqlx::SqlitePool>,
         ) = match config.storage.storage_type.as_str() {
             "sqlite" => {
                 // Use absolute path for database to avoid working directory issues
@@ -723,24 +728,30 @@ impl Gateway {
                 let db_url = format!("sqlite:///{}", db_path.display());
                 info!("Connecting to SQLite storage at: {}", db_url);
 
-                let sqlite_storage =
-                    Arc::new(crate::adapters::SqliteStorage::connect(&db_url).await?);
+                // Create shared pool for both storage and session search
+                let pool = sqlx::SqlitePool::connect(&db_url).await
+                    .map_err(|e| crate::error::MantaError::Storage {
+                        context: "Failed to connect to SQLite".into(),
+                        details: e.to_string(),
+                    })?;
+
+                let sqlite_storage = Arc::new(crate::adapters::SqliteStorage::new(pool.clone()));
                 // Clone the Arc for use as VectorStore trait object
                 let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
                 // Wrap in RwLock for the generic storage interface
                 let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
-                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::connect(&db_url).await?));
-                (storage, Some(vector_store))
+                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::new(pool.clone())));
+                (storage, Some(vector_store), Some(pool))
             }
             "file" => {
                 let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
                 let storage = Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?));
-                (storage, None)
+                (storage, None, None)
             }
             _ => {
                 // Default to memory storage
                 let storage = Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()));
-                (storage, None)
+                (storage, None, None)
             }
         };
 
@@ -761,6 +772,8 @@ impl Gateway {
             plugin_manager,
             acp,
             vector_memory: RwLock::new(None),
+            session_search: RwLock::new(None),
+            memory_manager: RwLock::new(None),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
             auth_manager,
@@ -890,6 +903,45 @@ impl Gateway {
             }
         } else {
             info!("Vector memory service disabled");
+        }
+
+        // Initialize SessionSearch (FTS5) and MemoryManager (hybrid search) if we have SQLite
+        if let Some(pool) = sqlite_pool {
+            info!("Initializing session search (FTS5)...");
+            let session_search = Arc::new(crate::memory::SessionSearch::new(pool.clone()));
+            if let Err(e) = session_search.initialize().await {
+                warn!("Failed to initialize session search: {}", e);
+            } else {
+                info!("✅ Session search (FTS5) initialized");
+                *state.session_search.write().await = Some(session_search.clone());
+
+                // Create MemoryManager with hybrid search enabled if we also have vector_memory
+                let vector_guard = state.vector_memory.read().await;
+                if let Some(ref vector_svc) = *vector_guard {
+                    info!("Initializing MemoryManager with hybrid search...");
+                    // Create store from the existing pool (shared connection)
+                    let store = Arc::new(
+                        crate::memory::UnifiedStore::new_with_pool(pool.clone()).await.map_err(|e| {
+                            crate::error::MantaError::Storage {
+                                context: "Failed to create UnifiedStore".into(),
+                                details: e.to_string(),
+                            }
+                        })?,
+                    );
+                    let mm = crate::memory::MemoryManager::new(
+                        store,
+                        crate::memory::MemoryManagerConfig::default(),
+                    )
+                    .with_vector_service(vector_svc.clone())
+                    .with_session_search(session_search);
+                    *state.memory_manager.write().await = Some(Arc::new(mm));
+                    info!("✅ MemoryManager with hybrid search initialized");
+                } else {
+                    info!("Vector memory not available; MemoryManager will use fallback path");
+                }
+            }
+        } else {
+            info!("SQLite not in use; session search and hybrid memory disabled");
         }
 
         // Initialize hot reload manager if enabled
@@ -1245,8 +1297,17 @@ impl Gateway {
         // Get the model from config for this agent
         let model = self.state.config.read().await.model.clone();
 
-        // Create the actual Agent instance with model
-        let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+        // Create the actual Agent instance with model and memory manager
+        let memory_manager = self.state.memory_manager.read().await.clone();
+        let agent = if let Some(mm) = memory_manager {
+            Arc::new(
+                Agent::new(config.clone(), provider, tools)
+                    .with_model(model)
+                    .with_memory_manager(mm),
+            )
+        } else {
+            Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+        };
 
         // Wire the new agent into the cron scheduler so routine (agent-target)
         // jobs can run.  Only the first agent is wired; subsequent agents keep
@@ -3054,12 +3115,21 @@ async fn create_agent_handler(
         }
     };
 
-    // Get tools and model
+    // Get tools, model, and memory manager
     let tools = state.tool_registry.clone();
     let model = state.config.read().await.model.clone();
+    let memory_manager = state.memory_manager.read().await.clone();
 
-    // Create agent instance
-    let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+    // Create agent instance with memory manager if available
+    let agent = if let Some(mm) = memory_manager {
+        Arc::new(
+            Agent::new(config.clone(), provider, tools)
+                .with_model(model)
+                .with_memory_manager(mm),
+        )
+    } else {
+        Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+    };
 
     let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
 
@@ -4443,9 +4513,18 @@ async fn spawn_discovered_agent_handler(
 
         let tools = state.tool_registry.clone();
         let model = state.config.read().await.model.clone();
+        let memory_manager = state.memory_manager.read().await.clone();
         let (tx, mut rx) = mpsc::channel(100);
 
-        let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+        let agent = if let Some(mm) = memory_manager {
+            Arc::new(
+                Agent::new(config.clone(), provider, tools)
+                    .with_model(model)
+                    .with_memory_manager(mm),
+            )
+        } else {
+            Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+        };
 
         let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
 
@@ -4598,9 +4677,18 @@ async fn spawn_all_discovered_agents_handler(
             if let Ok(provider) = state.model_router.create_default_provider().await {
                 let tools = state.tool_registry.clone();
                 let model = state.config.read().await.model.clone();
+                let memory_manager = state.memory_manager.read().await.clone();
                 let (tx, mut rx) = mpsc::channel(100);
 
-                let agent = Arc::new(Agent::new(config.clone(), provider, tools).with_model(model));
+                let agent = if let Some(mm) = memory_manager {
+                    Arc::new(
+                        Agent::new(config.clone(), provider, tools)
+                            .with_model(model)
+                            .with_memory_manager(mm),
+                    )
+                } else {
+                    Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+                };
 
                 let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
 

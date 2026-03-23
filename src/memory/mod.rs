@@ -9,7 +9,9 @@ use std::time::SystemTime;
 
 pub mod db;
 pub mod hybrid;
+pub mod manager;
 pub mod personality;
+pub mod pipeline;
 pub mod session_search;
 pub mod sqlite;
 pub mod vector;
@@ -18,9 +20,18 @@ pub mod vector;
 pub mod local_embeddings;
 
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
+/// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
+pub type UnifiedStore = DatabaseStore;
+pub use pipeline::{
+    EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
+    PipelineEmbeddingProvider,
+};
 pub use hybrid::{
     apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,
+};
+pub use manager::{
+    MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext,
 };
 pub use personality::{MemoryType, PersonalityMemory};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
@@ -53,6 +64,14 @@ impl std::fmt::Display for MemoryId {
     }
 }
 
+fn default_importance_score() -> f32 {
+    0.5
+}
+
+fn default_source() -> String {
+    "agent".to_string()
+}
+
 /// A memory entry stored in the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
@@ -76,6 +95,12 @@ pub struct Memory {
     /// Additional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Importance score in [0.0, 1.0]. Default: 0.5
+    #[serde(default = "default_importance_score")]
+    pub importance_score: f32,
+    /// Source that created this memory (e.g., "agent", "user", "compaction")
+    #[serde(default = "default_source")]
+    pub source: String,
 }
 
 impl Memory {
@@ -95,6 +120,8 @@ impl Memory {
             created_at: SystemTime::now(),
             expires_at: None,
             metadata: None,
+            importance_score: 0.5,
+            source: "agent".to_string(),
         }
     }
 
@@ -119,6 +146,18 @@ impl Memory {
     /// Set metadata
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    /// Set the importance score
+    pub fn with_importance_score(mut self, score: f32) -> Self {
+        self.importance_score = score;
+        self
+    }
+
+    /// Set the source label
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
         self
     }
 

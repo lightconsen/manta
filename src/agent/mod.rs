@@ -400,9 +400,11 @@ pub struct Agent {
     session_id: Option<String>,
     /// Shutdown signal
     shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
-    /// Memory store for persistence
+    /// Memory manager for unified memory operations (retrieval, storage, compaction)
+    memory_manager: Option<Arc<crate::memory::MemoryManager>>,
+    /// Memory store for persistence (legacy, prefer memory_manager)
     memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
-    /// Chat history store for conversation persistence
+    /// Chat history store for conversation persistence (legacy, prefer memory_manager)
     chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
     /// Session search for conversation history indexing
     session_search: Option<Arc<crate::memory::SessionSearch>>,
@@ -430,6 +432,7 @@ impl Agent {
             session_store: None,
             session_id: None,
             shutdown_tx: Arc::new(RwLock::new(None)),
+            memory_manager: None,
             memory_store: None,
             chat_history: None,
             session_search: None,
@@ -484,6 +487,16 @@ impl Agent {
     /// Set the session search for conversation indexing
     pub fn with_session_search(mut self, search: Arc<crate::memory::SessionSearch>) -> Self {
         self.session_search = Some(search);
+        self
+    }
+
+    /// Set the memory manager for unified memory operations.
+    ///
+    /// The memory manager provides retrieval, storage, and compaction
+    /// capabilities. When set, it takes precedence over the legacy
+    /// memory_store and chat_history fields.
+    pub fn with_memory_manager(mut self, manager: Arc<crate::memory::MemoryManager>) -> Self {
+        self.memory_manager = Some(manager);
         self
     }
 
@@ -555,9 +568,39 @@ impl Agent {
         // Get base prompt
         let base_prompt = self.config.full_system_prompt_with_personality().await;
 
+        // Retrieve relevant memories via MemoryManager and inject into context
+        let memory_context = if let Some(ref mm) = self.memory_manager {
+            match mm.retrieve(user_id, Some(conversation_id), user_message, Some(5)).await {
+                Ok(memories) => {
+                    if memories.is_empty() {
+                        None
+                    } else {
+                        let ctx = crate::memory::SessionContext {
+                            messages: vec![],
+                            memories,
+                        };
+                        Some(ctx.format_for_injection())
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Memory retrieval failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Combine base prompt with memory context
+        let full_prompt = if let Some(ref mem_ctx) = memory_context {
+            format!("{}\n\n{}", base_prompt, mem_ctx)
+        } else {
+            base_prompt
+        };
+
         // Build dynamic system prompt
         let system_prompt = PromptBuilder::build_from_context(
-            &base_prompt,
+            &full_prompt,
             &prompt_ctx,
             self.config.max_context_tokens / 4, // Rough token estimate
         );
@@ -648,6 +691,17 @@ impl Agent {
 
         // Store user message in chat history and index for search
         let message_id = uuid::Uuid::new_v4().to_string();
+
+        // Persist user message via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(&user_id, &conversation_id, "user", &content)
+                .await
+            {
+                warn!("MemoryManager: failed to store user message: {}", e);
+            }
+        }
+
         if let Some(ref store) = self.chat_history {
             use crate::memory::{ChatHistoryStore, ChatMessage};
             let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
@@ -810,6 +864,17 @@ impl Agent {
 
         // Store assistant response in chat history and index for search
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
+
+        // Persist assistant response via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(&user_id, &conversation_id, "assistant", &response.message.content)
+                .await
+            {
+                warn!("MemoryManager: failed to store assistant message: {}", e);
+            }
+        }
+
         if let Some(ref store) = self.chat_history {
             use crate::memory::{ChatHistoryStore, ChatMessage};
             let chat_msg = ChatMessage::new(
@@ -1674,9 +1739,78 @@ impl Agent {
         Ok(())
     }
 
-    /// Shutdown the agent
+    /// Close a conversation and trigger compaction if eligible.
+    ///
+    /// Compaction is triggered when the session has accumulated more than 50
+    /// turns OR is older than 7 days. Compaction extracts key facts from the
+    /// conversation history into semantic memories via the MemoryManager.
+    ///
+    /// The thread is removed from `thread_map` regardless of compaction.
+    pub async fn close_conversation(&self, conversation_id: &str) {
+        const MAX_TURNS_BEFORE_COMPACT: usize = 50;
+        const MAX_AGE_DAYS: u64 = 7;
+
+        // Remove the thread from the map
+        let thread_opt = {
+            let mut map = self.thread_map.lock().await;
+            map.remove(conversation_id)
+        };
+
+        let thread = match thread_opt {
+            Some(t) => t,
+            None => return, // Nothing to close
+        };
+
+        // Determine if compaction is needed
+        let age_secs = thread
+            .created_at
+            .elapsed()
+            .unwrap_or_default()
+            .as_secs();
+        let too_old = age_secs > MAX_AGE_DAYS * 86_400;
+        let too_long = thread.turn_count() > MAX_TURNS_BEFORE_COMPACT;
+
+        if too_old || too_long {
+            if let Some(mm) = self.memory_manager.clone() {
+                let conv_id = conversation_id.to_string();
+                tokio::spawn(async move {
+                    match mm.compact_session(&conv_id, None).await {
+                        Ok(ids) => {
+                            info!(
+                                "Session {} compacted: {} facts extracted",
+                                conv_id,
+                                ids.len()
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Session compaction failed for {}: {}", conv_id, e);
+                        }
+                    }
+                });
+            }
+        } else {
+            debug!(
+                "Session {} closed without compaction ({} turns, {} days old)",
+                conversation_id,
+                thread.turn_count(),
+                age_secs / 86_400
+            );
+        }
+    }
+
+    /// Shutdown the agent, compacting all active sessions.
     pub async fn shutdown(&self) -> crate::Result<()> {
         info!("Shutting down agent");
+
+        // Compact all open sessions before shutting down
+        let conversation_ids: Vec<String> = {
+            let map = self.thread_map.lock().await;
+            map.keys().cloned().collect()
+        };
+        for conv_id in conversation_ids {
+            self.close_conversation(&conv_id).await;
+        }
+
         if let Some(tx) = self.shutdown_tx.write().await.take() {
             let _ = tx.send(()).await;
         }
