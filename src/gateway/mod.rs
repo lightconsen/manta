@@ -517,6 +517,8 @@ pub enum AgentQuery {
         session_id: String,
         message: String,
         user_id: String,
+        /// Trust level of the invoking skill — constrains which tools are available.
+        skill_trust: crate::tools::SkillTrust,
         response_tx: tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
     },
 }
@@ -1607,7 +1609,8 @@ async fn spawn_agent_inner(
                         AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                             let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
                         }
-                        AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                        AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                            agent.set_skill_trust(skill_trust);
                             let incoming = crate::channels::IncomingMessage::new(
                                 user_id, &session_id, message,
                             );
@@ -1615,6 +1618,7 @@ async fn spawn_agent_inner(
                                 Arc::new(|_| Box::pin(async {}));
                             let result =
                                 agent.process_message_with_progress(incoming, no_op).await;
+                            agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
                             let _ = response_tx.send(result);
                         }
                     }
@@ -2924,6 +2928,17 @@ async fn create_default_tool_registry(
     // Register MCP (Model Context Protocol) connection tool (uses shared manager)
     registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));
 
+    // Gate high-privilege tools behind SkillTrust::Trusted.
+    // Community-trust skills see only read-only / informational tools.
+    registry.mark_privileged("shell");
+    registry.mark_privileged("execute_code");
+    registry.mark_privileged("file_write");
+    registry.mark_privileged("file_edit");
+    registry.mark_privileged("delegate");
+    registry.mark_privileged("spawn_subagent");
+    registry.mark_privileged("manage_acp_session");
+    registry.mark_privileged("memory");
+
     Ok(registry)
 }
 
@@ -3536,7 +3551,8 @@ async fn create_agent_handler(
                     AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                         let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
                     }
-                    AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                    AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                        agent_clone.set_skill_trust(skill_trust);
                         let incoming = crate::channels::IncomingMessage::new(
                             user_id, &session_id, message,
                         );
@@ -3544,6 +3560,7 @@ async fn create_agent_handler(
                             Arc::new(|_| Box::pin(async {}));
                         let result =
                             agent_clone.process_message_with_progress(incoming, no_op).await;
+                        agent_clone.set_skill_trust(crate::tools::SkillTrust::Trusted);
                         let _ = response_tx.send(result);
                     }
                 }
@@ -4509,6 +4526,9 @@ async fn run_skill_handler(
         format!("{}\n\nUser input: {}", skill.prompt, body.input)
     };
 
+    // Capture trust level before dropping the lock (skill is owned so this is just being explicit)
+    let skill_trust = skill.metadata.trust;
+
     // Drop read lock before acquiring agents lock
     drop(skills_manager);
 
@@ -4536,6 +4556,7 @@ async fn run_skill_handler(
             session_id: session_id.clone(),
             message: full_message,
             user_id: "skill-runner".to_string(),
+            skill_trust,
             response_tx: resp_tx,
         })
         .await
@@ -4906,13 +4927,15 @@ async fn spawn_discovered_agent_handler(
                         AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                             let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
                         }
-                        AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                        AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                            agent.set_skill_trust(skill_trust);
                             let incoming = crate::channels::IncomingMessage::new(
                                 user_id, &session_id, message,
                             );
                             let no_op: crate::agent::ProgressCallback =
                                 Arc::new(|_| Box::pin(async {}));
                             let result = agent.process_message_with_progress(incoming, no_op).await;
+                            agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
                             let _ = response_tx.send(result);
                         }
                     }
@@ -5028,13 +5051,15 @@ async fn spawn_all_discovered_agents_handler(
                                 AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                                     let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
                                 }
-                                AgentQuery::RunSkill { session_id, message, user_id, response_tx } => {
+                                AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                                    agent.set_skill_trust(skill_trust);
                                     let incoming = crate::channels::IncomingMessage::new(
                                         user_id, &session_id, message,
                                     );
                                     let no_op: crate::agent::ProgressCallback =
                                         Arc::new(|_| Box::pin(async {}));
                                     let result = agent.process_message_with_progress(incoming, no_op).await;
+                                    agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
                                     let _ = response_tx.send(result);
                                 }
                             }

@@ -416,6 +416,10 @@ pub struct Agent {
     active_plans: Arc<RwLock<std::collections::HashMap<String, ActivePlan>>>,
     /// Live cost guard — checked before every provider call.
     cost_guard: Option<Arc<CostGuard>>,
+    /// Active skill trust level for the current invocation.
+    /// 0 = Community, 1 = Trusted (default).
+    /// Set by the gateway before RunSkill invocations; reset to Trusted afterward.
+    active_skill_trust: std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl Agent {
@@ -440,6 +444,26 @@ impl Agent {
             task_planner: Arc::new(TaskPlanner::new(provider_clone)),
             active_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             cost_guard: None,
+            active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
+        }
+    }
+
+    /// Set the skill trust level for the next process_message invocation.
+    ///
+    /// Call this before invoking `process_message` or `process_message_with_progress`
+    /// to constrain which tools the agent may call. The gateway resets this to
+    /// `Trusted` after the invocation completes.
+    pub fn set_skill_trust(&self, trust: crate::tools::SkillTrust) {
+        use std::sync::atomic::Ordering;
+        self.active_skill_trust.store(trust as u8, Ordering::Relaxed);
+    }
+
+    /// Read the current active skill trust level from the atomic.
+    fn current_skill_trust(&self) -> crate::tools::SkillTrust {
+        use std::sync::atomic::Ordering;
+        match self.active_skill_trust.load(Ordering::Relaxed) {
+            0 => crate::tools::SkillTrust::Community,
+            _ => crate::tools::SkillTrust::Trusted,
         }
     }
 
@@ -561,7 +585,8 @@ impl Agent {
         drop(active_plans);
 
         // Get available tools
-        let tool_context = crate::tools::ToolContext::new(user_id, conversation_id);
+        let tool_context = crate::tools::ToolContext::new(user_id, conversation_id)
+            .with_skill_trust(self.current_skill_trust());
         let tool_defs = self.tools.get_available(&tool_context);
         prompt_ctx.available_tools = tool_defs;
 
@@ -1227,7 +1252,8 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = ToolContext::new("user", context.id());
+        let tool_context = ToolContext::new("user", context.id())
+            .with_skill_trust(self.current_skill_trust());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1322,8 +1348,9 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools concurrently (up to limit)
-        let tool_context =
-            ToolContext::new("user", context.id()).with_timeout(std::time::Duration::from_secs(30));
+        let tool_context = ToolContext::new("user", context.id())
+            .with_skill_trust(self.current_skill_trust())
+            .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
@@ -1394,7 +1421,8 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = ToolContext::new("user", context.id());
+        let tool_context = ToolContext::new("user", context.id())
+            .with_skill_trust(self.current_skill_trust());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1477,8 +1505,9 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools with progress
-        let tool_context =
-            ToolContext::new("user", context.id()).with_timeout(std::time::Duration::from_secs(30));
+        let tool_context = ToolContext::new("user", context.id())
+            .with_skill_trust(self.current_skill_trust())
+            .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
 
