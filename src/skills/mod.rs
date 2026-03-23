@@ -393,6 +393,57 @@ impl Skill {
         false
     }
 
+    /// Verify requirements at activation time (non-mutating).
+    /// Returns Ok(()) if all requirements are met, Err with reasons if not.
+    pub fn verify_requirements(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Check OS
+        if !self.metadata.requires.os.is_empty() {
+            let current_os = std::env::consts::OS;
+            let os_map = match current_os {
+                "macos" => "darwin",
+                "linux" => "linux",
+                "windows" => "win32",
+                _ => current_os,
+            };
+            if !self.metadata.requires.os.iter().any(|o| o == os_map) {
+                errors.push(format!(
+                    "OS '{}' not in supported list: {:?}",
+                    os_map, self.metadata.requires.os
+                ));
+            }
+        }
+
+        // Check binaries
+        for bin in &self.metadata.requires.bins {
+            if !self.is_binary_available(bin) {
+                errors.push(format!("Binary '{}' not found on PATH", bin));
+            }
+        }
+
+        // Check env vars
+        for env in &self.metadata.requires.env {
+            if std::env::var(env).is_err() {
+                errors.push(format!("Environment variable '{}' not set", env));
+            }
+        }
+
+        // Check config paths
+        for config_path in &self.metadata.requires.config {
+            let expanded = shellexpand::tilde(config_path);
+            if !Path::new(expanded.as_ref()).exists() {
+                errors.push(format!("Config path '{}' does not exist", config_path));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
     /// Compact path for token optimization
     pub fn compact_path(&self) -> String {
         let path_str = self.source_path.to_string_lossy();
@@ -632,6 +683,34 @@ impl SkillManager {
     pub async fn get_skill(&self, name: &str) -> Option<Skill> {
         let skills = self.skills.read().await;
         skills.get(name).cloned()
+    }
+
+    /// Activate a skill with runtime requirement verification.
+    ///
+    /// Unlike `get_skill()` which returns the cached skill,
+    /// this verifies all `requires` fields are still met at activation time.
+    pub async fn activate_skill(&self, name: &str) -> crate::Result<Skill> {
+        let skill = self.get_skill(name).await.ok_or_else(|| {
+            crate::error::MantaError::NotFound {
+                resource: format!("Skill: {}", name),
+            }
+        })?;
+
+        // Runtime verification - re-check requirements at activation
+        match skill.verify_requirements() {
+            Ok(()) => Ok(skill),
+            Err(errors) => {
+                warn!(
+                    "Skill '{}' activation blocked: requirements not met: {:?}",
+                    name, errors
+                );
+                Err(crate::error::MantaError::Validation(format!(
+                    "Skill '{}' requirements not met: {}",
+                    name,
+                    errors.join(", ")
+                )))
+            }
+        }
     }
 
     /// List all loaded skills

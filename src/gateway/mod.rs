@@ -4545,14 +4545,29 @@ async fn run_skill_handler(
 ) -> impl IntoResponse {
     let skills_manager = state.skills_manager.read().await;
 
-    // Check if skill exists and is eligible
-    let skill = match skills_manager.get_skill(&id).await {
-        Some(s) => s,
-        None => {
+    // Activate skill with runtime requirement verification
+    let skill = match skills_manager.activate_skill(&id).await {
+        Ok(s) => s,
+        Err(crate::error::MantaError::NotFound { .. }) => {
             let error = serde_json::json!({
                 "error": format!("Skill '{}' not found", id),
             });
             return (StatusCode::NOT_FOUND, Json(error)).into_response();
+        }
+        Err(crate::error::MantaError::Validation(msg)) => {
+            // Requirements not met at activation time
+            let error = serde_json::json!({
+                "error": "Skill requirements not met",
+                "details": msg,
+                "skill_id": id,
+            });
+            return (StatusCode::PRECONDITION_FAILED, Json(error)).into_response();
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to activate skill '{}': {}", id, e),
+            });
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response();
         }
     };
 
@@ -4563,13 +4578,8 @@ async fn run_skill_handler(
         return (StatusCode::BAD_REQUEST, Json(error)).into_response();
     }
 
-    if !skill.is_eligible {
-        let error = serde_json::json!({
-            "error": format!("Skill '{}' is not eligible to run", id),
-            "reasons": skill.eligibility_errors,
-        });
-        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
-    }
+    // Note: is_eligible is checked at load time, but activate_skill() also
+    // verifies requirements at runtime. If we got here, requirements are met.
 
     // Build the message: skill system prompt + user input
     let full_message = if skill.prompt.is_empty() {
@@ -5105,6 +5115,9 @@ async fn spawn_all_discovered_agents_handler(
                                 }
                                 AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                                     let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                                }
+                                AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                                    let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
                                 }
                                 AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
                                     agent.set_skill_trust(skill_trust);
