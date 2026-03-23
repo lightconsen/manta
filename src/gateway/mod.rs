@@ -457,6 +457,8 @@ pub struct GatewayState {
     pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     /// Approval queue for human-in-the-loop tool policy enforcement.
     pub approval_queue: Arc<ApprovalQueue>,
+    /// Self-repair loop state — tracks restart records, exposed via REST.
+    pub repair_state: Arc<RepairState>,
 }
 
 /// Handle to a running agent
@@ -580,6 +582,14 @@ pub enum GatewayEvent {
         risk_level: crate::tools::approval::RiskLevel,
         message: String,
     },
+    /// Self-repair action taken (agent or channel restarted)
+    RepairAction {
+        /// "agent" or "channel"
+        kind: String,
+        target_id: String,
+        description: String,
+        restart_count: u32,
+    },
 }
 
 /// Agent status
@@ -589,6 +599,43 @@ pub enum AgentStatus {
     Processing { session_id: String },
     Error(String),
     Shutdown,
+}
+
+/// Per-target restart tracking record (agent or channel)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepairRecord {
+    pub target: String,
+    pub restart_count: u32,
+    pub last_restart_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub abandoned: bool,
+}
+
+impl RepairRecord {
+    fn new(target: impl Into<String>) -> Self {
+        Self {
+            target: target.into(),
+            restart_count: 0,
+            last_restart_at: None,
+            abandoned: false,
+        }
+    }
+}
+
+/// Shared state for the gateway-level self-repair loop — exposed via REST
+pub struct RepairState {
+    pub last_cycle_at: RwLock<Option<chrono::DateTime<chrono::Utc>>>,
+    pub records: RwLock<HashMap<String, RepairRecord>>,
+    pub loop_running: std::sync::atomic::AtomicBool,
+}
+
+impl RepairState {
+    pub fn new() -> Self {
+        Self {
+            last_cycle_at: RwLock::new(None),
+            records: RwLock::new(HashMap::new()),
+            loop_running: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
 }
 
 /// Queued message for processing
@@ -771,6 +818,7 @@ impl Gateway {
             },
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
             approval_queue,
+            repair_state: Arc::new(RepairState::new()),
         });
 
         // Configure providers from config
@@ -1124,6 +1172,9 @@ impl Gateway {
             });
         }
 
+        // Start gateway-level self-repair watchdog (60 s interval)
+        tokio::spawn(run_repair_loop(self.state.clone()));
+
         // Start web terminal server
         tokio::spawn(Self::start_web_terminal(self.config.web_port, self.state.clone()));
 
@@ -1173,8 +1224,9 @@ impl Gateway {
             // Conversation history
             .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
             .route("/api/v1/conversations/last", get(get_last_conversation_handler))
-            // Status
+            // Status and diagnostics
             .route("/api/v1/status", get(status_handler))
+            .route("/api/v1/repair/status", get(repair_status_handler))
             // Canvas/A2UI
             .route("/api/v1/canvas", post(create_canvas_handler))
             .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
@@ -1285,64 +1337,81 @@ impl Gateway {
 
     /// Spawn a new agent
     async fn spawn_agent(&self, id: String, config: AgentConfig) -> crate::Result<()> {
-        info!("Spawning agent: {}", id);
+        spawn_agent_inner(self.state.clone(), id, config).await
+    }
+}
 
-        let (tx, mut rx) = mpsc::channel(100);
+/// Free function that spawns an agent — callable from both `Gateway::spawn_agent`
+/// and the self-repair watchdog loop.
+async fn spawn_agent_inner(
+    state: Arc<GatewayState>,
+    id: String,
+    config: AgentConfig,
+) -> crate::Result<()> {
+    info!("Spawning agent: {}", id);
 
-        // Create provider from model router
-        let provider: Arc<dyn crate::providers::Provider> =
-            self.state.model_router.create_default_provider().await?;
+    let (tx, mut rx) = mpsc::channel(100);
 
-        // Get tool registry from state
-        let tools = self.state.tool_registry.clone();
+    // Create provider from model router
+    let provider: Arc<dyn crate::providers::Provider> =
+        state.model_router.create_default_provider().await?;
 
-        // Get the model from config for this agent
-        let model = self.state.config.read().await.model.clone();
+    // Get tool registry from state
+    let tools = state.tool_registry.clone();
 
-        // Create the actual Agent instance with model and memory manager
-        let memory_manager = self.state.memory_manager.read().await.clone();
-        let agent = if let Some(mm) = memory_manager {
-            Arc::new(
-                Agent::new(config.clone(), provider, tools)
-                    .with_model(model)
-                    .with_memory_manager(mm),
-            )
-        } else {
-            Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
-        };
+    // Get the model from config for this agent
+    let model = state.config.read().await.model.clone();
 
-        // Wire the new agent into the cron scheduler so routine (agent-target)
-        // jobs can run.  Only the first agent is wired; subsequent agents keep
-        // the first one active unless explicitly overwritten.
-        {
-            let cron_guard = self.state.cron_scheduler.read().await;
-            if let Some(ref cron_arc) = *cron_guard {
-                cron_arc.lock().await.set_agent(agent.clone()).await;
-                debug!("Routine engine: wired agent '{}' into cron scheduler", id);
-            }
+    // Create the actual Agent instance with model and memory manager
+    let memory_manager = state.memory_manager.read().await.clone();
+    let agent = if let Some(mm) = memory_manager {
+        Arc::new(
+            Agent::new(config.clone(), provider, tools)
+                .with_model(model)
+                .with_memory_manager(mm),
+        )
+    } else {
+        Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+    };
+
+    // Wire the new agent into the cron scheduler so routine (agent-target)
+    // jobs can run.  Only the first agent is wired; subsequent agents keep
+    // the first one active unless explicitly overwritten.
+    {
+        let cron_guard = state.cron_scheduler.read().await;
+        if let Some(ref cron_arc) = *cron_guard {
+            cron_arc.lock().await.set_agent(agent.clone()).await;
+            debug!("Routine engine: wired agent '{}' into cron scheduler", id);
         }
+    }
 
-        let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
+    let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
 
-        let handle = AgentHandle {
-            id: id.clone(),
-            config: config.clone(),
-            tx: tx.clone(),
-            query_tx: query_tx.clone(),
-            busy: false,
-        };
+    let handle = AgentHandle {
+        id: id.clone(),
+        config: config.clone(),
+        tx: tx.clone(),
+        query_tx: query_tx.clone(),
+        busy: false,
+    };
 
-        {
-            let mut agents = self.state.agents.write().await;
-            agents.insert(id.clone(), handle);
-        }
+    {
+        let mut agents = state.agents.write().await;
+        agents.insert(id.clone(), handle);
+    }
 
-        // Start agent processing loop
-        let state = self.state.clone();
-        let agent_id = id.clone();
+    // Start agent processing loop
+    let agent_id = id.clone();
 
         tokio::spawn(async move {
             info!("Agent {} processing loop started", agent_id);
+
+            // Start per-agent stale-context eviction loop (check every 5 min,
+            // evict contexts idle > 30 min)
+            let repair_handle = agent.start_self_repair_loop(
+                std::time::Duration::from_secs(300),
+                std::time::Duration::from_secs(1800),
+            );
 
             loop { tokio::select! {
                 cmd = rx.recv() => {
@@ -1553,11 +1622,15 @@ impl Gateway {
             }} // end tokio::select! and loop
 
             info!("Agent {} processing loop ended", agent_id);
+
+            // Stop the per-agent repair task when the agent exits
+            repair_handle.abort();
         });
 
         Ok(())
     }
 
+impl Gateway {
     /// Spawn an agent from its personality (on-demand spawning)
     /// Returns true if agent was spawned, false if already exists
     pub async fn spawn_agent_from_personality(&self, agent_id: &str) -> crate::Result<bool> {
@@ -2854,6 +2927,203 @@ async fn create_default_tool_registry(
     Ok(registry)
 }
 
+// ── Self-repair watchdog ───────────────────────────────────────────────────────
+
+/// One watchdog cycle: find agents whose command channel is closed and respawn them.
+async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
+    const MAX_RESTARTS: u32 = 5;
+    const COOLDOWN_SECS: i64 = 30;
+
+    let dead: Vec<(String, AgentConfig)> = {
+        state
+            .agents
+            .read()
+            .await
+            .iter()
+            .filter(|(_, h)| h.tx.is_closed())
+            .map(|(id, h)| (id.clone(), h.config.clone()))
+            .collect()
+    };
+    if dead.is_empty() {
+        return;
+    }
+
+    for (agent_id, config) in dead {
+        let key = format!("agent:{}", agent_id);
+
+        let should_restart = {
+            let mut records = state.repair_state.records.write().await;
+            let rec = records
+                .entry(key.clone())
+                .or_insert_with(|| RepairRecord::new(&key));
+            if rec.abandoned {
+                false
+            } else if rec.restart_count >= MAX_RESTARTS {
+                error!(
+                    "Agent {} exceeded max restarts ({}), abandoning",
+                    agent_id, MAX_RESTARTS
+                );
+                rec.abandoned = true;
+                false
+            } else if rec
+                .last_restart_at
+                .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
+                .unwrap_or(false)
+            {
+                false
+            } else {
+                true
+            }
+        };
+        if !should_restart {
+            continue;
+        }
+
+        warn!("Agent {} tx closed — attempting restart", agent_id);
+        state.agents.write().await.remove(&agent_id);
+
+        match spawn_agent_inner(state.clone(), agent_id.clone(), config).await {
+            Ok(()) => {
+                let mut records = state.repair_state.records.write().await;
+                let rec = records
+                    .entry(key)
+                    .or_insert_with(|| RepairRecord::new(&agent_id));
+                rec.restart_count += 1;
+                rec.last_restart_at = Some(chrono::Utc::now());
+                info!(
+                    "Agent {} restarted (attempt {})",
+                    agent_id, rec.restart_count
+                );
+                let _ = state.event_tx.send(GatewayEvent::RepairAction {
+                    kind: "agent".into(),
+                    target_id: agent_id,
+                    description: format!(
+                        "Restarted after tx closed (attempt {})",
+                        rec.restart_count
+                    ),
+                    restart_count: rec.restart_count,
+                });
+            }
+            Err(e) => {
+                error!("Failed to restart agent {}: {}", agent_id, e);
+                let mut records = state.repair_state.records.write().await;
+                let rec = records
+                    .entry(key)
+                    .or_insert_with(|| RepairRecord::new(&agent_id));
+                rec.restart_count += 1;
+                rec.last_restart_at = Some(chrono::Utc::now());
+            }
+        }
+    }
+}
+
+/// One watchdog cycle: check each channel's health and call `start()` if unhealthy.
+async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
+    const MAX_RESTARTS: u32 = 5;
+    const COOLDOWN_SECS: i64 = 30;
+
+    let channels: Vec<(String, Arc<dyn Channel>)> = state
+        .channels
+        .read()
+        .await
+        .iter()
+        .map(|(n, c)| (n.clone(), c.clone()))
+        .collect();
+
+    for (name, channel) in channels {
+        let healthy = match channel.health_check().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Channel {} health_check error: {}", name, e);
+                false
+            }
+        };
+        if healthy {
+            continue;
+        }
+
+        let key = format!("channel:{}", name);
+        let should_restart = {
+            let mut records = state.repair_state.records.write().await;
+            let rec = records
+                .entry(key.clone())
+                .or_insert_with(|| RepairRecord::new(&key));
+            if rec.abandoned {
+                false
+            } else if rec.restart_count >= MAX_RESTARTS {
+                error!(
+                    "Channel {} exceeded max restarts ({}), abandoning",
+                    name, MAX_RESTARTS
+                );
+                rec.abandoned = true;
+                false
+            } else if rec
+                .last_restart_at
+                .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
+                .unwrap_or(false)
+            {
+                false
+            } else {
+                true
+            }
+        };
+        if !should_restart {
+            continue;
+        }
+
+        warn!("Channel {} unhealthy — calling start()", name);
+        match channel.start().await {
+            Ok(()) => {
+                let mut records = state.repair_state.records.write().await;
+                let rec = records
+                    .entry(key)
+                    .or_insert_with(|| RepairRecord::new(&name));
+                rec.restart_count += 1;
+                rec.last_restart_at = Some(chrono::Utc::now());
+                info!("Channel {} restarted (attempt {})", name, rec.restart_count);
+                let _ = state.event_tx.send(GatewayEvent::RepairAction {
+                    kind: "channel".into(),
+                    target_id: name,
+                    description: format!(
+                        "Restarted after health_check=false (attempt {})",
+                        rec.restart_count
+                    ),
+                    restart_count: rec.restart_count,
+                });
+            }
+            Err(e) => {
+                error!("Failed to restart channel {}: {}", name, e);
+                let mut records = state.repair_state.records.write().await;
+                let rec = records
+                    .entry(key)
+                    .or_insert_with(|| RepairRecord::new(&name));
+                rec.restart_count += 1;
+                rec.last_restart_at = Some(chrono::Utc::now());
+            }
+        }
+    }
+}
+
+/// Gateway-level self-repair loop — runs every 60 seconds, checks agents and channels.
+async fn run_repair_loop(state: Arc<GatewayState>) {
+    use std::sync::atomic::Ordering;
+    state
+        .repair_state
+        .loop_running
+        .store(true, Ordering::Relaxed);
+
+    let mut ticker =
+        tokio::time::interval(std::time::Duration::from_secs(60));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        ticker.tick().await;
+        *state.repair_state.last_cycle_at.write().await = Some(chrono::Utc::now());
+        run_agent_watchdog_cycle(&state).await;
+        run_channel_watchdog_cycle(&state).await;
+    }
+}
+
 // HTTP Handlers
 async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     // Check if default agent is available
@@ -3537,6 +3807,35 @@ async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResp
         },
         "channels": channels.len(),
         "version": crate::VERSION,
+    }))
+}
+
+async fn repair_status_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    use std::sync::atomic::Ordering;
+    let last_cycle = state
+        .repair_state
+        .last_cycle_at
+        .read()
+        .await
+        .map(|t| t.to_rfc3339());
+    let loop_running = state
+        .repair_state
+        .loop_running
+        .load(Ordering::Relaxed);
+    let records: Vec<_> = state
+        .repair_state
+        .records
+        .read()
+        .await
+        .values()
+        .cloned()
+        .collect();
+    Json(serde_json::json!({
+        "loop_running": loop_running,
+        "last_cycle_at": last_cycle,
+        "repairs": records,
     }))
 }
 
