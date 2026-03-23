@@ -29,7 +29,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use super::ToolExecutionResult;
+use super::{ApprovalDecision, RiskLevel, ToolExecutionResult};
 
 // ── Policy decision ───────────────────────────────────────────────────────────
 
@@ -43,12 +43,38 @@ pub enum ToolPolicyDecision {
         /// Human-readable reason returned to the caller.
         reason: String,
     },
+    /// High-risk tool call requires human approval before execution.
+    /// The tool execution will suspend until approved or denied.
+    NeedsApproval {
+        /// Unique approval request ID
+        approval_id: String,
+        /// Name of the tool being requested
+        tool_name: String,
+        /// Arguments that will be passed to the tool
+        args: Value,
+        /// Risk level assessment
+        risk_level: RiskLevel,
+        /// User or agent that requested the tool
+        requested_by: String,
+        /// Human-readable explanation for why approval is needed
+        message: String,
+    },
 }
 
 impl ToolPolicyDecision {
-    /// Return `true` if this decision allows the call.
+    /// Return `true` if this decision allows the call immediately.
     pub fn is_allow(&self) -> bool {
         matches!(self, ToolPolicyDecision::Allow)
+    }
+
+    /// Return `true` if this decision requires human approval.
+    pub fn is_needs_approval(&self) -> bool {
+        matches!(self, ToolPolicyDecision::NeedsApproval { .. })
+    }
+
+    /// Return `true` if this decision denies the call.
+    pub fn is_deny(&self) -> bool {
+        matches!(self, ToolPolicyDecision::Deny { .. })
     }
 }
 
@@ -181,7 +207,7 @@ impl ToolHooks {
 
     /// Run all registered policy hooks for the given tool call.
     ///
-    /// Returns `Allow` if all hooks allow, or the first `Deny` encountered.
+    /// Returns `Allow` if all hooks allow, or the first `Deny` or `NeedsApproval` encountered.
     pub async fn run_policy(&self, name: &str, args: &Value) -> ToolPolicyDecision {
         for hook in &self.policy_hooks {
             let decision = hook(name, args).await;
@@ -336,5 +362,67 @@ mod tests {
         let hooks = ToolHooks::new();
         let decision = hooks.run_policy("any", &serde_json::json!({})).await;
         assert_eq!(decision, ToolPolicyDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn test_policy_hook_needs_approval() {
+        use super::super::{ApprovalDecision, RiskLevel};
+
+        let hooks = ToolHooks::new().policy(|name, args| {
+            let name = name.to_string();
+            async move {
+                if name == "shell" {
+                    ToolPolicyDecision::NeedsApproval {
+                        approval_id: "test-123".into(),
+                        tool_name: name.clone(),
+                        args: serde_json::json!({}),
+                        risk_level: RiskLevel::High,
+                        requested_by: "user1".into(),
+                        message: format!("Shell command requires approval: {}", name),
+                    }
+                } else {
+                    ToolPolicyDecision::Allow
+                }
+            }
+        });
+
+        let decision = hooks.run_policy("shell", &serde_json::json!({})).await;
+        assert!(decision.is_needs_approval());
+        assert!(!decision.is_allow());
+        assert!(!decision.is_deny());
+
+        let decision = hooks.run_policy("memory", &serde_json::json!({})).await;
+        assert!(decision.is_allow());
+        assert!(!decision.is_needs_approval());
+    }
+
+    #[tokio::test]
+    async fn test_policy_short_circuits_on_first_needs_approval() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+
+        let hooks = ToolHooks::new()
+            .policy(|_, _| async {
+                ToolPolicyDecision::NeedsApproval {
+                    approval_id: "test".into(),
+                    tool_name: "shell".into(),
+                    args: serde_json::json!({}),
+                    risk_level: RiskLevel::High,
+                    requested_by: "user".into(),
+                    message: "Approval required".into(),
+                }
+            })
+            .policy(move |_, _| {
+                let c = Arc::clone(&c);
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    ToolPolicyDecision::Allow
+                }
+            });
+
+        let decision = hooks.run_policy("any", &serde_json::json!({})).await;
+        assert!(decision.is_needs_approval());
+        // Second hook should not have run (NeedsApproval short-circuits like Deny).
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 }

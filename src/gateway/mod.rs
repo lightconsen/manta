@@ -36,6 +36,7 @@ use crate::memory::vector::{
 };
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
+use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
@@ -454,8 +455,8 @@ pub struct GatewayState {
     pub sse_tx: broadcast::Sender<SseEvent>,
     /// Runtime settings store — mutable key/value pairs changeable without restart.
     pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    /// Pending tool-approval requests (approval_id → PendingApproval).
-    pub pending_approvals: Arc<RwLock<HashMap<String, PendingApproval>>>,
+    /// Approval queue for human-in-the-loop tool policy enforcement.
+    pub approval_queue: Arc<ApprovalQueue>,
 }
 
 /// Handle to a running agent
@@ -529,38 +530,6 @@ pub struct SseEvent {
     pub session_id: Option<String>,
 }
 
-/// A pending tool-approval request inserted by a `BeforeHookFn` for
-/// high-risk tools.  Resolved via `POST /api/chat/approval`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingApproval {
-    /// Unique approval ID.
-    pub id: String,
-    /// Session that is waiting for approval.
-    pub session_id: String,
-    /// Tool name that triggered the approval gate.
-    pub tool_name: String,
-    /// Tool arguments (JSON string).
-    pub arguments: String,
-    /// When the request was created.
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    /// Resolution: `None` = pending, `Some(true)` = approved, `Some(false)` = rejected.
-    pub approved: Option<bool>,
-}
-
-impl PendingApproval {
-    /// Create a new approval request.
-    pub fn new(session_id: impl Into<String>, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            session_id: session_id.into(),
-            tool_name: tool_name.into(),
-            arguments: arguments.into(),
-            created_at: chrono::Utc::now(),
-            approved: None,
-        }
-    }
-}
-
 /// Events broadcast by gateway
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GatewayEvent {
@@ -602,6 +571,14 @@ pub enum GatewayEvent {
         agent_id: String,
         tool_name: String,
         result: String,
+    },
+    /// High-risk tool call is waiting for human approval
+    ApprovalRequired {
+        approval_id: String,
+        tool_name: String,
+        requested_by: String,
+        risk_level: crate::tools::approval::RiskLevel,
+        message: String,
     },
 }
 
@@ -676,9 +653,14 @@ impl Gateway {
         // Create the shared MCP manager
         let mcp_manager = Arc::new(McpManager::new());
 
+        // Create shared approval queue for human-in-the-loop tool policy enforcement
+        let approval_queue = Arc::new(ApprovalQueue::new());
+
         // Create tool registry with built-in tools (including ACP tools if enabled)
-        let tool_registry =
-            Arc::new(create_default_tool_registry(acp.clone(), mcp_manager.clone()).await?);
+        let tool_registry = Arc::new(
+            create_default_tool_registry(acp.clone(), mcp_manager.clone(), approval_queue.clone())
+                .await?,
+        );
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
@@ -788,7 +770,7 @@ impl Gateway {
                 tx
             },
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-            pending_approvals: Arc::new(RwLock::new(HashMap::new())),
+            approval_queue,
         });
 
         // Configure providers from config
@@ -1125,6 +1107,23 @@ impl Gateway {
             self.start_tailscale().await?;
         }
 
+        // Forward ApprovalRequired events from the tool registry into the Gateway event bus
+        {
+            let mut approval_rx = self.state.approval_queue.event_tx.subscribe();
+            let event_tx = self.state.event_tx.clone();
+            tokio::spawn(async move {
+                while let Ok(evt) = approval_rx.recv().await {
+                    let _ = event_tx.send(GatewayEvent::ApprovalRequired {
+                        approval_id: evt.approval_id,
+                        tool_name: evt.tool_name,
+                        requested_by: evt.requested_by,
+                        risk_level: evt.risk_level,
+                        message: evt.message,
+                    });
+                }
+            });
+        }
+
         // Start web terminal server
         tokio::spawn(Self::start_web_terminal(self.config.web_port, self.state.clone()));
 
@@ -1257,8 +1256,11 @@ impl Gateway {
             // ── Runtime settings CRUD ──────────────────────────────────────
             .route("/api/settings", get(list_settings_handler).post(set_setting_handler))
             .route("/api/settings/:key", get(get_setting_handler).delete(delete_setting_handler))
-            // ── Pending tool approvals ─────────────────────────────────────
-            .route("/api/chat/approval", get(list_approvals_handler).post(resolve_approval_handler))
+            // ── Tool approval management (human-in-the-loop) ──────────────
+            .route("/api/v1/approvals", get(list_approvals_handler))
+            .route("/api/v1/approvals/:id", get(get_approval_handler))
+            .route("/api/v1/approvals/:id/approve", post(approve_tool_handler))
+            .route("/api/v1/approvals/:id/deny", post(deny_tool_handler))
             // ── Session / Thread / Turn introspection ──────────────────────
             .route("/api/sessions", get(list_sessions_handler))
             .route("/api/sessions/:id/threads", get(list_threads_handler))
@@ -2762,10 +2764,11 @@ async fn handle_web_terminal_websocket(
 async fn create_default_tool_registry(
     acp: Arc<AcpControlPlane>,
     mcp_manager: Arc<McpManager>,
+    approval_queue: Arc<ApprovalQueue>,
 ) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
-    let mut registry = ToolRegistry::new();
+    let mut registry = ToolRegistry::new().with_approval_queue(approval_queue);
 
     // Register file system tools
     registry.register(Box::new(FileReadTool::new()));
@@ -5517,40 +5520,82 @@ async fn delete_setting_handler(
     }
 }
 
-// ── Pending tool approvals ────────────────────────────────────────────────────
+// ── Tool approval management (human-in-the-loop) ──────────────────────────────
 
-#[derive(Debug, Deserialize)]
-struct ResolveApprovalRequest {
-    id: String,
-    approved: bool,
-}
-
-/// `GET /api/chat/approval` — list all pending approval requests.
+/// `GET /api/v1/approvals` — list all pending approval requests.
 async fn list_approvals_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    let approvals: Vec<_> =
-        state.pending_approvals.read().await.values().cloned().collect();
-    Json(approvals)
+    let approvals = state
+        .approval_queue
+        .list_pending(ApprovalFilter::default())
+        .await;
+    Json(serde_json::json!({ "approvals": approvals, "count": approvals.len() }))
 }
 
-/// `POST /api/chat/approval` — resolve (approve or reject) a pending request.
-async fn resolve_approval_handler(
+/// `GET /api/v1/approvals/:id` — get a specific pending approval.
+async fn get_approval_handler(
+    Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
-    Json(req): Json<ResolveApprovalRequest>,
 ) -> impl IntoResponse {
-    let mut approvals = state.pending_approvals.write().await;
-    match approvals.get_mut(&req.id) {
-        Some(approval) => {
-            approval.approved = Some(req.approved);
-            let resp = approval.clone();
-            Json(resp).into_response()
-        }
+    match state.approval_queue.get(&id).await {
+        Some(approval) => Json(approval).into_response(),
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("Approval '{}' not found", req.id) })),
+            Json(serde_json::json!({ "error": format!("Approval '{}' not found", id) })),
         )
             .into_response(),
+    }
+}
+
+/// `POST /api/v1/approvals/:id/approve` — approve a pending tool call.
+async fn approve_tool_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    if state
+        .approval_queue
+        .resolve(&id, ApprovalDecision::Approve)
+        .await
+    {
+        Json(serde_json::json!({ "id": id, "status": "approved" })).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Approval '{}' not found", id) })),
+        )
+            .into_response()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DenyApprovalRequest {
+    reason: Option<String>,
+}
+
+/// `POST /api/v1/approvals/:id/deny` — deny a pending tool call.
+async fn deny_tool_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+    body: Option<Json<DenyApprovalRequest>>,
+) -> impl IntoResponse {
+    let reason = body
+        .and_then(|b| b.reason.clone())
+        .unwrap_or_else(|| "Denied by operator".to_string());
+
+    if state
+        .approval_queue
+        .resolve(&id, ApprovalDecision::Deny { reason: reason.clone() })
+        .await
+    {
+        Json(serde_json::json!({ "id": id, "status": "denied", "reason": reason }))
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Approval '{}' not found", id) })),
+        )
+            .into_response()
     }
 }
 

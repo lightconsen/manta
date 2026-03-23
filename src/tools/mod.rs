@@ -8,7 +8,16 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
+
+pub mod approval;
+
+// Re-export approval types for convenience
+pub use approval::{
+    ApprovalDecision, ApprovalFilter, ApprovalQueue, ApprovalRequiredEvent, PendingApproval,
+    PendingApprovalSummary, RiskLevel,
+};
 
 /// Skill trust level for tool access control.
 ///
@@ -430,7 +439,7 @@ pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;
-pub use hooks::ToolHooks;
+pub use hooks::{ToolHooks, ToolPolicyDecision};
 pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use sandbox::{SandboxConfig, SandboxedTool};
@@ -467,6 +476,11 @@ pub struct ToolRegistry {
     /// Tool names that require `SkillTrust::Trusted` access.
     /// When a context has `skill_trust == Community` these tools are hidden.
     privileged_tools: std::sync::RwLock<HashSet<String>>,
+    /// Hooks for tool execution (before/after/policy).
+    hooks: ToolHooks,
+    /// Approval queue for human-in-the-loop tool execution.
+    /// When set, high-risk tool calls can be suspended pending human approval.
+    approval_queue: Option<Arc<ApprovalQueue>>,
 }
 
 impl Default for ToolRegistry {
@@ -479,6 +493,8 @@ impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolRegistry")
             .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .field("hooks", &self.hooks)
+            .field("approval_queue", &self.approval_queue.is_some())
             .finish()
     }
 }
@@ -498,6 +514,8 @@ impl ToolRegistry {
             cache_enabled: false,
             failure_counts: std::sync::RwLock::new(HashMap::new()),
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
+            hooks: ToolHooks::new(),
+            approval_queue: None,
         }
     }
 
@@ -512,6 +530,8 @@ impl ToolRegistry {
             cache_enabled: true,
             failure_counts: std::sync::RwLock::new(HashMap::new()),
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
+            hooks: ToolHooks::new(),
+            approval_queue: None,
         }
     }
 
@@ -677,6 +697,31 @@ impl ToolRegistry {
         }
     }
 
+    // ── Hooks and approval queue ──────────────────────────────────────────────
+
+    /// Set the hooks for this registry.
+    ///
+    /// Hooks allow policy decisions, before/after execution callbacks,
+    /// and human-in-the-loop approval for high-risk tools.
+    pub fn with_hooks(mut self, hooks: ToolHooks) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// Set the approval queue for human-in-the-loop execution.
+    ///
+    /// When set, tool calls that return `ToolPolicyDecision::NeedsApproval`
+    /// will suspend execution and wait for human approval via the queue.
+    pub fn with_approval_queue(mut self, queue: Arc<ApprovalQueue>) -> Self {
+        self.approval_queue = Some(queue);
+        self
+    }
+
+    /// Get a reference to the approval queue if set.
+    pub fn approval_queue(&self) -> Option<&Arc<ApprovalQueue>> {
+        self.approval_queue.as_ref()
+    }
+
     /// Register a tool
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
@@ -818,48 +863,145 @@ impl ToolRegistry {
         defs
     }
 
-    /// Execute a tool by name with optional caching.
+    /// Execute a tool by name with optional caching, hooks, and approval flow.
     /// Checks both static and dynamic registries.
+    ///
+    /// # Policy and Approval Flow
+    ///
+    /// 1. Run policy hooks — if any hook returns `Deny`, return error immediately
+    /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
+    ///    suspend execution and wait for human approval
+    /// 3. Run before-hooks
+    /// 4. Execute the tool
+    /// 5. Run after-hooks
     pub async fn execute(
         &self,
         name: &str,
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
+        // Run policy hooks first
+        let policy_decision = self.hooks.run_policy(name, &args).await;
+
+        match policy_decision {
+            ToolPolicyDecision::Allow => {
+                // Proceed with execution
+            }
+            ToolPolicyDecision::Deny { reason } => {
+                return Some(Err(crate::error::MantaError::Validation(format!(
+                    "Tool '{}' denied: {}",
+                    name, reason
+                ))));
+            }
+            ToolPolicyDecision::NeedsApproval {
+                approval_id,
+                tool_name,
+                args: approval_args,
+                risk_level,
+                requested_by,
+                message,
+            } => {
+                // Check if approval queue is configured
+                let approval_queue = match &self.approval_queue {
+                    Some(q) => q.clone(),
+                    None => {
+                        return Some(Err(crate::error::MantaError::Validation(
+                            "Tool requires approval but no approval queue configured".into(),
+                        )));
+                    }
+                };
+
+                // Create oneshot channel for the approval resolution
+                let (tx, rx) = tokio::sync::oneshot::channel();
+
+                // Create pending approval
+                let approval = PendingApproval::new(
+                    &approval_id,
+                    &tool_name,
+                    approval_args,
+                    requested_by,
+                    risk_level,
+                    message,
+                    tx,
+                );
+
+                // Submit to approval queue
+                approval_queue.submit(approval).await;
+
+                // Wait for human decision
+                match rx.await {
+                    Ok(ApprovalDecision::Approve) => {
+                        tracing::info!("Approval {} granted, proceeding with tool execution", approval_id);
+                        // Proceed with execution below
+                    }
+                    Ok(ApprovalDecision::Deny { reason }) => {
+                        return Some(Err(crate::error::MantaError::Validation(format!(
+                            "Tool '{}' denied by user: {}",
+                            name, reason
+                        ))));
+                    }
+                    Err(_) => {
+                        return Some(Err(crate::error::MantaError::Validation(
+                            "Approval channel closed".into(),
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Run before-hooks
+        self.hooks.run_before(name, &args).await;
+
         // Check cache first
         let cache_key = Self::cache_key(name, &args);
         if let Some(cached_result) = self.get_cached(&cache_key) {
             tracing::debug!("Cache hit for tool: {}", name);
-            return Some(Ok(cached_result));
-        }
-
-        // Try static tools first
-        if let Some(tool) = self.get(name) {
-            let result = tool.execute(args, context).await;
+            let result = Ok(cached_result);
             if let Ok(ref exec_result) = result {
-                self.store_cached(cache_key, exec_result.clone());
+                self.hooks.run_after(name, &args, exec_result).await;
             }
             return Some(result);
         }
 
-        // Try dynamic tools
-        let dynamic_tool = self
-            .dynamic_tools
-            .read()
-            .ok()
-            .and_then(|map| map.get(name).cloned());
-
-        if let Some(tool) = dynamic_tool {
-            if !self.is_blocked(name) && !self.is_degraded(name) {
-                let result = tool.execute(args, context).await;
+        // Execute the tool — clone args so the original remains for after-hooks
+        let execution_result: Option<crate::Result<ToolExecutionResult>> = {
+            // Try static tools first
+            if let Some(tool) = self.get(name) {
+                let result = tool.execute(args.clone(), context).await;
                 if let Ok(ref exec_result) = result {
                     self.store_cached(cache_key, exec_result.clone());
                 }
-                return Some(result);
+                Some(result)
+            } else {
+                // Try dynamic tools
+                let dynamic_tool = self
+                    .dynamic_tools
+                    .read()
+                    .ok()
+                    .and_then(|map| map.get(name).cloned());
+
+                if let Some(tool) = dynamic_tool {
+                    if !self.is_blocked(name) && !self.is_degraded(name) {
+                        let result = tool.execute(args.clone(), context).await;
+                        if let Ok(ref exec_result) = result {
+                            self.store_cached(cache_key, exec_result.clone());
+                        }
+                        Some(result)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
+        };
+
+        // Run after-hooks
+        if let Some(Ok(ref exec_result)) = execution_result {
+            self.hooks.run_after(name, &args, exec_result).await;
         }
 
-        None
+        execution_result
     }
 
     /// Execute a tool by name without caching

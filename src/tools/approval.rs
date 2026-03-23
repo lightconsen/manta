@@ -1,0 +1,471 @@
+//! Human-in-the-loop approval system for high-risk tool calls
+//!
+//! Provides PendingApproval queue for tools that require explicit human
+//! confirmation before execution. Integrates with ToolPolicyDecision to
+//! suspend tool execution until approved or denied.
+//!
+//! ## Flow
+//!
+//! 1. Policy hook returns `ToolPolicyDecision::NeedsApproval`
+//! 2. ToolRegistry creates PendingApproval with oneshot channel
+//! 3. ApprovalQueue stores it and broadcasts ApprovalRequired event
+//! 4. Human reviews via REST API and submits approve/deny
+//! 5. ApprovalQueue resolves the oneshot, ToolRegistry resumes execution
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{broadcast, oneshot, RwLock};
+use tracing::{debug, info, warn};
+
+/// Risk level for tool calls requiring approval
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    /// Low risk - informational, read-only
+    Low = 0,
+    /// Medium risk - modifies state but recoverable
+    Medium = 1,
+    /// High risk - destructive or security-sensitive
+    High = 2,
+    /// Critical risk - irreversible or system-level
+    Critical = 3,
+}
+
+impl RiskLevel {
+    /// Human-readable description
+    pub fn description(&self) -> &'static str {
+        match self {
+            RiskLevel::Low => "Low risk",
+            RiskLevel::Medium => "Medium risk",
+            RiskLevel::High => "High risk",
+            RiskLevel::Critical => "Critical risk",
+        }
+    }
+}
+
+/// Decision from human reviewer
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    /// Allow the tool call to proceed
+    Approve,
+    /// Deny the tool call
+    Deny { reason: String },
+}
+
+/// A pending tool approval request
+#[derive(Debug)]
+pub struct PendingApproval {
+    /// Unique approval ID
+    pub id: String,
+    /// Tool name being requested
+    pub tool_name: String,
+    /// Tool arguments
+    pub args: serde_json::Value,
+    /// When the approval was requested
+    pub requested_at: Instant,
+    /// User or agent that requested the tool
+    pub requested_by: String,
+    /// Risk level assessment
+    pub risk_level: RiskLevel,
+    /// Human-readable message explaining the request
+    pub message: String,
+    /// Channel to send resolution back to suspended execution
+    pub(crate) response_tx: Option<oneshot::Sender<ApprovalDecision>>,
+}
+
+impl PendingApproval {
+    /// Create a new pending approval
+    pub fn new(
+        id: impl Into<String>,
+        tool_name: impl Into<String>,
+        args: serde_json::Value,
+        requested_by: impl Into<String>,
+        risk_level: RiskLevel,
+        message: impl Into<String>,
+        response_tx: oneshot::Sender<ApprovalDecision>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            tool_name: tool_name.into(),
+            args,
+            requested_at: Instant::now(),
+            requested_by: requested_by.into(),
+            risk_level,
+            message: message.into(),
+            response_tx: Some(response_tx),
+        }
+    }
+
+    /// Age of this approval request
+    pub fn age(&self) -> Duration {
+        self.requested_at.elapsed()
+    }
+}
+
+/// Summary of a pending approval (for API responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingApprovalSummary {
+    pub id: String,
+    pub tool_name: String,
+    pub args: serde_json::Value,
+    pub requested_at: chrono::DateTime<chrono::Utc>,
+    pub requested_by: String,
+    pub risk_level: RiskLevel,
+    pub message: String,
+    pub age_seconds: u64,
+}
+
+impl From<&PendingApproval> for PendingApprovalSummary {
+    fn from(pa: &PendingApproval) -> Self {
+        Self {
+            id: pa.id.clone(),
+            tool_name: pa.tool_name.clone(),
+            args: pa.args.clone(),
+            requested_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::from_std(pa.requested_at.elapsed()).unwrap_or_default(),
+            requested_by: pa.requested_by.clone(),
+            risk_level: pa.risk_level,
+            message: pa.message.clone(),
+            age_seconds: pa.age().as_secs(),
+        }
+    }
+}
+
+/// Event broadcast when new approval is required
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequiredEvent {
+    pub approval_id: String,
+    pub tool_name: String,
+    pub requested_by: String,
+    pub risk_level: RiskLevel,
+    pub message: String,
+}
+
+/// Filter for listing pending approvals
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalFilter {
+    pub min_risk_level: Option<RiskLevel>,
+    pub tool_name: Option<String>,
+    pub requested_by: Option<String>,
+    pub max_age: Option<Duration>,
+}
+
+/// Thread-safe approval queue with broadcast notifications
+#[derive(Debug, Clone)]
+pub struct ApprovalQueue {
+    pending: Arc<RwLock<HashMap<String, PendingApproval>>>,
+    /// Broadcast channel for new approval events
+    pub event_tx: broadcast::Sender<ApprovalRequiredEvent>,
+    /// Default timeout for approvals
+    pub default_timeout: Duration,
+}
+
+impl ApprovalQueue {
+    /// Create a new approval queue
+    pub fn new() -> Self {
+        let (event_tx, _) = broadcast::channel(256);
+        Self {
+            pending: Arc::new(RwLock::new(HashMap::new())),
+            event_tx,
+            default_timeout: Duration::from_secs(300), // 5 minutes
+        }
+    }
+
+    /// Submit a new approval request
+    ///
+    /// Returns the approval ID. The caller should await the oneshot receiver
+    /// to get the resolution.
+    pub async fn submit(&self, approval: PendingApproval) -> String {
+        let id = approval.id.clone();
+        let event = ApprovalRequiredEvent {
+            approval_id: id.clone(),
+            tool_name: approval.tool_name.clone(),
+            requested_by: approval.requested_by.clone(),
+            risk_level: approval.risk_level,
+            message: approval.message.clone(),
+        };
+
+        {
+            let mut pending = self.pending.write().await;
+            pending.insert(id.clone(), approval);
+        }
+
+        info!("Approval {} submitted for tool '{}' (risk: {:?})",
+              id, event.tool_name, event.risk_level);
+
+        // Broadcast event to subscribers (web UI, notifications, etc.)
+        let _ = self.event_tx.send(event);
+
+        id
+    }
+
+    /// Resolve an approval with a decision
+    ///
+    /// Returns true if the approval was found and resolved, false if not found
+    /// or already resolved.
+    pub async fn resolve(&self, approval_id: &str, decision: ApprovalDecision) -> bool {
+        let approval = {
+            let mut pending = self.pending.write().await;
+            pending.remove(approval_id)
+        };
+
+        match approval {
+            Some(mut pa) => {
+                if let Some(tx) = pa.response_tx.take() {
+                    let _ = tx.send(decision.clone());
+                    match decision {
+                        ApprovalDecision::Approve => {
+                            info!("Approval {} approved", approval_id);
+                        }
+                        ApprovalDecision::Deny { reason } => {
+                            info!("Approval {} denied: {}", approval_id, reason);
+                        }
+                    }
+                    true
+                } else {
+                    warn!("Approval {} already resolved", approval_id);
+                    false
+                }
+            }
+            None => {
+                warn!("Approval {} not found", approval_id);
+                false
+            }
+        }
+    }
+
+    /// Get a specific pending approval
+    pub async fn get(&self, id: &str) -> Option<PendingApprovalSummary> {
+        let pending = self.pending.read().await;
+        pending.get(id).map(|pa| pa.into())
+    }
+
+    /// List pending approvals with optional filter
+    pub async fn list_pending(&self, filter: ApprovalFilter) -> Vec<PendingApprovalSummary> {
+        let pending = self.pending.read().await;
+
+        pending
+            .values()
+            .filter(|pa| {
+                if let Some(min_risk) = filter.min_risk_level {
+                    if pa.risk_level < min_risk {
+                        return false;
+                    }
+                }
+                if let Some(ref tool) = filter.tool_name {
+                    if pa.tool_name != *tool {
+                        return false;
+                    }
+                }
+                if let Some(ref user) = filter.requested_by {
+                    if pa.requested_by != *user {
+                        return false;
+                    }
+                }
+                if let Some(max_age) = filter.max_age {
+                    if pa.age() > max_age {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|pa| pa.into())
+            .collect()
+    }
+
+    /// Get all pending approval IDs
+    pub async fn list_ids(&self) -> Vec<String> {
+        let pending = self.pending.read().await;
+        pending.keys().cloned().collect()
+    }
+
+    /// Cancel (deny) all pending approvals for a given user/session
+    pub async fn cancel_for(&self, requested_by: &str) -> usize {
+        let ids: Vec<String> = {
+            let pending = self.pending.read().await;
+            pending
+                .values()
+                .filter(|pa| pa.requested_by == requested_by)
+                .map(|pa| pa.id.clone())
+                .collect()
+        };
+
+        let mut count = 0;
+        for id in ids {
+            if self.resolve(&id, ApprovalDecision::Deny {
+                reason: "Cancelled: session ended".into()
+            }).await {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Clean up stale approvals that have exceeded timeout
+    pub async fn cleanup_stale(&self) -> usize {
+        let timeout = self.default_timeout;
+        let stale_ids: Vec<String> = {
+            let pending = self.pending.read().await;
+            pending
+                .values()
+                .filter(|pa| pa.age() > timeout)
+                .map(|pa| pa.id.clone())
+                .collect()
+        };
+
+        let mut count = 0;
+        for id in stale_ids {
+            if self.resolve(&id, ApprovalDecision::Deny {
+                reason: "Approval timed out".into()
+            }).await {
+                count += 1;
+                debug!("Cleaned up stale approval {}", id);
+            }
+        }
+        count
+    }
+
+    /// Number of pending approvals
+    pub async fn len(&self) -> usize {
+        self.pending.read().await.len()
+    }
+
+    /// Check if queue is empty
+    pub async fn is_empty(&self) -> bool {
+        self.pending.read().await.is_empty()
+    }
+}
+
+impl Default for ApprovalQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_approval_queue_submit_and_resolve() {
+        let queue = ApprovalQueue::new();
+        let (tx, rx) = oneshot::channel();
+
+        let approval = PendingApproval::new(
+            "test-1",
+            "shell",
+            serde_json::json!({"command": "ls"}),
+            "user123",
+            RiskLevel::High,
+            "Shell command requires approval",
+            tx,
+        );
+
+        let id = queue.submit(approval).await;
+        assert_eq!(id, "test-1");
+        assert_eq!(queue.len().await, 1);
+
+        // Resolve the approval
+        let resolved = queue.resolve(&id, ApprovalDecision::Approve).await;
+        assert!(resolved);
+        assert!(queue.is_empty().await);
+
+        // Check the receiver got the decision
+        let decision = rx.await.unwrap();
+        assert_eq!(decision, ApprovalDecision::Approve);
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_deny() {
+        let queue = ApprovalQueue::new();
+        let (tx, rx) = oneshot::channel();
+
+        let approval = PendingApproval::new(
+            "test-2",
+            "file_delete",
+            serde_json::json!({"path": "/tmp/test"}),
+            "user456",
+            RiskLevel::Critical,
+            "File deletion requires approval",
+            tx,
+        );
+
+        let id = queue.submit(approval).await;
+
+        let resolved = queue.resolve(&id, ApprovalDecision::Deny {
+            reason: "Not allowed".into()
+        }).await;
+        assert!(resolved);
+
+        let decision = rx.await.unwrap();
+        assert!(matches!(decision, ApprovalDecision::Deny { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_not_found() {
+        let queue = ApprovalQueue::new();
+
+        let resolved = queue.resolve("nonexistent", ApprovalDecision::Approve).await;
+        assert!(!resolved);
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_list_filter() {
+        let queue = ApprovalQueue::new();
+
+        // Add multiple approvals
+        for i in 0..3 {
+            let (tx, _rx) = oneshot::channel();
+            let approval = PendingApproval::new(
+                format!("test-{}", i),
+                if i == 0 { "shell" } else { "memory_read" },
+                serde_json::json!({}),
+                if i == 0 { "user1" } else { "user2" },
+                if i == 2 { RiskLevel::Critical } else { RiskLevel::Medium },
+                "Test",
+                tx,
+            );
+            queue.submit(approval).await;
+        }
+
+        assert_eq!(queue.len().await, 3);
+
+        // Filter by tool name
+        let filter = ApprovalFilter {
+            tool_name: Some("shell".into()),
+            ..Default::default()
+        };
+        let results = queue.list_pending(filter).await;
+        assert_eq!(results.len(), 1);
+
+        // Filter by risk level
+        let filter = ApprovalFilter {
+            min_risk_level: Some(RiskLevel::Critical),
+            ..Default::default()
+        };
+        let results = queue.list_pending(filter).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].risk_level, RiskLevel::Critical);
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_cancel_for() {
+        let queue = ApprovalQueue::new();
+
+        let (tx1, _rx1) = oneshot::channel();
+        let (tx2, _rx2) = oneshot::channel();
+
+        queue.submit(PendingApproval::new(
+            "a1", "tool", serde_json::json!({}), "user1", RiskLevel::Low, "Test", tx1
+        )).await;
+
+        queue.submit(PendingApproval::new(
+            "a2", "tool", serde_json::json!({}), "user2", RiskLevel::Low, "Test", tx2
+        )).await;
+
+        let cancelled = queue.cancel_for("user1").await;
+        assert_eq!(cancelled, 1);
+        assert_eq!(queue.len().await, 1);
+    }
+}
