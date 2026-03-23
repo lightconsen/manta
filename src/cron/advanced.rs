@@ -842,11 +842,15 @@ impl AdvancedCronScheduler {
             SessionTarget::Isolated => format!("cron:{}", job.id),
         };
 
-        let message = IncomingMessage::new("system", &session_id, prompt).with_metadata(
-            crate::channels::MessageMetadata::new()
-                .with_extra("job_id", job.id.clone())
-                .with_extra("job_name", job.name.clone()),
-        );
+        let message = IncomingMessage::new("system", &session_id, prompt)
+            .with_provenance(crate::channels::InputProvenance::InternalSystem {
+                source: "cron".to_string(),
+            })
+            .with_metadata(
+                crate::channels::MessageMetadata::new()
+                    .with_extra("job_id", job.id.clone())
+                    .with_extra("job_name", job.name.clone()),
+            );
 
         let response = agent.process_message(message).await?;
         Ok(response.content)

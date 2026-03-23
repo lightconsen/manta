@@ -365,14 +365,20 @@ impl CronScheduler {
 
         if let Some(agent) = agent {
             // Create incoming message from job
-            let message =
-                IncomingMessage::new("system", format!("cron:{}", job.id), job.prompt.clone())
-                    .with_metadata(
-                        crate::channels::MessageMetadata::new()
-                            .with_extra("job_id", job.id.clone())
-                            .with_extra("job_name", job.name.clone())
-                            .with_extra("channel", job.channel.clone()),
-                    );
+            let message = IncomingMessage::new(
+                "system",
+                format!("cron:{}", job.id),
+                job.prompt.clone(),
+            )
+            .with_provenance(crate::channels::InputProvenance::InternalSystem {
+                source: "cron".to_string(),
+            })
+            .with_metadata(
+                crate::channels::MessageMetadata::new()
+                    .with_extra("job_id", job.id.clone())
+                    .with_extra("job_name", job.name.clone())
+                    .with_extra("channel", job.channel.clone()),
+            );
 
             // Process the message through the agent
             match agent.process_message(message).await {
