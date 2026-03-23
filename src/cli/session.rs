@@ -36,6 +36,13 @@ pub enum SessionCommands {
         /// Thread ID
         thread_id: String,
     },
+    /// Redo the most recently undone turn of a thread
+    Redo {
+        /// Session ID
+        session_id: String,
+        /// Thread ID
+        thread_id: String,
+    },
 }
 
 /// Run session commands
@@ -129,6 +136,34 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                         }
                     } else {
                         eprintln!("Undo failed ({}): {}", status, body);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
+        }
+
+        SessionCommands::Redo {
+            session_id,
+            thread_id,
+        } => {
+            let url = format!(
+                "{}/api/sessions/{}/threads/{}/redo",
+                DAEMON_URL, session_id, thread_id
+            );
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Redo successful.");
+                        if !body.is_empty() {
+                            println!("{}", body);
+                        }
+                    } else {
+                        eprintln!("Redo failed ({}): {}", status, body);
                     }
                 }
                 Err(e) => {

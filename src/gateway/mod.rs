@@ -94,6 +94,9 @@ pub struct GatewayConfig {
     /// MCP server configurations (auto-connected on startup)
     #[serde(default)]
     pub mcp: McpSettings,
+    /// Live spend and action-rate guard for LLM calls.
+    #[serde(default)]
+    pub cost_guard: CostGuardConfig,
 }
 
 fn default_model() -> String {
@@ -242,6 +245,30 @@ impl Default for CronConfig {
     }
 }
 
+/// Cost guard configuration — live spend and action-rate tracking.
+///
+/// Set `daily_limit_cents` and/or `hourly_action_limit` to non-zero values to
+/// enable limits.  Zero means unlimited (default).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostGuardConfig {
+    /// Maximum daily LLM spend in cents (0 = unlimited).
+    /// Example: 500 = $5.00/day cap.
+    #[serde(default)]
+    pub daily_limit_cents: u64,
+    /// Maximum provider calls per hour across all agents (0 = unlimited).
+    #[serde(default)]
+    pub hourly_action_limit: u64,
+}
+
+impl Default for CostGuardConfig {
+    fn default() -> Self {
+        Self {
+            daily_limit_cents: 0,
+            hourly_action_limit: 0,
+        }
+    }
+}
+
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
@@ -332,6 +359,7 @@ impl Default for GatewayConfig {
             model: default_model(),
             model_provider: default_model_provider(),
             mcp: McpSettings::default(),
+            cost_guard: CostGuardConfig::default(),
         }
     }
 }
@@ -457,6 +485,9 @@ pub struct GatewayState {
     pub approval_queue: Arc<ApprovalQueue>,
     /// Self-repair loop state — tracks restart records, exposed via REST.
     pub repair_state: Arc<RepairState>,
+    /// Shared live cost guard — tracks daily spend and hourly action rate
+    /// across all agents. `Arc` allows every spawned agent to share one guard.
+    pub cost_guard: Arc<crate::agent::CostGuard>,
 }
 
 /// Handle to a running agent
@@ -507,6 +538,11 @@ pub enum AgentQuery {
     },
     /// Undo the last turn in a conversation.
     UndoLastTurn {
+        conv_id: String,
+        response_tx: tokio::sync::oneshot::Sender<bool>,
+    },
+    /// Redo the most recently undone turn in a conversation.
+    RedoLastTurn {
         conv_id: String,
         response_tx: tokio::sync::oneshot::Sender<bool>,
     },
@@ -833,6 +869,10 @@ impl Gateway {
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
             approval_queue,
             repair_state: Arc::new(RepairState::new()),
+            cost_guard: crate::agent::CostGuard::new(
+                config.cost_guard.daily_limit_cents,
+                config.cost_guard.hourly_action_limit,
+            ),
         });
 
         // Configure providers from config
@@ -1237,6 +1277,7 @@ impl Gateway {
             // Status and diagnostics
             .route("/api/v1/status", get(status_handler))
             .route("/api/v1/repair/status", get(repair_status_handler))
+            .route("/api/v1/cost/status", get(cost_status_handler))
             // Canvas/A2UI
             .route("/api/v1/canvas", post(create_canvas_handler))
             .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
@@ -1334,6 +1375,10 @@ impl Gateway {
                 "/api/sessions/:id/threads/:thread_id/undo",
                 post(undo_turn_handler),
             )
+            .route(
+                "/api/sessions/:id/threads/:thread_id/redo",
+                post(redo_turn_handler),
+            )
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
@@ -1372,16 +1417,22 @@ async fn spawn_agent_inner(
     // Get the model from config for this agent
     let model = state.config.read().await.model.clone();
 
-    // Create the actual Agent instance with model and memory manager
+    // Create the actual Agent instance with model, memory manager, and shared cost guard
     let memory_manager = state.memory_manager.read().await.clone();
+    let cost_guard = Arc::clone(&state.cost_guard);
     let agent = if let Some(mm) = memory_manager {
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
-                .with_memory_manager(mm),
+                .with_memory_manager(mm)
+                .with_cost_guard(cost_guard),
         )
     } else {
-        Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+        Arc::new(
+            Agent::new(config.clone(), provider, tools)
+                .with_model(model)
+                .with_cost_guard(cost_guard),
+        )
     };
 
     // Wire the new agent into the cron scheduler so routine (agent-target)
@@ -1589,6 +1640,9 @@ async fn spawn_agent_inner(
                         }
                         AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                             let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
                         }
                         AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
                             agent.set_skill_trust(skill_trust);
@@ -3522,6 +3576,9 @@ async fn create_agent_handler(
                     AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                         let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
                     }
+                    AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                        let _ = response_tx.send(agent_clone.redo_last_turn(&conv_id).await);
+                    }
                     AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
                         agent_clone.set_skill_trust(skill_trust);
                         let incoming = crate::channels::IncomingMessage::new(
@@ -3824,6 +3881,30 @@ async fn repair_status_handler(
         "loop_running": loop_running,
         "last_cycle_at": last_cycle,
         "repairs": records,
+    }))
+}
+
+/// GET /api/v1/cost/status
+///
+/// Returns current spend and action-rate counters from the live CostGuard.
+/// Useful for monitoring budget burn in real-time.
+async fn cost_status_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    use std::sync::atomic::Ordering;
+
+    let daily_cents = state.cost_guard.daily_spend_cents();
+    let hourly_actions = state.cost_guard.hourly_action_count();
+    let budget_exceeded = state.cost_guard.budget_exceeded.load(Ordering::Relaxed);
+    let daily_limit = state.cost_guard.daily_limit_cents;
+    let hourly_limit = state.cost_guard.hourly_action_limit;
+
+    Json(serde_json::json!({
+        "daily_spend_cents": daily_cents,
+        "daily_limit_cents": daily_limit,
+        "hourly_actions": hourly_actions,
+        "hourly_action_limit": hourly_limit,
+        "budget_exceeded": budget_exceeded,
     }))
 }
 
@@ -4897,6 +4978,9 @@ async fn spawn_discovered_agent_handler(
                         }
                         AgentQuery::UndoLastTurn { conv_id, response_tx } => {
                             let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
                         }
                         AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
                             agent.set_skill_trust(skill_trust);
@@ -6924,6 +7008,59 @@ async fn undo_turn_handler(
             Json(serde_json::json!({
                 "error": format!(
                     "Thread '{}' not found or has no turns to undo",
+                    thread_id
+                ),
+            })),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "agent response channel closed"})),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/sessions/:id/threads/:thread_id/redo` — redo the most recently undone turn.
+async fn redo_turn_handler(
+    Path((session_id, thread_id)): Path<(String, String)>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let qtx = match resolve_session_query_tx(&state, &session_id).await {
+        Ok(tx) => tx,
+        Err(resp) => return resp,
+    };
+
+    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
+
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if qtx
+        .send(AgentQuery::RedoLastTurn { conv_id, response_tx: resp_tx })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "agent unavailable"})),
+        )
+            .into_response();
+    }
+    match resp_rx.await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "session_id": session_id,
+                "thread_id": thread_id,
+                "message": "Turn redone successfully",
+            })),
+        )
+            .into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!(
+                    "Thread '{}' not found or has no turns to redo",
                     thread_id
                 ),
             })),

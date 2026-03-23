@@ -1446,11 +1446,33 @@ impl Agent {
             request.tools = Some(tools);
         }
 
+        // Check live cost guard before calling provider
+        if let Some(ref guard) = self.cost_guard {
+            if guard.is_exceeded() {
+                return Err(crate::error::MantaError::Validation(
+                    "Budget limit exceeded — refusing provider call. \
+                     Adjust daily_limit_cents or hourly_action_limit in config."
+                        .to_string(),
+                ));
+            }
+        }
+
         // Notify generating
         (progress_cb)(ProgressEvent::Generating).await;
 
         // Get completion
         let response = self.provider.complete(request).await?;
+
+        // Record token usage in cost guard
+        if let Some(ref guard) = self.cost_guard {
+            if let Some(ref usage) = response.usage {
+                guard.record_usage(
+                    usage.prompt_tokens as u64,
+                    usage.completion_tokens as u64,
+                    response.model.as_str(),
+                );
+            }
+        }
 
         // Handle tool calls if present
         if let Some(tool_calls) = &response.message.tool_calls {
@@ -1702,8 +1724,8 @@ impl Agent {
 
     /// Undo the last turn for a conversation.
     ///
-    /// Removes the most recent `Turn` from the in-memory `Thread` and strips
-    /// the corresponding messages from the context window.  If a
+    /// Moves the most recent `Turn` from the turn log to the redo stack and
+    /// strips the corresponding messages from the context window. If a
     /// `SessionStore` is attached the turn rows are also hard-deleted from
     /// SQLite (fire-and-forget).
     ///
@@ -1728,6 +1750,35 @@ impl Agent {
         } else {
             false
         }
+    }
+
+    /// Redo the most recently undone turn for a conversation.
+    ///
+    /// Restores the turn from the redo stack back to the turn log and
+    /// re-inserts its messages into the context window. Note: persistence
+    /// is not supported for redo (the turn was deleted from SQLite on undo).
+    ///
+    /// Returns `true` if a turn was redone, `false` if the redo stack was empty
+    /// or the thread was not found.
+    pub async fn redo_last_turn(&self, conversation_id: &str) -> bool {
+        let mut map = self.thread_map.lock().await;
+        if let Some(thread) = map.get_mut(conversation_id) {
+            thread.redo_last_turn()
+        } else {
+            false
+        }
+    }
+
+    /// Returns `true` if the conversation can undo a turn.
+    pub async fn can_undo(&self, conversation_id: &str) -> bool {
+        let map = self.thread_map.lock().await;
+        map.get(conversation_id).map(|t| t.can_undo()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the conversation can redo a turn.
+    pub async fn can_redo(&self, conversation_id: &str) -> bool {
+        let map = self.thread_map.lock().await;
+        map.get(conversation_id).map(|t| t.can_redo()).unwrap_or(false)
     }
 
     /// Restore threads from the `SessionStore` for the current `session_id`.

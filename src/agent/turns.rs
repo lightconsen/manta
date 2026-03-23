@@ -94,6 +94,8 @@ impl Turn {
 ///
 /// The thread owns a [`super::context::Context`] (the sliding message window
 /// sent to the provider) and additionally keeps the full turn log for undo.
+/// A separate `redo_stack` preserves undone turns so they can be restored
+/// until a new turn is pushed (which clears the redo history).
 #[derive(Debug)]
 pub struct Thread {
     /// Thread identifier (e.g. `"main"` or `uuid`).
@@ -102,6 +104,8 @@ pub struct Thread {
     pub label: String,
     /// Ordered turn log.
     pub turns: Vec<Turn>,
+    /// Stack of turns that were undone (preserved for redo).
+    redo_stack: Vec<Turn>,
     /// Raw message context for the provider.
     pub context: super::context::Context,
     /// When the thread was created.
@@ -122,6 +126,7 @@ impl Thread {
             id: id_str,
             label: label.into(),
             turns: Vec::new(),
+            redo_stack: Vec::new(),
             context,
             created_at: SystemTime::now(),
         }
@@ -142,6 +147,7 @@ impl Thread {
             id: id.into(),
             label: label.into(),
             turns: Vec::new(),
+            redo_stack: Vec::new(),
             context,
             created_at: SystemTime::now(),
         }
@@ -153,27 +159,73 @@ impl Thread {
     }
 
     /// Append a new `Pending` turn for `user_message`.
+    ///
+    /// Clears the redo stack — new input invalidates the redo history.
     pub fn push_turn(&mut self, user_message: impl Into<String>) -> usize {
         let index = self.turns.len();
         self.turns.push(Turn::new(index, user_message));
+        self.redo_stack.clear(); // New turn invalidates redo history
         index
     }
 
-    /// Undo the most recent turn by removing it from the turn log and the
-    /// underlying context window.
+    /// Undo the most recent turn by moving it from the turn log to the
+    /// redo stack, and strip the corresponding messages from the context.
     ///
-    /// Returns `true` if a turn was removed, `false` if the thread was empty.
+    /// Returns `true` if a turn was undone, `false` if the thread was empty.
     pub fn undo_last_turn(&mut self) -> bool {
         match self.turns.pop() {
             None => false,
             Some(turn) => {
+                // Preserve the undone turn for potential redo
+                self.redo_stack.push(turn);
                 // Mirror the undo in the context by stripping the last
                 // user message plus any subsequent messages (assistant reply
                 // and tool call/result pairs).
-                self.remove_turn_from_context(&turn.user_message);
+                let turn_ref = self.redo_stack.last().unwrap();
+                self.remove_turn_from_context(&turn_ref.user_message);
                 true
             }
         }
+    }
+
+    /// Redo the most recently undone turn by restoring it from the redo stack.
+    ///
+    /// Re-inserts the turn into the turn log and restores its messages to the
+    /// context window. Returns `true` if a turn was redone, `false` if the
+    /// redo stack was empty.
+    pub fn redo_last_turn(&mut self) -> bool {
+        match self.redo_stack.pop() {
+            None => false,
+            Some(turn) => {
+                // Restore user message to context
+                self.context.add_message(crate::providers::Message::user(&turn.user_message));
+                // Restore assistant response if present
+                if !turn.assistant_response.is_empty() {
+                    self.context.add_message(crate::providers::Message::assistant(&turn.assistant_response));
+                }
+                // Re-insert turn (with corrected index)
+                let corrected_index = self.turns.len();
+                let mut restored_turn = turn;
+                restored_turn.index = corrected_index;
+                self.turns.push(restored_turn);
+                true
+            }
+        }
+    }
+
+    /// Returns `true` if there are turns that can be undone.
+    pub fn can_undo(&self) -> bool {
+        !self.turns.is_empty()
+    }
+
+    /// Returns `true` if there are turns that can be redone.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Returns the number of turns available for redo.
+    pub fn redo_count(&self) -> usize {
+        self.redo_stack.len()
     }
 
     // ── Private ──────────────────────────────────────────────────────────────
@@ -228,6 +280,21 @@ impl ThreadManager {
     /// Undo the last turn in the named thread.  Returns `true` if successful.
     pub fn undo(&mut self, thread_id: &str) -> bool {
         self.get_mut(thread_id).map(|t| t.undo_last_turn()).unwrap_or(false)
+    }
+
+    /// Redo the most recently undone turn in the named thread.  Returns `true` if successful.
+    pub fn redo(&mut self, thread_id: &str) -> bool {
+        self.get_mut(thread_id).map(|t| t.redo_last_turn()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the named thread can undo.
+    pub fn can_undo(&self, thread_id: &str) -> bool {
+        self.get(thread_id).map(|t| t.can_undo()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the named thread can redo.
+    pub fn can_redo(&self, thread_id: &str) -> bool {
+        self.get(thread_id).map(|t| t.can_redo()).unwrap_or(false)
     }
 
     /// List all thread IDs.
@@ -289,12 +356,103 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_manager_undo() {
+    fn test_thread_undo_redo_cycle() {
+        let mut thread = make_thread();
+
+        // Setup: push a turn with messages
+        thread.push_turn("What is 2+2?");
+        thread.context.add_message(crate::providers::Message::user("What is 2+2?"));
+        thread.context.add_message(crate::providers::Message::assistant("4"));
+        thread.turns[0].complete("4");
+
+        assert_eq!(thread.turn_count(), 1);
+        assert_eq!(thread.redo_count(), 0);
+
+        // Undo preserves the turn in redo_stack
+        assert!(thread.undo_last_turn());
+        assert_eq!(thread.turn_count(), 0);
+        assert_eq!(thread.redo_count(), 1);
+
+        // Redo restores the turn
+        assert!(thread.redo_last_turn());
+        assert_eq!(thread.turn_count(), 1);
+        assert_eq!(thread.redo_count(), 0);
+        assert_eq!(thread.turns[0].assistant_response, "4");
+
+        // Context restored
+        assert_eq!(thread.context.message_count(), 2);
+    }
+
+    #[test]
+    fn test_thread_can_undo_can_redo() {
+        let mut thread = make_thread();
+        assert!(!thread.can_undo());
+        assert!(!thread.can_redo());
+
+        thread.push_turn("Hello");
+        assert!(thread.can_undo());
+        assert!(!thread.can_redo());
+
+        thread.undo_last_turn();
+        assert!(!thread.can_undo());
+        assert!(thread.can_redo());
+
+        thread.redo_last_turn();
+        assert!(thread.can_undo());
+        assert!(!thread.can_redo());
+    }
+
+    #[test]
+    fn test_thread_redo_empty_fails() {
+        let mut thread = make_thread();
+        assert!(!thread.redo_last_turn());
+    }
+
+    #[test]
+    fn test_thread_push_clears_redo_stack() {
+        let mut thread = make_thread();
+
+        thread.push_turn("Turn 1");
+        thread.context.add_message(crate::providers::Message::user("Turn 1"));
+        thread.turns[0].complete("Response 1");
+
+        thread.undo_last_turn();
+        assert_eq!(thread.redo_count(), 1);
+
+        // Pushing a new turn clears redo history
+        thread.push_turn("Turn 2");
+        assert_eq!(thread.redo_count(), 0);
+        assert!(!thread.can_redo());
+    }
+
+    #[test]
+    fn test_thread_manager_undo_redo() {
         let mut mgr = ThreadManager::new();
         mgr.push(make_thread());
         // Undo on an unknown id returns false.
         assert!(!mgr.undo("nonexistent"));
         // Undo on empty thread returns false.
         assert!(!mgr.undo("test"));
+        // Redo on empty thread returns false.
+        assert!(!mgr.redo("test"));
+
+        // Setup: add a thread with a turn
+        let thread = mgr.get_mut("test").unwrap();
+        thread.push_turn("Hello");
+        thread.context.add_message(crate::providers::Message::user("Hello"));
+
+        // Can check undo/redo availability
+        assert!(mgr.can_undo("test"));
+        assert!(!mgr.can_redo("test"));
+
+        // Undo works through manager
+        assert!(mgr.undo("test"));
+        assert!(!mgr.can_undo("test"));
+        assert!(mgr.can_redo("test"));
+
+        // Redo works through manager
+        assert!(mgr.redo("test"));
+        assert!(mgr.can_undo("test"));
+        assert!(!mgr.can_redo("test"));
     }
 }
