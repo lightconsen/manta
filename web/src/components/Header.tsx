@@ -1,19 +1,24 @@
 import { ReactNode } from 'react';
-import { WebSocketState } from '../types';
+import { ConnectionState } from '../types';
 
 interface HeaderProps {
   logo: ReactNode;
-  wsState: WebSocketState;
+  connectionState: ConnectionState;
   version: string;
   onSettingsClick: () => void;
 }
 
-export function Header({ logo, wsState, version, onSettingsClick }: HeaderProps) {
+export function Header({ logo, connectionState, version, onSettingsClick }: HeaderProps) {
   const statusText = {
-    [WebSocketState.Connecting]: 'Connecting...',
-    [WebSocketState.Connected]: 'Connected',
-    [WebSocketState.Disconnected]: 'Disconnected',
+    [ConnectionState.Connecting]: 'Connecting...',
+    [ConnectionState.Connected]: 'Connected',
+    [ConnectionState.Disconnected]: 'Disconnected',
+    [ConnectionState.Reconnecting]: 'Reconnecting...',
+    [ConnectionState.Error]: 'Error',
   };
+
+  const isDisconnected = connectionState === ConnectionState.Disconnected ||
+                         connectionState === ConnectionState.Error;
 
   return (
     <div className="header">
@@ -21,8 +26,8 @@ export function Header({ logo, wsState, version, onSettingsClick }: HeaderProps)
       <div className="header-center">
         <span className="version">{version}</span>
         <div className="status">
-          <span className={`status-dot ${wsState === WebSocketState.Disconnected ? 'disconnected' : ''}`}></span>
-          <span>{statusText[wsState]}</span>
+          <span className={`status-dot ${isDisconnected ? 'disconnected' : ''}`}></span>
+          <span>{statusText[connectionState]}</span>
         </div>
       </div>
       <button className="settings-btn" onClick={onSettingsClick} title="Settings">

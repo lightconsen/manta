@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::gateway::GatewayState;
-use crate::security::{RateLimitHeaders, UserId};
+use crate::security::UserId;
 
 /// Allowed network origins for admin APIs
 #[derive(Debug, Clone)]

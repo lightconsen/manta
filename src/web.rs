@@ -8,7 +8,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
-    response::Html,
+    http::StatusCode,
+    response::{Html, Json},
     routing::get,
     Router,
 };
@@ -32,6 +33,14 @@ pub struct WsQuery {
     pub conversation: Option<String>,
 }
 
+/// Request body for web terminal chat
+#[derive(Debug, serde::Deserialize)]
+struct WebTerminalChatRequest {
+    message: String,
+    conversation_id: Option<String>,
+    user_id: Option<String>,
+}
+
 /// Shared application state
 #[derive(Clone)]
 pub struct WebTerminalState {
@@ -48,6 +57,8 @@ pub async fn start_web_terminal(agent: Arc<Agent>, port: u16) -> crate::Result<(
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler))
+        .route("/api/events", get(sse_events_handler))
+        .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
@@ -76,6 +87,8 @@ pub async fn start_web_terminal_with_daemon(client: DaemonClient, port: u16) -> 
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler_daemon))
+        .route("/api/events", get(sse_events_daemon_handler))
+        .route("/api/chat", axum::routing::post(web_terminal_chat_daemon_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
@@ -433,6 +446,146 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
                     break;
                 }
             }
+        }
+    }
+}
+
+/// SSE events handler for web terminal
+/// Streams events from the broadcast channel
+async fn sse_events_handler(
+    State(state): State<WebTerminalState>,
+) -> axum::response::sse::Sse<
+    impl futures_core::Stream<
+        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio::sync::broadcast;
+    use tokio_stream::wrappers::BroadcastStream;
+    use futures_util::StreamExt;
+
+    // Create a broadcast channel for events
+    let (tx, _rx) = broadcast::channel::<serde_json::Value>(100);
+    let rx = tx.subscribe();
+
+    // Spawn a task to forward agent responses to the broadcast channel
+    let agent = state.agent.clone();
+    tokio::spawn(async move {
+        // This is a simplified implementation - in production you'd want
+        // to integrate with the agent's event system
+        let _ = agent;
+    });
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+        match result {
+            Ok(evt) => {
+                let data = serde_json::to_string(&evt).unwrap_or_default();
+                Some(Ok(Event::default().data(data)))
+            }
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// POST handler for web terminal chat
+/// Accepts messages via HTTP POST and processes them asynchronously
+async fn web_terminal_chat_handler(
+    State(state): State<WebTerminalState>,
+    Json(body): Json<WebTerminalChatRequest>,
+) -> impl axum::response::IntoResponse {
+    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let message_id = uuid::Uuid::new_v4().to_string();
+
+    // Process the message with the agent
+    let incoming = IncomingMessage::new(
+        body.user_id.as_deref().unwrap_or("web_user"),
+        &conversation_id,
+        &body.message
+    );
+
+    match state.agent.process_message(incoming).await {
+        Ok(_response) => {
+            let resp = serde_json::json!({
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "status": "processing"
+            });
+            (StatusCode::ACCEPTED, Json(resp))
+        }
+        Err(e) => {
+            error!("Failed to process message: {}", e);
+            let resp = serde_json::json!({
+                "error": format!("Failed to process message: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
+        }
+    }
+}
+
+/// SSE events handler for daemon-connected web terminal
+/// Streams events from the broadcast channel
+async fn sse_events_daemon_handler(
+    State(_state): State<DaemonWebState>,
+) -> axum::response::sse::Sse<
+    impl futures_core::Stream<
+        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio::sync::broadcast;
+    use tokio_stream::wrappers::BroadcastStream;
+    use futures_util::StreamExt;
+
+    // Create a broadcast channel for events
+    let (tx, _rx) = broadcast::channel::<serde_json::Value>(100);
+    let rx = tx.subscribe();
+
+    // Spawn a task to forward daemon events to the broadcast channel
+    // Note: In production, this would integrate with the daemon's event system
+    tokio::spawn(async move {
+        // Event forwarding placeholder
+    });
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+        match result {
+            Ok(evt) => {
+                let data = serde_json::to_string(&evt).unwrap_or_default();
+                Some(Ok(Event::default().data(data)))
+            }
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// POST handler for daemon-connected web terminal chat
+/// Accepts messages via HTTP POST and processes them asynchronously via daemon
+async fn web_terminal_chat_daemon_handler(
+    State(state): State<DaemonWebState>,
+    Json(body): Json<WebTerminalChatRequest>,
+) -> impl axum::response::IntoResponse {
+    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let message_id = uuid::Uuid::new_v4().to_string();
+
+    // Process the message with the daemon client
+    match state.client.chat(&body.message, Some(&conversation_id)).await {
+        Ok(_response) => {
+            let resp = serde_json::json!({
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "status": "processing"
+            });
+            (StatusCode::ACCEPTED, Json(resp))
+        }
+        Err(e) => {
+            error!("Failed to process message via daemon: {}", e);
+            let resp = serde_json::json!({
+                "error": format!("Failed to process message: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(resp))
         }
     }
 }

@@ -2,14 +2,13 @@
 //!
 //! Provides periodic health checks and staleness detection for channels.
 
-use crate::error::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Instant};
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Health status of a channel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,10 +5,10 @@
 //! a single `embed_batch()` call.  This amortises API latency and keeps the
 //! hot path non-blocking.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::{debug, error, info, warn};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, info};
 
 /// Shared state for tracking pipeline metrics.
 #[derive(Debug, Default)]

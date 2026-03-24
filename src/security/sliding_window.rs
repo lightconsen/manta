@@ -4,7 +4,6 @@
 //! Unlike token bucket (which allows bursts), sliding window tracks actual
 //! request timestamps and enforces strict rate limits over time.
 
-use crate::error::{MantaError, Result};
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;

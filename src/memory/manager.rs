@@ -16,8 +16,7 @@ use tracing::{debug, info, warn};
 
 use super::{
     hybrid::{hybrid_search, HybridSearchConfig},
-    pipeline::{EmbeddingPipelineConfig, EmbeddingPipelineHandle},
-    personality::PersonalityMemory,
+    pipeline::EmbeddingPipelineHandle,
     session_search::SessionSearch,
     vector::VectorMemoryService,
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStore, MemoryStats,

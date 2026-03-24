@@ -5,9 +5,9 @@
 
 use async_trait::async_trait;
 use serde_json::json;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
-use crate::team::mesh::{get_team_mesh_manager, TeamMeshManager};
+use crate::team::mesh::get_team_mesh_manager;
 use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
 /// Tool for team communication

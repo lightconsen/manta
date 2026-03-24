@@ -3,7 +3,6 @@
 //! Defines the structure of plugin.json/manifest.json files
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Plugin manifest - describes a plugin's metadata and capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]

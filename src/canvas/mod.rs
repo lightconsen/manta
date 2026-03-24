@@ -4,13 +4,13 @@
 //! dynamic user interfaces through WebSocket updates. Supports forms, buttons,
 //! progress indicators, and real-time content streaming.
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// Unique identifier for a UI session

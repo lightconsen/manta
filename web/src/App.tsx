@@ -4,19 +4,19 @@ import { Message } from './components/Message';
 import { TypingIndicator } from './components/TypingIndicator';
 import { Header } from './components/Header';
 import { InputArea } from './components/InputArea';
-import { WebSocketManager } from './utils/websocket';
+import { SSEManager } from './utils/sse';
 import { formatContent, escapeHtml } from './utils/format';
-import { MessageType, MessageData, WebSocketState } from './types';
+import { MessageType, MessageData, ConnectionState } from './types';
 import './styles.css';
 
 function App() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [isTyping, setIsTyping] = useState(false);
-  const [wsState, setWsState] = useState<WebSocketState>(WebSocketState.Connecting);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.Connecting);
   const [version, setVersion] = useState('v0.1.0');
   const [conversationId, setConversationId] = useState<string | null>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
-  const wsManagerRef = useRef<WebSocketManager | null>(null);
+  const sseManagerRef = useRef<SSEManager | null>(null);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -25,28 +25,33 @@ function App() {
     }
   }, [messages, isTyping]);
 
-  // Initialize WebSocket connection with stored conversation ID
+  // Initialize SSE connection with stored conversation ID
   useEffect(() => {
     // Try to get stored conversation ID from localStorage
     const storedConversationId = localStorage.getItem('manta_conversation_id');
 
-    wsManagerRef.current = new WebSocketManager({
+    sseManagerRef.current = new SSEManager({
       onMessage: handleMessage,
-      onStateChange: setWsState,
+      onStateChange: setConnectionState,
       onError: (error) => {
-        console.error('WebSocket error:', error);
+        console.error('SSE error:', error);
+      },
+      onConversationId: (id) => {
+        setConversationId(id);
+        sseManagerRef.current?.setConversationId(id);
+        localStorage.setItem('manta_conversation_id', id);
       },
     });
 
     // Connect with stored conversation ID if available
-    wsManagerRef.current.connect(storedConversationId || undefined);
+    sseManagerRef.current.connect(storedConversationId || undefined);
     if (storedConversationId) {
-      wsManagerRef.current.setConversationId(storedConversationId);
+      sseManagerRef.current.setConversationId(storedConversationId);
       setConversationId(storedConversationId);
     }
 
     return () => {
-      wsManagerRef.current?.disconnect();
+      sseManagerRef.current?.disconnect();
     };
   }, []);
 
@@ -62,7 +67,7 @@ function App() {
         // Extract conversation ID from system message if present
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
-          wsManagerRef.current?.setConversationId(data.conversation_id);
+          sseManagerRef.current?.setConversationId(data.conversation_id);
           localStorage.setItem('manta_conversation_id', data.conversation_id);
         }
         break;
@@ -79,7 +84,7 @@ function App() {
         }
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
-          wsManagerRef.current?.setConversationId(data.conversation_id);
+          sseManagerRef.current?.setConversationId(data.conversation_id);
           localStorage.setItem('manta_conversation_id', data.conversation_id);
         }
         break;
@@ -130,10 +135,10 @@ function App() {
     }
   }, []);
 
-  const handleSendMessage = useCallback((text: string) => {
-    if (!text.trim() || !wsManagerRef.current?.isConnected()) return;
+  const handleSendMessage = useCallback(async (text: string) => {
+    if (!text.trim()) return;
 
-    // Add user message to UI
+    // Add user message to UI immediately
     setMessages((prev) => [...prev, {
       id: Date.now().toString(),
       role: 'user',
@@ -141,8 +146,18 @@ function App() {
       timestamp: Date.now(),
     }]);
 
-    // Send to server
-    wsManagerRef.current.send(text);
+    // Send to server via POST
+    try {
+      await sseManagerRef.current?.send(text);
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      setMessages((prev) => [...prev, {
+        id: Date.now().toString(),
+        role: 'system',
+        content: 'Failed to send message. Please try again.',
+        timestamp: Date.now(),
+      }]);
+    }
   }, []);
 
   const handleSettingsClick = useCallback(() => {
@@ -158,7 +173,7 @@ function App() {
     <>
       <Header
         logo={<MantaLogo />}
-        wsState={wsState}
+        connectionState={connectionState}
         version={version}
         onSettingsClick={handleSettingsClick}
       />
@@ -172,7 +187,7 @@ function App() {
 
       <InputArea
         onSendMessage={handleSendMessage}
-        disabled={wsState !== WebSocketState.Connected}
+        disabled={connectionState !== ConnectionState.Connected}
       />
     </>
   );

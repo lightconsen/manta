@@ -8,17 +8,17 @@
 //! - Authentication and security policies
 
 use axum::{
-    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state},
     response::{Html, IntoResponse, Json},
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -1353,6 +1353,8 @@ impl Gateway {
             .route("/mcp", post(manta_as_mcp_server_handler))
             // ── SSE real-time event streaming ──────────────────────────────
             .route("/api/events", get(sse_events_handler))
+            // ── Web terminal API ───────────────────────────────────────────
+            .route("/api/chat", post(web_terminal_chat_handler))
             // ── OpenAI-compatible API ──────────────────────────────────────
             .route("/v1/chat/completions", post(openai_chat_completions_handler))
             .route("/v1/models", get(openai_list_models_handler))
@@ -3681,6 +3683,67 @@ async fn list_channels_handler(State(state): State<Arc<GatewayState>>) -> impl I
     let channels = state.channels.read().await;
     let list: Vec<_> = channels.keys().cloned().collect();
     Json(list)
+}
+
+/// Request body for web terminal chat
+#[derive(Debug, Deserialize)]
+struct WebTerminalChatRequest {
+    /// Message content from user
+    message: String,
+    /// Optional conversation ID (creates new if not provided)
+    conversation_id: Option<String>,
+    /// Optional user ID
+    user_id: Option<String>,
+}
+
+/// Response for web terminal chat
+#[derive(Debug, Serialize)]
+struct WebTerminalChatResponse {
+    /// Message ID
+    message_id: String,
+    /// Conversation ID (new or existing)
+    conversation_id: String,
+    /// Status
+    status: String,
+}
+
+/// `POST /api/chat` — Send a message from the web terminal.
+///
+/// The message is queued for processing and a 202 Accepted is returned immediately.
+/// The actual response(s) will be streamed via SSE on `GET /api/events`.
+async fn web_terminal_chat_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<WebTerminalChatRequest>,
+) -> impl IntoResponse {
+    let message_id = uuid::Uuid::new_v4().to_string();
+    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    let queued_msg = QueuedMessage {
+        id: message_id.clone(),
+        channel: "web".to_string(),
+        user_id: body.user_id.unwrap_or_else(|| "web_user".to_string()),
+        content: body.message,
+        session_id: conversation_id.clone(),
+        timestamp: chrono::Utc::now(),
+        model_alias: None,
+    };
+
+    if let Err(e) = state.message_queue.send(queued_msg).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Failed to queue message: {}", e),
+            })),
+        )
+            .into_response();
+    }
+
+    let resp = WebTerminalChatResponse {
+        message_id,
+        conversation_id,
+        status: "processing".to_string(),
+    };
+    (StatusCode::ACCEPTED, Json(resp)).into_response()
 }
 
 async fn send_message_handler(

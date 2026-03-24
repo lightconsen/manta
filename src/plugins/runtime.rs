@@ -2,12 +2,11 @@
 //!
 //! Loads and executes plugins using Wasmtime for sandboxing.
 
-use super::manifest::{PluginManifest, PluginTool};
-use async_trait::async_trait;
+use super::manifest::PluginManifest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// A loaded plugin instance
 pub struct PluginInstance {

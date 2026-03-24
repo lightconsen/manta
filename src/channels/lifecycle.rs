@@ -3,7 +3,7 @@
 //! Provides automatic restart with exponential backoff for channel failures.
 
 use crate::channels::Channel;
-use crate::error::{MantaError, Result};
+use crate::error::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

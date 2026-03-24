@@ -22,8 +22,7 @@ pub use runtime::{PluginInstance, PluginRuntime};
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Plugin manager - high-level interface for plugin operations
 pub struct PluginManager {

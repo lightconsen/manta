@@ -6,13 +6,11 @@
 use crate::dirs;
 use crate::error::{MantaError, Result};
 use crate::skills::frontmatter::SkillFile;
-use crate::skills::{Skill, StorageLevel};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 /// Skill listing from registry
 #[derive(Debug, Clone, Serialize, Deserialize)]

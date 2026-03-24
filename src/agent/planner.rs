@@ -3,8 +3,8 @@
 //! Automatically decomposes complex user requests into structured task plans
 //! using LLM-based analysis. Integrates with the Todo system for execution.
 
-use super::todo::{Task, TaskStatus, TodoStore};
-use crate::providers::{CompletionRequest, Message, Provider, Role};
+use super::todo::TodoStore;
+use crate::providers::{CompletionRequest, Message, Provider};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};

@@ -3,9 +3,8 @@
 //! Provides start/stop/status functionality for running Manta as a background service.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Daemon configuration
 #[derive(Debug, Clone)]
@@ -101,7 +100,7 @@ impl DaemonManager {
     pub async fn run_foreground(&self) -> crate::Result<()> {
         println!("🚀 Manta daemon running with Gateway...");
 
-        use crate::agent::AgentConfig;
+        
         use crate::gateway::{Gateway, GatewayConfig};
 
         // Try to load existing Gateway config from manta.toml
@@ -463,7 +462,7 @@ impl DaemonManager {
             tokio::fs::File::create(&db_path).await?;
         }
 
-        let db_url = format!("sqlite:{}", db_path.display());
+        let db_url = format!("sqlite:///{}", db_path.display());
 
         println!("💾 Memory store: {}", db_path.display());
 

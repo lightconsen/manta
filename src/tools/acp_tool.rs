@@ -3,7 +3,7 @@
 //! This tool allows agents to spawn subagents for parallel task execution.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{info, warn};

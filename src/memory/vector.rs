@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
-use super::{Memory, MemoryId, MemoryQuery};
+use super::{Memory, MemoryId};
 
 /// Configuration for vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -11,12 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::agent::{Agent, AgentConfig};
 use crate::channels::IncomingMessage;
-use crate::tools::ToolRegistry;
 
 // AgentHandle is defined in gateway module
 pub use crate::gateway::AgentHandle;

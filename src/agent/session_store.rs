@@ -10,8 +10,7 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, warn};
-use uuid::Uuid;
+use tracing::{debug, info, instrument};
 
 /// Session metadata for querying
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,12 +3,12 @@
 //! Integrates AssistantMesh with the Team system to enable runtime-enforced
 //! communication patterns for agent teams.
 
-use super::{CommunicationPattern, Team, TeamMember};
-use crate::assistants::mesh::{AssistantMesh, MeshMessage, MessageType};
+use super::{CommunicationPattern, Team};
+use crate::assistants::mesh::{AssistantMesh, MeshMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// Team mesh manager - manages mesh communication for teams
 #[derive(Debug)]

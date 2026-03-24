@@ -29,7 +29,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use super::{ApprovalDecision, RiskLevel, ToolExecutionResult};
+use super::{RiskLevel, ToolExecutionResult};
 
 // ── Policy decision ───────────────────────────────────────────────────────────
 

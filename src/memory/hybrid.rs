@@ -16,7 +16,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sha2::{Digest, Sha256};
 
 use super::{
-    session_search::{SearchResult as FtsResult, SessionSearch, SessionSearchQuery},
+    session_search::{SessionSearch, SessionSearchQuery},
     vector::VectorMemoryService,
 };
 

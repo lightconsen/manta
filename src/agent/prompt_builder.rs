@@ -4,7 +4,6 @@
 //! Provides runtime prompt customization for better agent performance.
 
 use crate::providers::{FunctionDefinition, Message};
-use crate::tools::ToolContext;
 use std::collections::HashMap;
 
 /// Section of a dynamic prompt

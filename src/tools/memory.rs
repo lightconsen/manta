@@ -26,7 +26,7 @@ impl MemoryTool {
     pub async fn new() -> crate::Result<Self> {
         // Use centralized ~/.manta/memory directory
         let db_path = crate::dirs::default_memory_db();
-        let db_url = format!("sqlite:{}", db_path.display());
+        let db_url = format!("sqlite:///{}", db_path.display());
 
         info!("Initializing memory tool with database: {}", db_path.display());
 
@@ -41,7 +41,7 @@ impl MemoryTool {
         Ok(Self { storage })
     }
 
-    /// Create with an existing store (for sharing with agent)
+    /// Create with an existing store (for sharing with the agent)
     pub async fn with_store(storage: Arc<SqliteMemoryStore>) -> crate::Result<Self> {
         Ok(Self { storage })
     }
@@ -362,7 +362,7 @@ impl MemorySearchTool {
     /// Create with the default `~/.manta/memory` database.
     pub async fn new() -> crate::Result<Self> {
         let db_path = crate::dirs::default_memory_db();
-        let db_url = format!("sqlite:{}", db_path.display());
+        let db_url = format!("sqlite:///{}", db_path.display());
         let storage = Arc::new(SqliteMemoryStore::new(&db_url).await?);
         Ok(Self { storage })
     }
@@ -519,7 +519,7 @@ impl MemoryGetTool {
     /// Create with the default `~/.manta/memory` database.
     pub async fn new() -> crate::Result<Self> {
         let db_path = crate::dirs::default_memory_db();
-        let db_url = format!("sqlite:{}", db_path.display());
+        let db_url = format!("sqlite:///{}", db_path.display());
         let storage = Arc::new(SqliteMemoryStore::new(&db_url).await?);
         Ok(Self { storage })
     }

@@ -35,3 +35,24 @@ export interface WebSocketConfig {
   onStateChange: (state: WebSocketState) => void;
   onError?: (error: Event) => void;
 }
+
+/**
+ * SSE (Server-Sent Events) connection states
+ */
+export enum ConnectionState {
+  Connecting = 'connecting',
+  Connected = 'connected',
+  Disconnected = 'disconnected',
+  Reconnecting = 'reconnecting',
+  Error = 'error',
+}
+
+/**
+ * SSE Manager configuration
+ */
+export interface SSEConfig {
+  onMessage: (data: MessageData) => void;
+  onStateChange: (state: ConnectionState) => void;
+  onError?: (error: Event | Error) => void;
+  onConversationId?: (id: string) => void;
+}

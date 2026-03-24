@@ -713,7 +713,7 @@ impl AdvancedCronScheduler {
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
     ) {
-        let mut job = {
+        let job = {
             let mut jobs_lock = jobs.write().await;
             let job = match jobs_lock.get_mut(job_id) {
                 Some(j) => j,
