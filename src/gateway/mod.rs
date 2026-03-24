@@ -644,6 +644,12 @@ pub enum GatewayEvent {
         to: String,
         message: String,
     },
+    /// Agent is thinking/generating response (typing indicator)
+    Thinking {
+        session_id: String,
+        agent_id: String,
+        content: Option<String>,
+    },
 }
 
 /// Agent status
@@ -3515,6 +3521,20 @@ async fn create_agent_handler(
                         let aid = progress_agent.clone();
                         Box::pin(async move {
                             match event {
+                                crate::agent::ProgressEvent::Started => {
+                                    let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                        agent_id: aid.clone(),
+                                        status: AgentStatus::Processing { session_id: sid.clone() },
+                                    });
+                                }
+                                crate::agent::ProgressEvent::Generating => {
+                                    // Send thinking indicator
+                                    let _ = state.event_tx.send(GatewayEvent::Thinking {
+                                        session_id: sid.clone(),
+                                        agent_id: aid.clone(),
+                                        content: None,
+                                    });
+                                }
                                 crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                                     let _ = state.event_tx.send(GatewayEvent::ToolCalling {
                                         session_id: sid.clone(), agent_id: aid.clone(),
@@ -5742,6 +5762,14 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: None,
         },
+        GatewayEvent::Thinking { session_id, agent_id, content } => SseEvent {
+            event_type: "thinking".into(),
+            data: serde_json::json!({
+                "agent_id": agent_id,
+                "content": content,
+            }),
+            session_id: Some(session_id),
+        },
     }
 }
 
@@ -7177,45 +7205,28 @@ async fn web_terminal_events_handler(
     let stream = BroadcastStream::new(rx).filter_map(|result| async move {
         match result {
             Ok(evt) => {
-                // Transform GatewayEvent into web terminal format (MessageData-like)
-                let msg = match &evt {
-                    GatewayEvent::AgentResponse { content, .. } => {
-                        serde_json::json!({
-                            "type": "message",
-                            "role": "assistant",
-                            "content": content
-                        })
-                    }
-                    GatewayEvent::ToolCalling { tool_name, arguments, .. } => {
-                        serde_json::json!({
-                            "type": "tool_call",
-                            "tool": tool_name,
-                            "arguments": arguments
-                        })
-                    }
-                    GatewayEvent::ToolResult { tool_name, result, .. } => {
-                        serde_json::json!({
-                            "type": "tool_result",
-                            "tool": tool_name,
-                            "result": result
-                        })
-                    }
-                    GatewayEvent::AgentStatus { .. } => {
-                        // Skip status events for web terminal
-                        return None;
-                    }
-                    GatewayEvent::ProcessingError { message, .. } => {
-                        serde_json::json!({
-                            "type": "error",
-                            "content": message
-                        })
-                    }
-                    _ => {
-                        // Skip other events
-                        return None;
-                    }
-                };
-                let data = msg.to_string();
+                // Serialize GatewayEvent directly - let terminals handle display logic
+                // Add event_type field to help terminals identify event type
+                let mut json_value = serde_json::to_value(&evt).unwrap_or_default();
+                if let serde_json::Value::Object(ref mut map) = json_value {
+                    // Add event_type field based on the variant
+                    let event_type = match &evt {
+                        GatewayEvent::AgentResponse { .. } => "agent_response",
+                        GatewayEvent::Thinking { .. } => "thinking",
+                        GatewayEvent::ToolCalling { .. } => "tool_calling",
+                        GatewayEvent::ToolResult { .. } => "tool_result",
+                        GatewayEvent::AgentStatus { .. } => "agent_status",
+                        GatewayEvent::ProcessingError { .. } => "processing_error",
+                        GatewayEvent::Completed { .. } => "completed",
+                        GatewayEvent::MessageReceived { .. } => "message_received",
+                        GatewayEvent::ChannelStatus { .. } => "channel_status",
+                        GatewayEvent::ApprovalRequired { .. } => "approval_required",
+                        GatewayEvent::RepairAction { .. } => "repair_action",
+                        GatewayEvent::CronAnnounce { .. } => "cron_announce",
+                    };
+                    map.insert("event_type".to_string(), serde_json::json!(event_type));
+                }
+                let data = json_value.to_string();
                 Some(Ok(Event::default().data(data)))
             }
             Err(_) => None,

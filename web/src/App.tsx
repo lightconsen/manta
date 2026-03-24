@@ -56,7 +56,66 @@ function App() {
   }, []);
 
   const handleMessage = useCallback((data: MessageData) => {
-    switch (data.type) {
+    // Handle new GatewayEvent format with event_type field
+    const eventType = data.event_type || data.type;
+
+    switch (eventType) {
+      case 'agent_response':
+        // Extract content from AgentResponse event
+        const agentContent = data.AgentResponse?.content || data.content;
+        if (agentContent) {
+          setMessages((prev) => [...prev, {
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: agentContent,
+            timestamp: Date.now(),
+          }]);
+        }
+        setIsTyping(false);
+        break;
+      case 'thinking':
+        setIsTyping(true);
+        break;
+      case 'tool_calling':
+        const toolName = data.ToolCalling?.tool_name || data.tool;
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString(),
+          role: 'tool_call',
+          content: `🔧 Using tool: ${toolName}...`,
+          tool: toolName,
+          arguments: data.ToolCalling?.arguments || data.arguments,
+          timestamp: Date.now(),
+        }]);
+        break;
+      case 'tool_result':
+        const resultToolName = data.ToolResult?.tool_name || data.tool;
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString(),
+          role: 'tool_result',
+          content: `✓ Tool ${resultToolName} completed`,
+          tool: resultToolName,
+          result: data.ToolResult?.result || data.result,
+          timestamp: Date.now(),
+        }]);
+        break;
+      case 'agent_status':
+        const status = data.AgentStatus?.status;
+        if (status === 'Idle') {
+          setIsTyping(false);
+        } else if (status?.Processing) {
+          setIsTyping(true);
+        }
+        break;
+      case 'processing_error':
+        const errorMsg = data.ProcessingError?.message || data.content;
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString(),
+          role: 'system',
+          content: `Error: ${errorMsg}`,
+          timestamp: Date.now(),
+        }]);
+        setIsTyping(false);
+        break;
       case 'system':
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
@@ -64,7 +123,6 @@ function App() {
           content: data.content,
           timestamp: Date.now(),
         }]);
-        // Extract conversation ID from system message if present
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           sseManagerRef.current?.setConversationId(data.conversation_id);
@@ -72,7 +130,6 @@ function App() {
         }
         break;
       case 'history':
-        // Handle history messages from server
         if (data.messages && Array.isArray(data.messages)) {
           const historyMessages = data.messages.map((msg) => ({
             id: msg.id || Date.now().toString() + Math.random(),
@@ -95,6 +152,7 @@ function App() {
           content: data.content,
           timestamp: Date.now(),
         }]);
+        setIsTyping(false);
         break;
       case 'cron':
         setMessages((prev) => [...prev, {
@@ -114,16 +172,6 @@ function App() {
           content: `🔧 Using tool: ${data.tool}`,
           tool: data.tool,
           arguments: data.arguments,
-          timestamp: Date.now(),
-        }]);
-        break;
-      case 'tool_result':
-        setMessages((prev) => [...prev, {
-          id: Date.now().toString(),
-          role: 'tool_result',
-          content: `✓ Tool result: ${data.result?.substring(0, 200) || 'Done'}`,
-          tool: data.tool,
-          result: data.result,
           timestamp: Date.now(),
         }]);
         break;
