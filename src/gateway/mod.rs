@@ -2275,6 +2275,7 @@ impl Gateway {
             .route("/ws", get(web_terminal_ws_handler))
             .route("/api/events", get(web_terminal_events_handler))
             .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
+            .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
             .with_state(state);
 
         let addr = format!("127.0.0.1:{}", port);
