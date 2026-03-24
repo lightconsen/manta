@@ -77,12 +77,15 @@ pub fn workspace_data_dir() -> PathBuf {
     manta_dir().join("workspace")
 }
 
+/// Get the data directory (~/.manta/data)
+pub fn data_dir() -> PathBuf {
+    manta_dir().join("data")
+}
+
 /// Get the todos directory (~/.manta/todos)
 pub fn todos_dir() -> PathBuf {
     manta_dir().join("todos")
 }
-
-/// Get the teams directory (~/.manta/teams)
 pub fn teams_dir() -> PathBuf {
     manta_dir().join("teams")
 }
@@ -123,6 +126,7 @@ pub async fn init() -> crate::Result<PathBuf> {
     let dirs = [
         &base,
         &memory_dir(),
+        &data_dir(),
         &workspace_data_dir(),
         &logs_dir(),
         &skills_dir(),
@@ -156,6 +160,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
     let dirs = [
         &base,
         &memory_dir(),
+        &data_dir(),
         &workspace_data_dir(),
         &logs_dir(),
         &skills_dir(),

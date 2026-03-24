@@ -807,6 +807,11 @@ impl Gateway {
                     tokio::fs::create_dir_all(parent).await.ok();
                 }
 
+                // Create empty database file if it doesn't exist
+                if !db_path.exists() {
+                    tokio::fs::File::create(&db_path).await.ok();
+                }
+
                 // SQLite URL format: sqlite:///absolute/path/to/db for absolute paths
                 let db_url = format!("sqlite:///{}", db_path.display());
                 info!("Connecting to SQLite storage at: {}", db_url);
@@ -2262,6 +2267,8 @@ impl Gateway {
         let app = Router::new()
             .route("/", get(web_terminal_html_handler))
             .route("/ws", get(web_terminal_ws_handler))
+            .route("/api/events", get(web_terminal_events_handler))
+            .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
             .with_state(state);
 
         let addr = format!("127.0.0.1:{}", port);
@@ -7148,4 +7155,72 @@ async fn redo_turn_handler(
         )
             .into_response(),
     }
+}
+
+/// SSE events handler for web terminal
+/// Streams gateway events to the browser in the format expected by the web UI
+async fn web_terminal_events_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> axum::response::sse::Sse<
+    impl futures_core::Stream<
+        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio::sync::broadcast;
+    use tokio_stream::wrappers::BroadcastStream;
+    use futures_util::StreamExt;
+
+    // Subscribe to gateway events
+    let rx = state.event_tx.subscribe();
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
+        match result {
+            Ok(evt) => {
+                // Transform GatewayEvent into web terminal format (MessageData-like)
+                let msg = match &evt {
+                    GatewayEvent::AgentResponse { content, .. } => {
+                        serde_json::json!({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": content
+                        })
+                    }
+                    GatewayEvent::ToolCalling { tool_name, arguments, .. } => {
+                        serde_json::json!({
+                            "type": "tool_call",
+                            "tool": tool_name,
+                            "arguments": arguments
+                        })
+                    }
+                    GatewayEvent::ToolResult { tool_name, result, .. } => {
+                        serde_json::json!({
+                            "type": "tool_result",
+                            "tool": tool_name,
+                            "result": result
+                        })
+                    }
+                    GatewayEvent::AgentStatus { .. } => {
+                        // Skip status events for web terminal
+                        return None;
+                    }
+                    GatewayEvent::ProcessingError { message, .. } => {
+                        serde_json::json!({
+                            "type": "error",
+                            "content": message
+                        })
+                    }
+                    _ => {
+                        // Skip other events
+                        return None;
+                    }
+                };
+                let data = msg.to_string();
+                Some(Ok(Event::default().data(data)))
+            }
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }

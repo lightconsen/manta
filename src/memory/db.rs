@@ -31,6 +31,32 @@ impl DatabaseStore {
     pub async fn new(database_url: &str) -> crate::Result<Self> {
         info!("Initializing unified database store");
 
+        // Ensure parent directory and file exist for file-based databases
+        if database_url.starts_with("sqlite://") && !database_url.contains(":memory:") {
+            let path_str = database_url.strip_prefix("sqlite://").unwrap_or(database_url);
+            let path = std::path::Path::new(path_str);
+
+            // Create parent directory if needed
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    crate::error::MantaError::Storage {
+                        context: format!("Failed to create database directory: {:?}", parent),
+                        details: e.to_string(),
+                    }
+                })?;
+            }
+
+            // Create empty database file if it doesn't exist
+            if !path.exists() {
+                tokio::fs::File::create(path).await.map_err(|e| {
+                    crate::error::MantaError::Storage {
+                        context: format!("Failed to create database file: {:?}", path),
+                        details: e.to_string(),
+                    }
+                })?;
+            }
+        }
+
         let pool = SqlitePoolOptions::new()
             .max_connections(10)
             .min_connections(2)
