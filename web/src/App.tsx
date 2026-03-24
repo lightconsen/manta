@@ -25,6 +25,29 @@ function App() {
     }
   }, [messages, isTyping]);
 
+  // Fetch conversation history from API
+  const fetchHistory = useCallback(async (convId: string) => {
+    try {
+      const response = await fetch(`/api/v1/conversations/${convId}/messages?limit=100`);
+      if (!response.ok) {
+        console.error('Failed to fetch history:', response.statusText);
+        return;
+      }
+      const data = await response.json();
+      if (data.messages && Array.isArray(data.messages)) {
+        const historyMessages = data.messages.map((msg: any) => ({
+          id: msg.id || Date.now().toString() + Math.random(),
+          role: msg.role as 'user' | 'assistant' | 'system' | 'cron' | 'tool_call' | 'tool_result',
+          content: msg.content,
+          timestamp: msg.created_at ? new Date(msg.created_at).getTime() : Date.now(),
+        }));
+        setMessages(historyMessages);
+      }
+    } catch (err) {
+      console.error('Error fetching history:', err);
+    }
+  }, []);
+
   // Initialize SSE connection with stored conversation ID
   useEffect(() => {
     // Try to get stored conversation ID from localStorage
@@ -48,12 +71,14 @@ function App() {
     if (storedConversationId) {
       sseManagerRef.current.setConversationId(storedConversationId);
       setConversationId(storedConversationId);
+      // Fetch history for the stored conversation
+      fetchHistory(storedConversationId);
     }
 
     return () => {
       sseManagerRef.current?.disconnect();
     };
-  }, []);
+  }, [fetchHistory]);
 
   const handleMessage = useCallback((data: MessageData) => {
     // Handle new GatewayEvent format with event_type field
