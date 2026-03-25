@@ -464,7 +464,7 @@ pub struct GatewayState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler:
-        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::advanced::AdvancedCronScheduler>>>>,
+        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::advanced::CronScheduler>>>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// Rate limiter for API protection
@@ -1074,8 +1074,8 @@ impl Gateway {
         // Initialize cron scheduler if enabled
         if config.cron.enabled {
             info!("Initializing advanced cron scheduler...");
-            use crate::cron::advanced::{AdvancedCronScheduler, AnnounceDelivery};
-            let (cron_scheduler, command_rx) = AdvancedCronScheduler::new();
+            use crate::cron::advanced::{CronScheduler, AnnounceDelivery};
+            let (cron_scheduler, command_rx) = CronScheduler::new();
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
             // Wire up announce delivery → SSE broadcast
@@ -1088,11 +1088,14 @@ impl Gateway {
             tokio::spawn(async move {
                 while let Some(delivery) = announce_rx.recv().await {
                     info!("Cron announce → {}:{}", delivery.channel, delivery.to);
-                    let _ = event_tx_announce.send(GatewayEvent::CronAnnounce {
+                    match event_tx_announce.send(GatewayEvent::CronAnnounce {
                         channel: delivery.channel,
                         to: delivery.to,
-                        message: delivery.message,
-                    });
+                        message: delivery.message.clone(),
+                    }) {
+                        Ok(receiver_count) => info!("Cron announce broadcast to {} receivers", receiver_count),
+                        Err(e) => warn!("Failed to broadcast cron announce: {}", e),
+                    }
                 }
             });
 
@@ -1104,8 +1107,11 @@ impl Gateway {
                     warn!("Advanced cron scheduler failed: {}", e);
                 }
             });
-            *state.cron_scheduler.write().await = Some(cron_scheduler);
+            *state.cron_scheduler.write().await = Some(cron_scheduler.clone());
             info!("✅ Advanced cron scheduler initialized");
+
+            // Wire the scheduler into CronTool so it can delegate operations
+            crate::tools::CronTool::set_scheduler(cron_scheduler);
         } else {
             info!("Cron scheduler disabled");
         }
@@ -2890,6 +2896,16 @@ async fn handle_web_terminal_websocket(
                             if socket.send(Message::Text(response.to_string())).await.is_err() {
                                 break;
                             }
+                        }
+                    }
+                    Ok(GatewayEvent::CronAnnounce { message, .. }) => {
+                        // Broadcast cron job output to all connected web terminal clients
+                        let cron_msg = serde_json::json!({
+                            "event_type": "cron_announce",
+                            "message": message
+                        });
+                        if socket.send(Message::Text(cron_msg.to_string())).await.is_err() {
+                            break;
                         }
                     }
                     Ok(_) => {
@@ -6246,7 +6262,7 @@ async fn add_cron_job_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddCronJobRequest>,
 ) -> impl IntoResponse {
-    use crate::cron::advanced::{AdvancedCronJob, ExecutionTarget, Schedule as CronSchedule};
+    use crate::cron::advanced::{CronJob, ExecutionTarget, Schedule as CronSchedule};
     use std::str::FromStr;
 
     let schedule = match cron::Schedule::from_str(&req.schedule) {
@@ -6265,7 +6281,7 @@ async fn add_cron_job_handler(
     };
 
     let job_id = uuid::Uuid::new_v4().to_string();
-    let job = AdvancedCronJob::new(
+    let job = CronJob::new(
         job_id.clone(),
         req.name.clone(),
         schedule,

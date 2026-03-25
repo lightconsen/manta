@@ -1,31 +1,30 @@
 //! Cron Scheduler for Manta
 //!
-//! This module implements scheduled task execution using cron expressions.
-//! Jobs can be scheduled with natural language or standard cron syntax.
+//! This module provides types and utilities for scheduled task execution.
+//! The actual scheduling is handled by the `advanced` submodule which provides
+//! a production-grade scheduler with timer-based execution, retry logic,
+//! crash recovery, and run history logging.
 //!
-//! # Advanced Scheduler
+//! # Architecture
 //!
-//! The `advanced` submodule provides a production-grade scheduler with:
-//! - Timer-based scheduling (exact time, not polling)
-//! - Shell command and AI agent execution
-//! - Multi-channel delivery
-//! - Retry logic with exponential backoff
-//! - Crash recovery
-//! - Run history logging
+//! - **CronScheduler** (`advanced`): The primary scheduler implementation
+//!   used by the Gateway and CronTool
+//! - **ScheduledJob**: Legacy job type kept for backward compatibility
+//!
+//! # Deprecated
+//!
+//! The legacy `CronScheduler` has been removed. All cron functionality now
+//! goes through `CronScheduler`.
 
 pub mod advanced;
 
-use crate::agent::Agent;
-use crate::channels::IncomingMessage;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
 
 /// A scheduled job
+///
+/// This is the legacy job structure. New code should use `CronJob`
+/// from the `advanced` module instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledJob {
     /// Unique job ID
@@ -108,346 +107,8 @@ impl ScheduledJob {
     }
 }
 
-/// Job execution result
-#[derive(Debug, Clone)]
-pub struct JobExecutionResult {
-    /// Job ID
-    pub job_id: String,
-    /// Whether execution succeeded
-    pub success: bool,
-    /// Result message
-    pub message: String,
-    /// Timestamp
-    pub executed_at: DateTime<Utc>,
-}
-
-/// Cron scheduler
-pub struct CronScheduler {
-    /// Jobs storage
-    jobs: Arc<RwLock<HashMap<String, ScheduledJob>>>,
-    /// Command sender for job execution
-    command_tx: mpsc::Sender<JobCommand>,
-    /// Background task handle
-    handle: Option<JoinHandle<()>>,
-    /// Shutdown signal
-    shutdown_tx: Option<mpsc::Sender<()>>,
-    /// Optional agent for processing job prompts
-    agent: Option<Arc<Agent>>,
-    /// Results channel
-    results_tx: Option<mpsc::Sender<JobExecutionResult>>,
-}
-
-impl std::fmt::Debug for CronScheduler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CronScheduler")
-            .field("jobs", &self.jobs)
-            .field("handle", &self.handle.is_some())
-            .field("shutdown_tx", &self.shutdown_tx.is_some())
-            .field("has_agent", &self.agent.is_some())
-            .field("has_results_tx", &self.results_tx.is_some())
-            .finish()
-    }
-}
-
-/// Commands for the scheduler
-#[derive(Debug)]
-pub enum JobCommand {
-    /// Add a new job
-    Add(ScheduledJob),
-    /// Remove a job
-    Remove(String),
-    /// Enable/disable a job
-    SetEnabled(String, bool),
-    /// Trigger a job immediately
-    Trigger(String),
-}
-
-impl CronScheduler {
-    /// Create a new cron scheduler
-    pub fn new() -> (Self, mpsc::Receiver<JobCommand>) {
-        let (command_tx, command_rx) = mpsc::channel(100);
-        let scheduler = Self {
-            jobs: Arc::new(RwLock::new(HashMap::new())),
-            command_tx,
-            handle: None,
-            shutdown_tx: None,
-            agent: None,
-            results_tx: None,
-        };
-        (scheduler, command_rx)
-    }
-
-    /// Create a new cron scheduler with an agent for processing jobs
-    pub fn with_agent(agent: Arc<Agent>) -> (Self, mpsc::Receiver<JobCommand>) {
-        let (command_tx, command_rx) = mpsc::channel(100);
-        let scheduler = Self {
-            jobs: Arc::new(RwLock::new(HashMap::new())),
-            command_tx,
-            handle: None,
-            shutdown_tx: None,
-            agent: Some(agent),
-            results_tx: None,
-        };
-        (scheduler, command_rx)
-    }
-
-    /// Set the results channel for job execution notifications
-    pub fn with_results_channel(mut self, tx: mpsc::Sender<JobExecutionResult>) -> Self {
-        self.results_tx = Some(tx);
-        self
-    }
-
-    /// Start the scheduler
-    pub async fn start(&mut self, mut command_rx: mpsc::Receiver<JobCommand>) -> crate::Result<()> {
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
-        self.shutdown_tx = Some(shutdown_tx);
-
-        let jobs = Arc::clone(&self.jobs);
-        let agent = self.agent.clone();
-        let results_tx = self.results_tx.clone();
-
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        Self::check_and_run_jobs(&jobs, agent.as_ref(), results_tx.as_ref()).await;
-                    }
-                    cmd = command_rx.recv() => {
-                        if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, agent.as_ref(), results_tx.as_ref(), cmd).await;
-                        }
-                    }
-                    _ = shutdown_rx.recv() => {
-                        info!("Cron scheduler shutting down");
-                        break;
-                    }
-                }
-            }
-        });
-
-        self.handle = Some(handle);
-        info!("Cron scheduler started");
-        Ok(())
-    }
-
-    /// Shutdown the scheduler
-    pub async fn shutdown(&mut self) -> crate::Result<()> {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(()).await;
-        }
-        if let Some(handle) = self.handle.take() {
-            handle.abort();
-        }
-        Ok(())
-    }
-
-    /// Add a job
-    pub async fn add_job(&self, job: ScheduledJob) -> crate::Result<()> {
-        self.command_tx
-            .send(JobCommand::Add(job))
-            .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Failed to add job: {}", e)))?;
-        Ok(())
-    }
-
-    /// Remove a job
-    pub async fn remove_job(&self, job_id: &str) -> crate::Result<()> {
-        self.command_tx
-            .send(JobCommand::Remove(job_id.to_string()))
-            .await
-            .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to remove job: {}", e))
-            })?;
-        Ok(())
-    }
-
-    /// Enable/disable a job
-    pub async fn set_job_enabled(&self, job_id: &str, enabled: bool) -> crate::Result<()> {
-        self.command_tx
-            .send(JobCommand::SetEnabled(job_id.to_string(), enabled))
-            .await
-            .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to set job state: {}", e))
-            })?;
-        Ok(())
-    }
-
-    /// Trigger a job immediately
-    pub async fn trigger_job(&self, job_id: &str) -> crate::Result<()> {
-        self.command_tx
-            .send(JobCommand::Trigger(job_id.to_string()))
-            .await
-            .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to trigger job: {}", e))
-            })?;
-        Ok(())
-    }
-
-    /// Get all jobs
-    pub async fn list_jobs(&self) -> Vec<ScheduledJob> {
-        let jobs = self.jobs.read().await;
-        jobs.values().cloned().collect()
-    }
-
-    /// Get a specific job
-    pub async fn get_job(&self, job_id: &str) -> Option<ScheduledJob> {
-        let jobs = self.jobs.read().await;
-        jobs.get(job_id).cloned()
-    }
-
-    /// Handle scheduler commands
-    async fn handle_command(
-        jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>,
-        agent: Option<&Arc<Agent>>,
-        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
-        cmd: JobCommand,
-    ) {
-        let mut jobs_lock = jobs.write().await;
-        match cmd {
-            JobCommand::Add(job) => {
-                info!("Adding job: {} ({})", job.name, job.id);
-                jobs_lock.insert(job.id.clone(), job);
-            }
-            JobCommand::Remove(id) => {
-                info!("Removing job: {}", id);
-                jobs_lock.remove(&id);
-            }
-            JobCommand::SetEnabled(id, enabled) => {
-                if let Some(job) = jobs_lock.get_mut(&id) {
-                    job.enabled = enabled;
-                    info!("Job {} enabled = {}", id, enabled);
-                }
-            }
-            JobCommand::Trigger(id) => {
-                if let Some(job) = jobs_lock.get_mut(&id) {
-                    info!("Triggering job: {}", id);
-                    Self::execute_job(job, agent, results_tx).await;
-                }
-            }
-        }
-    }
-
-    /// Check and run due jobs
-    async fn check_and_run_jobs(
-        jobs: &Arc<RwLock<HashMap<String, ScheduledJob>>>,
-        agent: Option<&Arc<Agent>>,
-        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
-    ) {
-        let now = Utc::now();
-        let mut jobs_lock = jobs.write().await;
-
-        for job in jobs_lock.values_mut() {
-            if job.should_run(now) {
-                info!("Running scheduled job: {}", job.name);
-                Self::execute_job(job, agent, results_tx).await;
-                job.mark_executed(now);
-            }
-        }
-    }
-
-    /// Execute a job using the agent if available
-    async fn execute_job(
-        job: &mut ScheduledJob,
-        agent: Option<&Arc<Agent>>,
-        results_tx: Option<&mpsc::Sender<JobExecutionResult>>,
-    ) {
-        info!(
-            "Executing job '{}' with prompt: {}",
-            job.name,
-            job.prompt.chars().take(50).collect::<String>()
-        );
-
-        // Update last run time
-        job.last_run = Some(Utc::now());
-        job.run_count += 1;
-
-        if let Some(agent) = agent {
-            // Create incoming message from job
-            let message = IncomingMessage::new(
-                "system",
-                format!("cron:{}", job.id),
-                job.prompt.clone(),
-            )
-            .with_provenance(crate::channels::InputProvenance::InternalSystem {
-                source: "cron".to_string(),
-            })
-            .with_metadata(
-                crate::channels::MessageMetadata::new()
-                    .with_extra("job_id", job.id.clone())
-                    .with_extra("job_name", job.name.clone())
-                    .with_extra("channel", job.channel.clone()),
-            );
-
-            // Process the message through the agent
-            match agent.process_message(message).await {
-                Ok(response) => {
-                    info!(
-                        "Job '{}' completed successfully. Response: {} chars",
-                        job.name,
-                        response.content.len()
-                    );
-
-                    // Send result notification if channel is configured
-                    if let Some(tx) = results_tx {
-                        let result = JobExecutionResult {
-                            job_id: job.id.clone(),
-                            success: true,
-                            message: response.content,
-                            executed_at: Utc::now(),
-                        };
-                        let _ = tx.send(result).await;
-                    }
-                }
-                Err(e) => {
-                    error!("Job '{}' failed: {}", job.name, e);
-
-                    if let Some(tx) = results_tx {
-                        let result = JobExecutionResult {
-                            job_id: job.id.clone(),
-                            success: false,
-                            message: format!("Error: {}", e),
-                            executed_at: Utc::now(),
-                        };
-                        let _ = tx.send(result).await;
-                    }
-                }
-            }
-        } else {
-            // No agent configured - log a warning
-            warn!(
-                "No agent configured for job execution. Job '{}' would execute with prompt: {}",
-                job.name, job.prompt
-            );
-
-            if let Some(tx) = results_tx {
-                let result = JobExecutionResult {
-                    job_id: job.id.clone(),
-                    success: false,
-                    message: "No agent configured".to_string(),
-                    executed_at: Utc::now(),
-                };
-                let _ = tx.send(result).await;
-            }
-        }
-
-        debug!("Job '{}' execution completed", job.name);
-    }
-}
-
-impl Default for CronScheduler {
-    fn default() -> Self {
-        let (scheduler, _) = Self::new();
-        scheduler
-    }
-}
-
 /// Parse a cron expression and calculate next run time
-fn calculate_next_run(schedule: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    // Simplified implementation - in production, use a proper cron parser
-    // like the `cron` crate
-
+pub fn calculate_next_run(schedule: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
     // Handle common shorthand expressions
     match schedule.trim().to_lowercase().as_str() {
         "@hourly" => Some(from + chrono::Duration::hours(1)),
@@ -455,7 +116,7 @@ fn calculate_next_run(schedule: &str, from: DateTime<Utc>) -> Option<DateTime<Ut
         "@weekly" => Some(from + chrono::Duration::weeks(1)),
         "@monthly" => Some(from + chrono::Duration::days(30)),
         expr => {
-            // Try to parse as standard cron (simplified)
+            // Try to parse as standard cron
             parse_cron_expression(expr, from)
         }
     }
@@ -468,7 +129,7 @@ fn parse_cron_expression(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc
     match cron::Schedule::from_str(expr) {
         Ok(schedule) => schedule.after(&from).next(),
         Err(e) => {
-            warn!("Invalid cron expression '{}': {}", expr, e);
+            tracing::warn!("Invalid cron expression '{}': {}", expr, e);
             None
         }
     }
@@ -488,197 +149,6 @@ pub fn parse_natural_language(input: &str) -> Option<String> {
         Some("@monthly".to_string())
     } else {
         None
-    }
-}
-
-/// Tool for cron job management
-pub mod tool {
-    use super::*;
-    use crate::tools::{Tool, ToolContext, ToolExecutionResult};
-    use async_trait::async_trait;
-    use serde_json::json;
-
-    /// Tool for managing scheduled jobs
-    #[derive(Debug)]
-    pub struct CronTool {
-        scheduler: CronScheduler,
-    }
-
-    impl CronTool {
-        /// Create a new cron tool
-        pub fn new(scheduler: CronScheduler) -> Self {
-            Self { scheduler }
-        }
-    }
-
-    #[async_trait]
-    impl Tool for CronTool {
-        fn name(&self) -> &str {
-            "cron"
-        }
-
-        fn description(&self) -> &str {
-            r#"Schedule recurring tasks and reminders.
-
-Use this to set up automated jobs that run on a schedule.
-Supports natural language ("every day at 9am") or cron expressions ("0 9 * * *").
-
-Examples:
-- Schedule a daily summary
-- Set up hourly health checks
-- Create weekly reports
-- Schedule reminders"#
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["add", "remove", "list", "enable", "disable", "trigger"],
-                        "description": "The action to perform"
-                    },
-                    "job_id": {
-                        "type": "string",
-                        "description": "Job ID (for remove/enable/disable/trigger)"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Job name (for add)"
-                    },
-                    "schedule": {
-                        "type": "string",
-                        "description": "Cron expression or natural language (for add)"
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "The prompt/command to execute (for add)"
-                    },
-                    "channel": {
-                        "type": "string",
-                        "description": "Channel to deliver results to (for add)"
-                    }
-                },
-                "required": ["action"]
-            })
-        }
-
-        async fn execute(
-            &self,
-            args: serde_json::Value,
-            _context: &ToolContext,
-        ) -> crate::Result<ToolExecutionResult> {
-            let action = args["action"].as_str().ok_or_else(|| {
-                crate::error::MantaError::Validation("action is required".to_string())
-            })?;
-
-            match action {
-                "add" => {
-                    let name = args["name"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation("name is required for add".to_string())
-                    })?;
-                    let schedule = args["schedule"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "schedule is required for add".to_string(),
-                        )
-                    })?;
-                    let prompt = args["prompt"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "prompt is required for add".to_string(),
-                        )
-                    })?;
-                    let channel = args["channel"].as_str().unwrap_or("default");
-
-                    // Try to parse natural language
-                    let schedule =
-                        parse_natural_language(schedule).unwrap_or_else(|| schedule.to_string());
-
-                    let job = ScheduledJob::new(
-                        uuid::Uuid::new_v4().to_string(),
-                        name,
-                        schedule,
-                        prompt,
-                        channel,
-                    );
-
-                    let job_id = job.id.clone();
-                    self.scheduler.add_job(job).await?;
-
-                    Ok(ToolExecutionResult::success(format!("Created job: {}", name))
-                        .with_data(json!({"job_id": job_id})))
-                }
-
-                "remove" => {
-                    let job_id = args["job_id"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "job_id is required for remove".to_string(),
-                        )
-                    })?;
-
-                    self.scheduler.remove_job(job_id).await?;
-                    Ok(ToolExecutionResult::success(format!("Removed job: {}", job_id)))
-                }
-
-                "list" => {
-                    let jobs = self.scheduler.list_jobs().await;
-                    let formatted: Vec<serde_json::Value> = jobs
-                        .iter()
-                        .map(|j| {
-                            json!({
-                                "id": j.id,
-                                "name": j.name,
-                                "schedule": j.schedule,
-                                "enabled": j.enabled,
-                                "run_count": j.run_count,
-                                "last_run": j.last_run.map(|t| t.to_rfc3339()),
-                                "next_run": j.next_run.map(|t| t.to_rfc3339())
-                            })
-                        })
-                        .collect();
-
-                    Ok(ToolExecutionResult::success(format!("{} jobs found", jobs.len()))
-                        .with_data(json!({"jobs": formatted, "count": jobs.len()})))
-                }
-
-                "enable" => {
-                    let job_id = args["job_id"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "job_id is required for enable".to_string(),
-                        )
-                    })?;
-
-                    self.scheduler.set_job_enabled(job_id, true).await?;
-                    Ok(ToolExecutionResult::success(format!("Enabled job: {}", job_id)))
-                }
-
-                "disable" => {
-                    let job_id = args["job_id"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "job_id is required for disable".to_string(),
-                        )
-                    })?;
-
-                    self.scheduler.set_job_enabled(job_id, false).await?;
-                    Ok(ToolExecutionResult::success(format!("Disabled job: {}", job_id)))
-                }
-
-                "trigger" => {
-                    let job_id = args["job_id"].as_str().ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "job_id is required for trigger".to_string(),
-                        )
-                    })?;
-
-                    self.scheduler.trigger_job(job_id).await?;
-                    Ok(ToolExecutionResult::success(format!("Triggered job: {}", job_id)))
-                }
-
-                _ => {
-                    Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action)))
-                }
-            }
-        }
     }
 }
 

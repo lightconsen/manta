@@ -22,7 +22,7 @@ use tracing::{debug, error, info, warn};
 /// Delivery event emitted for `DeliveryMode::Announce` jobs.
 ///
 /// The gateway (or any consumer) receives these on the channel returned by
-/// `AdvancedCronScheduler::with_announce_tx` and forwards them to the
+/// `CronScheduler::with_announce_tx` and forwards them to the
 /// appropriate messaging channel (Discord, Telegram, WhatsApp, etc.).
 #[derive(Debug, Clone)]
 pub struct AnnounceDelivery {
@@ -284,7 +284,7 @@ impl Default for JobState {
 
 /// An advanced scheduled job
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdvancedCronJob {
+pub struct CronJob {
     /// Unique job ID
     pub id: String,
     /// Job name/description
@@ -319,7 +319,7 @@ fn default_true() -> bool {
     true
 }
 
-impl AdvancedCronJob {
+impl CronJob {
     /// Create a new scheduled job
     pub fn new(
         id: impl Into<String>,
@@ -432,18 +432,18 @@ pub struct RunLogEntry {
 /// Commands for the scheduler
 #[derive(Debug)]
 pub enum CronCommand {
-    Add(AdvancedCronJob),
+    Add(CronJob),
     Remove(String),
     SetEnabled(String, bool),
     Trigger(String),
     GetNextRun(String, tokio::sync::oneshot::Sender<Option<DateTime<Utc>>>),
-    ListJobs(tokio::sync::oneshot::Sender<Vec<AdvancedCronJob>>),
-    GetJob(String, tokio::sync::oneshot::Sender<Option<AdvancedCronJob>>),
+    ListJobs(tokio::sync::oneshot::Sender<Vec<CronJob>>),
+    GetJob(String, tokio::sync::oneshot::Sender<Option<CronJob>>),
 }
 
 /// Advanced cron scheduler with timer-based execution
-pub struct AdvancedCronScheduler {
-    jobs: Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
+pub struct CronScheduler {
+    jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
     timer_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
@@ -456,9 +456,9 @@ pub struct AdvancedCronScheduler {
     announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
 }
 
-impl std::fmt::Debug for AdvancedCronScheduler {
+impl std::fmt::Debug for CronScheduler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AdvancedCronScheduler")
+        f.debug_struct("CronScheduler")
             .field("jobs", &self.jobs)
             .field("has_timer", &self.timer_handle.is_some())
             .field("store_path", &self.store_path)
@@ -466,7 +466,7 @@ impl std::fmt::Debug for AdvancedCronScheduler {
     }
 }
 
-impl AdvancedCronScheduler {
+impl CronScheduler {
     /// Create a new scheduler
     pub fn new() -> (Self, mpsc::Receiver<CronCommand>) {
         let (command_tx, command_rx) = mpsc::channel(100);
@@ -636,7 +636,7 @@ impl AdvancedCronScheduler {
 
     /// Handle scheduler commands
     async fn handle_command(
-        jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
+        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
@@ -694,7 +694,7 @@ impl AdvancedCronScheduler {
             }
             CronCommand::ListJobs(tx) => {
                 let jobs_lock = jobs.read().await;
-                let list: Vec<AdvancedCronJob> = jobs_lock.values().cloned().collect();
+                let list: Vec<CronJob> = jobs_lock.values().cloned().collect();
                 let _ = tx.send(list);
             }
             CronCommand::GetJob(id, tx) => {
@@ -707,7 +707,7 @@ impl AdvancedCronScheduler {
 
     /// Execute a job
     async fn execute_job(
-        jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
+        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         job_id: &str,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
@@ -833,7 +833,7 @@ impl AdvancedCronScheduler {
     /// Execute via agent
     async fn execute_agent(
         agent: &Arc<Agent>,
-        job: &AdvancedCronJob,
+        job: &CronJob,
         prompt: &str,
         _agent_id: Option<&str>,
     ) -> Result<String> {
@@ -961,7 +961,7 @@ impl AdvancedCronScheduler {
             .await
             .map_err(|e| MantaError::Internal(format!("Failed to read jobs file: {}", e)))?;
 
-        let jobs: Vec<AdvancedCronJob> = serde_json::from_str(&content)
+        let jobs: Vec<CronJob> = serde_json::from_str(&content)
             .map_err(|e| MantaError::Internal(format!("Failed to parse jobs: {}", e)))?;
 
         let mut jobs_lock = self.jobs.write().await;
@@ -982,11 +982,11 @@ impl AdvancedCronScheduler {
 
     /// Save jobs to store
     async fn save_jobs(
-        jobs: &Arc<RwLock<HashMap<String, AdvancedCronJob>>>,
+        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         path: &PathBuf,
     ) -> Result<()> {
         let jobs_lock = jobs.read().await;
-        let jobs_vec: Vec<&AdvancedCronJob> = jobs_lock.values().collect();
+        let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
 
         let json = serde_json::to_string_pretty(&jobs_vec)
             .map_err(|e| MantaError::Internal(format!("Failed to serialize jobs: {}", e)))?;
@@ -1006,7 +1006,7 @@ impl AdvancedCronScheduler {
     /// Public API methods
 
     /// Add a job
-    pub async fn add_job(&self, job: AdvancedCronJob) -> Result<()> {
+    pub async fn add_job(&self, job: CronJob) -> Result<()> {
         self.command_tx
             .send(CronCommand::Add(job))
             .await
@@ -1038,14 +1038,14 @@ impl AdvancedCronScheduler {
     }
 
     /// List all jobs
-    pub async fn list_jobs(&self) -> Vec<AdvancedCronJob> {
+    pub async fn list_jobs(&self) -> Vec<CronJob> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let _ = self.command_tx.send(CronCommand::ListJobs(tx)).await;
         rx.await.unwrap_or_default()
     }
 
     /// Get a specific job
-    pub async fn get_job(&self, job_id: &str) -> Option<AdvancedCronJob> {
+    pub async fn get_job(&self, job_id: &str) -> Option<CronJob> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let _ = self
             .command_tx
@@ -1066,7 +1066,7 @@ impl AdvancedCronScheduler {
     }
 }
 
-impl Default for AdvancedCronScheduler {
+impl Default for CronScheduler {
     fn default() -> Self {
         let (scheduler, _) = Self::new();
         scheduler
