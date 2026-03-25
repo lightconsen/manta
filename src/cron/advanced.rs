@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -98,77 +98,45 @@ pub enum DeliveryMode {
     /// Send to messaging channel
     Announce { channel: String, to: String },
     /// POST to webhook URL
-    Webhook {
-        url: String,
-        #[serde(default)]
-        headers: HashMap<String, String>,
-    },
-}
-
-impl Default for DeliveryMode {
-    fn default() -> Self {
-        Self::None
-    }
+    Webhook { url: String, headers: HashMap<String, String> },
 }
 
 /// Schedule types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Schedule {
-    /// One-shot execution at specific time
+    /// Run at a specific time (one-shot)
     At { timestamp: DateTime<Utc> },
-    /// Fixed interval
-    Every {
-        #[serde(with = "duration_secs")]
-        interval: Duration,
-        anchor: Option<DateTime<Utc>>,
-    },
-    /// Cron expression (5 or 6 field)
+    /// Run every N seconds
+    Every { interval: Duration, anchor: Option<DateTime<Utc>> },
+    /// Cron expression
     Cron {
         expression: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         timezone: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stagger_ms: Option<u64>,
     },
 }
 
-/// Duration serialization helper
-mod duration_secs {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u64(d.as_secs())
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
-        let secs = u64::deserialize(d)?;
-        Ok(Duration::from_secs(secs))
-    }
-}
-
 impl Schedule {
-    /// Calculate next run time from given timestamp
+    /// Calculate the next run time after `from`
     pub fn next_run(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self {
             Schedule::At { timestamp } => {
                 if *timestamp > from {
                     Some(*timestamp)
                 } else {
-                    None // One-shot in the past
+                    None
                 }
             }
             Schedule::Every { interval, anchor } => {
-                let interval = ChronoDuration::from_std(*interval).ok()?;
                 let anchor = anchor.unwrap_or(from);
 
                 if from < anchor {
                     Some(anchor)
                 } else {
                     let elapsed = from.signed_duration_since(anchor);
-                    let periods = (elapsed.num_seconds() / interval.num_seconds()) + 1;
-                    Some(anchor + interval * periods as i32)
+                    let periods = (elapsed.num_seconds() / interval.as_secs() as i64) + 1;
+                    Some(anchor + ChronoDuration::seconds(periods * interval.as_secs() as i64))
                 }
             }
             Schedule::Cron {
@@ -213,23 +181,14 @@ impl Schedule {
 pub enum BackoffStrategy {
     /// Fixed delay between retries
     Fixed,
-    /// Linear increasing delay
-    Linear,
     /// Exponential backoff
     Exponential,
 }
 
-impl Default for BackoffStrategy {
-    fn default() -> Self {
-        Self::Exponential
-    }
-}
-
 /// Retry configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RetryConfig {
     pub max_retries: u32,
-    #[serde(default)]
     pub backoff: BackoffStrategy,
 }
 
@@ -245,121 +204,92 @@ impl Default for RetryConfig {
 impl RetryConfig {
     /// Calculate delay for a specific retry attempt
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let tier = attempt.min(4) as usize;
-
-        let base_ms = match self.backoff {
-            BackoffStrategy::Fixed => BACKOFF_TIERS[0],
-            BackoffStrategy::Linear => BACKOFF_TIERS[tier],
-            BackoffStrategy::Exponential => BACKOFF_TIERS[tier],
+        let base_delay_secs = match self.backoff {
+            BackoffStrategy::Fixed => 30,
+            BackoffStrategy::Exponential => {
+                // Tiered exponential: 30s, 1m, 5m, 15m, 1h
+                match attempt {
+                    0 => 30,
+                    1 => 60,
+                    2 => 300,
+                    3 => 900,
+                    _ => 3600,
+                }
+            }
         };
-
-        Duration::from_millis(base_ms)
+        Duration::from_secs(base_delay_secs)
     }
 }
 
-/// Exponential backoff tiers
-const BACKOFF_TIERS: [u64; 5] = [
-    30_000,    // 30s - 1st error
-    60_000,    // 1m - 2nd error
-    300_000,   // 5m - 3rd error
-    900_000,   // 15m - 4th error
-    3_600_000, // 1h - 5th+ error
-];
-
-/// Job state for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Job execution state
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobState {
-    pub running_at_ms: Option<i64>,
-    pub last_run_at: Option<DateTime<Utc>>,
-    pub last_error: Option<String>,
+    /// When the job is scheduled to run next
     pub next_run_at: Option<DateTime<Utc>>,
+    /// When the job last ran
+    pub last_run_at: Option<DateTime<Utc>>,
+    /// When the job started running (if currently running)
+    pub running_at_ms: Option<i64>,
+    /// Total execution count
     pub run_count: u32,
+    /// Last error message
+    pub last_error: Option<String>,
+    /// Consecutive error count
     pub consecutive_errors: u32,
 }
 
-impl Default for JobState {
-    fn default() -> Self {
-        Self {
-            running_at_ms: None,
-            last_run_at: None,
-            last_error: None,
-            next_run_at: None,
-            run_count: 0,
-            consecutive_errors: 0,
-        }
-    }
-}
-
-/// An advanced scheduled job
+/// A cron job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
-    /// Unique job ID
     pub id: String,
-    /// Job name/description
     pub name: String,
-    /// Schedule definition
     pub schedule: Schedule,
-    /// What to execute
     pub target: ExecutionTarget,
-    /// Where to execute
-    #[serde(default)]
     pub session: SessionTarget,
-    /// How to deliver results
-    #[serde(default)]
     pub delivery: DeliveryMode,
-    /// Retry configuration
-    #[serde(default)]
     pub retry: RetryConfig,
-    /// Whether the job is enabled
-    #[serde(default = "default_true")]
     pub enabled: bool,
-    /// When the job was created
     pub created_at: DateTime<Utc>,
-    /// Maximum executions (None = unlimited)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_runs: Option<u32>,
-    /// Job state
-    #[serde(default)]
     pub state: JobState,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 impl CronJob {
-    /// Create a new scheduled job
+    /// Create a new cron job
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
         schedule: Schedule,
         target: ExecutionTarget,
     ) -> Self {
-        let id = id.into();
+        let now = Utc::now();
+        let next_run = schedule.next_run(now);
+
         Self {
+            id: id.into(),
             name: name.into(),
             schedule,
             target,
             session: SessionTarget::default(),
-            delivery: DeliveryMode::default(),
+            delivery: DeliveryMode::None,
             retry: RetryConfig::default(),
             enabled: true,
-            created_at: Utc::now(),
-            max_runs: None,
-            id,
-            state: JobState::default(),
+            created_at: now,
+            state: JobState {
+                next_run_at: next_run,
+                ..Default::default()
+            },
         }
     }
 
-    /// Set session target
-    pub fn with_session(mut self, session: SessionTarget) -> Self {
-        self.session = session;
+    /// Set the delivery mode
+    pub fn with_delivery(mut self, delivery: DeliveryMode) -> Self {
+        self.delivery = delivery;
         self
     }
 
-    /// Set delivery mode
-    pub fn with_delivery(mut self, delivery: DeliveryMode) -> Self {
-        self.delivery = delivery;
+    /// Set the session target
+    pub fn with_session(mut self, session: SessionTarget) -> Self {
+        self.session = session;
         self
     }
 
@@ -369,40 +299,28 @@ impl CronJob {
         self
     }
 
-    /// Set maximum runs
-    pub fn with_max_runs(mut self, max: u32) -> Self {
-        self.max_runs = Some(max);
-        self
-    }
-
-    /// Check if job should run now
+    /// Check if the job should run at the given time
     pub fn should_run(&self, now: DateTime<Utc>) -> bool {
         if !self.enabled {
             return false;
         }
 
-        // Check if already running
         if self.state.running_at_ms.is_some() {
             return false;
         }
 
-        // Check max runs
-        if let Some(max) = self.max_runs {
-            if self.state.run_count >= max {
-                return false;
-            }
-        }
-
-        // Check schedule
         match self.state.next_run_at {
             Some(next) => now >= next,
             None => true,
         }
     }
 
-    /// Update next run time
-    pub fn update_next_run(&mut self, now: DateTime<Utc>) {
-        self.state.next_run_at = self.schedule.next_run(now);
+    /// Update the next run time based on schedule
+    pub fn update_next_run(&mut self, after: DateTime<Utc>) {
+        self.state.next_run_at = self.schedule.next_run(after);
+        if let Some(next) = self.state.next_run_at {
+            debug!("Job {} next run at {}", self.name, next);
+        }
     }
 }
 
@@ -412,14 +330,12 @@ impl CronJob {
 pub enum RunStatus {
     Ok,
     Error,
-    Cancelled,
 }
 
 /// Delivery status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
-    Pending,
     Delivered,
     Failed(String),
 }
@@ -444,16 +360,22 @@ pub enum CronCommand {
     Remove(String),
     SetEnabled(String, bool),
     Trigger(String),
-    GetNextRun(String, tokio::sync::oneshot::Sender<Option<DateTime<Utc>>>),
-    ListJobs(tokio::sync::oneshot::Sender<Vec<CronJob>>),
-    GetJob(String, tokio::sync::oneshot::Sender<Option<CronJob>>),
+    GetNextRun(String, oneshot::Sender<Option<DateTime<Utc>>>),
+    ListJobs(oneshot::Sender<Vec<CronJob>>),
+    GetJob(String, oneshot::Sender<Option<CronJob>>),
+}
+
+/// Timer command for rearming
+#[derive(Debug)]
+enum TimerCommand {
+    Rearm,
+    ExecuteNow(String),
 }
 
 /// Advanced cron scheduler with timer-based execution
 pub struct CronScheduler {
     jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
-    timer_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Shared agent reference — wrapping in `Arc<RwLock<…>>` lets
     /// `set_agent()` update the running scheduler's agent without
@@ -462,14 +384,15 @@ pub struct CronScheduler {
     store_path: Option<PathBuf>,
     /// Optional sender for Announce-mode delivery events.
     announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
+    /// Channel to trigger timer rearming
+    timer_tx: Option<mpsc::Sender<TimerCommand>>,
 }
 
 impl std::fmt::Debug for CronScheduler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CronScheduler")
-            .field("jobs", &self.jobs)
-            .field("has_timer", &self.timer_handle.is_some())
             .field("store_path", &self.store_path)
+            .field("has_announce_tx", &self.announce_tx.is_some())
             .finish()
     }
 }
@@ -481,26 +404,11 @@ impl CronScheduler {
         let scheduler = Self {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             command_tx,
-            timer_handle: None,
             shutdown_tx: None,
             agent: Arc::new(RwLock::new(None)),
             store_path: None,
             announce_tx: None,
-        };
-        (scheduler, command_rx)
-    }
-
-    /// Create a new scheduler with agent
-    pub fn with_agent(agent: Arc<Agent>) -> (Self, mpsc::Receiver<CronCommand>) {
-        let (command_tx, command_rx) = mpsc::channel(100);
-        let scheduler = Self {
-            jobs: Arc::new(RwLock::new(HashMap::new())),
-            command_tx,
-            timer_handle: None,
-            shutdown_tx: None,
-            agent: Arc::new(RwLock::new(Some(agent))),
-            store_path: None,
-            announce_tx: None,
+            timer_tx: None,
         };
         (scheduler, command_rx)
     }
@@ -540,13 +448,14 @@ impl CronScheduler {
             self.load_jobs(path).await.ok();
         }
 
+        // Create timer command channel
+        let (timer_tx, mut timer_rx) = mpsc::channel::<TimerCommand>(10);
+        self.timer_tx = Some(timer_tx.clone());
+
         let jobs = Arc::clone(&self.jobs);
         let agent = Arc::clone(&self.agent);
         let store_path = self.store_path.clone();
         let announce_tx = self.announce_tx.clone();
-
-        // Arm initial timer
-        self.arm_timer().await?;
 
         // Spawn command handler
         let handle = tokio::spawn(async move {
@@ -565,81 +474,109 @@ impl CronScheduler {
             }
         });
 
-        self.timer_handle = Some(handle);
+        // Spawn timer manager task
+        let jobs_for_timer = Arc::clone(&self.jobs);
+        let agent_for_timer = Arc::clone(&self.agent);
+        let store_path_for_timer = self.store_path.clone();
+        let announce_tx_for_timer = self.announce_tx.clone();
+
+        tokio::spawn(async move {
+            let mut current_timer: Option<JoinHandle<()>> = None;
+
+            loop {
+                // Calculate next job and arm timer
+                let next_job = {
+                    let jobs_lock = jobs_for_timer.read().await;
+                    let now = Utc::now();
+                    let mut next: Option<(String, DateTime<Utc>)> = None;
+
+                    for (id, job) in jobs_lock.iter() {
+                        if !job.enabled || job.state.running_at_ms.is_some() {
+                            continue;
+                        }
+                        if let Some(next_run) = job.state.next_run_at {
+                            if next.is_none() || next_run < next.as_ref().unwrap().1 {
+                                next = Some((id.clone(), next_run));
+                            }
+                        }
+                    }
+                    next
+                };
+
+                // Abort any existing timer
+                if let Some(handle) = current_timer.take() {
+                    handle.abort();
+                }
+
+                // Arm new timer if we have a next job
+                if let Some((job_id, run_at)) = next_job {
+                    let now = Utc::now();
+                    let delay = run_at.signed_duration_since(now);
+                    let jobs = Arc::clone(&jobs_for_timer);
+                    let agent = Arc::clone(&agent_for_timer);
+                    let store_path = store_path_for_timer.clone();
+                    let announce_tx = announce_tx_for_timer.clone();
+                    let job_id_clone = job_id.clone();
+
+                    if delay.num_seconds() > 0 {
+                        current_timer = Some(tokio::spawn(async move {
+                            sleep(delay.to_std().unwrap_or(Duration::from_secs(1))).await;
+
+                            let mut jobs_lock = jobs.write().await;
+                            if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
+                                if job.should_run(Utc::now()) {
+                                    drop(jobs_lock);
+                                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
+                                }
+                            }
+                        }));
+                        debug!("Timer armed for job {} at {}", job_id, run_at);
+                    } else {
+                        // Job is overdue, run immediately
+                        current_timer = Some(tokio::spawn(async move {
+                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
+                        }));
+                    }
+                }
+
+                // Wait for rearm signal or timeout
+                match tokio::time::timeout(Duration::from_secs(60), timer_rx.recv()).await {
+                    Ok(Some(TimerCommand::Rearm)) => {
+                        debug!("Timer re-arming due to schedule change");
+                        continue;
+                    }
+                    Ok(Some(TimerCommand::ExecuteNow(job_id))) => {
+                        // Execute immediately and rearm
+                        let jobs = Arc::clone(&jobs_for_timer);
+                        let agent = Arc::clone(&agent_for_timer);
+                        let store_path = store_path_for_timer.clone();
+                        let announce_tx = announce_tx_for_timer.clone();
+                        tokio::spawn(async move {
+                            Self::execute_job(&jobs, &job_id, &agent, &store_path, &announce_tx).await;
+                        });
+                        continue;
+                    }
+                    Ok(None) => {
+                        // Channel closed
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout - recalculate in case next_run_at changed
+                        continue;
+                    }
+                }
+            }
+        });
+
         info!("Advanced cron scheduler started");
         Ok(())
     }
 
-    /// Arm the timer for the next job
-    async fn arm_timer(&mut self) -> Result<()> {
-        let jobs = self.jobs.read().await;
-        let now = Utc::now();
-
-        // Find the next job to run
-        let mut next_job: Option<(String, DateTime<Utc>)> = None;
-
-        for (id, job) in jobs.iter() {
-            if !job.enabled || job.state.running_at_ms.is_some() {
-                continue;
-            }
-
-            if let Some(next_run) = job.state.next_run_at {
-                if next_job.is_none() || next_run < next_job.as_ref().unwrap().1 {
-                    next_job = Some((id.clone(), next_run));
-                }
-            }
+    /// Trigger timer rearm after schedule changes
+    async fn trigger_rearm(&self) {
+        if let Some(ref tx) = self.timer_tx {
+            let _ = tx.send(TimerCommand::Rearm).await;
         }
-
-        drop(jobs);
-
-        // If we have a timer handle, abort it and create a new one
-        if let Some(handle) = self.timer_handle.take() {
-            handle.abort();
-        }
-
-        if let Some((job_id, run_at)) = next_job {
-            let delay = run_at.signed_duration_since(now);
-
-            if delay.num_seconds() > 0 {
-                let jobs = Arc::clone(&self.jobs);
-                let agent = Arc::clone(&self.agent);
-                let store_path = self.store_path.clone();
-                let job_id_clone = job_id.clone();
-                let announce_tx = self.announce_tx.clone();
-
-                let handle = tokio::spawn(async move {
-                    sleep(delay.to_std().unwrap_or(Duration::from_secs(1))).await;
-
-                    // Execute the job
-                    let mut jobs_lock = jobs.write().await;
-                    if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
-                        if job.should_run(Utc::now()) {
-                            drop(jobs_lock);
-                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx)
-                                .await;
-                        }
-                    }
-                });
-
-                self.timer_handle = Some(handle);
-                debug!("Timer armed for job {} at {}", job_id, run_at);
-            } else {
-                // Job is overdue, run immediately
-                let jobs = Arc::clone(&self.jobs);
-                let agent = Arc::clone(&self.agent);
-                let store_path = self.store_path.clone();
-                let job_id_clone = job_id.clone();
-                let announce_tx = self.announce_tx.clone();
-
-                let handle = tokio::spawn(async move {
-                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
-                });
-
-                self.timer_handle = Some(handle);
-            }
-        }
-
-        Ok(())
     }
 
     /// Handle scheduler commands
@@ -1018,7 +955,10 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Add(job))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to add job: {}", e)))
+            .map_err(|e| MantaError::Internal(format!("Failed to add job: {}", e)))?;
+        // Trigger rearm to pick up new job
+        self.trigger_rearm().await;
+        Ok(())
     }
 
     /// Remove a job
@@ -1026,7 +966,9 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Remove(job_id.to_string()))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to remove job: {}", e)))
+            .map_err(|e| MantaError::Internal(format!("Failed to remove job: {}", e)))?;
+        self.trigger_rearm().await;
+        Ok(())
     }
 
     /// Enable/disable a job
@@ -1034,7 +976,11 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::SetEnabled(job_id.to_string(), enabled))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to set job state: {}", e)))
+            .map_err(|e| MantaError::Internal(format!("Failed to set job state: {}", e)))?;
+        if enabled {
+            self.trigger_rearm().await;
+        }
+        Ok(())
     }
 
     /// Trigger a job immediately
@@ -1047,14 +993,14 @@ impl CronScheduler {
 
     /// List all jobs
     pub async fn list_jobs(&self) -> Vec<CronJob> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let _ = self.command_tx.send(CronCommand::ListJobs(tx)).await;
         rx.await.unwrap_or_default()
     }
 
     /// Get a specific job
     pub async fn get_job(&self, job_id: &str) -> Option<CronJob> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let _ = self
             .command_tx
             .send(CronCommand::GetJob(job_id.to_string(), tx))
@@ -1066,9 +1012,6 @@ impl CronScheduler {
     pub async fn shutdown(&mut self) -> Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;
-        }
-        if let Some(handle) = self.timer_handle.take() {
-            handle.abort();
         }
         Ok(())
     }
