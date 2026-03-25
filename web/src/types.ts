@@ -10,7 +10,7 @@ export interface MessageType {
 
 export interface MessageData {
   type?: 'system' | 'message' | 'cron' | 'typing' | 'error' | 'version' | 'tool_call' | 'tool_result' | 'history';
-  event_type?: 'agent_response' | 'thinking' | 'tool_calling' | 'tool_result' | 'agent_status' | 'processing_error' | 'completed' | 'message_received' | 'channel_status' | 'approval_required' | 'repair_action' | 'cron_announce' | 'system' | 'message' | 'cron' | 'typing' | 'error' | 'version' | 'tool_call' | 'tool_result' | 'history';
+  event_type?: 'agent_response' | 'thinking' | 'tool_calling' | 'tool_result' | 'agent_status' | 'processing_error' | 'completed' | 'message_received' | 'channel_status' | 'approval_required' | 'repair_action' | 'cron_announce' | 'system' | 'message' | 'typing' | 'error' | 'version' | 'tool_call' | 'tool_result' | 'history';
   content: string | boolean;
   role?: 'user' | 'assistant';
   tool?: string;
@@ -51,6 +51,11 @@ export interface MessageData {
     agent_id: string;
     message: string;
     session_id: string;
+  };
+  CronAnnounce?: {
+    channel: string;
+    to: string;
+    message: string;
   };
   messages?: Array<{
     id: string;

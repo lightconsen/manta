@@ -179,11 +179,12 @@ function App() {
         }]);
         setIsTyping(false);
         break;
-      case 'cron':
+      case 'cron_announce':
+        const cronMessage = data.CronAnnounce?.message || data.message || data.content;
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
           role: 'cron',
-          content: data.content,
+          content: cronMessage,
           timestamp: Date.now(),
         }]);
         break;
