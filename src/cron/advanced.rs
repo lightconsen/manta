@@ -177,7 +177,15 @@ impl Schedule {
                 stagger_ms,
             } => {
                 // Parse cron expression
-                let schedule = CronSchedule::from_str(expression).ok()?;
+                // The cron crate v0.14 expects 6 fields (with seconds), so we need to
+                // convert 5-field expressions to 6-field by prepending "0" for seconds
+                let normalized = if expression.trim().split_whitespace().count() == 5 {
+                    format!("0 {}", expression.trim())
+                } else {
+                    expression.clone()
+                };
+
+                let schedule = CronSchedule::from_str(&normalized).ok()?;
 
                 // Get next occurrence
                 let next = schedule.upcoming(Utc).next()?;

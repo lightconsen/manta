@@ -142,9 +142,17 @@ impl Tool for CronTool {
                     })?;
 
                 // Parse cron schedule using the cron crate
-                let schedule = match cron::Schedule::from_str(schedule_str) {
+                // The cron crate v0.14 expects 6 fields (with seconds), so we need to
+                // convert 5-field expressions to 6-field by prepending "0" for seconds
+                let normalized_schedule = if schedule_str.trim().split_whitespace().count() == 5 {
+                    format!("0 {}", schedule_str.trim())
+                } else {
+                    schedule_str.to_string()
+                };
+
+                let schedule = match cron::Schedule::from_str(&normalized_schedule) {
                     Ok(_) => Schedule::Cron {
-                        expression: schedule_str.to_string(),
+                        expression: schedule_str.to_string(), // Store original 5-field format
                         timezone: None,
                         stagger_ms: None,
                     },
