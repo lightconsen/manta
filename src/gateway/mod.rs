@@ -1032,7 +1032,22 @@ impl Gateway {
                     *state.memory_manager.write().await = Some(Arc::new(mm));
                     info!("✅ MemoryManager with hybrid search initialized");
                 } else {
-                    info!("Vector memory not available; MemoryManager will use fallback path");
+                    info!("Initializing MemoryManager (vector search disabled)...");
+                    let store = Arc::new(
+                        crate::memory::UnifiedStore::new_with_pool(pool.clone()).await.map_err(|e| {
+                            crate::error::MantaError::Storage {
+                                context: "Failed to create UnifiedStore".into(),
+                                details: e.to_string(),
+                            }
+                        })?,
+                    );
+                    let mm = crate::memory::MemoryManager::new(
+                        store,
+                        crate::memory::MemoryManagerConfig::default(),
+                    )
+                    .with_session_search(session_search);
+                    *state.memory_manager.write().await = Some(Arc::new(mm));
+                    info!("✅ MemoryManager initialized (without vector search)");
                 }
             }
         } else {
@@ -1430,14 +1445,16 @@ async fn spawn_agent_inner(
     // Get the model from config for this agent
     let model = state.config.read().await.model.clone();
 
-    // Create the actual Agent instance with model, memory manager, and shared cost guard
+    // Create the actual Agent instance with model, memory manager, chat history, and shared cost guard
     let memory_manager = state.memory_manager.read().await.clone();
     let cost_guard = Arc::clone(&state.cost_guard);
-    let agent = if let Some(mm) = memory_manager {
+    let agent = if let Some(ref mm) = memory_manager {
+        let chat_history = mm.store();
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
-                .with_memory_manager(mm)
+                .with_memory_manager(mm.clone())
+                .with_chat_history(chat_history)
                 .with_cost_guard(cost_guard),
         )
     } else {

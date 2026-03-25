@@ -450,6 +450,11 @@ impl MemoryManager {
         Ok(stored_ids)
     }
 
+    /// Get the underlying store for direct access (e.g., for chat history).
+    pub fn store(&self) -> Arc<UnifiedStore> {
+        Arc::clone(&self.store)
+    }
+
     /// Get memory statistics.
     pub async fn stats(&self) -> crate::Result<MemoryStats> {
         self.store.stats().await

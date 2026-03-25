@@ -401,7 +401,7 @@ impl SqliteStorage {
                 user_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                created_at TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
                 metadata TEXT  -- JSON
             )
             "#,
@@ -436,8 +436,8 @@ impl SqliteStorage {
                 content TEXT NOT NULL,
                 memory_type TEXT NOT NULL,
                 embedding BLOB,  -- Serialized f32 array, optional
-                created_at TEXT NOT NULL,
-                expires_at TEXT,  -- NULL = never
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER,  -- NULL = never
                 metadata TEXT  -- JSON
             )
             "#,
@@ -670,6 +670,21 @@ fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
         .map(|dt| dt.with_timezone(&chrono::Utc).into())
 }
 
+// Helper functions for INTEGER timestamp (Unix epoch seconds) - compatible with db.rs
+fn system_time_to_secs(time: std::time::SystemTime) -> i64 {
+    time.duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn secs_to_system_time(secs: i64) -> Option<std::time::SystemTime> {
+    if secs <= 0 {
+        None
+    } else {
+        Some(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64))
+    }
+}
+
 #[async_trait]
 impl VectorStore for SqliteStorage {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
@@ -693,7 +708,7 @@ impl VectorStore for SqliteStorage {
         .bind(chunk.position as i64)
         .bind(chunk.total_chunks as i64)
         .bind(metadata_json)
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(system_time_to_secs(std::time::SystemTime::now()))
         .execute(&self.pool)
         .await
         .map_err(|e| crate::error::MantaError::ExternalService {
@@ -840,7 +855,7 @@ impl ChatHistoryStore for SqliteStorage {
         .bind(&message.user_id)
         .bind(&message.role)
         .bind(&message.content)
-        .bind(system_time_to_rfc3339(message.created_at))
+        .bind(system_time_to_secs(message.created_at))
         .bind(metadata_json)
         .execute(&self.pool)
         .await
@@ -878,8 +893,8 @@ impl ChatHistoryStore for SqliteStorage {
         let messages: Vec<ChatMessage> = rows
             .into_iter()
             .filter_map(|row| {
-                let created_at_str: String = row.get("created_at");
-                let created_at = rfc3339_to_system_time(&created_at_str)?;
+                let created_at_secs: i64 = row.get("created_at");
+                let created_at = secs_to_system_time(created_at_secs)?;
 
                 let metadata: Option<String> = row.get("metadata");
                 let metadata = metadata.and_then(|m| serde_json::from_str(&m).ok());
@@ -975,7 +990,7 @@ impl MemoryStore for SqliteStorage {
 
         let embedding_bytes = memory.embedding.as_ref().map(|e| serialize_embedding(e));
 
-        let expires_at = memory.expires_at.map(|t| system_time_to_rfc3339(t));
+        let expires_at = memory.expires_at.map(|t| system_time_to_secs(t));
 
         sqlx::query(
             r#"
@@ -990,7 +1005,7 @@ impl MemoryStore for SqliteStorage {
         .bind(&memory.content)
         .bind(&memory.memory_type)
         .bind(embedding_bytes)
-        .bind(system_time_to_rfc3339(memory.created_at))
+        .bind(system_time_to_secs(memory.created_at))
         .bind(expires_at)
         .bind(metadata_json)
         .execute(&self.pool)
@@ -1015,14 +1030,14 @@ impl MemoryStore for SqliteStorage {
 
         match row {
             Some(row) => {
-                let created_at_str: String = row.get("created_at");
-                let created_at = rfc3339_to_system_time(&created_at_str).ok_or_else(|| {
+                let created_at_secs: i64 = row.get("created_at");
+                let created_at = secs_to_system_time(created_at_secs).ok_or_else(|| {
                     crate::error::MantaError::Internal("Invalid created_at".to_string())
                 })?;
 
                 let expires_at = row
-                    .get::<Option<String>, _>("expires_at")
-                    .and_then(|s| rfc3339_to_system_time(&s));
+                    .get::<Option<i64>, _>("expires_at")
+                    .and_then(|s| secs_to_system_time(s));
 
                 let embedding = row
                     .get::<Option<Vec<u8>>, _>("embedding")
@@ -1094,7 +1109,7 @@ impl MemoryStore for SqliteStorage {
         }
 
         if !query.include_expired {
-            sql.push_str(" AND (expires_at IS NULL OR expires_at > datetime('now'))");
+            sql.push_str(" AND (expires_at IS NULL OR expires_at > UNIXEPOCH())");
         }
 
         sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", params.len() + 1));
@@ -1115,12 +1130,12 @@ impl MemoryStore for SqliteStorage {
         let memories: Vec<Memory> = rows
             .into_iter()
             .filter_map(|row| {
-                let created_at_str: String = row.get("created_at");
-                let created_at = rfc3339_to_system_time(&created_at_str)?;
+                let created_at_secs: i64 = row.get("created_at");
+                let created_at = secs_to_system_time(created_at_secs)?;
 
                 let expires_at = row
-                    .get::<Option<String>, _>("expires_at")
-                    .and_then(|s| rfc3339_to_system_time(&s));
+                    .get::<Option<i64>, _>("expires_at")
+                    .and_then(|s| secs_to_system_time(s));
 
                 let embedding = row
                     .get::<Option<Vec<u8>>, _>("embedding")
@@ -1165,9 +1180,11 @@ impl MemoryStore for SqliteStorage {
     }
 
     async fn cleanup_expired(&self) -> crate::Result<usize> {
+        let now = system_time_to_secs(std::time::SystemTime::now());
         let result = sqlx::query(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')",
+            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
         )
+        .bind(now)
         .execute(&self.pool)
         .await
         .map_err(|e| crate::error::MantaError::ExternalService {
@@ -1179,14 +1196,16 @@ impl MemoryStore for SqliteStorage {
     }
 
     async fn stats(&self) -> crate::Result<MemoryStats> {
+        let now = system_time_to_secs(std::time::SystemTime::now());
         let row = sqlx::query(
             r#"
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 1 ELSE 0 END) as expired
+                SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < ?1 THEN 1 ELSE 0 END) as expired
             FROM memories
             "#,
         )
+        .bind(now)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| crate::error::MantaError::ExternalService {
