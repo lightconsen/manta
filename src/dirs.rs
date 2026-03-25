@@ -3,13 +3,14 @@
 //! All Manta data is stored in ~/.manta/ with the following structure:
 //! ~/.manta/
 //! ├── manta.toml       # Configuration file
-//! ├── memory/          # SQLite databases (memory.db, chat history)
+//! ├── data/            # SQLite database (manta.db) - unified storage
 //! ├── logs/            # Log files (daemon.log)
 //! ├── skills/          # User-installed skills
 //! ├── agents/          # Agent configurations
 //! ├── cron/            # Cron job data
 //! ├── todos/           # Task persistence
-//! └── workspace/       # Workspace-level data (SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
+//! ├── workspace/       # Workspace-level data (SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
+//! └── memory/          # Legacy directory (deprecated, kept for backward compatibility)
 
 use std::path::PathBuf;
 use tracing::{debug, info};
@@ -105,9 +106,12 @@ pub fn default_config_file() -> PathBuf {
     config_dir().join("manta.toml")
 }
 
-/// Get the default memory DB path (~/.manta/memory/memory.db)
+/// Get the default memory DB path (~/.manta/data/manta.db)
+///
+/// Note: Previously returned ~/.manta/memory/memory.db, now consolidated
+/// to use the main gateway database for unified storage.
 pub fn default_memory_db() -> PathBuf {
-    memory_dir().join("memory.db")
+    data_dir().join("manta.db")
 }
 
 /// Get the default log file path (~/.manta/logs/daemon.log)
@@ -253,7 +257,7 @@ mod tests {
             .contains("manta.toml"));
         assert!(path_for(FileType::MemoryDb)
             .to_string_lossy()
-            .contains("memory.db"));
+            .contains("data/manta.db"));
         assert!(path_for(FileType::Log)
             .to_string_lossy()
             .contains("daemon.log"));
