@@ -398,6 +398,7 @@ impl Default for LifecycleManager {
 mod tests {
     use super::*;
     use crate::core::models::Id;
+    use crate::error::MantaError;
     use async_trait::async_trait;
 
     struct MockChannel {

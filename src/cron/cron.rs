@@ -353,6 +353,11 @@ pub struct RunLogEntry {
     pub delivery_status: Option<DeliveryStatus>,
 }
 
+/// Maximum timer delay - wake at least once per minute to check for schedule changes
+const MAX_TIMER_DELAY_MS: u64 = 60_000;
+/// Minimum delay between timer fires to prevent tight loops
+const MIN_REFIRE_GAP_MS: u64 = 2_000;
+
 /// Commands for the scheduler
 #[derive(Debug)]
 pub enum CronCommand {
@@ -365,14 +370,7 @@ pub enum CronCommand {
     GetJob(String, oneshot::Sender<Option<CronJob>>),
 }
 
-/// Timer command for rearming
-#[derive(Debug)]
-enum TimerCommand {
-    Rearm,
-    ExecuteNow(String),
-}
-
-/// Advanced cron scheduler with timer-based execution
+/// Advanced cron scheduler with single global timer (OpenClaw-style)
 pub struct CronScheduler {
     jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
@@ -384,8 +382,8 @@ pub struct CronScheduler {
     store_path: Option<PathBuf>,
     /// Optional sender for Announce-mode delivery events.
     announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
-    /// Channel to trigger timer rearming
-    timer_tx: Option<mpsc::Sender<TimerCommand>>,
+    /// Notify the timer to re-calculate next wake time
+    rearm_notify: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for CronScheduler {
@@ -408,7 +406,7 @@ impl CronScheduler {
             agent: Arc::new(RwLock::new(None)),
             store_path: None,
             announce_tx: None,
-            timer_tx: None,
+            rearm_notify: Arc::new(tokio::sync::Notify::new()),
         };
         (scheduler, command_rx)
     }
@@ -448,17 +446,13 @@ impl CronScheduler {
             self.load_jobs(path).await.ok();
         }
 
-        // Create timer command channel
-        let (timer_tx, mut timer_rx) = mpsc::channel::<TimerCommand>(10);
-        self.timer_tx = Some(timer_tx.clone());
-
         let jobs = Arc::clone(&self.jobs);
         let agent = Arc::clone(&self.agent);
         let store_path = self.store_path.clone();
         let announce_tx = self.announce_tx.clone();
 
         // Spawn command handler
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 tokio::select! {
                     cmd = command_rx.recv() => {
@@ -467,116 +461,153 @@ impl CronScheduler {
                         }
                     }
                     _ = shutdown_rx.recv() => {
-                        info!("Advanced cron scheduler shutting down");
+                        info!("Cron scheduler shutting down");
                         break;
                     }
                 }
             }
         });
 
-        // Spawn timer manager task
+        // Spawn single global timer task (OpenClaw-style)
         let jobs_for_timer = Arc::clone(&self.jobs);
         let agent_for_timer = Arc::clone(&self.agent);
         let store_path_for_timer = self.store_path.clone();
         let announce_tx_for_timer = self.announce_tx.clone();
+        let rearm_notify = Arc::clone(&self.rearm_notify);
 
         tokio::spawn(async move {
-            let mut current_timer: Option<JoinHandle<()>> = None;
+            // Track if we're currently running jobs to prevent overlapping ticks
+            let running = Arc::new(RwLock::new(false));
 
             loop {
-                // Calculate next job and arm timer
-                let next_job = {
-                    let jobs_lock = jobs_for_timer.read().await;
-                    let now = Utc::now();
-                    let mut next: Option<(String, DateTime<Utc>)> = None;
+                // Calculate next wake time (minimum delay across all jobs)
+                let delay_ms = Self::calculate_next_wake_ms(&jobs_for_timer).await;
 
-                    for (id, job) in jobs_lock.iter() {
-                        if !job.enabled || job.state.running_at_ms.is_some() {
-                            continue;
-                        }
-                        if let Some(next_run) = job.state.next_run_at {
-                            if next.is_none() || next_run < next.as_ref().unwrap().1 {
-                                next = Some((id.clone(), next_run));
-                            }
-                        }
+                // Cap at MAX_TIMER_DELAY_MS to ensure we wake at least once per minute
+                let capped_delay = delay_ms.map(|d| d.min(MAX_TIMER_DELAY_MS)).unwrap_or(MAX_TIMER_DELAY_MS);
+
+                // Ensure minimum delay to prevent tight loops
+                let final_delay = capped_delay.max(MIN_REFIRE_GAP_MS);
+
+                debug!("Timer armed: delay={}ms (capped={}, min={})",
+                    delay_ms.unwrap_or(u64::MAX),
+                    capped_delay,
+                    final_delay
+                );
+
+                // Wait for timer OR rearm notification
+                let sleep_fut = tokio::time::sleep(Duration::from_millis(final_delay));
+                let notify_fut = rearm_notify.notified();
+
+                tokio::select! {
+                    _ = sleep_fut => {
+                        // Timer fired - proceed to check jobs
                     }
-                    next
-                };
-
-                // Abort any existing timer
-                if let Some(handle) = current_timer.take() {
-                    handle.abort();
-                }
-
-                // Arm new timer if we have a next job
-                if let Some((job_id, run_at)) = next_job {
-                    let now = Utc::now();
-                    let delay = run_at.signed_duration_since(now);
-                    let jobs = Arc::clone(&jobs_for_timer);
-                    let agent = Arc::clone(&agent_for_timer);
-                    let store_path = store_path_for_timer.clone();
-                    let announce_tx = announce_tx_for_timer.clone();
-                    let job_id_clone = job_id.clone();
-
-                    if delay.num_seconds() > 0 {
-                        current_timer = Some(tokio::spawn(async move {
-                            sleep(delay.to_std().unwrap_or(Duration::from_secs(1))).await;
-
-                            let mut jobs_lock = jobs.write().await;
-                            if let Some(job) = jobs_lock.get_mut(&job_id_clone) {
-                                if job.should_run(Utc::now()) {
-                                    drop(jobs_lock);
-                                    Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
-                                }
-                            }
-                        }));
-                        debug!("Timer armed for job {} at {}", job_id, run_at);
-                    } else {
-                        // Job is overdue, run immediately
-                        current_timer = Some(tokio::spawn(async move {
-                            Self::execute_job(&jobs, &job_id_clone, &agent, &store_path, &announce_tx).await;
-                        }));
-                    }
-                }
-
-                // Wait for rearm signal or timeout
-                match tokio::time::timeout(Duration::from_secs(60), timer_rx.recv()).await {
-                    Ok(Some(TimerCommand::Rearm)) => {
+                    _ = notify_fut => {
                         debug!("Timer re-arming due to schedule change");
-                        continue;
-                    }
-                    Ok(Some(TimerCommand::ExecuteNow(job_id))) => {
-                        // Execute immediately and rearm
-                        let jobs = Arc::clone(&jobs_for_timer);
-                        let agent = Arc::clone(&agent_for_timer);
-                        let store_path = store_path_for_timer.clone();
-                        let announce_tx = announce_tx_for_timer.clone();
-                        tokio::spawn(async move {
-                            Self::execute_job(&jobs, &job_id, &agent, &store_path, &announce_tx).await;
-                        });
-                        continue;
-                    }
-                    Ok(None) => {
-                        // Channel closed
-                        break;
-                    }
-                    Err(_) => {
-                        // Timeout - recalculate in case next_run_at changed
-                        continue;
+                        continue; // Recalculate immediately
                     }
                 }
+
+                // Check if already running (prevent overlapping ticks like OpenClaw's armRunningRecheckTimer)
+                let running_guard = running.read().await;
+                if *running_guard {
+                    debug!("Timer tick skipped: previous tick still running");
+                    continue; // Will re-arm with recalculated delay
+                }
+                drop(running_guard);
+
+                // Mark as running
+                *running.write().await = true;
+
+                // Run due jobs - ALWAYS re-arm in finally pattern
+                let jobs = Arc::clone(&jobs_for_timer);
+                let agent = Arc::clone(&agent_for_timer);
+                let store_path = store_path_for_timer.clone();
+                let announce_tx = announce_tx_for_timer.clone();
+
+                let result = async {
+                    Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx).await;
+                }.await;
+
+                // Always mark as not running and continue (re-arm happens at loop start)
+                *running.write().await = false;
+
+                // The loop continues and re-arms automatically
             }
         });
 
-        info!("Advanced cron scheduler started");
+        info!("Cron scheduler started (single global timer)");
         Ok(())
     }
 
-    /// Trigger timer rearm after schedule changes
-    async fn trigger_rearm(&self) {
-        if let Some(ref tx) = self.timer_tx {
-            let _ = tx.send(TimerCommand::Rearm).await;
+    /// Calculate the next wake time in milliseconds
+    /// Returns None if no jobs are scheduled
+    async fn calculate_next_wake_ms(jobs: &Arc<RwLock<HashMap<String, CronJob>>>) -> Option<u64> {
+        let jobs_lock = jobs.read().await;
+        let now = Utc::now();
+        let now_ms = now.timestamp_millis() as u64;
+
+        let mut min_next_ms: Option<u64> = None;
+
+        for (_, job) in jobs_lock.iter() {
+            if !job.enabled || job.state.running_at_ms.is_some() {
+                continue;
+            }
+            if let Some(next_run) = job.state.next_run_at {
+                let next_ms = next_run.timestamp_millis() as u64;
+                if next_ms > now_ms {
+                    let delay = next_ms - now_ms;
+                    if min_next_ms.map(|m| delay < m).unwrap_or(true) {
+                        min_next_ms = Some(delay);
+                    }
+                } else {
+                    // Job is overdue - wake immediately
+                    return Some(0);
+                }
+            }
         }
+
+        min_next_ms
+    }
+
+    /// Run all jobs that are currently due
+    async fn run_due_jobs(
+        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
+        agent: &Arc<RwLock<Option<Arc<Agent>>>>,
+        store_path: &Option<PathBuf>,
+        announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+    ) {
+        let due_job_ids: Vec<String> = {
+            let jobs_lock = jobs.read().await;
+            let now = Utc::now();
+
+            jobs_lock
+                .iter()
+                .filter_map(|(id, job)| {
+                    if job.should_run(now) {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if due_job_ids.is_empty() {
+            return;
+        }
+
+        info!("Running {} due cron jobs", due_job_ids.len());
+
+        for job_id in due_job_ids {
+            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx).await;
+        }
+    }
+
+    /// Trigger timer rearm after schedule changes
+    fn trigger_rearm(&self) {
+        self.rearm_notify.notify_one();
     }
 
     /// Handle scheduler commands
@@ -957,7 +988,7 @@ impl CronScheduler {
             .await
             .map_err(|e| MantaError::Internal(format!("Failed to add job: {}", e)))?;
         // Trigger rearm to pick up new job
-        self.trigger_rearm().await;
+        self.trigger_rearm();
         Ok(())
     }
 
@@ -967,7 +998,7 @@ impl CronScheduler {
             .send(CronCommand::Remove(job_id.to_string()))
             .await
             .map_err(|e| MantaError::Internal(format!("Failed to remove job: {}", e)))?;
-        self.trigger_rearm().await;
+        self.trigger_rearm();
         Ok(())
     }
 
@@ -978,7 +1009,7 @@ impl CronScheduler {
             .await
             .map_err(|e| MantaError::Internal(format!("Failed to set job state: {}", e)))?;
         if enabled {
-            self.trigger_rearm().await;
+            self.trigger_rearm();
         }
         Ok(())
     }

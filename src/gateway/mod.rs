@@ -464,7 +464,7 @@ pub struct GatewayState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler:
-        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::advanced::CronScheduler>>>>,
+        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// Rate limiter for API protection
@@ -1074,7 +1074,7 @@ impl Gateway {
         // Initialize cron scheduler if enabled
         if config.cron.enabled {
             info!("Initializing advanced cron scheduler...");
-            use crate::cron::advanced::{CronScheduler, AnnounceDelivery};
+            use crate::cron::cron::{CronScheduler, AnnounceDelivery};
             let (cron_scheduler, command_rx) = CronScheduler::new();
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
@@ -6262,7 +6262,7 @@ async fn add_cron_job_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddCronJobRequest>,
 ) -> impl IntoResponse {
-    use crate::cron::advanced::{CronJob, ExecutionTarget, Schedule as CronSchedule};
+    use crate::cron::cron::{CronJob, ExecutionTarget, Schedule as CronSchedule};
     use std::str::FromStr;
 
     let schedule = match cron::Schedule::from_str(&req.schedule) {

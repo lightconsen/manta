@@ -1,13 +1,13 @@
 //! Cron Scheduler for Manta
 //!
 //! This module provides types and utilities for scheduled task execution.
-//! The actual scheduling is handled by the `advanced` submodule which provides
+//! The actual scheduling is handled by the `cron` submodule which provides
 //! a production-grade scheduler with timer-based execution, retry logic,
 //! crash recovery, and run history logging.
 //!
 //! # Architecture
 //!
-//! - **CronScheduler** (`advanced`): The primary scheduler implementation
+//! - **CronScheduler** (`cron`): The primary scheduler implementation
 //!   used by the Gateway and CronTool
 //! - **ScheduledJob**: Legacy job type kept for backward compatibility
 //!
@@ -16,7 +16,7 @@
 //! The legacy `CronScheduler` has been removed. All cron functionality now
 //! goes through `CronScheduler`.
 
-pub mod advanced;
+pub mod cron;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 /// A scheduled job
 ///
 /// This is the legacy job structure. New code should use `CronJob`
-/// from the `advanced` module instead.
+/// from the `cron` module instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledJob {
     /// Unique job ID
@@ -126,7 +126,7 @@ pub fn calculate_next_run(schedule: &str, from: DateTime<Utc>) -> Option<DateTim
 fn parse_cron_expression(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
     use std::str::FromStr;
 
-    match cron::Schedule::from_str(expr) {
+    match ::cron::Schedule::from_str(expr) {
         Ok(schedule) => schedule.after(&from).next(),
         Err(e) => {
             tracing::warn!("Invalid cron expression '{}': {}", expr, e);
