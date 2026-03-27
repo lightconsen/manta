@@ -163,10 +163,8 @@ pub async fn run_mcp_command(command: &McpCommands) -> Result<()> {
         }
 
         McpCommands::Call { server_id, tool, args } => {
-            let endpoint = format!(
-                "{}/api/v1/mcp/servers/{}/tools/{}/call",
-                DAEMON_URL, server_id, tool
-            );
+            let endpoint =
+                format!("{}/api/v1/mcp/servers/{}/tools/{}/call", DAEMON_URL, server_id, tool);
             let parsed_args: serde_json::Value =
                 serde_json::from_str(args).unwrap_or(serde_json::json!({}));
             match client.post(&endpoint).json(&parsed_args).send().await {

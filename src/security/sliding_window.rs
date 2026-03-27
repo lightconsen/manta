@@ -199,12 +199,14 @@ impl SlidingWindowRateLimiter {
     /// Get current state for a key
     pub fn get_state(&self, key: &RateLimitKey) -> Option<SlidingWindowState> {
         let now = Instant::now();
-        self.windows.get_mut(key).map(|mut entry| SlidingWindowState {
-            window_size: entry.window_size,
-            max_requests: entry.max_requests,
-            current_requests: entry.count(now) as u32,
-            remaining: entry.remaining(now),
-        })
+        self.windows
+            .get_mut(key)
+            .map(|mut entry| SlidingWindowState {
+                window_size: entry.window_size,
+                max_requests: entry.max_requests,
+                current_requests: entry.count(now) as u32,
+                remaining: entry.remaining(now),
+            })
     }
 
     /// Reset rate limit for a key (useful for admin operations)
@@ -374,10 +376,7 @@ pub mod middleware {
         let key = RateLimitKey::new(user_id, endpoint);
 
         match limiter.check_and_record(&key) {
-            RateLimitResult::Allowed {
-                remaining,
-                reset_after_secs,
-            } => {
+            RateLimitResult::Allowed { remaining, reset_after_secs } => {
                 // Add rate limit headers to response
                 let mut response = next.run(req).await;
 
@@ -417,10 +416,7 @@ pub mod middleware {
         let key = extractor(&req);
 
         match limiter.check_and_record(&key) {
-            RateLimitResult::Allowed {
-                remaining,
-                reset_after_secs,
-            } => {
+            RateLimitResult::Allowed { remaining, reset_after_secs } => {
                 let mut response = next.run(req).await;
 
                 let headers = response.headers_mut();

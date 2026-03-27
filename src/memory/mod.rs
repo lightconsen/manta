@@ -22,18 +22,16 @@ pub mod local_embeddings;
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
-pub use pipeline::{
-    EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
-    PipelineEmbeddingProvider,
-};
 pub use hybrid::{
     apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,
 };
-pub use manager::{
-    MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext,
-};
+pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use personality::{MemoryType, PersonalityMemory};
+pub use pipeline::{
+    EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
+    PipelineEmbeddingProvider,
+};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use sqlite::SqliteMemoryStore;
 pub use vector::{

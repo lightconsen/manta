@@ -346,24 +346,21 @@ impl PluginRuntime {
 
         #[cfg(feature = "plugins")]
         {
-            let (store, instance) =
-                match (&mut plugin.wasm_store, &plugin.instance) {
-                    (Some(s), Some(i)) => (s, i),
-                    _ => {
-                        return Err(crate::error::MantaError::Internal(format!(
-                            "Plugin '{}' has no WASM module loaded",
-                            plugin_id
-                        )));
-                    }
-                };
+            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
+                (Some(s), Some(i)) => (s, i),
+                _ => {
+                    return Err(crate::error::MantaError::Internal(format!(
+                        "Plugin '{}' has no WASM module loaded",
+                        plugin_id
+                    )));
+                }
+            };
 
             return Self::invoke_wasm_tool(store, instance, tool_name, params);
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal(
-            "plugins feature is not enabled".to_string(),
-        ))
+        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
     }
 
     /// Low-level WASM tool invocation.
@@ -397,8 +394,9 @@ impl PluginRuntime {
 
         // Resolve the optional `alloc` export.  TypedFunc is Copy so we can
         // use it multiple times without re-borrowing.
-        let alloc_fn: Option<wasmtime::TypedFunc<i32, i32>> =
-            instance.get_typed_func::<i32, i32>(&mut *store, "alloc").ok();
+        let alloc_fn: Option<wasmtime::TypedFunc<i32, i32>> = instance
+            .get_typed_func::<i32, i32>(&mut *store, "alloc")
+            .ok();
 
         // Allocate and write the tool name.
         let name_len = tool_bytes.len() as i32;
@@ -431,35 +429,24 @@ impl PluginRuntime {
         // Allocate the output buffer.
         let out_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, OUT_MAX)
-                .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("alloc output: {}", e))
-                })?
+                .map_err(|e| crate::error::MantaError::Internal(format!("alloc output: {}", e)))?
         } else {
             0i32
         };
 
         // Try the generic `call_tool` dispatcher first.
-        let written: i32 = if let Ok(f) = instance.get_typed_func::<(i32, i32, i32, i32, i32, i32), i32>(
-            &mut *store,
-            "call_tool",
-        ) {
-            f.call(
-                &mut *store,
-                (name_ptr, name_len, params_ptr, params_len, out_ptr, OUT_MAX),
-            )
-            .map_err(|e| {
-                crate::error::MantaError::Internal(format!("call_tool: {}", e))
-            })?
+        let written: i32 = if let Ok(f) =
+            instance.get_typed_func::<(i32, i32, i32, i32, i32, i32), i32>(&mut *store, "call_tool")
+        {
+            f.call(&mut *store, (name_ptr, name_len, params_ptr, params_len, out_ptr, OUT_MAX))
+                .map_err(|e| crate::error::MantaError::Internal(format!("call_tool: {}", e)))?
         } else if let Ok(f) =
             instance.get_typed_func::<(i32, i32, i32, i32), i32>(&mut *store, tool_name)
         {
             // Fall back to a per-tool export.
             f.call(&mut *store, (params_ptr, params_len, out_ptr, OUT_MAX))
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!(
-                        "tool '{}': {}",
-                        tool_name, e
-                    ))
+                    crate::error::MantaError::Internal(format!("tool '{}': {}", tool_name, e))
                 })?
         } else {
             return Err(crate::error::MantaError::Internal(format!(
@@ -484,21 +471,13 @@ impl PluginRuntime {
         };
 
         let result_str = std::str::from_utf8(&result_bytes).map_err(|e| {
-            crate::error::MantaError::Internal(format!(
-                "Plugin returned invalid UTF-8: {}",
-                e
-            ))
+            crate::error::MantaError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
         })?;
 
-        let result: serde_json::Value =
-            serde_json::from_str(result_str).unwrap_or_else(|_| {
-                serde_json::json!({ "output": result_str })
-            });
+        let result: serde_json::Value = serde_json::from_str(result_str)
+            .unwrap_or_else(|_| serde_json::json!({ "output": result_str }));
 
-        debug!(
-            "Plugin tool '{}' executed successfully ({} bytes)",
-            tool_name, written
-        );
+        debug!("Plugin tool '{}' executed successfully ({} bytes)", tool_name, written);
         Ok(result)
     }
 

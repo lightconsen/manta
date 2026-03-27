@@ -18,7 +18,8 @@ use std::str::FromStr;
 
 /// Global scheduler reference for CronTool
 /// This is set by the Gateway after the CronScheduler is initialized
-static SCHEDULER: tokio::sync::OnceCell<Arc<Mutex<CronScheduler>>> = tokio::sync::OnceCell::const_new();
+static SCHEDULER: tokio::sync::OnceCell<Arc<Mutex<CronScheduler>>> =
+    tokio::sync::OnceCell::const_new();
 
 /// Cron tool for scheduling recurring tasks
 #[derive(Debug)]
@@ -110,7 +111,7 @@ impl Tool for CronTool {
             Some(s) => s,
             None => {
                 return Ok(ToolExecutionResult::error(
-                    "Cron scheduler is not yet initialized. Please try again in a moment."
+                    "Cron scheduler is not yet initialized. Please try again in a moment.",
                 ));
             }
         };
@@ -124,14 +125,14 @@ impl Tool for CronTool {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
                     crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
                 })?;
-                let schedule_str = args
-                    .get("schedule")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::MantaError::Validation(
-                            "Missing 'schedule' parameter".to_string(),
-                        )
-                    })?;
+                let schedule_str =
+                    args.get("schedule")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            crate::error::MantaError::Validation(
+                                "Missing 'schedule' parameter".to_string(),
+                            )
+                        })?;
                 let command = args
                     .get("command")
                     .and_then(|v| v.as_str())
@@ -157,9 +158,10 @@ impl Tool for CronTool {
                         stagger_ms: None,
                     },
                     Err(e) => {
-                        return Ok(ToolExecutionResult::error(
-                            &format!("Invalid cron expression '{}': {}", schedule_str, e)
-                        ));
+                        return Ok(ToolExecutionResult::error(&format!(
+                            "Invalid cron expression '{}': {}",
+                            schedule_str, e
+                        )));
                     }
                 };
 
@@ -223,8 +225,14 @@ impl Tool for CronTool {
                             output.push_str(&format!("   Command: {}\n", command));
                         }
                         ExecutionTarget::Agent { prompt, agent_id, .. } => {
-                            output.push_str(&format!("   Agent: {}\n", agent_id.as_deref().unwrap_or("default")));
-                            output.push_str(&format!("   Prompt: {}...\n", &prompt[..prompt.len().min(50)]));
+                            output.push_str(&format!(
+                                "   Agent: {}\n",
+                                agent_id.as_deref().unwrap_or("default")
+                            ));
+                            output.push_str(&format!(
+                                "   Prompt: {}...\n",
+                                &prompt[..prompt.len().min(50)]
+                            ));
                         }
                     }
                     output.push_str(&format!("   Run count: {}\n", job.state.run_count));

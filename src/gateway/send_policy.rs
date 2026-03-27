@@ -80,9 +80,7 @@ impl RuleCondition {
                 glob_match(pattern, content)
             }
             RuleCondition::Any => true,
-            RuleCondition::All(conds) => {
-                conds.iter().all(|c| c.matches(user_id, channel, content))
-            }
+            RuleCondition::All(conds) => conds.iter().all(|c| c.matches(user_id, channel, content)),
             RuleCondition::AnyOf(conds) => {
                 conds.iter().any(|c| c.matches(user_id, channel, content))
             }
@@ -240,12 +238,19 @@ impl SendPolicy {
 
     /// List all rules (for inspection/display).
     pub fn rules(&self) -> Vec<PolicyRule> {
-        self.inner.read().expect("SendPolicy lock poisoned").rules.clone()
+        self.inner
+            .read()
+            .expect("SendPolicy lock poisoned")
+            .rules
+            .clone()
     }
 
     /// Set the default policy.
     pub fn set_default(&self, default: DefaultPolicy) {
-        self.inner.write().expect("SendPolicy lock poisoned").default = default;
+        self.inner
+            .write()
+            .expect("SendPolicy lock poisoned")
+            .default = default;
     }
 
     /// Evaluate the policy for a given message context.
@@ -346,7 +351,9 @@ mod tests {
         let policy = SendPolicy::default();
         // Lower-priority allow added first, higher-priority deny added second
         policy.add_rule(
-            PolicyRule::allow("allow-all").condition(RuleCondition::Any).priority(1),
+            PolicyRule::allow("allow-all")
+                .condition(RuleCondition::Any)
+                .priority(1),
         );
         policy.add_rule(
             PolicyRule::deny("deny-user")
@@ -407,7 +414,9 @@ mod tests {
         // Both conditions must match.
         assert_eq!(
             policy.evaluate("suspect", "telegram", "hi"),
-            PolicyDecision::Deny { reason: "targeted-block".into() }
+            PolicyDecision::Deny {
+                reason: "targeted-block".into()
+            }
         );
         // Only one condition matches — rule should not fire.
         assert_eq!(policy.evaluate("suspect", "discord", "hi"), PolicyDecision::Allow);

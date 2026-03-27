@@ -376,7 +376,10 @@ impl SessionManager {
     }
 
     /// Get a shared handle to a session
-    pub fn get_session(&self, session_id: &str) -> Option<Arc<std::sync::Mutex<MultiAgentSession>>> {
+    pub fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<std::sync::Mutex<MultiAgentSession>>> {
         self.sessions.get(session_id).cloned()
     }
 
@@ -436,15 +439,16 @@ async fn session_processing_task(
         match msg {
             // ── Status query ────────────────────────────────────────────────
             SessionMessage::GetStatus { respond_to } => {
-                let status = session
-                    .lock()
-                    .map(|s| s.get_status())
-                    .unwrap_or_else(|_| SessionStatus {
-                        session_id: session_id.clone(),
-                        agent_count: 0,
-                        active_agents: vec![],
-                        thread_count: 0,
-                    });
+                let status =
+                    session
+                        .lock()
+                        .map(|s| s.get_status())
+                        .unwrap_or_else(|_| SessionStatus {
+                            session_id: session_id.clone(),
+                            agent_count: 0,
+                            active_agents: vec![],
+                            thread_count: 0,
+                        });
                 let _ = respond_to.send(status);
             }
 
@@ -483,7 +487,10 @@ async fn session_processing_task(
                             agent_id
                         );
                     } else {
-                        warn!("Session {}: RouteToAgent — agent {} not found", session_id, agent_id);
+                        warn!(
+                            "Session {}: RouteToAgent — agent {} not found",
+                            session_id, agent_id
+                        );
                     }
                 }
             }

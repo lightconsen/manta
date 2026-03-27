@@ -325,7 +325,10 @@ impl Default for MmrConfig {
 /// let reranked = mmr_rerank(results, &MmrConfig::default());
 /// assert!(!reranked.is_empty());
 /// ```
-pub fn mmr_rerank(candidates: Vec<HybridSearchResult>, config: &MmrConfig) -> Vec<HybridSearchResult> {
+pub fn mmr_rerank(
+    candidates: Vec<HybridSearchResult>,
+    config: &MmrConfig,
+) -> Vec<HybridSearchResult> {
     if candidates.is_empty() {
         return candidates;
     }
@@ -361,7 +364,10 @@ pub fn mmr_rerank(candidates: Vec<HybridSearchResult>, config: &MmrConfig) -> Ve
         selected.push(chosen);
     }
 
-    selected.into_iter().map(|i| candidates[i].clone()).collect()
+    selected
+        .into_iter()
+        .map(|i| candidates[i].clone())
+        .collect()
 }
 
 /// Word-level Jaccard similarity: |A ∩ B| / |A ∪ B|.
@@ -600,7 +606,9 @@ mod tests {
         let cfg = MmrConfig { lambda: 0.5, top_k: 2 };
         let reranked = mmr_rerank(results, &cfg);
         // First result: highest score "rust ownership..."
-        assert!(reranked[0].content.starts_with("rust ownership borrow move copy"));
+        assert!(reranked[0]
+            .content
+            .starts_with("rust ownership borrow move copy"));
         // Second result should be the diverse Python one, not the near-duplicate.
         assert_eq!(reranked.len(), 2);
         let has_diverse = reranked.iter().any(|r| r.content.starts_with("python"));

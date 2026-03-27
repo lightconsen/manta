@@ -123,7 +123,8 @@ impl From<&PendingApproval> for PendingApprovalSummary {
             id: pa.id.clone(),
             tool_name: pa.tool_name.clone(),
             args: pa.args.clone(),
-            requested_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::from_std(pa.requested_at.elapsed()).unwrap_or_default(),
+            requested_at: chrono::DateTime::UNIX_EPOCH
+                + chrono::Duration::from_std(pa.requested_at.elapsed()).unwrap_or_default(),
             requested_by: pa.requested_by.clone(),
             risk_level: pa.risk_level,
             message: pa.message.clone(),
@@ -191,8 +192,10 @@ impl ApprovalQueue {
             pending.insert(id.clone(), approval);
         }
 
-        info!("Approval {} submitted for tool '{}' (risk: {:?})",
-              id, event.tool_name, event.risk_level);
+        info!(
+            "Approval {} submitted for tool '{}' (risk: {:?})",
+            id, event.tool_name, event.risk_level
+        );
 
         // Broadcast event to subscribers (web UI, notifications, etc.)
         let _ = self.event_tx.send(event);
@@ -293,9 +296,15 @@ impl ApprovalQueue {
 
         let mut count = 0;
         for id in ids {
-            if self.resolve(&id, ApprovalDecision::Deny {
-                reason: "Cancelled: session ended".into()
-            }).await {
+            if self
+                .resolve(
+                    &id,
+                    ApprovalDecision::Deny {
+                        reason: "Cancelled: session ended".into(),
+                    },
+                )
+                .await
+            {
                 count += 1;
             }
         }
@@ -316,9 +325,15 @@ impl ApprovalQueue {
 
         let mut count = 0;
         for id in stale_ids {
-            if self.resolve(&id, ApprovalDecision::Deny {
-                reason: "Approval timed out".into()
-            }).await {
+            if self
+                .resolve(
+                    &id,
+                    ApprovalDecision::Deny {
+                        reason: "Approval timed out".into(),
+                    },
+                )
+                .await
+            {
                 count += 1;
                 debug!("Cleaned up stale approval {}", id);
             }
@@ -393,9 +408,9 @@ mod tests {
 
         let id = queue.submit(approval).await;
 
-        let resolved = queue.resolve(&id, ApprovalDecision::Deny {
-            reason: "Not allowed".into()
-        }).await;
+        let resolved = queue
+            .resolve(&id, ApprovalDecision::Deny { reason: "Not allowed".into() })
+            .await;
         assert!(resolved);
 
         let decision = rx.await.unwrap();
@@ -406,7 +421,9 @@ mod tests {
     async fn test_approval_queue_not_found() {
         let queue = ApprovalQueue::new();
 
-        let resolved = queue.resolve("nonexistent", ApprovalDecision::Approve).await;
+        let resolved = queue
+            .resolve("nonexistent", ApprovalDecision::Approve)
+            .await;
         assert!(!resolved);
     }
 
@@ -422,7 +439,11 @@ mod tests {
                 if i == 0 { "shell" } else { "memory_read" },
                 serde_json::json!({}),
                 if i == 0 { "user1" } else { "user2" },
-                if i == 2 { RiskLevel::Critical } else { RiskLevel::Medium },
+                if i == 2 {
+                    RiskLevel::Critical
+                } else {
+                    RiskLevel::Medium
+                },
                 "Test",
                 tx,
             );
@@ -456,13 +477,29 @@ mod tests {
         let (tx1, _rx1) = oneshot::channel();
         let (tx2, _rx2) = oneshot::channel();
 
-        queue.submit(PendingApproval::new(
-            "a1", "tool", serde_json::json!({}), "user1", RiskLevel::Low, "Test", tx1
-        )).await;
+        queue
+            .submit(PendingApproval::new(
+                "a1",
+                "tool",
+                serde_json::json!({}),
+                "user1",
+                RiskLevel::Low,
+                "Test",
+                tx1,
+            ))
+            .await;
 
-        queue.submit(PendingApproval::new(
-            "a2", "tool", serde_json::json!({}), "user2", RiskLevel::Low, "Test", tx2
-        )).await;
+        queue
+            .submit(PendingApproval::new(
+                "a2",
+                "tool",
+                serde_json::json!({}),
+                "user2",
+                RiskLevel::Low,
+                "Test",
+                tx2,
+            ))
+            .await;
 
         let cancelled = queue.cancel_for("user1").await;
         assert_eq!(cancelled, 1);

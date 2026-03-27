@@ -589,11 +589,16 @@ impl EventHandler for DiscordHandler {
             DmPolicy::Allowlist => {
                 // Check if user is in allowlist
                 let allow_list = self.allow_from.read().await;
-                let is_allowed = allow_list.iter().any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
+                let is_allowed = allow_list
+                    .iter()
+                    .any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
 
                 if !is_allowed {
                     warn!("User @{} ({}) is not in allowlist", username, user_id);
-                    let _ = msg.channel_id.say(&ctx.http, "🔒 This bot is private. You're not authorized to use it.").await;
+                    let _ = msg
+                        .channel_id
+                        .say(&ctx.http, "🔒 This bot is private. You're not authorized to use it.")
+                        .await;
                     return;
                 }
             }
@@ -603,42 +608,57 @@ impl EventHandler for DiscordHandler {
                     if let Some(store) = self.pairing_store.read().await.as_ref() {
                         if !store.is_authorized("discord", &user_id).await {
                             // Not authorized - check if they already have a pending request
-                            match store.request_access("discord", &user_id, Some(&username)).await {
+                            match store
+                                .request_access("discord", &user_id, Some(&username))
+                                .await
+                            {
                                 Ok(RequestAccessResult::AlreadyAuthorized) => {
                                     // Shouldn't happen since we just checked, but allow through
                                 }
                                 Ok(RequestAccessResult::NewRequest { code }) => {
-                                    info!("New pairing request from @{} ({}): code={}", username, user_id, code);
-                                    let _ = msg.channel_id.say(
-                                        &ctx.http,
-                                        format!(
-                                            "🔒 This bot requires pairing.\n\n\
+                                    info!(
+                                        "New pairing request from @{} ({}): code={}",
+                                        username, user_id, code
+                                    );
+                                    let _ = msg
+                                        .channel_id
+                                        .say(
+                                            &ctx.http,
+                                            format!(
+                                                "🔒 This bot requires pairing.\n\n\
                                             Your pairing code: **{}**\n\n\
                                             Please share this code with an admin to get access.\n\
                                             Or ask an admin to run:\n\
                                             `manta pairing approve discord {}`",
-                                            code, code
-                                        ),
-                                    ).await;
+                                                code, code
+                                            ),
+                                        )
+                                        .await;
                                     return;
                                 }
                                 Ok(RequestAccessResult::AlreadyPending { code, created_at: _ }) => {
-                                    let _ = msg.channel_id.say(
-                                        &ctx.http,
-                                        format!(
-                                            "⏳ Your pairing request is still pending.\n\n\
+                                    let _ = msg
+                                        .channel_id
+                                        .say(
+                                            &ctx.http,
+                                            format!(
+                                                "⏳ Your pairing request is still pending.\n\n\
                                             Code: **{}**\n\n\
                                             Please wait for an admin to approve your request.",
-                                            code
-                                        ),
-                                    ).await;
+                                                code
+                                            ),
+                                        )
+                                        .await;
                                     return;
                                 }
                                 Ok(RequestAccessResult::RateLimited { .. }) => {
-                                    let _ = msg.channel_id.say(
-                                        &ctx.http,
-                                        "⏳ Too many pairing requests. Please try again later."
-                                    ).await;
+                                    let _ = msg
+                                        .channel_id
+                                        .say(
+                                            &ctx.http,
+                                            "⏳ Too many pairing requests. Please try again later.",
+                                        )
+                                        .await;
                                     return;
                                 }
                                 Err(_) => {
@@ -652,7 +672,13 @@ impl EventHandler for DiscordHandler {
                         }
                     } else {
                         warn!("Pairing policy set but no pairing store configured");
-                        let _ = msg.channel_id.say(&ctx.http, "🔒 Pairing is not configured. Please contact the admin.").await;
+                        let _ = msg
+                            .channel_id
+                            .say(
+                                &ctx.http,
+                                "🔒 Pairing is not configured. Please contact the admin.",
+                            )
+                            .await;
                         return;
                     }
                 }

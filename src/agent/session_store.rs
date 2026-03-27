@@ -243,12 +243,10 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .ok();
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id)")
+            .execute(&self.pool)
+            .await
+            .ok();
 
         // Migrate existing session_messages rows: add thread_id, turn_index,
         // turn_state columns if they are not already present.
@@ -259,7 +257,8 @@ impl SessionStore {
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or(0) > 0;
+        .unwrap_or(0)
+            > 0;
 
         if !has_thread_id {
             sqlx::query("ALTER TABLE session_messages ADD COLUMN thread_id   TEXT")
@@ -787,11 +786,7 @@ impl SessionStore {
             result.push((tid, label, created_at, turns));
         }
 
-        debug!(
-            "Loaded {} threads for session {}",
-            result.len(),
-            session_id
-        );
+        debug!("Loaded {} threads for session {}", result.len(), session_id);
         Ok(result)
     }
 
@@ -817,19 +812,14 @@ impl SessionStore {
         .rows_affected();
 
         // Adjust session message_count (deleted rows are usually 2).
-        sqlx::query(
-            "UPDATE sessions SET message_count = MAX(0, message_count - ?) WHERE id = ?",
-        )
-        .bind(affected as i64)
-        .bind(session_id)
-        .execute(&self.pool)
-        .await
-        .ok();
+        sqlx::query("UPDATE sessions SET message_count = MAX(0, message_count - ?) WHERE id = ?")
+            .bind(affected as i64)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .ok();
 
-        debug!(
-            "Deleted turn {}/{}/{}: {} rows",
-            session_id, thread_id, turn_index, affected
-        );
+        debug!("Deleted turn {}/{}/{}: {} rows", session_id, thread_id, turn_index, affected);
         Ok(())
     }
 

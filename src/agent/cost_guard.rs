@@ -75,15 +75,12 @@ impl CostGuard {
 
         let (input_cpm, output_cpm) = Self::pricing_for_model(model);
         // cpm = cents per million tokens
-        let cost_cents =
-            (input_tokens * input_cpm + output_tokens * output_cpm) / 1_000_000;
+        let cost_cents = (input_tokens * input_cpm + output_tokens * output_cpm) / 1_000_000;
 
-        let new_daily =
-            self.daily_cents.fetch_add(cost_cents, Ordering::Relaxed) + cost_cents;
+        let new_daily = self.daily_cents.fetch_add(cost_cents, Ordering::Relaxed) + cost_cents;
         let new_hourly = self.hourly_actions.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let daily_exceeded =
-            self.daily_limit_cents > 0 && new_daily >= self.daily_limit_cents;
+        let daily_exceeded = self.daily_limit_cents > 0 && new_daily >= self.daily_limit_cents;
         let hourly_exceeded =
             self.hourly_action_limit > 0 && new_hourly >= self.hourly_action_limit;
 

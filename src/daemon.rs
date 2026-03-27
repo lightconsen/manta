@@ -100,7 +100,6 @@ impl DaemonManager {
     pub async fn run_foreground(&self) -> crate::Result<()> {
         println!("🚀 Manta daemon running with Gateway...");
 
-        
         use crate::gateway::{Gateway, GatewayConfig};
 
         // Try to load existing Gateway config from manta.toml

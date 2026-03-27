@@ -92,14 +92,9 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
             }
         }
 
-        SessionCommands::Turns {
-            session_id,
-            thread_id,
-        } => {
-            let url = format!(
-                "{}/api/sessions/{}/threads/{}/turns",
-                DAEMON_URL, session_id, thread_id
-            );
+        SessionCommands::Turns { session_id, thread_id } => {
+            let url =
+                format!("{}/api/sessions/{}/threads/{}/turns", DAEMON_URL, session_id, thread_id);
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -117,14 +112,9 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
             }
         }
 
-        SessionCommands::Undo {
-            session_id,
-            thread_id,
-        } => {
-            let url = format!(
-                "{}/api/sessions/{}/threads/{}/undo",
-                DAEMON_URL, session_id, thread_id
-            );
+        SessionCommands::Undo { session_id, thread_id } => {
+            let url =
+                format!("{}/api/sessions/{}/threads/{}/undo", DAEMON_URL, session_id, thread_id);
             match client.post(&url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -145,14 +135,9 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
             }
         }
 
-        SessionCommands::Redo {
-            session_id,
-            thread_id,
-        } => {
-            let url = format!(
-                "{}/api/sessions/{}/threads/{}/redo",
-                DAEMON_URL, session_id, thread_id
-            );
+        SessionCommands::Redo { session_id, thread_id } => {
+            let url =
+                format!("{}/api/sessions/{}/threads/{}/redo", DAEMON_URL, session_id, thread_id);
             match client.post(&url).send().await {
                 Ok(resp) => {
                     let status = resp.status();

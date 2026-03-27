@@ -101,9 +101,7 @@ pub type AfterHookFn = Arc<
 /// registered policy hooks are evaluated in registration order; the first
 /// `Deny` short-circuits further evaluation.
 pub type PolicyHookFn = Arc<
-    dyn Fn(&str, &Value) -> Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(&str, &Value) -> Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>> + Send + Sync,
 >;
 
 /// A collection of before/after/policy hooks for tool execution.
@@ -192,17 +190,14 @@ impl ToolHooks {
         Fut: Future<Output = ToolPolicyDecision> + Send + 'static,
     {
         self.policy_hooks.push(Arc::new(move |name, args| {
-            Box::pin(f(name, args))
-                as Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
+            Box::pin(f(name, args)) as Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
         }));
         self
     }
 
     /// Returns `true` if no hooks are registered.
     pub fn is_empty(&self) -> bool {
-        self.before_call.is_empty()
-            && self.after_call.is_empty()
-            && self.policy_hooks.is_empty()
+        self.before_call.is_empty() && self.after_call.is_empty() && self.policy_hooks.is_empty()
     }
 
     /// Run all registered policy hooks for the given tool call.
@@ -322,7 +317,9 @@ mod tests {
             let name = name.to_string();
             async move {
                 if name == "shell" {
-                    ToolPolicyDecision::Deny { reason: "shell disabled".into() }
+                    ToolPolicyDecision::Deny {
+                        reason: "shell disabled".into(),
+                    }
                 } else {
                     ToolPolicyDecision::Allow
                 }
@@ -330,7 +327,12 @@ mod tests {
         });
 
         let decision = hooks.run_policy("shell", &serde_json::json!({})).await;
-        assert_eq!(decision, ToolPolicyDecision::Deny { reason: "shell disabled".into() });
+        assert_eq!(
+            decision,
+            ToolPolicyDecision::Deny {
+                reason: "shell disabled".into()
+            }
+        );
 
         let decision = hooks.run_policy("memory", &serde_json::json!({})).await;
         assert_eq!(decision, ToolPolicyDecision::Allow);

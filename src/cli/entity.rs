@@ -126,7 +126,12 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
             }
         }
-        EntityCommands::Create { name, entity_type, status, metadata } => {
+        EntityCommands::Create {
+            name,
+            entity_type,
+            status,
+            metadata,
+        } => {
             let url = format!("{}/api/v1/entities", DAEMON_URL);
             let meta_value: serde_json::Value = metadata
                 .as_deref()

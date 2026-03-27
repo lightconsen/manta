@@ -280,10 +280,7 @@ impl ContextCompressor {
     fn create_summary(&self, messages: &[Message]) -> Message {
         let mut lines: Vec<String> = Vec::new();
 
-        let non_empty: Vec<&Message> = messages
-            .iter()
-            .filter(|m| !m.content.is_empty())
-            .collect();
+        let non_empty: Vec<&Message> = messages.iter().filter(|m| !m.content.is_empty()).collect();
 
         let mut i = 0;
         while i < non_empty.len() {
@@ -317,11 +314,8 @@ impl ContextCompressor {
             i += 1;
         }
 
-        let content = format!(
-            "[Summary of {} previous messages]\n{}",
-            messages.len(),
-            lines.join("\n")
-        );
+        let content =
+            format!("[Summary of {} previous messages]\n{}", messages.len(), lines.join("\n"));
 
         Message {
             role: Role::System,

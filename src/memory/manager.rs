@@ -19,7 +19,7 @@ use super::{
     pipeline::EmbeddingPipelineHandle,
     session_search::SessionSearch,
     vector::VectorMemoryService,
-    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStore, MemoryStats,
+    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     UnifiedStore,
 };
 
@@ -335,10 +335,7 @@ impl MemoryManager {
             self.store.search(mq).await?
         };
 
-        Ok(SessionContext {
-            messages,
-            memories,
-        })
+        Ok(SessionContext { messages, memories })
     }
 
     /// Remember a user message (store in chat history).
@@ -349,8 +346,7 @@ impl MemoryManager {
         role: impl Into<String>,
         content: impl Into<String>,
     ) -> crate::Result<()> {
-        let msg =
-            ChatMessage::new(conversation_id, user_id, role, content);
+        let msg = ChatMessage::new(conversation_id, user_id, role, content);
         self.store.store_message(msg).await
     }
 
@@ -414,9 +410,7 @@ impl MemoryManager {
 
             let id = self
                 .observe(
-                    &user_id,
-                    fact,
-                    "semantic", // Memory type: extracted fact
+                    &user_id, fact, "semantic", // Memory type: extracted fact
                     0.6,        // Medium importance
                 )
                 .await?;
@@ -442,11 +436,7 @@ impl MemoryManager {
             self.store.store(marker).await?;
         }
 
-        info!(
-            "Session {} compacted: {} facts extracted",
-            conversation_id,
-            stored_ids.len()
-        );
+        info!("Session {} compacted: {} facts extracted", conversation_id, stored_ids.len());
         Ok(stored_ids)
     }
 
@@ -541,10 +531,7 @@ impl MemoryManagerBuilder {
         self
     }
 
-    pub async fn build(
-        self,
-        database_url: impl AsRef<str>,
-    ) -> crate::Result<MemoryManager> {
+    pub async fn build(self, database_url: impl AsRef<str>) -> crate::Result<MemoryManager> {
         let store = Arc::new(UnifiedStore::new(database_url.as_ref()).await?);
         let mut mm = MemoryManager::new(store, self.config);
 
@@ -622,7 +609,10 @@ mod tests {
             .unwrap();
 
         // Get context
-        let ctx = mm.session_context("user1", "conv1", Some::<&str>("food")).await.unwrap();
+        let ctx = mm
+            .session_context("user1", "conv1", Some::<&str>("food"))
+            .await
+            .unwrap();
 
         assert_eq!(ctx.messages.len(), 2);
     }

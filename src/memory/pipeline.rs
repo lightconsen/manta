@@ -276,9 +276,8 @@ mod tests {
         let mut handles = vec![];
         for i in 0..8 {
             let h = handle.clone();
-            handles.push(tokio::spawn(async move {
-                h.embed(format!("text {}", i)).await.unwrap()
-            }));
+            handles
+                .push(tokio::spawn(async move { h.embed(format!("text {}", i)).await.unwrap() }));
         }
 
         // Wait for all

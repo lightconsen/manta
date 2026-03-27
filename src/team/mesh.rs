@@ -124,13 +124,8 @@ impl TeamMeshManager {
             let agent_name_clone = agent_name.clone();
             let inboxes_clone = Arc::clone(&self.agent_inboxes);
             tokio::spawn(async move {
-                Self::agent_message_receiver(
-                    team_id_clone,
-                    agent_name_clone,
-                    rx,
-                    inboxes_clone,
-                )
-                .await;
+                Self::agent_message_receiver(team_id_clone, agent_name_clone, rx, inboxes_clone)
+                    .await;
             });
 
             info!("Registered agent '{}' with team '{}' mesh", agent_name, team_id);
@@ -455,7 +450,10 @@ impl TeamMeshManager {
 
             // Store in agent's inbox for retrieval via `receive_messages_for`
             let mut inboxes = inboxes.write().await;
-            inboxes.entry(inbox_key.clone()).or_insert_with(Vec::new).push(msg);
+            inboxes
+                .entry(inbox_key.clone())
+                .or_insert_with(Vec::new)
+                .push(msg);
         }
 
         debug!("Message receiver for {} stopped", inbox_key);
@@ -466,11 +464,7 @@ impl TeamMeshManager {
     /// Returns messages in FIFO order and clears the inbox.  The agent (or
     /// `TeamCommunicateTool`) can call this to get messages sent to it by
     /// other team members.
-    pub async fn receive_messages_for(
-        &self,
-        team_id: &str,
-        agent_name: &str,
-    ) -> Vec<MeshMessage> {
+    pub async fn receive_messages_for(&self, team_id: &str, agent_name: &str) -> Vec<MeshMessage> {
         let inbox_key = format!("{}:{}", team_id, agent_name);
         let mut inboxes = self.agent_inboxes.write().await;
         inboxes.remove(&inbox_key).unwrap_or_default()

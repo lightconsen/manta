@@ -234,7 +234,10 @@ impl CommandGate {
 
     /// Snapshot of all configured user levels.
     pub fn user_levels(&self) -> HashMap<String, UserLevel> {
-        self.levels.read().expect("CommandGate lock poisoned").clone()
+        self.levels
+            .read()
+            .expect("CommandGate lock poisoned")
+            .clone()
     }
 }
 
@@ -260,7 +263,10 @@ mod tests {
     fn test_classify_admin_command() {
         assert_eq!(RequestClass::classify("/admin providers"), RequestClass::AdminCommand);
         assert_eq!(RequestClass::classify("/security audit"), RequestClass::AdminCommand);
-        assert_eq!(RequestClass::classify("/security pair --channel telegram"), RequestClass::AdminCommand);
+        assert_eq!(
+            RequestClass::classify("/security pair --channel telegram"),
+            RequestClass::AdminCommand
+        );
     }
 
     #[test]

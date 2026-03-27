@@ -201,32 +201,30 @@ async fn install_skill_local(source: &str, name: Option<&str>) -> Result<()> {
     let dest = skills_dir.join(&skill_name);
 
     // Detect git URL vs local path
-    if source.starts_with("http://") || source.starts_with("https://") || source.ends_with(".git")
-    {
+    if source.starts_with("http://") || source.starts_with("https://") || source.ends_with(".git") {
         println!("Cloning skill '{}' from {}", skill_name, source);
         let status = tokio::process::Command::new("git")
-            .args(["clone", "--depth=1", source, dest.to_str().unwrap_or_default()])
+            .args([
+                "clone",
+                "--depth=1",
+                source,
+                dest.to_str().unwrap_or_default(),
+            ])
             .status()
             .await
             .map_err(|e| MantaError::Internal(format!("Failed to run git clone: {}", e)))?;
         if !status.success() {
-            return Err(MantaError::Internal(format!(
-                "git clone failed for '{}'",
-                source
-            )));
+            return Err(MantaError::Internal(format!("git clone failed for '{}'", source)));
         }
     } else {
         // Local directory copy
         let src_path = std::path::Path::new(source);
         if !src_path.exists() {
-            return Err(MantaError::Internal(format!(
-                "Source path does not exist: {}",
-                source
-            )));
+            return Err(MantaError::Internal(format!("Source path does not exist: {}", source)));
         }
-        copy_dir_recursive(src_path, &dest).await.map_err(|e| {
-            MantaError::Internal(format!("Failed to copy skill directory: {}", e))
-        })?;
+        copy_dir_recursive(src_path, &dest)
+            .await
+            .map_err(|e| MantaError::Internal(format!("Failed to copy skill directory: {}", e)))?;
     }
 
     println!("Skill '{}' installed to {:?}", skill_name, dest);
@@ -235,10 +233,7 @@ async fn install_skill_local(source: &str, name: Option<&str>) -> Result<()> {
 }
 
 /// Recursively copy a directory tree.
-async fn copy_dir_recursive(
-    src: &std::path::Path,
-    dst: &std::path::Path,
-) -> std::io::Result<()> {
+async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;
     while let Some(entry) = entries.next_entry().await? {
@@ -277,9 +272,9 @@ async fn setup_skill_deps(name: Option<&str>) -> Result<()> {
         if !skill_md.exists() {
             continue;
         }
-        let content = tokio::fs::read_to_string(&skill_md).await.map_err(|e| {
-            MantaError::Internal(format!("Failed to read {:?}: {}", skill_md, e))
-        })?;
+        let content = tokio::fs::read_to_string(&skill_md)
+            .await
+            .map_err(|e| MantaError::Internal(format!("Failed to read {:?}: {}", skill_md, e)))?;
 
         let skill_file = match SkillFile::parse(&content, skill_md.clone()) {
             Ok(sf) => sf,
@@ -291,10 +286,7 @@ async fn setup_skill_deps(name: Option<&str>) -> Result<()> {
 
         let specs = &skill_file.frontmatter.install;
         if specs.is_empty() {
-            println!(
-                "No install specs for skill '{}'",
-                skill_file.frontmatter.name
-            );
+            println!("No install specs for skill '{}'", skill_file.frontmatter.name);
             continue;
         }
 
@@ -312,7 +304,11 @@ async fn setup_skill_deps(name: Option<&str>) -> Result<()> {
 }
 
 /// Create a new SKILL.md template in the given directory.
-async fn init_skill_template(name: &str, path: Option<&std::path::Path>, template: &str) -> Result<()> {
+async fn init_skill_template(
+    name: &str,
+    path: Option<&std::path::Path>,
+    template: &str,
+) -> Result<()> {
     let target_dir = if let Some(p) = path {
         p.to_path_buf()
     } else {
@@ -368,9 +364,9 @@ install: []
     };
 
     let skill_md_path = target_dir.join("SKILL.md");
-    tokio::fs::write(&skill_md_path, skill_md_content).await.map_err(|e| {
-        MantaError::Internal(format!("Failed to write SKILL.md: {}", e))
-    })?;
+    tokio::fs::write(&skill_md_path, skill_md_content)
+        .await
+        .map_err(|e| MantaError::Internal(format!("Failed to write SKILL.md: {}", e)))?;
 
     println!("Created skill '{}' at {:?}", name, target_dir);
     println!("Edit {:?} to configure your skill.", skill_md_path);

@@ -209,10 +209,7 @@ impl LarkChannel {
                         Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
                         Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
                             false,
-                            Some(format!(
-                                "您的接入申请正在等待管理员审批。配对码：`{}`",
-                                code
-                            )),
+                            Some(format!("您的接入申请正在等待管理员审批。配对码：`{}`", code)),
                         ),
                         Ok(RequestAccessResult::NewRequest { code }) => (
                             false,
@@ -221,14 +218,10 @@ impl LarkChannel {
                                 code
                             )),
                         ),
-                        Ok(RequestAccessResult::RateLimited { .. }) => (
-                            false,
-                            Some("请求过于频繁，请稍后再试。".to_string()),
-                        ),
-                        Err(_) => (
-                            false,
-                            Some("处理请求时发生错误。".to_string()),
-                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => {
+                            (false, Some("请求过于频繁，请稍后再试。".to_string()))
+                        }
+                        Err(_) => (false, Some("处理请求时发生错误。".to_string())),
                     }
                 } else {
                     (false, Some("访问控制未配置。".to_string()))

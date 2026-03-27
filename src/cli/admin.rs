@@ -211,7 +211,12 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
                 }
             }
         }
-        AdminCommands::Send { session_id, message, provider, model } => {
+        AdminCommands::Send {
+            session_id,
+            message,
+            provider,
+            model,
+        } => {
             let url = format!("{}/api/v1/sessions/{}/messages", DAEMON_URL, session_id);
             let body = serde_json::json!({
                 "content": message,

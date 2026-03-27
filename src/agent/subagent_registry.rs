@@ -415,7 +415,9 @@ impl SubagentRegistry {
                     .completed_at
                     .and_then(|t| now_instant.checked_duration_since(t))
                     .unwrap_or_default();
-                let completed_at = now_system.checked_sub(elapsed_completed).unwrap_or(now_system);
+                let completed_at = now_system
+                    .checked_sub(elapsed_completed)
+                    .unwrap_or(now_system);
 
                 Some(RunRecord {
                     run_id: r.run_id.clone(),

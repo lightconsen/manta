@@ -566,9 +566,7 @@ impl ToolRegistry {
     pub fn is_degraded(&self, name: &str) -> bool {
         self.failure_counts
             .read()
-            .map(|counts| {
-                counts.get(name).copied().unwrap_or(0) >= Self::CIRCUIT_BREAKER_THRESHOLD
-            })
+            .map(|counts| counts.get(name).copied().unwrap_or(0) >= Self::CIRCUIT_BREAKER_THRESHOLD)
             .unwrap_or(false)
     }
 
@@ -783,7 +781,8 @@ impl ToolRegistry {
     /// List available tool names (excludes blocked and degraded tools).
     /// Includes both statically- and dynamically-registered tools.
     pub fn list(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.tools
+        let mut names: Vec<String> = self
+            .tools
             .keys()
             .filter(|name| !self.is_blocked(name) && !self.is_degraded(name))
             .cloned()
@@ -818,7 +817,8 @@ impl ToolRegistry {
     /// Get all tools as function definitions (excludes blocked and degraded tools).
     /// Includes both statically- and dynamically-registered tools.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
-        let mut defs: Vec<FunctionDefinition> = self.tools
+        let mut defs: Vec<FunctionDefinition> = self
+            .tools
             .iter()
             .filter(|(name, _)| !self.is_blocked(name) && !self.is_degraded(name))
             .map(|(_, t)| t.to_function_definition())
@@ -844,7 +844,8 @@ impl ToolRegistry {
     ///
     /// Includes both statically- and dynamically-registered tools.
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
-        let mut defs: Vec<FunctionDefinition> = self.tools
+        let mut defs: Vec<FunctionDefinition> = self
+            .tools
             .iter()
             .filter(|(name, t)| {
                 !self.is_excluded(name, context.skill_trust) && t.is_available(context)
@@ -931,7 +932,10 @@ impl ToolRegistry {
                 // Wait for human decision
                 match rx.await {
                     Ok(ApprovalDecision::Approve) => {
-                        tracing::info!("Approval {} granted, proceeding with tool execution", approval_id);
+                        tracing::info!(
+                            "Approval {} granted, proceeding with tool execution",
+                            approval_id
+                        );
                         // Proceed with execution below
                     }
                     Ok(ApprovalDecision::Deny { reason }) => {

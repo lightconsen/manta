@@ -329,41 +329,34 @@ impl AcpControlPlane {
                         // Build a debug-logging callback so tool activity inside
                         // the subagent surfaces in logs.
                         let sid_cb = subagent_id_clone.clone();
-                        let progress_cb: crate::agent::ProgressCallback =
-                            Arc::new(move |event| {
-                                let sid = sid_cb.clone();
-                                Box::pin(async move {
-                                    match event {
-                                        crate::agent::ProgressEvent::ToolCalling {
-                                            name,
-                                            arguments,
-                                        } => {
-                                            debug!(
-                                                "Subagent {} calling tool {}: {}",
-                                                sid, name, arguments
-                                            );
-                                        }
-                                        crate::agent::ProgressEvent::ToolResult {
-                                            name,
-                                            result,
-                                        } => {
-                                            debug!(
-                                                "Subagent {} tool {} result: {} chars",
-                                                sid,
-                                                name,
-                                                result.len()
-                                            );
-                                        }
-                                        crate::agent::ProgressEvent::Error { message } => {
-                                            warn!(
-                                                "Subagent {} progress error: {}",
-                                                sid, message
-                                            );
-                                        }
-                                        _ => {}
+                        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+                            let sid = sid_cb.clone();
+                            Box::pin(async move {
+                                match event {
+                                    crate::agent::ProgressEvent::ToolCalling {
+                                        name,
+                                        arguments,
+                                    } => {
+                                        debug!(
+                                            "Subagent {} calling tool {}: {}",
+                                            sid, name, arguments
+                                        );
                                     }
-                                })
-                            });
+                                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                        debug!(
+                                            "Subagent {} tool {} result: {} chars",
+                                            sid,
+                                            name,
+                                            result.len()
+                                        );
+                                    }
+                                    crate::agent::ProgressEvent::Error { message } => {
+                                        warn!("Subagent {} progress error: {}", sid, message);
+                                    }
+                                    _ => {}
+                                }
+                            })
+                        });
 
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(timeout.unwrap_or(300)),

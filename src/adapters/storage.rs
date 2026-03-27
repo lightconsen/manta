@@ -1181,16 +1181,15 @@ impl MemoryStore for SqliteStorage {
 
     async fn cleanup_expired(&self) -> crate::Result<usize> {
         let now = system_time_to_secs(std::time::SystemTime::now());
-        let result = sqlx::query(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1",
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
-            source: "Failed to cleanup expired memories".to_string(),
-            cause: Some(Box::new(e)),
-        })?;
+        let result =
+            sqlx::query("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1")
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: "Failed to cleanup expired memories".to_string(),
+                    cause: Some(Box::new(e)),
+                })?;
 
         Ok(result.rows_affected() as usize)
     }

@@ -236,7 +236,13 @@ pub struct StorageReference {
 
 impl StorageReference {
     /// Create a new storage reference.
-    pub fn new(backend: impl Into<String>, bucket: impl Into<String>, key: impl Into<String>, hash: impl Into<String>, size: usize) -> Self {
+    pub fn new(
+        backend: impl Into<String>,
+        bucket: impl Into<String>,
+        key: impl Into<String>,
+        hash: impl Into<String>,
+        size: usize,
+    ) -> Self {
         Self {
             backend: backend.into(),
             bucket: bucket.into(),
@@ -274,7 +280,12 @@ pub struct MediaAttachment {
 
 impl MediaAttachment {
     /// Create a new media attachment.
-    pub fn new(id: impl Into<String>, mime_type: impl Into<String>, filename: impl Into<String>, content: MediaContent) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        mime_type: impl Into<String>,
+        filename: impl Into<String>,
+        content: MediaContent,
+    ) -> Self {
         let size_bytes = match &content {
             MediaContent::Text(t) => t.len(),
             MediaContent::Audio(a) => a.size_bytes(),
@@ -330,7 +341,11 @@ pub trait SttProvider: Send + Sync {
     /// # Arguments
     /// * `audio` - The audio data to transcribe
     /// * `language` - Expected language code (e.g., "en-US")
-    async fn transcribe(&self, audio: &AudioData, language: Option<&str>) -> Result<TranscriptionResult>;
+    async fn transcribe(
+        &self,
+        audio: &AudioData,
+        language: Option<&str>,
+    ) -> Result<TranscriptionResult>;
 
     /// Provider name.
     fn name(&self) -> &str;
@@ -364,7 +379,12 @@ pub trait ImageProvider: Send + Sync {
     /// * `prompt` - Text description of desired image
     /// * `size` - Target dimensions (width, height)
     /// * `format` - Output format
-    async fn generate(&self, prompt: &str, size: (u32, u32), format: ImageFormat) -> Result<ImageData>;
+    async fn generate(
+        &self,
+        prompt: &str,
+        size: (u32, u32),
+        format: ImageFormat,
+    ) -> Result<ImageData>;
 
     /// Edit/modify an existing image.
     ///
@@ -372,7 +392,12 @@ pub trait ImageProvider: Send + Sync {
     /// * `image` - Base image to edit
     /// * `prompt` - Edit instructions
     /// * `mask` - Optional mask for selective editing
-    async fn edit(&self, image: &ImageData, prompt: &str, mask: Option<&ImageData>) -> Result<ImageData>;
+    async fn edit(
+        &self,
+        image: &ImageData,
+        prompt: &str,
+        mask: Option<&ImageData>,
+    ) -> Result<ImageData>;
 
     /// Create image variations.
     ///
@@ -417,7 +442,8 @@ pub trait MediaStorage: Send + Sync {
     async fn delete(&self, reference: &StorageReference) -> Result<()>;
 
     /// Generate temporary access URL.
-    async fn presigned_url(&self, reference: &StorageReference, expiry_secs: u64) -> Result<String>;
+    async fn presigned_url(&self, reference: &StorageReference, expiry_secs: u64)
+        -> Result<String>;
 
     /// Storage backend name.
     fn name(&self) -> &str;
@@ -502,7 +528,12 @@ impl MediaPipeline {
     }
 
     /// Synthesize text to speech.
-    pub async fn synthesize_speech(&self, text: &str, voice: &str, speed: f64) -> Result<AudioData> {
+    pub async fn synthesize_speech(
+        &self,
+        text: &str,
+        voice: &str,
+        speed: f64,
+    ) -> Result<AudioData> {
         match &self.tts {
             Some(provider) => provider.synthesize(text, voice, speed).await,
             None => Err(MantaError::Validation("TTS provider not configured".into())),
@@ -510,7 +541,11 @@ impl MediaPipeline {
     }
 
     /// Transcribe speech to text.
-    pub async fn transcribe_audio(&self, audio: &AudioData, language: Option<&str>) -> Result<TranscriptionResult> {
+    pub async fn transcribe_audio(
+        &self,
+        audio: &AudioData,
+        language: Option<&str>,
+    ) -> Result<TranscriptionResult> {
         match &self.stt {
             Some(provider) => provider.transcribe(audio, language).await,
             None => Err(MantaError::Validation("STT provider not configured".into())),
@@ -518,7 +553,12 @@ impl MediaPipeline {
     }
 
     /// Generate image from prompt.
-    pub async fn generate_image(&self, prompt: &str, size: (u32, u32), format: ImageFormat) -> Result<ImageData> {
+    pub async fn generate_image(
+        &self,
+        prompt: &str,
+        size: (u32, u32),
+        format: ImageFormat,
+    ) -> Result<ImageData> {
         match &self.image {
             Some(provider) => provider.generate(prompt, size, format).await,
             None => Err(MantaError::Validation("Image provider not configured".into())),
@@ -534,7 +574,12 @@ impl MediaPipeline {
     }
 
     /// Store media and return reference.
-    pub async fn store(&self, key: &str, data: Bytes, content_type: &str) -> Result<StorageReference> {
+    pub async fn store(
+        &self,
+        key: &str,
+        data: Bytes,
+        content_type: &str,
+    ) -> Result<StorageReference> {
         match &self.storage {
             Some(storage) => storage.store(key, data, content_type).await,
             None => Err(MantaError::Validation("Media storage not configured".into())),
@@ -566,7 +611,8 @@ mod tests {
         assert!(text.is_text());
         assert!(!text.is_audio());
 
-        let audio = MediaContent::Audio(AudioData::new(vec![1, 2, 3], AudioFormat::Mp3, 44100, 2, 1.0));
+        let audio =
+            MediaContent::Audio(AudioData::new(vec![1, 2, 3], AudioFormat::Mp3, 44100, 2, 1.0));
         assert!(audio.is_audio());
         assert!(!audio.is_text());
     }
@@ -602,8 +648,9 @@ mod tests {
 
     #[test]
     fn test_storage_reference() {
-        let storage_ref = StorageReference::new("s3", "my-bucket", "path/to/file.mp3", "abc123", 1024)
-            .with_url("https://example.com/file.mp3");
+        let storage_ref =
+            StorageReference::new("s3", "my-bucket", "path/to/file.mp3", "abc123", 1024)
+                .with_url("https://example.com/file.mp3");
 
         assert_eq!(storage_ref.backend, "s3");
         assert_eq!(storage_ref.url, Some("https://example.com/file.mp3".to_string()));

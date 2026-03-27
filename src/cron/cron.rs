@@ -98,7 +98,10 @@ pub enum DeliveryMode {
     /// Send to messaging channel
     Announce { channel: String, to: String },
     /// POST to webhook URL
-    Webhook { url: String, headers: HashMap<String, String> },
+    Webhook {
+        url: String,
+        headers: HashMap<String, String>,
+    },
 }
 
 /// Schedule types
@@ -108,7 +111,10 @@ pub enum Schedule {
     /// Run at a specific time (one-shot)
     At { timestamp: DateTime<Utc> },
     /// Run every N seconds
-    Every { interval: Duration, anchor: Option<DateTime<Utc>> },
+    Every {
+        interval: Duration,
+        anchor: Option<DateTime<Utc>>,
+    },
     /// Cron expression
     Cron {
         expression: String,
@@ -484,12 +490,15 @@ impl CronScheduler {
                 let delay_ms = Self::calculate_next_wake_ms(&jobs_for_timer).await;
 
                 // Cap at MAX_TIMER_DELAY_MS to ensure we wake at least once per minute
-                let capped_delay = delay_ms.map(|d| d.min(MAX_TIMER_DELAY_MS)).unwrap_or(MAX_TIMER_DELAY_MS);
+                let capped_delay = delay_ms
+                    .map(|d| d.min(MAX_TIMER_DELAY_MS))
+                    .unwrap_or(MAX_TIMER_DELAY_MS);
 
                 // Ensure minimum delay to prevent tight loops
                 let final_delay = capped_delay.max(MIN_REFIRE_GAP_MS);
 
-                debug!("Timer armed: delay={}ms (capped={}, min={})",
+                debug!(
+                    "Timer armed: delay={}ms (capped={}, min={})",
                     delay_ms.unwrap_or(u64::MAX),
                     capped_delay,
                     final_delay
@@ -528,7 +537,8 @@ impl CronScheduler {
 
                 let result = async {
                     Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx).await;
-                }.await;
+                }
+                .await;
 
                 // Always mark as not running and continue (re-arm happens at loop start)
                 *running.write().await = false;
@@ -745,7 +755,9 @@ impl CronScheduler {
 
                         // Deliver result if configured
                         if !matches!(j.delivery, DeliveryMode::None) {
-                            if let Err(e) = Self::deliver_result(&j.delivery, output, announce_tx).await {
+                            if let Err(e) =
+                                Self::deliver_result(&j.delivery, output, announce_tx).await
+                            {
                                 warn!("Delivery failed for job '{}': {}", j.name, e);
                             }
                         }
@@ -761,7 +773,9 @@ impl CronScheduler {
                         // Check if we should retry
                         if j.state.consecutive_errors <= j.retry.max_retries {
                             let delay = j.retry.delay_for_attempt(j.state.consecutive_errors);
-                            let retry_at = completed_at + chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::seconds(60));
+                            let retry_at = completed_at
+                                + chrono::Duration::from_std(delay)
+                                    .unwrap_or_else(|_| chrono::Duration::seconds(60));
                             warn!("Scheduling retry for job '{}' at {:?}", j.name, retry_at);
                             j.state.next_run_at = Some(retry_at);
                         } else {
@@ -851,7 +865,10 @@ impl CronScheduler {
                     .await
                     .map_err(|_| MantaError::Internal("Announce channel closed".to_string()))?;
                 } else {
-                    debug!("No announce_tx configured; output: {}", output.chars().take(100).collect::<String>());
+                    debug!(
+                        "No announce_tx configured; output: {}",
+                        output.chars().take(100).collect::<String>()
+                    );
                 }
                 Ok(())
             }
@@ -918,9 +935,11 @@ impl CronScheduler {
                 .await
                 .map_err(|e| MantaError::Internal(format!("Failed to open run log: {}", e)))?;
             use tokio::io::AsyncWriteExt;
-            file.write_all(line.as_bytes()).await
+            file.write_all(line.as_bytes())
+                .await
                 .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
-            file.write_all(b"\n").await
+            file.write_all(b"\n")
+                .await
                 .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
         }
 
@@ -957,10 +976,7 @@ impl CronScheduler {
     }
 
     /// Save jobs to store
-    async fn save_jobs(
-        jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
-        path: &PathBuf,
-    ) -> Result<()> {
+    async fn save_jobs(jobs: &Arc<RwLock<HashMap<String, CronJob>>>, path: &PathBuf) -> Result<()> {
         let jobs_lock = jobs.read().await;
         let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
 

@@ -199,10 +199,14 @@ impl Thread {
             None => false,
             Some(turn) => {
                 // Restore user message to context
-                self.context.add_message(crate::providers::Message::user(&turn.user_message));
+                self.context
+                    .add_message(crate::providers::Message::user(&turn.user_message));
                 // Restore assistant response if present
                 if !turn.assistant_response.is_empty() {
-                    self.context.add_message(crate::providers::Message::assistant(&turn.assistant_response));
+                    self.context
+                        .add_message(crate::providers::Message::assistant(
+                            &turn.assistant_response,
+                        ));
                 }
                 // Re-insert turn (with corrected index)
                 let corrected_index = self.turns.len();
@@ -280,12 +284,16 @@ impl ThreadManager {
 
     /// Undo the last turn in the named thread.  Returns `true` if successful.
     pub fn undo(&mut self, thread_id: &str) -> bool {
-        self.get_mut(thread_id).map(|t| t.undo_last_turn()).unwrap_or(false)
+        self.get_mut(thread_id)
+            .map(|t| t.undo_last_turn())
+            .unwrap_or(false)
     }
 
     /// Redo the most recently undone turn in the named thread.  Returns `true` if successful.
     pub fn redo(&mut self, thread_id: &str) -> bool {
-        self.get_mut(thread_id).map(|t| t.redo_last_turn()).unwrap_or(false)
+        self.get_mut(thread_id)
+            .map(|t| t.redo_last_turn())
+            .unwrap_or(false)
     }
 
     /// Returns `true` if the named thread can undo.
@@ -347,8 +355,12 @@ mod tests {
         assert_eq!(thread.turn_count(), 1);
 
         // Add user message to context to mirror what the agent loop does.
-        thread.context.add_message(crate::providers::Message::user("What is 2+2?"));
-        thread.context.add_message(crate::providers::Message::assistant("4"));
+        thread
+            .context
+            .add_message(crate::providers::Message::user("What is 2+2?"));
+        thread
+            .context
+            .add_message(crate::providers::Message::assistant("4"));
 
         assert!(thread.undo_last_turn());
         assert_eq!(thread.turn_count(), 0);
@@ -362,8 +374,12 @@ mod tests {
 
         // Setup: push a turn with messages
         thread.push_turn("What is 2+2?");
-        thread.context.add_message(crate::providers::Message::user("What is 2+2?"));
-        thread.context.add_message(crate::providers::Message::assistant("4"));
+        thread
+            .context
+            .add_message(crate::providers::Message::user("What is 2+2?"));
+        thread
+            .context
+            .add_message(crate::providers::Message::assistant("4"));
         thread.turns[0].complete("4");
 
         assert_eq!(thread.turn_count(), 1);
@@ -414,7 +430,9 @@ mod tests {
         let mut thread = make_thread();
 
         thread.push_turn("Turn 1");
-        thread.context.add_message(crate::providers::Message::user("Turn 1"));
+        thread
+            .context
+            .add_message(crate::providers::Message::user("Turn 1"));
         thread.turns[0].complete("Response 1");
 
         thread.undo_last_turn();
@@ -440,7 +458,9 @@ mod tests {
         // Setup: add a thread with a turn
         let thread = mgr.get_mut("test").unwrap();
         thread.push_turn("Hello");
-        thread.context.add_message(crate::providers::Message::user("Hello"));
+        thread
+            .context
+            .add_message(crate::providers::Message::user("Hello"));
 
         // Can check undo/redo availability
         assert!(mgr.can_undo("test"));

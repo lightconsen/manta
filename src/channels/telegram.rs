@@ -301,20 +301,22 @@ impl Channel for TelegramChannel {
 
             // Spawn the update dispatcher with captured message sender
             tokio::spawn(async move {
-                let handler =
-                    dptree::entry().branch(Update::filter_message().endpoint(
-                        move |bot: Bot, msg: Message| {
-                            let tx = message_tx.clone();
-                            let allowed = allowed_usernames.clone();
-                            let sessions = session_map.clone();
-                            let ps = pairing_store.clone();
-                            let policy = dm_policy.clone();
-                            let af = allow_from.clone();
-                            async move {
-                                handle_message_with_sender(bot, msg, tx, allowed, sessions, ps, policy, af).await
-                            }
-                        },
-                    ));
+                let handler = dptree::entry().branch(Update::filter_message().endpoint(
+                    move |bot: Bot, msg: Message| {
+                        let tx = message_tx.clone();
+                        let allowed = allowed_usernames.clone();
+                        let sessions = session_map.clone();
+                        let ps = pairing_store.clone();
+                        let policy = dm_policy.clone();
+                        let af = allow_from.clone();
+                        async move {
+                            handle_message_with_sender(
+                                bot, msg, tx, allowed, sessions, ps, policy, af,
+                            )
+                            .await
+                        }
+                    },
+                ));
 
                 let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
                     .enable_ctrlc_handler()
@@ -582,12 +584,17 @@ async fn handle_message_with_sender(
             DmPolicy::Allowlist => {
                 // Check if user is in allowlist
                 let allow_list = allow_from.read().await;
-                let is_allowed = allow_list.iter().any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
+                let is_allowed = allow_list
+                    .iter()
+                    .any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
 
                 if !is_allowed {
                     warn!("User @{} ({}) is not in allowlist", username, user_id);
-                    bot.send_message(msg.chat.id, "🔒 This bot is private. You're not authorized to use it.")
-                        .await?;
+                    bot.send_message(
+                        msg.chat.id,
+                        "🔒 This bot is private. You're not authorized to use it.",
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
@@ -596,12 +603,18 @@ async fn handle_message_with_sender(
                 if let Some(store) = pairing_store.read().await.as_ref() {
                     if !store.is_authorized("telegram", &user_id).await {
                         // Not authorized - check if they already have a pending request
-                        match store.request_access("telegram", &user_id, Some(&username)).await {
+                        match store
+                            .request_access("telegram", &user_id, Some(&username))
+                            .await
+                        {
                             Ok(RequestAccessResult::AlreadyAuthorized) => {
                                 // Shouldn't happen since we just checked, but allow through
                             }
                             Ok(RequestAccessResult::NewRequest { code }) => {
-                                info!("New pairing request from @{} ({}): code={}", username, user_id, code);
+                                info!(
+                                    "New pairing request from @{} ({}): code={}",
+                                    username, user_id, code
+                                );
                                 bot.send_message(
                                     msg.chat.id,
                                     format!(
@@ -651,8 +664,11 @@ async fn handle_message_with_sender(
                     }
                 } else {
                     warn!("Pairing policy set but no pairing store configured");
-                    bot.send_message(msg.chat.id, "🔒 Pairing is not configured. Please contact the admin.")
-                        .await?;
+                    bot.send_message(
+                        msg.chat.id,
+                        "🔒 Pairing is not configured. Please contact the admin.",
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
@@ -732,7 +748,10 @@ async fn handle_message_with_sender(
                 .await?;
             }
         } else {
-            warn!("No message_tx configured for Telegram channel — message from @{} dropped", username);
+            warn!(
+                "No message_tx configured for Telegram channel — message from @{} dropped",
+                username
+            );
         }
     }
 

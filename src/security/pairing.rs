@@ -141,7 +141,9 @@ pub struct AuthorizedUser {
 impl AuthorizedUser {
     /// Return `true` if the authorization has not yet expired.
     pub fn is_valid(&self) -> bool {
-        self.expires_at.map(|exp| SystemTime::now() < exp).unwrap_or(true)
+        self.expires_at
+            .map(|exp| SystemTime::now() < exp)
+            .unwrap_or(true)
     }
 }
 
@@ -151,7 +153,10 @@ pub enum RequestAccessResult {
     /// New pairing request created.
     NewRequest { code: String },
     /// Already has a pending request.
-    AlreadyPending { code: String, created_at: SystemTime },
+    AlreadyPending {
+        code: String,
+        created_at: SystemTime,
+    },
     /// Already authorized.
     AlreadyAuthorized,
     /// Rate limited (too many requests).
@@ -511,11 +516,7 @@ impl PairingStore {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    async fn check_rate_limits(
-        &self,
-        channel: &str,
-        user_id: &str,
-    ) -> Result<(), PairingError> {
+    async fn check_rate_limits(&self, channel: &str, user_id: &str) -> Result<(), PairingError> {
         // Count existing pending requests for this user
         let pending = self.pending.read().await;
         let user_request_count = pending
@@ -525,10 +526,7 @@ impl PairingStore {
 
         if user_request_count >= self.max_requests_per_user {
             return Err(PairingError::RateLimited {
-                message: format!(
-                    "Maximum {} pending requests reached",
-                    self.max_requests_per_user
-                ),
+                message: format!("Maximum {} pending requests reached", self.max_requests_per_user),
                 retry_after: self.min_request_interval,
             });
         }
@@ -543,7 +541,10 @@ impl PairingStore {
 #[derive(Debug, Clone)]
 pub enum PairingError {
     /// Rate limit exceeded.
-    RateLimited { message: String, retry_after: Duration },
+    RateLimited {
+        message: String,
+        retry_after: Duration,
+    },
     /// Internal error.
     Internal(String),
 }
@@ -586,7 +587,9 @@ mod tests {
         let store = PairingStore::new();
 
         // User requests access
-        let result = store.request_access("telegram", "123456", Some("@alice")).await;
+        let result = store
+            .request_access("telegram", "123456", Some("@alice"))
+            .await;
         assert!(matches!(result, Ok(RequestAccessResult::NewRequest { .. })));
 
         let code = match result.unwrap() {
@@ -650,8 +653,14 @@ mod tests {
     async fn test_list_pending() {
         let store = PairingStore::new();
 
-        store.request_access("telegram", "111", Some("@user1")).await.unwrap();
-        store.request_access("telegram", "222", Some("@user2")).await.unwrap();
+        store
+            .request_access("telegram", "111", Some("@user1"))
+            .await
+            .unwrap();
+        store
+            .request_access("telegram", "222", Some("@user2"))
+            .await
+            .unwrap();
         store.request_access("discord", "333", None).await.unwrap();
 
         let pending_telegram = store.list_pending("telegram").await;
@@ -699,7 +708,9 @@ mod tests {
     async fn test_revoke() {
         let store = PairingStore::new();
 
-        let user = store.add_to_allowlist("telegram", "123456", None, None).await;
+        let user = store
+            .add_to_allowlist("telegram", "123456", None, None)
+            .await;
         assert!(store.is_authorized("telegram", "123456").await);
 
         store.revoke("telegram", "123456").await;

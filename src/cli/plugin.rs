@@ -65,9 +65,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                     let body = resp.text().await.unwrap_or_default();
                     if *verbose {
                         println!("{}", body);
-                    } else if let Ok(json) =
-                        serde_json::from_str::<serde_json::Value>(&body)
-                    {
+                    } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                         let empty = vec![];
                         let plugins = json["plugins"].as_array().unwrap_or(&empty);
                         println!("Plugins ({}):", plugins.len());
@@ -93,9 +91,9 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
         PluginCommands::Install { path, name } => {
             // Resolve destination inside the Manta plugins directory.
             let plugins_dir = crate::dirs::config_dir().join("plugins");
-            tokio::fs::create_dir_all(&plugins_dir).await.map_err(|e| {
-                MantaError::Internal(format!("Cannot create plugins dir: {}", e))
-            })?;
+            tokio::fs::create_dir_all(&plugins_dir)
+                .await
+                .map_err(|e| MantaError::Internal(format!("Cannot create plugins dir: {}", e)))?;
 
             let dest_name = name
                 .clone()
@@ -112,9 +110,9 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
             if path.is_dir() {
                 copy_dir_all(path, &dest).await?;
             } else {
-                tokio::fs::copy(path, &dest).await.map_err(|e| {
-                    MantaError::Internal(format!("Copy failed: {}", e))
-                })?;
+                tokio::fs::copy(path, &dest)
+                    .await
+                    .map_err(|e| MantaError::Internal(format!("Copy failed: {}", e)))?;
             }
 
             println!("Plugin installed to {:?}", dest);
@@ -192,9 +190,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let body = resp.text().await.unwrap_or_default();
-                    if let Ok(json) =
-                        serde_json::from_str::<serde_json::Value>(&body)
-                    {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                         let empty = vec![];
                         let plugins = json["plugins"].as_array().unwrap_or(&empty);
                         let found = plugins.iter().find(|p| {
@@ -202,10 +198,9 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                                 || p["name"].as_str() == Some(name.as_str())
                         });
                         match found {
-                            Some(p) => println!(
-                                "{}",
-                                serde_json::to_string_pretty(p).unwrap_or_default()
-                            ),
+                            Some(p) => {
+                                println!("{}", serde_json::to_string_pretty(p).unwrap_or_default())
+                            }
                             None => {
                                 eprintln!("Plugin '{}' not found", name);
                             }
@@ -249,13 +244,13 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
 
 /// Recursively copy a directory tree.
 async fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
-    tokio::fs::create_dir_all(dst).await.map_err(|e| {
-        MantaError::Internal(format!("mkdir {:?}: {}", dst, e))
-    })?;
+    tokio::fs::create_dir_all(dst)
+        .await
+        .map_err(|e| MantaError::Internal(format!("mkdir {:?}: {}", dst, e)))?;
 
-    let mut entries = tokio::fs::read_dir(src).await.map_err(|e| {
-        MantaError::Internal(format!("read_dir {:?}: {}", src, e))
-    })?;
+    let mut entries = tokio::fs::read_dir(src)
+        .await
+        .map_err(|e| MantaError::Internal(format!("read_dir {:?}: {}", src, e)))?;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let src_path = entry.path();
@@ -263,9 +258,9 @@ async fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
         if src_path.is_dir() {
             Box::pin(copy_dir_all(&src_path, &dst_path)).await?;
         } else {
-            tokio::fs::copy(&src_path, &dst_path).await.map_err(|e| {
-                MantaError::Internal(format!("copy {:?}: {}", src_path, e))
-            })?;
+            tokio::fs::copy(&src_path, &dst_path)
+                .await
+                .map_err(|e| MantaError::Internal(format!("copy {:?}: {}", src_path, e)))?;
         }
     }
 

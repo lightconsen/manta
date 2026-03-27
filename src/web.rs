@@ -455,14 +455,12 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
 async fn sse_events_handler(
     State(state): State<WebTerminalState>,
 ) -> axum::response::sse::Sse<
-    impl futures_core::Stream<
-        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
-    >,
+    impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
     use tokio::sync::broadcast;
     use tokio_stream::wrappers::BroadcastStream;
-    use futures_util::StreamExt;
 
     // Create a broadcast channel for events
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(100);
@@ -495,14 +493,16 @@ async fn web_terminal_chat_handler(
     State(state): State<WebTerminalState>,
     Json(body): Json<WebTerminalChatRequest>,
 ) -> impl axum::response::IntoResponse {
-    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let conversation_id = body
+        .conversation_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let message_id = uuid::Uuid::new_v4().to_string();
 
     // Process the message with the agent
     let incoming = IncomingMessage::new(
         body.user_id.as_deref().unwrap_or("web_user"),
         &conversation_id,
-        &body.message
+        &body.message,
     );
 
     match state.agent.process_message(incoming).await {
@@ -529,14 +529,12 @@ async fn web_terminal_chat_handler(
 async fn sse_events_daemon_handler(
     State(_state): State<DaemonWebState>,
 ) -> axum::response::sse::Sse<
-    impl futures_core::Stream<
-        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
-    >,
+    impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
     use tokio::sync::broadcast;
     use tokio_stream::wrappers::BroadcastStream;
-    use futures_util::StreamExt;
 
     // Create a broadcast channel for events
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(100);
@@ -567,11 +565,17 @@ async fn web_terminal_chat_daemon_handler(
     State(state): State<DaemonWebState>,
     Json(body): Json<WebTerminalChatRequest>,
 ) -> impl axum::response::IntoResponse {
-    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let conversation_id = body
+        .conversation_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let message_id = uuid::Uuid::new_v4().to_string();
 
     // Process the message with the daemon client
-    match state.client.chat(&body.message, Some(&conversation_id)).await {
+    match state
+        .client
+        .chat(&body.message, Some(&conversation_id))
+        .await
+    {
         Ok(_response) => {
             let resp = serde_json::json!({
                 "message_id": message_id,

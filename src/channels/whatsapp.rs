@@ -198,7 +198,11 @@ impl WhatsappChannel {
 
     /// Check if a user is authorized to use the bot (for webhook handler)
     /// Returns (is_authorized, response_message)
-    pub async fn check_access(&self, phone_number: &str, name: Option<&str>) -> (bool, Option<String>) {
+    pub async fn check_access(
+        &self,
+        phone_number: &str,
+        name: Option<&str>,
+    ) -> (bool, Option<String>) {
         let policy = *self.dm_policy.read().await;
 
         match policy {
@@ -206,14 +210,19 @@ impl WhatsappChannel {
             DmPolicy::Allowlist => {
                 let allow_list = self.allow_from.read().await;
                 let normalized = phone_number.trim_start_matches('+');
-                let is_allowed = allow_list.iter().any(|n| {
-                    n.trim_start_matches('+') == normalized
-                });
+                let is_allowed = allow_list
+                    .iter()
+                    .any(|n| n.trim_start_matches('+') == normalized);
 
                 if is_allowed {
                     (true, None)
                 } else {
-                    (false, Some("🔒 This bot is private. You're not authorized to use it.".to_string()))
+                    (
+                        false,
+                        Some(
+                            "🔒 This bot is private. You're not authorized to use it.".to_string(),
+                        ),
+                    )
                 }
             }
             DmPolicy::Pairing => {
@@ -227,32 +236,49 @@ impl WhatsappChannel {
                     match store.request_access("whatsapp", normalized, name).await {
                         Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
                         Ok(RequestAccessResult::NewRequest { code }) => {
-                            info!("New WhatsApp pairing request from {}: code={}", phone_number, code);
-                            (false, Some(format!(
-                                "🔒 This bot requires pairing.\n\n\
+                            info!(
+                                "New WhatsApp pairing request from {}: code={}",
+                                phone_number, code
+                            );
+                            (
+                                false,
+                                Some(format!(
+                                    "🔒 This bot requires pairing.\n\n\
                                 Your pairing code: *{}*\n\n\
                                 Please share this code with an admin to get access.",
-                                code
-                            )))
+                                    code
+                                )),
+                            )
                         }
-                        Ok(RequestAccessResult::AlreadyPending { code, .. }) => {
-                            (false, Some(format!(
+                        Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
+                            false,
+                            Some(format!(
                                 "⏳ Your pairing request is still pending.\n\n\
                                 Code: *{}*\n\n\
                                 Please wait for an admin to approve your request.",
                                 code
-                            )))
-                        }
-                        Ok(RequestAccessResult::RateLimited { .. }) => {
-                            (false, Some("⏳ Too many pairing requests. Please try again later.".to_string()))
-                        }
-                        Err(_) => {
-                            (false, Some("❌ Error processing pairing request. Please try again later.".to_string()))
-                        }
+                            )),
+                        ),
+                        Ok(RequestAccessResult::RateLimited { .. }) => (
+                            false,
+                            Some(
+                                "⏳ Too many pairing requests. Please try again later.".to_string(),
+                            ),
+                        ),
+                        Err(_) => (
+                            false,
+                            Some(
+                                "❌ Error processing pairing request. Please try again later."
+                                    .to_string(),
+                            ),
+                        ),
                     }
                 } else {
                     warn!("Pairing policy set but no pairing store configured");
-                    (false, Some("🔒 Pairing is not configured. Please contact the admin.".to_string()))
+                    (
+                        false,
+                        Some("🔒 Pairing is not configured. Please contact the admin.".to_string()),
+                    )
                 }
             }
         }

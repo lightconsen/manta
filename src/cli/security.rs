@@ -94,115 +94,130 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
-        SecurityCommands::Pairing { command } => {
-            match command {
-                PairingCommands::List { channel } => {
-                    let mut url = format!("{}/api/v1/pairing/pending", DAEMON_URL);
-                    if let Some(ch) = channel {
-                        url.push_str(&format!("?channel={}", ch));
-                    }
-                    match client.get(&url).send().await {
-                        Ok(resp) => {
-                            let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                            if let Some(requests) = body.get("requests").and_then(|r| r.as_array()) {
-                                if requests.is_empty() {
-                                    println!("No pending pairing requests.");
-                                } else {
-                                    println!("Pending Pairing Requests:");
-                                    println!("{:<12} {:<15} {:<20} {}", "Code", "Channel", "User ID", "Created");
-                                    println!("{}", "-".repeat(70));
-                                    for req in requests {
-                                        println!("{:<12} {:<15} {:<20} {}",
-                                            req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
-                                            req.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
-                                            req.get("user_id").and_then(|u| u.as_str()).unwrap_or("-"),
-                                            req.get("created_at").and_then(|c| c.as_str()).unwrap_or("-"),
-                                        );
-                                    }
+        SecurityCommands::Pairing { command } => match command {
+            PairingCommands::List { channel } => {
+                let mut url = format!("{}/api/v1/pairing/pending", DAEMON_URL);
+                if let Some(ch) = channel {
+                    url.push_str(&format!("?channel={}", ch));
+                }
+                match client.get(&url).send().await {
+                    Ok(resp) => {
+                        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                        if let Some(requests) = body.get("requests").and_then(|r| r.as_array()) {
+                            if requests.is_empty() {
+                                println!("No pending pairing requests.");
+                            } else {
+                                println!("Pending Pairing Requests:");
+                                println!(
+                                    "{:<12} {:<15} {:<20} {}",
+                                    "Code", "Channel", "User ID", "Created"
+                                );
+                                println!("{}", "-".repeat(70));
+                                for req in requests {
+                                    println!(
+                                        "{:<12} {:<15} {:<20} {}",
+                                        req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
+                                        req.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
+                                        req.get("user_id").and_then(|u| u.as_str()).unwrap_or("-"),
+                                        req.get("created_at")
+                                            .and_then(|c| c.as_str())
+                                            .unwrap_or("-"),
+                                    );
                                 }
                             }
                         }
-                        Err(e) => {
-                            eprintln!("Failed to reach daemon: {}", e);
-                            return Err(MantaError::Internal(e.to_string()));
-                        }
                     }
-                    Ok(())
-                }
-                PairingCommands::Approve { channel, code, as_admin } => {
-                    let url = format!("{}/api/v1/pairing/approve", DAEMON_URL);
-                    let body = json!({
-                        "channel": channel,
-                        "code": code,
-                        "approved_by": as_admin,
-                    });
-                    match client.post(&url).json(&body).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_success() {
-                                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                                let user_id = body.get("user_id").and_then(|u| u.as_str()).unwrap_or("unknown");
-                                println!("✅ Approved pairing request {} for user {} on {}", code, user_id, channel);
-                            } else {
-                                let text = resp.text().await.unwrap_or_default();
-                                eprintln!("Failed to approve: {}", text);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to reach daemon: {}", e);
-                            return Err(MantaError::Internal(e.to_string()));
-                        }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
                     }
-                    Ok(())
                 }
-                PairingCommands::Reject { channel, code } => {
-                    let url = format!("{}/api/v1/pairing/reject", DAEMON_URL);
-                    let body = json!({
-                        "channel": channel,
-                        "code": code,
-                    });
-                    match client.post(&url).json(&body).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_success() {
-                                println!("❌ Rejected pairing request {} on {}", code, channel);
-                            } else {
-                                let text = resp.text().await.unwrap_or_default();
-                                eprintln!("Failed to reject: {}", text);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to reach daemon: {}", e);
-                            return Err(MantaError::Internal(e.to_string()));
-                        }
-                    }
-                    Ok(())
-                }
-                PairingCommands::Allow { channel, user_id, username } => {
-                    let url = format!("{}/api/v1/pairing/allow", DAEMON_URL);
-                    let body = json!({
-                        "channel": channel,
-                        "user_id": user_id,
-                        "username": username,
-                    });
-                    match client.post(&url).json(&body).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_success() {
-                                println!("✅ Added {} to allowlist for {}", user_id, channel);
-                            } else {
-                                let text = resp.text().await.unwrap_or_default();
-                                eprintln!("Failed to add to allowlist: {}", text);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to reach daemon: {}", e);
-                            return Err(MantaError::Internal(e.to_string()));
-                        }
-                    }
-                    Ok(())
-                }
+                Ok(())
             }
-        }
+            PairingCommands::Approve { channel, code, as_admin } => {
+                let url = format!("{}/api/v1/pairing/approve", DAEMON_URL);
+                let body = json!({
+                    "channel": channel,
+                    "code": code,
+                    "approved_by": as_admin,
+                });
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                            let user_id = body
+                                .get("user_id")
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("unknown");
+                            println!(
+                                "✅ Approved pairing request {} for user {} on {}",
+                                code, user_id, channel
+                            );
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            eprintln!("Failed to approve: {}", text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+            PairingCommands::Reject { channel, code } => {
+                let url = format!("{}/api/v1/pairing/reject", DAEMON_URL);
+                let body = json!({
+                    "channel": channel,
+                    "code": code,
+                });
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            println!("❌ Rejected pairing request {} on {}", code, channel);
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            eprintln!("Failed to reject: {}", text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+            PairingCommands::Allow { channel, user_id, username } => {
+                let url = format!("{}/api/v1/pairing/allow", DAEMON_URL);
+                let body = json!({
+                    "channel": channel,
+                    "user_id": user_id,
+                    "username": username,
+                });
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            println!("✅ Added {} to allowlist for {}", user_id, channel);
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            eprintln!("Failed to add to allowlist: {}", text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+        },
 
-        SecurityCommands::Audit { format, paths, skip_leaks, skip_sandbox } => {
+        SecurityCommands::Audit {
+            format,
+            paths,
+            skip_leaks,
+            skip_sandbox,
+        } => {
             // Run local security audit
             let config = crate::config::Config::load()?;
             let mut audit_config = crate::security::audit::AuditConfig::default();
@@ -315,16 +330,31 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                         "🔴"
                     };
 
-                    println!("║  Overall Score: {} {}/100                           ║", score_color, report.score);
+                    println!(
+                        "║  Overall Score: {} {}/100                           ║",
+                        score_color, report.score
+                    );
                     println!("║                                                              ║");
-                    println!("║  Permissions:  {}/{} passed                           ║",
-                        report.permissions.passed, report.permissions.total_checks);
-                    println!("║  Tools:        {}/{} passing                          ║",
-                        report.tools.passing, report.tools.total_tools);
-                    println!("║  Data Leaks:   {} found in {} checks                  ║",
-                        report.data_leaks.leaks_found, report.data_leaks.checks_performed);
-                    println!("║  Sandbox:      {}                                    ║",
-                        if report.sandbox.enabled { "✅ Enabled" } else { "❌ Disabled" });
+                    println!(
+                        "║  Permissions:  {}/{} passed                           ║",
+                        report.permissions.passed, report.permissions.total_checks
+                    );
+                    println!(
+                        "║  Tools:        {}/{} passing                          ║",
+                        report.tools.passing, report.tools.total_tools
+                    );
+                    println!(
+                        "║  Data Leaks:   {} found in {} checks                  ║",
+                        report.data_leaks.leaks_found, report.data_leaks.checks_performed
+                    );
+                    println!(
+                        "║  Sandbox:      {}                                    ║",
+                        if report.sandbox.enabled {
+                            "✅ Enabled"
+                        } else {
+                            "❌ Disabled"
+                        }
+                    );
                     println!("╚══════════════════════════════════════════════════════════════╝");
                     println!();
 
@@ -361,9 +391,10 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
 
             // Return error if critical issues found (for CI/CD use)
             if !report.critical_issues.is_empty() {
-                return Err(MantaError::Validation(
-                    format!("Security audit found {} critical issues", report.critical_issues.len())
-                ));
+                return Err(MantaError::Validation(format!(
+                    "Security audit found {} critical issues",
+                    report.critical_issues.len()
+                )));
             }
 
             Ok(())

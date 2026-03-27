@@ -29,13 +29,13 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
-use crate::security::pairing::DmPolicy;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
     MemoryVectorStore, VectorMemoryService,
 };
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
+use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
@@ -463,8 +463,7 @@ pub struct GatewayState {
     /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
-    pub cron_scheduler:
-        RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
+    pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// Rate limiter for API protection
@@ -553,7 +552,8 @@ pub enum AgentQuery {
         user_id: String,
         /// Trust level of the invoking skill — constrains which tools are available.
         skill_trust: crate::tools::SkillTrust,
-        response_tx: tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
+        response_tx:
+            tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
     },
 }
 
@@ -823,11 +823,12 @@ impl Gateway {
                 info!("Connecting to SQLite storage at: {}", db_url);
 
                 // Create shared pool for both storage and session search
-                let pool = sqlx::SqlitePool::connect(&db_url).await
-                    .map_err(|e| crate::error::MantaError::Storage {
+                let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
+                    crate::error::MantaError::Storage {
                         context: "Failed to connect to SQLite".into(),
                         details: e.to_string(),
-                    })?;
+                    }
+                })?;
 
                 let sqlite_storage = Arc::new(crate::adapters::SqliteStorage::new(pool.clone()));
                 // Clone the Arc for use as VectorStore trait object
@@ -1016,12 +1017,12 @@ impl Gateway {
                     info!("Initializing MemoryManager with hybrid search...");
                     // Create store from the existing pool (shared connection)
                     let store = Arc::new(
-                        crate::memory::UnifiedStore::new_with_pool(pool.clone()).await.map_err(|e| {
-                            crate::error::MantaError::Storage {
+                        crate::memory::UnifiedStore::new_with_pool(pool.clone())
+                            .await
+                            .map_err(|e| crate::error::MantaError::Storage {
                                 context: "Failed to create UnifiedStore".into(),
                                 details: e.to_string(),
-                            }
-                        })?,
+                            })?,
                     );
                     let mm = crate::memory::MemoryManager::new(
                         store,
@@ -1034,12 +1035,12 @@ impl Gateway {
                 } else {
                     info!("Initializing MemoryManager (vector search disabled)...");
                     let store = Arc::new(
-                        crate::memory::UnifiedStore::new_with_pool(pool.clone()).await.map_err(|e| {
-                            crate::error::MantaError::Storage {
+                        crate::memory::UnifiedStore::new_with_pool(pool.clone())
+                            .await
+                            .map_err(|e| crate::error::MantaError::Storage {
                                 context: "Failed to create UnifiedStore".into(),
                                 details: e.to_string(),
-                            }
-                        })?,
+                            })?,
                     );
                     let mm = crate::memory::MemoryManager::new(
                         store,
@@ -1074,7 +1075,7 @@ impl Gateway {
         // Initialize cron scheduler if enabled
         if config.cron.enabled {
             info!("Initializing advanced cron scheduler...");
-            use crate::cron::cron::{CronScheduler, AnnounceDelivery};
+            use crate::cron::cron::{AnnounceDelivery, CronScheduler};
             let (cron_scheduler, command_rx) = CronScheduler::new();
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
@@ -1093,7 +1094,9 @@ impl Gateway {
                         to: delivery.to,
                         message: delivery.message.clone(),
                     }) {
-                        Ok(receiver_count) => info!("Cron announce broadcast to {} receivers", receiver_count),
+                        Ok(receiver_count) => {
+                            info!("Cron announce broadcast to {} receivers", receiver_count)
+                        }
                         Err(e) => warn!("Failed to broadcast cron announce: {}", e),
                     }
                 }
@@ -1500,17 +1503,18 @@ async fn spawn_agent_inner(
     // Start agent processing loop
     let agent_id = id.clone();
 
-        tokio::spawn(async move {
-            info!("Agent {} processing loop started", agent_id);
+    tokio::spawn(async move {
+        info!("Agent {} processing loop started", agent_id);
 
-            // Start per-agent stale-context eviction loop (check every 5 min,
-            // evict contexts idle > 30 min)
-            let repair_handle = agent.start_self_repair_loop(
-                std::time::Duration::from_secs(300),
-                std::time::Duration::from_secs(1800),
-            );
+        // Start per-agent stale-context eviction loop (check every 5 min,
+        // evict contexts idle > 30 min)
+        let repair_handle = agent.start_self_repair_loop(
+            std::time::Duration::from_secs(300),
+            std::time::Duration::from_secs(1800),
+        );
 
-            loop { tokio::select! {
+        loop {
+            tokio::select! {
                 cmd = rx.recv() => {
                 let cmd = match cmd { Some(c) => c, None => break };
                 match cmd {
@@ -1694,16 +1698,17 @@ async fn spawn_agent_inner(
                         }
                     }
                 }
-            }} // end tokio::select! and loop
+            }
+        } // end tokio::select! and loop
 
-            info!("Agent {} processing loop ended", agent_id);
+        info!("Agent {} processing loop ended", agent_id);
 
-            // Stop the per-agent repair task when the agent exits
-            repair_handle.abort();
-        });
+        // Stop the per-agent repair task when the agent exits
+        repair_handle.abort();
+    });
 
-        Ok(())
-    }
+    Ok(())
+}
 
 impl Gateway {
     /// Spawn an agent from its personality (on-demand spawning)
@@ -1834,15 +1839,10 @@ impl Gateway {
 
                     if let Some(client_arc) = self.state.mcp_manager.get_client(server_id).await {
                         for tool in tools.iter().take(max_tools) {
-                            let wrapper = Arc::new(McpToolWrapper::new(
-                                client_arc.clone(),
-                                server_id,
-                                tool,
-                            ));
+                            let wrapper =
+                                Arc::new(McpToolWrapper::new(client_arc.clone(), server_id, tool));
                             self.state.tool_registry.register_dynamic(wrapper);
-                            debug!(
-                                "  Registered MCP tool: mcp__{}__{}", server_id, tool.name
-                            );
+                            debug!("  Registered MCP tool: mcp__{}__{}", server_id, tool.name);
                         }
                     }
                 }
@@ -2484,10 +2484,7 @@ impl Gateway {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        info!(
-                            "Agent config changed for '{}': {:?}",
-                            agent_name, event.path
-                        );
+                        info!("Agent config changed for '{}': {:?}", agent_name, event.path);
 
                         let content = match tokio::fs::read_to_string(&event.path).await {
                             Ok(c) => c,
@@ -2500,10 +2497,7 @@ impl Gateway {
                         let new_config: AgentConfig = match toml::from_str(&content) {
                             Ok(c) => c,
                             Err(e) => {
-                                error!(
-                                    "Failed to parse agent config for '{}': {}",
-                                    agent_name, e
-                                );
+                                error!("Failed to parse agent config for '{}': {}", agent_name, e);
                                 return Ok(());
                             }
                         };
@@ -2548,18 +2542,12 @@ impl Gateway {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        info!(
-                            "Channel config changed for '{}': {:?}",
-                            channel_name, event.path
-                        );
+                        info!("Channel config changed for '{}': {:?}", channel_name, event.path);
 
                         let content = match tokio::fs::read_to_string(&event.path).await {
                             Ok(c) => c,
                             Err(e) => {
-                                error!(
-                                    "Failed to read channel config {:?}: {}",
-                                    event.path, e
-                                );
+                                error!("Failed to read channel config {:?}: {}", event.path, e);
                                 return Ok(());
                             }
                         };
@@ -2590,8 +2578,10 @@ impl Gateway {
                         }
 
                         // Re-initialize with new config
-                        let gateway =
-                            Gateway { state: state.clone(), config: current_config.clone() };
+                        let gateway = Gateway {
+                            state: state.clone(),
+                            config: current_config.clone(),
+                        };
                         match gateway
                             .init_single_channel(&channel_name, &new_channel_config)
                             .await
@@ -2627,10 +2617,7 @@ impl Gateway {
                             .unwrap_or_default()
                             .to_string();
 
-                        info!(
-                            "Plugin config changed for '{}': {:?}",
-                            plugin_id, event.path
-                        );
+                        info!("Plugin config changed for '{}': {:?}", plugin_id, event.path);
 
                         if plugin_id.is_empty() {
                             warn!("Could not determine plugin ID from path {:?}", event.path);
@@ -2643,7 +2630,10 @@ impl Gateway {
                                 info!("Unloaded plugin '{}' for reload", plugin_id);
                                 match state.plugin_manager.load_plugin(&plugin_dir).await {
                                     Ok(loaded_id) => {
-                                        info!("✅ Reloaded plugin '{}' (id={})", plugin_id, loaded_id)
+                                        info!(
+                                            "✅ Reloaded plugin '{}' (id={})",
+                                            plugin_id, loaded_id
+                                        )
                                     }
                                     Err(e) => {
                                         error!("Failed to reload plugin '{}': {}", plugin_id, e)
@@ -2654,7 +2644,10 @@ impl Gateway {
                                 // Plugin wasn't loaded, try a fresh load
                                 match state.plugin_manager.load_plugin(&plugin_dir).await {
                                     Ok(loaded_id) => {
-                                        info!("✅ Loaded new plugin '{}' (id={})", plugin_id, loaded_id)
+                                        info!(
+                                            "✅ Loaded new plugin '{}' (id={})",
+                                            plugin_id, loaded_id
+                                        )
                                     }
                                     Err(e) => {
                                         warn!("Could not load plugin '{}': {}", plugin_id, e)
@@ -2684,10 +2677,7 @@ impl Gateway {
                         let content = match tokio::fs::read_to_string(&event.path).await {
                             Ok(c) => c,
                             Err(e) => {
-                                error!(
-                                    "Failed to read gateway config {:?}: {}",
-                                    event.path, e
-                                );
+                                error!("Failed to read gateway config {:?}: {}", event.path, e);
                                 return Ok(());
                             }
                         };
@@ -2942,7 +2932,10 @@ async fn create_default_tool_registry(
     // ShellTool needs network access (git, curl, etc.); CodeExecutionTool does not.
     registry.register(Box::new(SandboxedTool::new(
         ShellTool::new(),
-        SandboxConfig { allow_network_access: true, ..SandboxConfig::default() },
+        SandboxConfig {
+            allow_network_access: true,
+            ..SandboxConfig::default()
+        },
     )));
     registry.register(Box::new(SandboxedTool::new(
         CodeExecutionTool::default(),
@@ -3058,10 +3051,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
             if rec.abandoned {
                 false
             } else if rec.restart_count >= MAX_RESTARTS {
-                error!(
-                    "Agent {} exceeded max restarts ({}), abandoning",
-                    agent_id, MAX_RESTARTS
-                );
+                error!("Agent {} exceeded max restarts ({}), abandoning", agent_id, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
             } else if rec
@@ -3089,10 +3079,7 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
                     .or_insert_with(|| RepairRecord::new(&agent_id));
                 rec.restart_count += 1;
                 rec.last_restart_at = Some(chrono::Utc::now());
-                info!(
-                    "Agent {} restarted (attempt {})",
-                    agent_id, rec.restart_count
-                );
+                info!("Agent {} restarted (attempt {})", agent_id, rec.restart_count);
                 let _ = state.event_tx.send(GatewayEvent::RepairAction {
                     kind: "agent".into(),
                     target_id: agent_id,
@@ -3150,10 +3137,7 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
             if rec.abandoned {
                 false
             } else if rec.restart_count >= MAX_RESTARTS {
-                error!(
-                    "Channel {} exceeded max restarts ({}), abandoning",
-                    name, MAX_RESTARTS
-                );
+                error!("Channel {} exceeded max restarts ({}), abandoning", name, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
             } else if rec
@@ -3211,8 +3195,7 @@ async fn run_repair_loop(state: Arc<GatewayState>) {
         .loop_running
         .store(true, Ordering::Relaxed);
 
-    let mut ticker =
-        tokio::time::interval(std::time::Duration::from_secs(60));
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -3233,7 +3216,10 @@ async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResp
 
     // Check model router health (Closed = healthy/normal operation)
     let router_health = state.model_router.get_health_status().await;
-    let healthy_providers = router_health.values().filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed)).count();
+    let healthy_providers = router_health
+        .values()
+        .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
+        .count();
     let total_providers = router_health.len();
 
     let overall_healthy = agent_ready && healthy_providers > 0;
@@ -3526,137 +3512,139 @@ async fn create_agent_handler(
     let agent_clone = agent.clone();
     tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id_clone);
-        loop { tokio::select! {
-            cmd = rx.recv() => {
-            let cmd = match cmd { Some(c) => c, None => break };
-            match cmd {
-                AgentCommand::ProcessMessage { session_id, message, user_id, channel } => {
-                    let source_channel = channel;
-                    info!("Agent {} processing message for session {}", agent_id_clone, session_id);
+        loop {
+            tokio::select! {
+                cmd = rx.recv() => {
+                let cmd = match cmd { Some(c) => c, None => break };
+                match cmd {
+                    AgentCommand::ProcessMessage { session_id, message, user_id, channel } => {
+                        let source_channel = channel;
+                        info!("Agent {} processing message for session {}", agent_id_clone, session_id);
 
-                    // Update status
-                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
-                        agent_id: agent_id_clone.clone(),
-                        status: AgentStatus::Processing { session_id: session_id.clone() },
-                    });
+                        // Update status
+                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                            agent_id: agent_id_clone.clone(),
+                            status: AgentStatus::Processing { session_id: session_id.clone() },
+                        });
 
-                    // Create incoming message
-                    let incoming_msg = crate::channels::IncomingMessage::new(
-                        user_id.clone(), session_id.clone(), message.clone()
-                    );
-
-                    // Process with progress callbacks
-                    let progress_state = state_clone.clone();
-                    let progress_session = session_id.clone();
-                    let progress_agent = agent_id_clone.clone();
-                    let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
-                        let state = progress_state.clone();
-                        let sid = progress_session.clone();
-                        let aid = progress_agent.clone();
-                        Box::pin(async move {
-                            match event {
-                                crate::agent::ProgressEvent::Started => {
-                                    let _ = state.event_tx.send(GatewayEvent::AgentStatus {
-                                        agent_id: aid.clone(),
-                                        status: AgentStatus::Processing { session_id: sid.clone() },
-                                    });
-                                }
-                                crate::agent::ProgressEvent::Generating => {
-                                    // Send thinking indicator
-                                    let _ = state.event_tx.send(GatewayEvent::Thinking {
-                                        session_id: sid.clone(),
-                                        agent_id: aid.clone(),
-                                        content: None,
-                                    });
-                                }
-                                crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
-                                    let _ = state.event_tx.send(GatewayEvent::ToolCalling {
-                                        session_id: sid.clone(), agent_id: aid.clone(),
-                                        tool_name: name.clone(), arguments: arguments.clone(),
-                                    });
-                                }
-                                crate::agent::ProgressEvent::ToolResult { name, result } => {
-                                    let _ = state.event_tx.send(GatewayEvent::ToolResult {
-                                        session_id: sid.clone(), agent_id: aid.clone(),
-                                        tool_name: name.clone(), result: result.clone(),
-                                    });
-                                }
-                                crate::agent::ProgressEvent::Completed { response } => {
-                                    let _ = state.event_tx.send(GatewayEvent::Completed {
-                                        session_id: sid.clone(),
-                                        agent_id: aid.clone(),
-                                        response,
-                                    });
-                                }
-                                crate::agent::ProgressEvent::Error { message } => {
-                                    let _ = state.event_tx.send(GatewayEvent::ProcessingError {
-                                        session_id: sid.clone(),
-                                        agent_id: aid.clone(),
-                                        message,
-                                    });
-                                }
-                                _ => {}
-                            }
-                        })
-                    });
-
-                    match agent_clone.process_message_with_progress(incoming_msg, progress_cb).await {
-                        Ok(outgoing) => {
-                            let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
-                                session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
-                                content: outgoing.content, channel: source_channel.clone(),
-                                conversation_id: session_id.clone(), usage: outgoing.usage,
-                            });
-                        }
-                        Err(e) => {
-                            error!("Agent {} failed to process: {}", agent_id_clone, e);
-                        }
-                    }
-
-                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
-                        agent_id: agent_id_clone.clone(), status: AgentStatus::Idle,
-                    });
-                }
-                AgentCommand::Shutdown => {
-                    info!("Agent {} shutting down", agent_id_clone);
-                    let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
-                        agent_id: agent_id_clone.clone(), status: AgentStatus::Shutdown,
-                    });
-                    break;
-                }
-                _ => info!("Agent {} received command: {:?}", agent_id_clone, cmd),
-            }
-            } // cmd = rx.recv() arm
-            query = query_rx.recv() => {
-                let query = match query { Some(q) => q, None => break };
-                match query {
-                    AgentQuery::GetThreadSummaries { response_tx } => {
-                        let _ = response_tx.send(agent_clone.thread_summaries().await);
-                    }
-                    AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent_clone.thread_turns_for(&conv_id).await);
-                    }
-                    AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
-                    }
-                    AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                        let _ = response_tx.send(agent_clone.redo_last_turn(&conv_id).await);
-                    }
-                    AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
-                        agent_clone.set_skill_trust(skill_trust);
-                        let incoming = crate::channels::IncomingMessage::new(
-                            user_id, &session_id, message,
+                        // Create incoming message
+                        let incoming_msg = crate::channels::IncomingMessage::new(
+                            user_id.clone(), session_id.clone(), message.clone()
                         );
-                        let no_op: crate::agent::ProgressCallback =
-                            Arc::new(|_| Box::pin(async {}));
-                        let result =
-                            agent_clone.process_message_with_progress(incoming, no_op).await;
-                        agent_clone.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                        let _ = response_tx.send(result);
+
+                        // Process with progress callbacks
+                        let progress_state = state_clone.clone();
+                        let progress_session = session_id.clone();
+                        let progress_agent = agent_id_clone.clone();
+                        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+                            let state = progress_state.clone();
+                            let sid = progress_session.clone();
+                            let aid = progress_agent.clone();
+                            Box::pin(async move {
+                                match event {
+                                    crate::agent::ProgressEvent::Started => {
+                                        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+                                            agent_id: aid.clone(),
+                                            status: AgentStatus::Processing { session_id: sid.clone() },
+                                        });
+                                    }
+                                    crate::agent::ProgressEvent::Generating => {
+                                        // Send thinking indicator
+                                        let _ = state.event_tx.send(GatewayEvent::Thinking {
+                                            session_id: sid.clone(),
+                                            agent_id: aid.clone(),
+                                            content: None,
+                                        });
+                                    }
+                                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                        let _ = state.event_tx.send(GatewayEvent::ToolCalling {
+                                            session_id: sid.clone(), agent_id: aid.clone(),
+                                            tool_name: name.clone(), arguments: arguments.clone(),
+                                        });
+                                    }
+                                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                        let _ = state.event_tx.send(GatewayEvent::ToolResult {
+                                            session_id: sid.clone(), agent_id: aid.clone(),
+                                            tool_name: name.clone(), result: result.clone(),
+                                        });
+                                    }
+                                    crate::agent::ProgressEvent::Completed { response } => {
+                                        let _ = state.event_tx.send(GatewayEvent::Completed {
+                                            session_id: sid.clone(),
+                                            agent_id: aid.clone(),
+                                            response,
+                                        });
+                                    }
+                                    crate::agent::ProgressEvent::Error { message } => {
+                                        let _ = state.event_tx.send(GatewayEvent::ProcessingError {
+                                            session_id: sid.clone(),
+                                            agent_id: aid.clone(),
+                                            message,
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            })
+                        });
+
+                        match agent_clone.process_message_with_progress(incoming_msg, progress_cb).await {
+                            Ok(outgoing) => {
+                                let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                    session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
+                                    content: outgoing.content, channel: source_channel.clone(),
+                                    conversation_id: session_id.clone(), usage: outgoing.usage,
+                                });
+                            }
+                            Err(e) => {
+                                error!("Agent {} failed to process: {}", agent_id_clone, e);
+                            }
+                        }
+
+                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                            agent_id: agent_id_clone.clone(), status: AgentStatus::Idle,
+                        });
+                    }
+                    AgentCommand::Shutdown => {
+                        info!("Agent {} shutting down", agent_id_clone);
+                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                            agent_id: agent_id_clone.clone(), status: AgentStatus::Shutdown,
+                        });
+                        break;
+                    }
+                    _ => info!("Agent {} received command: {:?}", agent_id_clone, cmd),
+                }
+                } // cmd = rx.recv() arm
+                query = query_rx.recv() => {
+                    let query = match query { Some(q) => q, None => break };
+                    match query {
+                        AgentQuery::GetThreadSummaries { response_tx } => {
+                            let _ = response_tx.send(agent_clone.thread_summaries().await);
+                        }
+                        AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent_clone.thread_turns_for(&conv_id).await);
+                        }
+                        AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent_clone.undo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                            let _ = response_tx.send(agent_clone.redo_last_turn(&conv_id).await);
+                        }
+                        AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                            agent_clone.set_skill_trust(skill_trust);
+                            let incoming = crate::channels::IncomingMessage::new(
+                                user_id, &session_id, message,
+                            );
+                            let no_op: crate::agent::ProgressCallback =
+                                Arc::new(|_| Box::pin(async {}));
+                            let result =
+                                agent_clone.process_message_with_progress(incoming, no_op).await;
+                            agent_clone.set_skill_trust(crate::tools::SkillTrust::Trusted);
+                            let _ = response_tx.send(result);
+                        }
                     }
                 }
             }
-        }} // end tokio::select! and loop
+        } // end tokio::select! and loop
         info!("Agent {} processing loop ended", agent_id_clone);
     });
 
@@ -3777,7 +3765,9 @@ async fn web_terminal_chat_handler(
     Json(body): Json<WebTerminalChatRequest>,
 ) -> impl IntoResponse {
     let message_id = uuid::Uuid::new_v4().to_string();
-    let conversation_id = body.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let conversation_id = body
+        .conversation_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let queued_msg = QueuedMessage {
         id: message_id.clone(),
@@ -3855,7 +3845,10 @@ async fn send_message_handler(
     let queued_msg = QueuedMessage {
         id: message_id.clone(),
         channel: "api".to_string(),
-        user_id: body.user_id.clone().unwrap_or_else(|| "api_user".to_string()),
+        user_id: body
+            .user_id
+            .clone()
+            .unwrap_or_else(|| "api_user".to_string()),
         content: body.message,
         session_id: session_id.clone(),
         timestamp: chrono::Utc::now(),
@@ -3979,9 +3972,7 @@ async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResp
     }))
 }
 
-async fn repair_status_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
     let last_cycle = state
         .repair_state
@@ -3989,10 +3980,7 @@ async fn repair_status_handler(
         .read()
         .await
         .map(|t| t.to_rfc3339());
-    let loop_running = state
-        .repair_state
-        .loop_running
-        .load(Ordering::Relaxed);
+    let loop_running = state.repair_state.loop_running.load(Ordering::Relaxed);
     let records: Vec<_> = state
         .repair_state
         .records
@@ -4012,9 +4000,7 @@ async fn repair_status_handler(
 ///
 /// Returns current spend and action-rate counters from the live CostGuard.
 /// Useful for monitoring budget burn in real-time.
-async fn cost_status_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn cost_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
 
     let daily_cents = state.cost_guard.daily_spend_cents();
@@ -5055,81 +5041,83 @@ async fn spawn_discovered_agent_handler(
         let agent_id_clone = id.clone();
         tokio::spawn(async move {
             info!("Agent {} processing loop started", agent_id_clone);
-            loop { tokio::select! {
-                cmd = rx.recv() => {
-                let cmd = match cmd { Some(c) => c, None => break };
-                match cmd {
-                    AgentCommand::Shutdown => {
-                        info!("Agent {} shutting down", agent_id_clone);
-                        let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
-                            agent_id: agent_id_clone.clone(),
-                            status: AgentStatus::Shutdown,
-                        });
-                        break;
-                    }
-                    AgentCommand::ProcessMessage {
-                        session_id,
-                        message,
-                        user_id,
-                        channel,
-                    } => {
-                        let incoming_msg = crate::channels::IncomingMessage::new(
-                            user_id.clone(),
-                            session_id.clone(),
-                            message.clone(),
-                        );
-
-                        match agent.process_message(incoming_msg).await {
-                            Ok(outgoing) => {
-                                // Route response back to channel
-                                let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
-                                    session_id: session_id.clone(),
-                                    agent_id: agent_id_clone.clone(),
-                                    content: outgoing.content,
-                                    channel: channel.clone(),
-                                    conversation_id: session_id.clone(),
-                                    usage: outgoing.usage,
-                                });
-                            }
-                            Err(e) => {
-                                error!("Agent {} failed to process message: {}", agent_id_clone, e);
-                            }
+            loop {
+                tokio::select! {
+                    cmd = rx.recv() => {
+                    let cmd = match cmd { Some(c) => c, None => break };
+                    match cmd {
+                        AgentCommand::Shutdown => {
+                            info!("Agent {} shutting down", agent_id_clone);
+                            let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
+                                agent_id: agent_id_clone.clone(),
+                                status: AgentStatus::Shutdown,
+                            });
+                            break;
                         }
-                    }
-                    _ => {
-                        info!("Agent {} received command: {:?}", agent_id_clone, cmd);
-                    }
-                }
-                } // cmd = rx.recv() arm
-                query = query_rx.recv() => {
-                    let query = match query { Some(q) => q, None => break };
-                    match query {
-                        AgentQuery::GetThreadSummaries { response_tx } => {
-                            let _ = response_tx.send(agent.thread_summaries().await);
-                        }
-                        AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
-                        }
-                        AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
-                        }
-                        AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                            let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
-                        }
-                        AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
-                            agent.set_skill_trust(skill_trust);
-                            let incoming = crate::channels::IncomingMessage::new(
-                                user_id, &session_id, message,
+                        AgentCommand::ProcessMessage {
+                            session_id,
+                            message,
+                            user_id,
+                            channel,
+                        } => {
+                            let incoming_msg = crate::channels::IncomingMessage::new(
+                                user_id.clone(),
+                                session_id.clone(),
+                                message.clone(),
                             );
-                            let no_op: crate::agent::ProgressCallback =
-                                Arc::new(|_| Box::pin(async {}));
-                            let result = agent.process_message_with_progress(incoming, no_op).await;
-                            agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                            let _ = response_tx.send(result);
+
+                            match agent.process_message(incoming_msg).await {
+                                Ok(outgoing) => {
+                                    // Route response back to channel
+                                    let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
+                                        session_id: session_id.clone(),
+                                        agent_id: agent_id_clone.clone(),
+                                        content: outgoing.content,
+                                        channel: channel.clone(),
+                                        conversation_id: session_id.clone(),
+                                        usage: outgoing.usage,
+                                    });
+                                }
+                                Err(e) => {
+                                    error!("Agent {} failed to process message: {}", agent_id_clone, e);
+                                }
+                            }
+                        }
+                        _ => {
+                            info!("Agent {} received command: {:?}", agent_id_clone, cmd);
+                        }
+                    }
+                    } // cmd = rx.recv() arm
+                    query = query_rx.recv() => {
+                        let query = match query { Some(q) => q, None => break };
+                        match query {
+                            AgentQuery::GetThreadSummaries { response_tx } => {
+                                let _ = response_tx.send(agent.thread_summaries().await);
+                            }
+                            AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                                let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                            }
+                            AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                                let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                            }
+                            AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                                let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
+                            }
+                            AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                                agent.set_skill_trust(skill_trust);
+                                let incoming = crate::channels::IncomingMessage::new(
+                                    user_id, &session_id, message,
+                                );
+                                let no_op: crate::agent::ProgressCallback =
+                                    Arc::new(|_| Box::pin(async {}));
+                                let result = agent.process_message_with_progress(incoming, no_op).await;
+                                agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
+                                let _ = response_tx.send(result);
+                            }
                         }
                     }
                 }
-            }} // end tokio::select! and loop
+            } // end tokio::select! and loop
             info!("Agent {} processing loop ended", agent_id_clone);
         });
 
@@ -5223,40 +5211,42 @@ async fn spawn_all_discovered_agents_handler(
                 let state_clone = state.clone();
                 let agent_id_clone = agent_id.clone();
                 tokio::spawn(async move {
-                    loop { tokio::select! {
-                        cmd = rx.recv() => {
-                            let cmd = match cmd { Some(c) => c, None => break };
-                            if let AgentCommand::Shutdown = cmd { break; }
-                        }
-                        query = query_rx.recv() => {
-                            let query = match query { Some(q) => q, None => break };
-                            match query {
-                                AgentQuery::GetThreadSummaries { response_tx } => {
-                                    let _ = response_tx.send(agent.thread_summaries().await);
-                                }
-                                AgentQuery::GetThreadTurns { conv_id, response_tx } => {
-                                    let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
-                                }
-                                AgentQuery::UndoLastTurn { conv_id, response_tx } => {
-                                    let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
-                                }
-                                AgentQuery::RedoLastTurn { conv_id, response_tx } => {
-                                    let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
-                                }
-                                AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
-                                    agent.set_skill_trust(skill_trust);
-                                    let incoming = crate::channels::IncomingMessage::new(
-                                        user_id, &session_id, message,
-                                    );
-                                    let no_op: crate::agent::ProgressCallback =
-                                        Arc::new(|_| Box::pin(async {}));
-                                    let result = agent.process_message_with_progress(incoming, no_op).await;
-                                    agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
-                                    let _ = response_tx.send(result);
+                    loop {
+                        tokio::select! {
+                            cmd = rx.recv() => {
+                                let cmd = match cmd { Some(c) => c, None => break };
+                                if let AgentCommand::Shutdown = cmd { break; }
+                            }
+                            query = query_rx.recv() => {
+                                let query = match query { Some(q) => q, None => break };
+                                match query {
+                                    AgentQuery::GetThreadSummaries { response_tx } => {
+                                        let _ = response_tx.send(agent.thread_summaries().await);
+                                    }
+                                    AgentQuery::GetThreadTurns { conv_id, response_tx } => {
+                                        let _ = response_tx.send(agent.thread_turns_for(&conv_id).await);
+                                    }
+                                    AgentQuery::UndoLastTurn { conv_id, response_tx } => {
+                                        let _ = response_tx.send(agent.undo_last_turn(&conv_id).await);
+                                    }
+                                    AgentQuery::RedoLastTurn { conv_id, response_tx } => {
+                                        let _ = response_tx.send(agent.redo_last_turn(&conv_id).await);
+                                    }
+                                    AgentQuery::RunSkill { session_id, message, user_id, skill_trust, response_tx } => {
+                                        agent.set_skill_trust(skill_trust);
+                                        let incoming = crate::channels::IncomingMessage::new(
+                                            user_id, &session_id, message,
+                                        );
+                                        let no_op: crate::agent::ProgressCallback =
+                                            Arc::new(|_| Box::pin(async {}));
+                                        let result = agent.process_message_with_progress(incoming, no_op).await;
+                                        agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
+                                        let _ = response_tx.send(result);
+                                    }
                                 }
                             }
                         }
-                    }}
+                    }
                     let _ = state_clone.event_tx.send(GatewayEvent::AgentStatus {
                         agent_id: agent_id_clone,
                         status: AgentStatus::Shutdown,
@@ -5695,7 +5685,12 @@ fn json_rpc_error_response(
 /// the `event_tx` bus and converts each event to SSE wire format before streaming.
 fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
     match evt {
-        GatewayEvent::MessageReceived { channel, user_id, content, timestamp } => SseEvent {
+        GatewayEvent::MessageReceived {
+            channel,
+            user_id,
+            content,
+            timestamp,
+        } => SseEvent {
             event_type: "message_received".into(),
             data: serde_json::json!({
                 "channel": channel,
@@ -5705,7 +5700,14 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: None,
         },
-        GatewayEvent::AgentResponse { session_id, agent_id, content, channel, conversation_id, usage } => SseEvent {
+        GatewayEvent::AgentResponse {
+            session_id,
+            agent_id,
+            content,
+            channel,
+            conversation_id,
+            usage,
+        } => SseEvent {
             event_type: "agent_response".into(),
             data: serde_json::json!({
                 "agent_id": agent_id,
@@ -5732,7 +5734,12 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: None,
         },
-        GatewayEvent::ToolCalling { session_id, agent_id, tool_name, arguments } => SseEvent {
+        GatewayEvent::ToolCalling {
+            session_id,
+            agent_id,
+            tool_name,
+            arguments,
+        } => SseEvent {
             event_type: "tool_calling".into(),
             data: serde_json::json!({
                 "agent_id": agent_id,
@@ -5741,7 +5748,12 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: Some(session_id),
         },
-        GatewayEvent::ToolResult { session_id, agent_id, tool_name, result } => SseEvent {
+        GatewayEvent::ToolResult {
+            session_id,
+            agent_id,
+            tool_name,
+            result,
+        } => SseEvent {
             event_type: "tool_result".into(),
             data: serde_json::json!({
                 "agent_id": agent_id,
@@ -5750,7 +5762,13 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: Some(session_id),
         },
-        GatewayEvent::ApprovalRequired { approval_id, tool_name, requested_by, risk_level, message } => SseEvent {
+        GatewayEvent::ApprovalRequired {
+            approval_id,
+            tool_name,
+            requested_by,
+            risk_level,
+            message,
+        } => SseEvent {
             event_type: "approval_required".into(),
             data: serde_json::json!({
                 "approval_id": approval_id,
@@ -5761,7 +5779,12 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
             }),
             session_id: None,
         },
-        GatewayEvent::RepairAction { kind, target_id, description, restart_count } => SseEvent {
+        GatewayEvent::RepairAction {
+            kind,
+            target_id,
+            description,
+            restart_count,
+        } => SseEvent {
             event_type: "repair_action".into(),
             data: serde_json::json!({
                 "kind": kind,
@@ -5815,9 +5838,7 @@ fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
 async fn sse_events_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> axum::response::sse::Sse<
-    impl futures_core::Stream<
-        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
-    >,
+    impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use tokio_stream::wrappers::BroadcastStream;
@@ -5972,11 +5993,8 @@ async fn openai_chat_completions_handler(
                 if start.elapsed() > timeout_dur {
                     break String::new();
                 }
-                match tokio::time::timeout(
-                    tokio::time::Duration::from_millis(100),
-                    event_rx.recv(),
-                )
-                .await
+                match tokio::time::timeout(tokio::time::Duration::from_millis(100), event_rx.recv())
+                    .await
                 {
                     Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
                         if sid == session_id {
@@ -6008,12 +6026,18 @@ async fn openai_chat_completions_handler(
                 "model": model,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
             });
-            let _ = tx.send(Ok(SseEvt::default().data(final_chunk.to_string()))).await;
-            let _ = tx.send(Ok(SseEvt::default().data("[DONE]".to_string()))).await;
+            let _ = tx
+                .send(Ok(SseEvt::default().data(final_chunk.to_string())))
+                .await;
+            let _ = tx
+                .send(Ok(SseEvt::default().data("[DONE]".to_string())))
+                .await;
         });
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-        Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+        Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response()
     } else {
         // ── Non-streaming JSON response ─────────────────────────────────────
         let timeout_dur = tokio::time::Duration::from_secs(120);
@@ -6034,13 +6058,15 @@ async fn openai_chat_completions_handler(
                     .into_response();
             }
 
-            match tokio::time::timeout(
-                tokio::time::Duration::from_millis(100),
-                event_rx.recv(),
-            )
-            .await
+            match tokio::time::timeout(tokio::time::Duration::from_millis(100), event_rx.recv())
+                .await
             {
-                Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, usage, .. })) => {
+                Ok(Ok(GatewayEvent::AgentResponse {
+                    session_id: sid,
+                    content,
+                    usage,
+                    ..
+                })) => {
                     if sid == session_id {
                         response_content = content;
                         if let Some(ref u) = usage {
@@ -6069,7 +6095,11 @@ async fn openai_chat_completions_handler(
                 },
                 finish_reason: "stop".to_string(),
             }],
-            usage: OpenAiUsage { prompt_tokens, completion_tokens, total_tokens },
+            usage: OpenAiUsage {
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+            },
         };
 
         Json(resp).into_response()
@@ -6079,9 +6109,7 @@ async fn openai_chat_completions_handler(
 /// `GET /v1/models`
 ///
 /// Returns available model aliases in OpenAI wire format.
-async fn openai_list_models_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn openai_list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let aliases = state.model_router.list_aliases().await;
     let data: Vec<_> = aliases
         .iter()
@@ -6107,9 +6135,7 @@ struct SetSettingRequest {
 }
 
 /// `GET /api/settings` — list all runtime key/value settings.
-async fn list_settings_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_settings_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let settings = state.runtime_settings.read().await.clone();
     Json(settings)
 }
@@ -6160,9 +6186,7 @@ async fn delete_setting_handler(
 // ── Tool approval management (human-in-the-loop) ──────────────────────────────
 
 /// `GET /api/v1/approvals` — list all pending approval requests.
-async fn list_approvals_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn list_approvals_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let approvals = state
         .approval_queue
         .list_pending(ApprovalFilter::default())
@@ -6225,8 +6249,7 @@ async fn deny_tool_handler(
         .resolve(&id, ApprovalDecision::Deny { reason: reason.clone() })
         .await
     {
-        Json(serde_json::json!({ "id": id, "status": "denied", "reason": reason }))
-            .into_response()
+        Json(serde_json::json!({ "id": id, "status": "denied", "reason": reason })).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
@@ -6320,11 +6343,10 @@ async fn remove_cron_job_handler(
     match guard.as_ref() {
         Some(scheduler) => match scheduler.lock().await.remove_job(&id).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id })).into_response(),
-            Err(e) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
-                .into_response(),
+            Err(e) => {
+                (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
+                    .into_response()
+            }
         },
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -6344,11 +6366,10 @@ async fn enable_cron_job_handler(
         Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, true).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": true }))
                 .into_response(),
-            Err(e) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
-                .into_response(),
+            Err(e) => {
+                (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
+                    .into_response()
+            }
         },
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -6368,11 +6389,10 @@ async fn disable_cron_job_handler(
         Some(scheduler) => match scheduler.lock().await.set_job_enabled(&id, false).await {
             Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "enabled": false }))
                 .into_response(),
-            Err(e) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
-                .into_response(),
+            Err(e) => {
+                (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
+                    .into_response()
+            }
         },
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -6390,15 +6410,12 @@ async fn trigger_cron_job_handler(
     let guard = state.cron_scheduler.read().await;
     match guard.as_ref() {
         Some(scheduler) => match scheduler.lock().await.trigger_job(&id).await {
-            Ok(()) => {
-                Json(serde_json::json!({ "success": true, "id": id, "triggered": true }))
+            Ok(()) => Json(serde_json::json!({ "success": true, "id": id, "triggered": true }))
+                .into_response(),
+            Err(e) => {
+                (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
                     .into_response()
             }
-            Err(e) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
-                .into_response(),
         },
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -6523,10 +6540,7 @@ async fn get_entity_handler(
     let storage = state.storage.read().await;
     match storage.get(entity_id).await {
         Ok(entity) => Json(entity).into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6566,10 +6580,7 @@ async fn update_entity_handler(
     let mut entity = match storage.get(entity_id).await {
         Ok(e) => e,
         Err(e) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
                 .into_response();
         }
     };
@@ -6621,10 +6632,7 @@ async fn delete_entity_handler(
     let storage = state.storage.read().await;
     match storage.delete(entity_id).await {
         Ok(()) => Json(serde_json::json!({ "success": true, "id": id })).into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6717,8 +6725,9 @@ async fn import_entities_handler(
 /// `GET /api/v1/teams` — list all teams.
 async fn list_teams_handler(_state: State<Arc<GatewayState>>) -> impl IntoResponse {
     match crate::team::Team::list_all().await {
-        Ok(names) => Json(serde_json::json!({ "teams": names, "count": names.len() }))
-            .into_response(),
+        Ok(names) => {
+            Json(serde_json::json!({ "teams": names, "count": names.len() })).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("{}", e) })),
@@ -6760,10 +6769,7 @@ async fn get_team_handler(
 ) -> impl IntoResponse {
     match crate::team::Team::load(&id).await {
         Ok(team) => Json(team).into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6782,10 +6788,7 @@ async fn delete_team_handler(
             )
                 .into_response(),
         },
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6800,10 +6803,7 @@ async fn list_team_members_handler(
             let members: Vec<_> = team.members.values().collect();
             Json(serde_json::json!({ "members": members, "count": members.len() })).into_response()
         }
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6842,10 +6842,7 @@ async fn add_team_member_handler(
                     .into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6872,10 +6869,7 @@ async fn remove_team_member_handler(
                     .into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("{}", e) })),
-        )
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
             .into_response(),
     }
 }
@@ -6901,10 +6895,7 @@ async fn assign_team_task_handler(
     let team = match crate::team::Team::load(&id).await {
         Ok(t) => t,
         Err(e) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("{}", e) })),
-            )
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": format!("{}", e) })))
                 .into_response();
         }
     };
@@ -7061,7 +7052,10 @@ async fn list_turns_handler(
 
     // Thread map key is `conversation_id`; the CLI passes `thread_id` with a
     // "thread-" prefix. Strip it to get the correct map key.
-    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
+    let conv_id = thread_id
+        .strip_prefix("thread-")
+        .unwrap_or(&thread_id)
+        .to_string();
 
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
     if qtx
@@ -7123,7 +7117,10 @@ async fn undo_turn_handler(
         Err(resp) => return resp,
     };
 
-    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
+    let conv_id = thread_id
+        .strip_prefix("thread-")
+        .unwrap_or(&thread_id)
+        .to_string();
 
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
     if qtx
@@ -7176,7 +7173,10 @@ async fn redo_turn_handler(
         Err(resp) => return resp,
     };
 
-    let conv_id = thread_id.strip_prefix("thread-").unwrap_or(&thread_id).to_string();
+    let conv_id = thread_id
+        .strip_prefix("thread-")
+        .unwrap_or(&thread_id)
+        .to_string();
 
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
     if qtx
@@ -7224,14 +7224,12 @@ async fn redo_turn_handler(
 async fn web_terminal_events_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> axum::response::sse::Sse<
-    impl futures_core::Stream<
-        Item = Result<axum::response::sse::Event, std::convert::Infallible>,
-    >,
+    impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
     use tokio::sync::broadcast;
     use tokio_stream::wrappers::BroadcastStream;
-    use futures_util::StreamExt;
 
     // Subscribe to gateway events
     let rx = state.event_tx.subscribe();

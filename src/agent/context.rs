@@ -408,13 +408,11 @@ impl Context {
             i += 1;
         }
 
-        let summary_content = format!(
-            "[Summary of {} earlier messages]\n{}",
-            middle.len(),
-            turns.join("\n")
-        );
+        let summary_content =
+            format!("[Summary of {} earlier messages]\n{}", middle.len(), turns.join("\n"));
 
-        self.messages.insert(middle_start, Message::system(summary_content));
+        self.messages
+            .insert(middle_start, Message::system(summary_content));
         self.recalculate_tokens();
     }
 }

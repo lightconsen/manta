@@ -3,7 +3,10 @@
 //! This module provides the runtime for loading and executing WASM-based
 //! channel plugins, enabling third-party channels without recompiling Manta.
 
-use crate::channels::{Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, MessageMetadata, OutgoingMessage, UserId};
+use crate::channels::{
+    Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, MessageMetadata,
+    OutgoingMessage, UserId,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -690,20 +690,18 @@ impl SkillManager {
     /// Unlike `get_skill()` which returns the cached skill,
     /// this verifies all `requires` fields are still met at activation time.
     pub async fn activate_skill(&self, name: &str) -> crate::Result<Skill> {
-        let skill = self.get_skill(name).await.ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Skill: {}", name),
-            }
-        })?;
+        let skill =
+            self.get_skill(name)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Skill: {}", name),
+                })?;
 
         // Runtime verification - re-check requirements at activation
         match skill.verify_requirements() {
             Ok(()) => Ok(skill),
             Err(errors) => {
-                warn!(
-                    "Skill '{}' activation blocked: requirements not met: {:?}",
-                    name, errors
-                );
+                warn!("Skill '{}' activation blocked: requirements not met: {:?}", name, errors);
                 Err(crate::error::MantaError::Validation(format!(
                     "Skill '{}' requirements not met: {}",
                     name,

@@ -92,13 +92,7 @@ async fn send_message(client: &reqwest::Client, session_id: &str, message: &str)
 /// Start web terminal interface
 pub async fn run_web(_config: &Config, port: u16) -> Result<()> {
     println!("Web terminal interface on port {}", port);
-    println!(
-        "The daemon's built-in web UI is available at http://127.0.0.1:{}/",
-        port
-    );
-    println!(
-        "Start the daemon with: manta start --web-port {}",
-        port
-    );
+    println!("The daemon's built-in web UI is available at http://127.0.0.1:{}/", port);
+    println!("Start the daemon with: manta start --web-port {}", port);
     Ok(())
 }

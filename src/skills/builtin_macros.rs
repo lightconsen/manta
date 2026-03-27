@@ -47,7 +47,8 @@ macro_rules! include_builtin_skills {
         skills.insert("nano-pdf", include_str!("builtin/nano-pdf/SKILL.md"));
 
         // Self-Improving Agent
-        skills.insert("self-improving-agent", include_str!("builtin/self-improving-agent/SKILL.md"));
+        skills
+            .insert("self-improving-agent", include_str!("builtin/self-improving-agent/SKILL.md"));
 
         // Agent Creator
         skills.insert("agent-creator", include_str!("builtin/agent-creator/SKILL.md"));

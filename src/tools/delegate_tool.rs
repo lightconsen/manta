@@ -353,12 +353,7 @@ async fn execute_child_task(
                         debug!("Child {} calling tool {}: {}", cid, name, arguments);
                     }
                     crate::agent::ProgressEvent::ToolResult { name, result } => {
-                        debug!(
-                            "Child {} tool {} result: {} chars",
-                            cid,
-                            name,
-                            result.len()
-                        );
+                        debug!("Child {} tool {} result: {} chars", cid, name, result.len());
                     }
                     crate::agent::ProgressEvent::Error { message } => {
                         warn!("Child {} progress error: {}", cid, message);
@@ -369,7 +364,10 @@ async fn execute_child_task(
         });
 
         // Process the task through the agent with progress visibility
-        match agent.process_message_with_progress(message, progress_cb).await {
+        match agent
+            .process_message_with_progress(message, progress_cb)
+            .await
+        {
             Ok(response) => {
                 iterations.fetch_add(1, Ordering::SeqCst);
 

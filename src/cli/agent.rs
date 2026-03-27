@@ -213,9 +213,9 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
             }
         }
         AgentCommands::Import { path, name } => {
-            let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-                MantaError::Internal(format!("Failed to read file: {}", e))
-            })?;
+            let content = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| MantaError::Internal(format!("Failed to read file: {}", e)))?;
             let mut body: serde_json::Value =
                 serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
             if let Some(n) = name {
@@ -278,9 +278,9 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
     // 2. Write to a temp file
     let tmp_dir = std::env::temp_dir();
     let tmp_path = tmp_dir.join(format!("manta-agent-{}.json", name));
-    tokio::fs::write(&tmp_path, &current_body).await.map_err(|e| {
-        MantaError::Internal(format!("Failed to write temp file: {}", e))
-    })?;
+    tokio::fs::write(&tmp_path, &current_body)
+        .await
+        .map_err(|e| MantaError::Internal(format!("Failed to write temp file: {}", e)))?;
 
     // 3. Open editor
     let editor = std::env::var("EDITOR")
@@ -291,7 +291,9 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
         .arg(&tmp_path)
         .status()
         .await
-        .map_err(|e| MantaError::Internal(format!("Failed to launch editor '{}': {}", editor, e)))?;
+        .map_err(|e| {
+            MantaError::Internal(format!("Failed to launch editor '{}': {}", editor, e))
+        })?;
 
     if !status.success() {
         eprintln!("Editor exited with non-zero status");
@@ -300,9 +302,9 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
     }
 
     // 4. Read back the edited file
-    let new_body = tokio::fs::read_to_string(&tmp_path).await.map_err(|e| {
-        MantaError::Internal(format!("Failed to read temp file: {}", e))
-    })?;
+    let new_body = tokio::fs::read_to_string(&tmp_path)
+        .await
+        .map_err(|e| MantaError::Internal(format!("Failed to read temp file: {}", e)))?;
     let _ = tokio::fs::remove_file(&tmp_path).await;
 
     // 5. Skip if nothing changed
@@ -312,9 +314,8 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
     }
 
     // 6. Validate it's still JSON
-    let patch_value: serde_json::Value = serde_json::from_str(&new_body).map_err(|e| {
-        MantaError::Internal(format!("Edited content is not valid JSON: {}", e))
-    })?;
+    let patch_value: serde_json::Value = serde_json::from_str(&new_body)
+        .map_err(|e| MantaError::Internal(format!("Edited content is not valid JSON: {}", e)))?;
 
     // 7. PATCH to daemon
     match client.patch(&url).json(&patch_value).send().await {

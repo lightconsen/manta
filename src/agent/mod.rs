@@ -460,7 +460,8 @@ impl Agent {
     /// `Trusted` after the invocation completes.
     pub fn set_skill_trust(&self, trust: crate::tools::SkillTrust) {
         use std::sync::atomic::Ordering;
-        self.active_skill_trust.store(trust as u8, Ordering::Relaxed);
+        self.active_skill_trust
+            .store(trust as u8, Ordering::Relaxed);
     }
 
     /// Read the current active skill trust level from the atomic.
@@ -477,7 +478,11 @@ impl Agent {
     /// When set, every completed turn is persisted asynchronously and the
     /// conversation history can be restored across restarts via
     /// [`Agent::restore_threads`].
-    pub fn with_session_store(mut self, store: Arc<SessionStore>, session_id: impl Into<String>) -> Self {
+    pub fn with_session_store(
+        mut self,
+        store: Arc<SessionStore>,
+        session_id: impl Into<String>,
+    ) -> Self {
         self.session_store = Some(store);
         self.session_id = Some(session_id.into());
         self
@@ -611,15 +616,15 @@ impl Agent {
 
         // Retrieve relevant memories via MemoryManager and inject into context
         let memory_context = if let Some(ref mm) = self.memory_manager {
-            match mm.retrieve(user_id, Some(conversation_id), user_message, Some(5)).await {
+            match mm
+                .retrieve(user_id, Some(conversation_id), user_message, Some(5))
+                .await
+            {
                 Ok(memories) => {
                     if memories.is_empty() {
                         None
                     } else {
-                        let ctx = crate::memory::SessionContext {
-                            messages: vec![],
-                            memories,
-                        };
+                        let ctx = crate::memory::SessionContext { messages: vec![], memories };
                         Some(ctx.format_for_injection())
                     }
                 }
@@ -851,8 +856,9 @@ impl Agent {
                 Some(t) => t,
                 None => {
                     // First message for this conversation — build initial Context.
-                    let ctx =
-                        self.build_fresh_context(&conversation_id, &user_id, &content).await;
+                    let ctx = self
+                        .build_fresh_context(&conversation_id, &user_id, &content)
+                        .await;
                     let thread_id = format!("thread-{}", &conversation_id);
                     // Persist the new thread record (fire-and-forget).
                     if let (Some(store), Some(sid)) =
@@ -942,7 +948,12 @@ impl Agent {
         // Persist assistant response via MemoryManager (episodic memory)
         if let Some(ref mm) = self.memory_manager {
             if let Err(e) = mm
-                .remember_message(&user_id, &conversation_id, "assistant", &response.message.content)
+                .remember_message(
+                    &user_id,
+                    &conversation_id,
+                    "assistant",
+                    &response.message.content,
+                )
                 .await
             {
                 warn!("MemoryManager: failed to store assistant message: {}", e);
@@ -1129,8 +1140,9 @@ impl Agent {
             match map.remove(&conversation_id) {
                 Some(t) => t,
                 None => {
-                    let ctx =
-                        self.build_fresh_context(&conversation_id, &user_id, &content).await;
+                    let ctx = self
+                        .build_fresh_context(&conversation_id, &user_id, &content)
+                        .await;
                     let thread_id = format!("thread-{}", &conversation_id);
                     if let (Some(store), Some(sid)) =
                         (self.session_store.clone(), self.session_id.clone())
@@ -1284,11 +1296,18 @@ impl Agent {
         if context.needs_pruning() {
             if let Some(ref compaction_model) = self.config.compaction_model {
                 // LLM-assisted compaction: produce a high-quality summary.
-                let compressor =
-                    crate::agent::compressor::ContextCompressor::new(self.config.max_context_tokens);
+                let compressor = crate::agent::compressor::ContextCompressor::new(
+                    self.config.max_context_tokens,
+                );
                 let history = context.history().to_vec();
                 let compacted = compressor
-                    .compact_with_llm(&history, &self.provider, Some(compaction_model.as_str()), 2, 6)
+                    .compact_with_llm(
+                        &history,
+                        &self.provider,
+                        Some(compaction_model.as_str()),
+                        2,
+                        6,
+                    )
                     .await;
                 context.replace_messages(compacted);
             } else {
@@ -1301,8 +1320,8 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = ToolContext::new("user", context.id())
-            .with_skill_trust(self.current_skill_trust());
+        let tool_context =
+            ToolContext::new("user", context.id()).with_skill_trust(self.current_skill_trust());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1470,8 +1489,8 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context = ToolContext::new("user", context.id())
-            .with_skill_trust(self.current_skill_trust());
+        let tool_context =
+            ToolContext::new("user", context.id()).with_skill_trust(self.current_skill_trust());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1720,8 +1739,7 @@ impl Agent {
                         guard.remove(id);
                         warn!(
                             conversation_id = id.as_str(),
-                            "Self-repair: evicted stale context (inactive >{:?})",
-                            stale_threshold
+                            "Self-repair: evicted stale context (inactive >{:?})", stale_threshold
                         );
                     }
                 }
@@ -1821,13 +1839,17 @@ impl Agent {
     /// Returns `true` if the conversation can undo a turn.
     pub async fn can_undo(&self, conversation_id: &str) -> bool {
         let map = self.thread_map.lock().await;
-        map.get(conversation_id).map(|t| t.can_undo()).unwrap_or(false)
+        map.get(conversation_id)
+            .map(|t| t.can_undo())
+            .unwrap_or(false)
     }
 
     /// Returns `true` if the conversation can redo a turn.
     pub async fn can_redo(&self, conversation_id: &str) -> bool {
         let map = self.thread_map.lock().await;
-        map.get(conversation_id).map(|t| t.can_redo()).unwrap_or(false)
+        map.get(conversation_id)
+            .map(|t| t.can_redo())
+            .unwrap_or(false)
     }
 
     /// Restore threads from the `SessionStore` for the current `session_id`.
@@ -1891,11 +1913,7 @@ impl Agent {
         };
 
         // Determine if compaction is needed
-        let age_secs = thread
-            .created_at
-            .elapsed()
-            .unwrap_or_default()
-            .as_secs();
+        let age_secs = thread.created_at.elapsed().unwrap_or_default().as_secs();
         let too_old = age_secs > MAX_AGE_DAYS * 86_400;
         let too_long = thread.turn_count() > MAX_TURNS_BEFORE_COMPACT;
 
@@ -1905,11 +1923,7 @@ impl Agent {
                 tokio::spawn(async move {
                     match mm.compact_session(&conv_id, None).await {
                         Ok(ids) => {
-                            info!(
-                                "Session {} compacted: {} facts extracted",
-                                conv_id,
-                                ids.len()
-                            );
+                            info!("Session {} compacted: {} facts extracted", conv_id, ids.len());
                         }
                         Err(e) => {
                             warn!("Session compaction failed for {}: {}", conv_id, e);

@@ -33,7 +33,9 @@ impl DatabaseStore {
 
         // Ensure parent directory and file exist for file-based databases
         if database_url.starts_with("sqlite://") && !database_url.contains(":memory:") {
-            let path_str = database_url.strip_prefix("sqlite://").unwrap_or(database_url);
+            let path_str = database_url
+                .strip_prefix("sqlite://")
+                .unwrap_or(database_url);
             let path = std::path::Path::new(path_str);
 
             // Create parent directory if needed
@@ -222,21 +224,30 @@ impl DatabaseStore {
 
         // --- triggers to keep FTS5 in sync ---
         let triggers: &[(&str, &str)] = &[
-            ("memories_fts_insert", r#"
+            (
+                "memories_fts_insert",
+                r#"
                 CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories BEGIN
                     INSERT INTO memories_fts(content, user_id, memory_id)
                     VALUES (NEW.content, NEW.user_id, NEW.id);
-                END"#),
-            ("memories_fts_delete", r#"
+                END"#,
+            ),
+            (
+                "memories_fts_delete",
+                r#"
                 CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories BEGIN
                     DELETE FROM memories_fts WHERE memory_id = OLD.id;
-                END"#),
-            ("memories_fts_update", r#"
+                END"#,
+            ),
+            (
+                "memories_fts_update",
+                r#"
                 CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE ON memories BEGIN
                     DELETE FROM memories_fts WHERE memory_id = OLD.id;
                     INSERT INTO memories_fts(content, user_id, memory_id)
                     VALUES (NEW.content, NEW.user_id, NEW.id);
-                END"#),
+                END"#,
+            ),
         ];
 
         for (name, sql) in triggers {
@@ -261,11 +272,9 @@ impl DatabaseStore {
         .execute(&self.pool)
         .await;
 
-        let _ = sqlx::query(
-            "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'",
-        )
-        .execute(&self.pool)
-        .await;
+        let _ = sqlx::query("ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'")
+            .execute(&self.pool)
+            .await;
 
         Ok(())
     }
@@ -334,8 +343,7 @@ impl DatabaseStore {
         source: String,
     ) -> crate::Result<Memory> {
         let embedding = embedding_bytes.map(|b| Self::deserialize_embedding(&b));
-        let created_at =
-            Self::secs_to_system_time(created_at_secs).unwrap_or_else(SystemTime::now);
+        let created_at = Self::secs_to_system_time(created_at_secs).unwrap_or_else(SystemTime::now);
         let expires_at = expires_at_secs.and_then(Self::secs_to_system_time);
         let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
@@ -439,8 +447,10 @@ impl MemoryStore for DatabaseStore {
     async fn store(&self, memory: Memory) -> crate::Result<MemoryId> {
         debug!("Storing memory: {}", memory.id);
 
-        let embedding_bytes =
-            memory.embedding.as_ref().map(|e| Self::serialize_embedding(e));
+        let embedding_bytes = memory
+            .embedding
+            .as_ref()
+            .map(|e| Self::serialize_embedding(e));
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
         let metadata_str = memory
@@ -514,12 +524,14 @@ impl MemoryStore for DatabaseStore {
                     row.try_get("content").map_err(|e| col_err("content", e))?,
                     row.try_get("memory_type")
                         .map_err(|e| col_err("memory_type", e))?,
-                    row.try_get("embedding").map_err(|e| col_err("embedding", e))?,
+                    row.try_get("embedding")
+                        .map_err(|e| col_err("embedding", e))?,
                     row.try_get("created_at")
                         .map_err(|e| col_err("created_at", e))?,
                     row.try_get("expires_at")
                         .map_err(|e| col_err("expires_at", e))?,
-                    row.try_get("metadata").map_err(|e| col_err("metadata", e))?,
+                    row.try_get("metadata")
+                        .map_err(|e| col_err("metadata", e))?,
                     row.try_get("importance_score")
                         .map_err(|e| col_err("importance_score", e))?,
                     row.try_get("source").map_err(|e| col_err("source", e))?,
@@ -538,8 +550,10 @@ impl MemoryStore for DatabaseStore {
     async fn update(&self, memory: Memory) -> crate::Result<()> {
         debug!("Updating memory: {}", memory.id);
 
-        let embedding_bytes =
-            memory.embedding.as_ref().map(|e| Self::serialize_embedding(e));
+        let embedding_bytes = memory
+            .embedding
+            .as_ref()
+            .map(|e| Self::serialize_embedding(e));
         let created_at_secs = Self::system_time_to_secs(memory.created_at);
         let expires_at_secs = memory.expires_at.map(Self::system_time_to_secs);
         let metadata_str = memory
@@ -634,7 +648,11 @@ impl MemoryStore for DatabaseStore {
             sql.push_str(" AND (expires_at IS NULL OR expires_at > ?)");
         }
 
-        let fetch_limit = if query.embedding.is_some() { query.limit * 10 } else { query.limit };
+        let fetch_limit = if query.embedding.is_some() {
+            query.limit * 10
+        } else {
+            query.limit
+        };
         sql.push_str(&format!(
             " ORDER BY importance_score DESC, created_at DESC LIMIT {} OFFSET {}",
             fetch_limit, query.offset
@@ -676,12 +694,14 @@ impl MemoryStore for DatabaseStore {
                 row.try_get("content").map_err(|e| col_err("content", e))?,
                 row.try_get("memory_type")
                     .map_err(|e| col_err("memory_type", e))?,
-                row.try_get("embedding").map_err(|e| col_err("embedding", e))?,
+                row.try_get("embedding")
+                    .map_err(|e| col_err("embedding", e))?,
                 row.try_get("created_at")
                     .map_err(|e| col_err("created_at", e))?,
                 row.try_get("expires_at")
                     .map_err(|e| col_err("expires_at", e))?,
-                row.try_get("metadata").map_err(|e| col_err("metadata", e))?,
+                row.try_get("metadata")
+                    .map_err(|e| col_err("metadata", e))?,
                 row.try_get("importance_score")
                     .map_err(|e| col_err("importance_score", e))?,
                 row.try_get("source").map_err(|e| col_err("source", e))?,
@@ -737,7 +757,9 @@ impl MemoryStore for DatabaseStore {
                 context: "Failed to get total count".to_string(),
                 details: e.to_string(),
             })?;
-        let total_count: i64 = total_row.try_get("count").map_err(|e| col_err("count", e))?;
+        let total_count: i64 = total_row
+            .try_get("count")
+            .map_err(|e| col_err("count", e))?;
 
         let type_rows =
             sqlx::query("SELECT memory_type, COUNT(*) as count FROM memories GROUP BY memory_type")
@@ -750,8 +772,9 @@ impl MemoryStore for DatabaseStore {
 
         let mut count_by_type = HashMap::new();
         for row in type_rows {
-            let mem_type: String =
-                row.try_get("memory_type").map_err(|e| col_err("memory_type", e))?;
+            let mem_type: String = row
+                .try_get("memory_type")
+                .map_err(|e| col_err("memory_type", e))?;
             let count: i64 = row.try_get("count").map_err(|e| col_err("count", e))?;
             count_by_type.insert(mem_type, count as usize);
         }
@@ -767,8 +790,9 @@ impl MemoryStore for DatabaseStore {
             context: "Failed to get expired count".to_string(),
             details: e.to_string(),
         })?;
-        let expired_count: i64 =
-            expired_row.try_get("count").map_err(|e| col_err("count", e))?;
+        let expired_count: i64 = expired_row
+            .try_get("count")
+            .map_err(|e| col_err("count", e))?;
 
         Ok(MemoryStats {
             total_count: total_count as usize,
@@ -853,10 +877,12 @@ impl ChatHistoryStore for DatabaseStore {
 
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
-            let created_at_secs: i64 =
-                row.try_get("created_at").map_err(|e| col_err("created_at", e))?;
-            let metadata_str: Option<String> =
-                row.try_get("metadata").map_err(|e| col_err("metadata", e))?;
+            let created_at_secs: i64 = row
+                .try_get("created_at")
+                .map_err(|e| col_err("created_at", e))?;
+            let metadata_str: Option<String> = row
+                .try_get("metadata")
+                .map_err(|e| col_err("metadata", e))?;
 
             messages.push(ChatMessage {
                 id: row.try_get("id").map_err(|e| col_err("id", e))?,

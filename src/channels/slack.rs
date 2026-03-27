@@ -64,9 +64,8 @@ pub struct SlackChannel {
     config: SlackConfig,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Maps our internal message ID -> (slack_channel_id, slack_ts) for edit/delete
-    message_ids: std::sync::Arc<
-        tokio::sync::RwLock<std::collections::HashMap<String, (String, String)>>,
-    >,
+    message_ids:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// Pairing store for DM access control
     pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
     /// DM policy for access control
@@ -392,8 +391,7 @@ impl Channel for SlackChannel {
             let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
 
             if resp_status.is_success() && resp_json["ok"].as_bool().unwrap_or(false) {
-                let slack_ts =
-                    resp_json["ts"].as_str().unwrap_or("").to_string();
+                let slack_ts = resp_json["ts"].as_str().unwrap_or("").to_string();
                 let slack_channel = resp_json["channel"]
                     .as_str()
                     .unwrap_or(&channel_id)

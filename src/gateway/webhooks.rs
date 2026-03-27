@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-use crate::channels::{ConversationId, OutgoingMessage};
 use super::GatewayState;
+use crate::channels::{ConversationId, OutgoingMessage};
 
 /// Query params for webhook verification (used by some platforms)
 #[derive(Debug, Deserialize)]
@@ -205,7 +205,10 @@ async fn whatsapp_webhook_handler(
                                             "✅ New session started. How can I help you?",
                                         );
                                         if let Err(e) = channel.send(confirmation).await {
-                                            warn!("Failed to send /new confirmation to {}: {}", from, e);
+                                            warn!(
+                                                "Failed to send /new confirmation to {}: {}",
+                                                from, e
+                                            );
                                         }
                                     }
                                     new_session
