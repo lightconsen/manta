@@ -16,6 +16,7 @@ mod chat;
 mod cron;
 mod daemon;
 mod entity;
+mod export;
 mod mcp;
 mod plugin;
 mod security;
@@ -28,6 +29,7 @@ pub use agent::AgentCommands;
 pub use channel::ChannelCommands;
 pub use cron::CronCommands;
 pub use entity::EntityCommands;
+pub use export::ExportCommands;
 pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
 pub use security::{PairingCommands, SecurityCommands};
@@ -61,6 +63,12 @@ pub enum Commands {
         /// Entity subcommand
         #[command(subcommand)]
         command: EntityCommands,
+    },
+    /// Export conversations and memories to files
+    Export {
+        /// Export subcommand
+        #[command(subcommand)]
+        command: ExportCommands,
     },
     /// Show configuration
     Config {
@@ -269,6 +277,7 @@ impl Cli {
     pub async fn execute(&self, config: &Config) -> Result<()> {
         match &self.command {
             Commands::Entity { command } => entity::run_entity_command(command).await,
+            Commands::Export { command } => export::run_export_command(command).await,
             Commands::Config { format } => daemon::show_config(format).await,
             Commands::Health => daemon::run_health_check(config).await,
             Commands::Chat { conversation, message } => {
