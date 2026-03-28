@@ -98,7 +98,7 @@ impl WorkspaceState {
     pub async fn load(state_path: &Path) -> crate::Result<Self> {
         match fs::read_to_string(state_path).await {
             Ok(raw) => match Self::parse(&raw) {
-                Some(mut state) => {
+                Some(state) => {
                     // Migrate legacy onboarding_completed_at to setup_completed_at
                     if raw.contains("\"onboarding_completed_at\"")
                         && !raw.contains("\"setup_completed_at\"")

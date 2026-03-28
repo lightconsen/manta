@@ -292,7 +292,7 @@ impl AcpControlPlane {
         let (command_tx, mut command_rx) = mpsc::channel::<SubagentCommand>(100);
 
         // Build agent config
-        let agent_config = AgentConfig {
+        let _agent_config = AgentConfig {
             system_prompt: config.system_prompt.unwrap_or_default(),
             max_tokens: config.max_tokens.map(|m| m as u32).unwrap_or(2048),
             max_context_tokens: 4096,

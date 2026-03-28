@@ -249,7 +249,7 @@ Examples:
                             "member_count": team.members.len(),
                             "members": team.members.keys().cloned().collect::<Vec<_>>()
                         }))),
-                        Err(e) => Err(crate::error::MantaError::NotFound {
+                        Err(_e) => Err(crate::error::MantaError::NotFound {
                             resource: format!("Team '{}'", team_name),
                         }),
                     }

@@ -484,8 +484,6 @@ impl PairingStore {
 
     /// Remove expired pending codes and expired authorizations.
     pub async fn sweep_expired(&self) {
-        let now = SystemTime::now();
-
         let mut pending = self.pending.write().await;
         let mut index = self.pending_index.write().await;
         let before = pending.len();

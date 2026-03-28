@@ -15,8 +15,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 /// Delivery event emitted for `DeliveryMode::Announce` jobs.
@@ -535,7 +533,8 @@ impl CronScheduler {
                 let store_path = store_path_for_timer.clone();
                 let announce_tx = announce_tx_for_timer.clone();
 
-                let result = async {
+                // Run jobs (result unused)
+                async {
                     Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx).await;
                 }
                 .await;

@@ -4,7 +4,6 @@
 //! manages context, calls tools, and interacts with LLM providers.
 
 use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::memory::MemoryStore;
 use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolRegistry};
 use std::collections::HashMap;

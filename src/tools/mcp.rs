@@ -343,7 +343,6 @@ impl McpClient {
         });
 
         // Process-exit watcher (9.4)
-        let child_exited = self.child_exited.clone();
         self.process = Some(child);
         if let Some(child) = &mut self.process {
             // We need to give the child to the watcher task without moving self.

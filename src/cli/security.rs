@@ -219,7 +219,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
             skip_sandbox,
         } => {
             // Run local security audit
-            let config = crate::config::Config::load()?;
+            let _config = crate::config::Config::load()?;
             let mut audit_config = crate::security::audit::AuditConfig::default();
 
             if !paths.is_empty() {

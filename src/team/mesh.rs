@@ -409,7 +409,7 @@ impl TeamMeshManager {
 
     /// Get message history for a team
     pub async fn get_team_history(&self, team_id: &str) -> Vec<MeshMessage> {
-        let session = match self.get_session(team_id).await {
+        let _session = match self.get_session(team_id).await {
             Some(s) => s,
             None => return vec![],
         };

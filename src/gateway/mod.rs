@@ -3582,7 +3582,6 @@ async fn create_agent_handler(
                                             message,
                                         });
                                     }
-                                    _ => {}
                                 }
                             })
                         });
@@ -5911,6 +5910,7 @@ struct OpenAiUsage {
 /// OpenAI-compatible chat completions endpoint. Routes the last user message
 /// through the default Manta agent and returns the result in OpenAI wire
 /// format. Supports both streaming (`stream: true` → SSE) and non-streaming.
+#[allow(unused_assignments)]
 async fn openai_chat_completions_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<OpenAiChatRequest>,
@@ -6042,7 +6042,7 @@ async fn openai_chat_completions_handler(
         // ── Non-streaming JSON response ─────────────────────────────────────
         let timeout_dur = tokio::time::Duration::from_secs(120);
         let start = tokio::time::Instant::now();
-        let mut response_content = String::new();
+        let mut response_content: Option<String> = None;
         let mut prompt_tokens = 0u32;
         let mut completion_tokens = 0u32;
         let mut total_tokens = 0u32;
@@ -6068,7 +6068,7 @@ async fn openai_chat_completions_handler(
                     ..
                 })) => {
                     if sid == session_id {
-                        response_content = content;
+                        response_content = Some(content);
                         if let Some(ref u) = usage {
                             prompt_tokens = u.prompt_tokens;
                             completion_tokens = u.completion_tokens;
@@ -6091,7 +6091,7 @@ async fn openai_chat_completions_handler(
                 index: 0,
                 message: OpenAiResponseMessage {
                     role: "assistant".to_string(),
-                    content: response_content,
+                    content: response_content.unwrap_or_default(),
                 },
                 finish_reason: "stop".to_string(),
             }],
@@ -7228,7 +7228,6 @@ async fn web_terminal_events_handler(
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use futures_util::StreamExt;
-    use tokio::sync::broadcast;
     use tokio_stream::wrappers::BroadcastStream;
 
     // Subscribe to gateway events
