@@ -249,6 +249,11 @@ impl Context {
         self.token_count + (self.system_prompt.len() / 4)
     }
 
+    /// Get the maximum tokens allowed
+    pub fn max_context_tokens(&self) -> usize {
+        self.max_tokens
+    }
+
     /// Check if context needs pruning
     pub fn needs_pruning(&self) -> bool {
         self.token_count() > self.max_tokens

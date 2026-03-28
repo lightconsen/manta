@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 pub mod db;
+pub mod flush;
 pub mod hybrid;
 pub mod manager;
 pub mod personality;
@@ -23,6 +24,10 @@ pub mod local_embeddings;
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
+pub use flush::{
+    check_memory_flush, increment_compaction_count, record_flush_in_state,
+    resolve_flush_target_path, FlushReason, MemoryFlushDecision,
+};
 pub use hybrid::{
     apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,

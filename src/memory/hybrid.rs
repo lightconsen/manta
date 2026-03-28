@@ -31,6 +31,10 @@ pub struct HybridSearchConfig {
     pub max_results: usize,
     /// Minimum combined score to include a result. Default: 0.35.
     pub min_score: f32,
+    /// Temporal decay configuration for recency-aware scoring. Default: disabled.
+    pub temporal_decay: TemporalDecayConfig,
+    /// MMR configuration for diversity re-ranking. Default: lambda=0.7, top_k=5.
+    pub mmr: MmrConfig,
 }
 
 impl Default for HybridSearchConfig {
@@ -40,6 +44,8 @@ impl Default for HybridSearchConfig {
             text_weight: 0.3,
             max_results: 6,
             min_score: 0.35,
+            temporal_decay: TemporalDecayConfig::default(),
+            mmr: MmrConfig::default(),
         }
     }
 }
@@ -209,7 +215,19 @@ pub async fn hybrid_search(
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    merged.truncate(config.max_results);
+
+    // Apply temporal decay if enabled.
+    if config.temporal_decay.enabled {
+        apply_temporal_decay(&mut merged, &config.temporal_decay);
+    }
+
+    // Apply MMR re-ranking if configured.
+    if config.mmr.lambda > 0.0 && config.mmr.top_k > 0 {
+        merged = mmr_rerank(merged, &config.mmr);
+    } else {
+        merged.truncate(config.max_results);
+    }
+
     merged
 }
 
@@ -645,5 +663,151 @@ mod tests {
         // "a b c" ∩ "b c d" = {b, c}, union = {a, b, c, d} → 2/4 = 0.5
         let sim = jaccard_similarity("a b c", "b c d");
         assert!((sim - 0.5).abs() < 1e-6);
+    }
+
+    // ── HybridSearchConfig with temporal decay tests ─────────────────────────
+
+    #[test]
+    fn test_hybrid_search_config_includes_temporal_decay_and_mmr() {
+        let cfg = HybridSearchConfig::default();
+        assert!(!cfg.temporal_decay.enabled);
+        assert!((cfg.temporal_decay.half_life_days - 30.0).abs() < 1e-6);
+        assert!((cfg.mmr.lambda - 0.7).abs() < 1e-6);
+        assert_eq!(cfg.mmr.top_k, 5);
+    }
+
+    #[test]
+    fn test_hybrid_search_config_with_custom_temporal_decay() {
+        let cfg = HybridSearchConfig {
+            temporal_decay: TemporalDecayConfig {
+                enabled: true,
+                half_life_days: 7.0,
+            },
+            mmr: MmrConfig { lambda: 0.5, top_k: 3 },
+            ..HybridSearchConfig::default()
+        };
+
+        assert!(cfg.temporal_decay.enabled);
+        assert!((cfg.temporal_decay.half_life_days - 7.0).abs() < 1e-6);
+        assert!((cfg.mmr.lambda - 0.5).abs() < 1e-6);
+        assert_eq!(cfg.mmr.top_k, 3);
+    }
+
+    #[test]
+    fn test_apply_temporal_decay_preserves_score_order_for_same_age() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut results = vec![
+            HybridSearchResult {
+                content: "first".to_string(),
+                score: 0.9,
+                source: "vector".to_string(),
+                citation: format!("vector:memory/{}.md", today),
+            },
+            HybridSearchResult {
+                content: "second".to_string(),
+                score: 0.7,
+                source: "vector".to_string(),
+                citation: format!("vector:memory/{}.md", today),
+            },
+        ];
+
+        apply_temporal_decay(&mut results, &config);
+
+        // Both have same age, so order should be preserved (both decayed equally)
+        // Higher initial score should still be higher after decay
+        assert_eq!(results[0].content, "first");
+        assert_eq!(results[1].content, "second");
+        // First should still have higher score than second (order preserved)
+        assert!(results[0].score > results[1].score, "Score order should be preserved");
+        // Both scores should be reduced from original (since today's date may have slight age)
+        assert!(results[0].score <= 0.9);
+        assert!(results[1].score <= 0.7);
+    }
+
+    #[test]
+    fn test_apply_temporal_decay_half_life_correctness() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        // Create a result from exactly 30 days ago
+        let old_date = (chrono::Utc::now() - chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut results = vec![HybridSearchResult {
+            content: "old".to_string(),
+            score: 1.0,
+            source: "vector".to_string(),
+            citation: format!("vector:memory/{}.md", old_date),
+        }];
+
+        apply_temporal_decay(&mut results, &config);
+
+        // After one half-life, score should be approximately 0.5
+        assert!(
+            results[0].score > 0.45 && results[0].score < 0.55,
+            "Score after one half-life should be ~0.5, got {}",
+            results[0].score
+        );
+    }
+
+    #[test]
+    fn test_apply_temporal_decay_multiple_half_lives() {
+        let config = TemporalDecayConfig {
+            enabled: true,
+            half_life_days: 30.0,
+        };
+
+        // Create a result from 90 days ago (3 half-lives)
+        let old_date = (chrono::Utc::now() - chrono::Duration::days(90))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut results = vec![HybridSearchResult {
+            content: "very old".to_string(),
+            score: 1.0,
+            source: "vector".to_string(),
+            citation: format!("vector:memory/{}.md", old_date),
+        }];
+
+        apply_temporal_decay(&mut results, &config);
+
+        // After 3 half-lives, score should be approximately 0.125 (1/8)
+        assert!(
+            results[0].score > 0.10 && results[0].score < 0.15,
+            "Score after 3 half-lives should be ~0.125, got {}",
+            results[0].score
+        );
+    }
+
+    #[test]
+    fn test_mmr_config_defaults() {
+        let cfg = MmrConfig::default();
+        assert!((cfg.lambda - 0.7).abs() < 1e-6);
+        assert_eq!(cfg.top_k, 5);
+    }
+
+    #[test]
+    fn test_mmr_with_zero_lambda_pure_diversity() {
+        let results = vec![
+            make_result("rust programming language", 0.9),
+            make_result("rust programming tutorial", 0.85), // similar to first
+            make_result("python scripting", 0.5),           // diverse
+        ];
+        let cfg = MmrConfig { lambda: 0.0, top_k: 2 }; // Pure diversity
+        let reranked = mmr_rerank(results, &cfg);
+
+        // With pure diversity, should pick diverse results over similar ones
+        assert_eq!(reranked.len(), 2);
+        // First should be highest relevance
+        assert!(reranked[0].content.contains("rust"));
+        // Second should be diverse (Python) not the similar rust one
+        let has_diverse = reranked.iter().any(|r| r.content.contains("python"));
+        assert!(has_diverse, "Should pick diverse Python result with lambda=0");
     }
 }

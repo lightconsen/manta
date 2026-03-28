@@ -38,6 +38,7 @@ pub type ProgressCallback = Arc<
 >;
 
 pub mod budget;
+pub mod compaction;
 pub mod compressor;
 pub mod context;
 pub mod cost_guard;
@@ -51,6 +52,12 @@ pub mod todo;
 pub mod turns;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
+pub use compaction::{
+    compute_context_hash, should_run_memory_flush, MemoryFlushConfig, SessionCompactionState,
+    DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES, DEFAULT_MEMORY_FLUSH_PROMPT,
+    DEFAULT_MEMORY_FLUSH_RESERVE_TOKENS_FLOOR, DEFAULT_MEMORY_FLUSH_SOFT_TOKENS,
+    DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT,
+};
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use cost_guard::CostGuard;
