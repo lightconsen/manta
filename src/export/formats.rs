@@ -213,6 +213,7 @@ fn humantime_timestamp(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_export_format_from_str() {

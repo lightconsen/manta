@@ -47,6 +47,10 @@ pub struct AgentPersonality {
     pub agents: String,
     /// TOOLS.md - Tool notes and conventions
     pub tools: String,
+    /// HEARTBEAT.md - Periodic task checklist and proactive work reminders
+    pub heartbeat: String,
+    /// MEMORY.md - Curated long-term memory (personal context)
+    pub memory: String,
     /// Path to the agent directory
     pub path: PathBuf,
     /// Whether this personality is valid (has at least SOUL.md or IDENTITY.md)
@@ -77,6 +81,8 @@ impl AgentPersonality {
         personality.user = personality.load_file("USER.md").await;
         personality.agents = personality.load_file("AGENTS.md").await;
         personality.tools = personality.load_file("TOOLS.md").await;
+        personality.heartbeat = personality.load_file("HEARTBEAT.md").await;
+        personality.memory = personality.load_file("MEMORY.md").await;
 
         // Valid if has SOUL.md or IDENTITY.md
         personality.is_valid = !personality.soul.is_empty() || !personality.identity.is_empty();
@@ -176,6 +182,16 @@ impl AgentPersonality {
             sections.push(format!("## Tools\n{}\n", self.tools.trim()));
         }
 
+        // HEARTBEAT.md - Periodic tasks and proactive work
+        if !self.heartbeat.is_empty() {
+            sections.push(format!("## Heartbeat\n{}\n", self.heartbeat.trim()));
+        }
+
+        // MEMORY.md - Curated long-term memory (personal context)
+        if !self.memory.is_empty() {
+            sections.push(format!("## Memory\n{}\n", self.memory.trim()));
+        }
+
         if sections.is_empty() {
             // Fallback to default
             AgentConfig::default().system_prompt
@@ -186,8 +202,8 @@ impl AgentPersonality {
 
     /// Build a reduced system prompt for subagents and cron jobs.
     ///
-    /// Includes: Identity, Soul, Agents, Tools.
-    /// Excludes: Bootstrap (startup-only), User (irrelevant to subagents).
+    /// Includes: Identity, Soul, Agents, Tools, User.
+    /// Excludes: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory (personal context).
     fn build_subagent_prompt(&self) -> String {
         let mut sections = Vec::new();
 
@@ -206,6 +222,15 @@ impl AgentPersonality {
         if !self.tools.is_empty() {
             sections.push(format!("## Tools\n{}\n", self.tools.trim()));
         }
+
+        if !self.user.is_empty() {
+            sections.push(format!("## User\n{}\n", self.user.trim()));
+        }
+
+        // Explicitly excluded: bootstrap, heartbeat, memory
+        // - Bootstrap: startup-only instructions irrelevant to subagents
+        // - Heartbeat: periodic task checklist for main session only
+        // - Memory: contains personal context that shouldn't leak to strangers
 
         if sections.is_empty() {
             AgentConfig::default().system_prompt
@@ -421,6 +446,8 @@ mod tests {
             user: "User prefers terse replies.".to_string(),
             agents: "Work with other agents.".to_string(),
             tools: "Use tools wisely.".to_string(),
+            heartbeat: "Check inbox every hour.".to_string(),
+            memory: "User likes coffee.".to_string(),
             ..Default::default()
         };
 
@@ -428,10 +455,12 @@ mod tests {
         assert!(config.system_prompt.contains("Bootstrap"), "Primary should include Bootstrap");
         assert!(config.system_prompt.contains("Identity"));
         assert!(config.system_prompt.contains("Soul"));
+        assert!(config.system_prompt.contains("Heartbeat"));
+        assert!(config.system_prompt.contains("Memory"));
     }
 
     #[test]
-    fn test_personality_context_subagent_excludes_bootstrap_and_user() {
+    fn test_personality_context_subagent_excludes_bootstrap_heartbeat_and_memory() {
         let personality = AgentPersonality {
             id: "agent".to_string(),
             bootstrap: "Start by greeting.".to_string(),
@@ -440,22 +469,31 @@ mod tests {
             user: "User prefers terse replies.".to_string(),
             agents: "Work with other agents.".to_string(),
             tools: "Use tools wisely.".to_string(),
+            heartbeat: "Check inbox every hour.".to_string(),
+            memory: "User likes coffee.".to_string(),
             ..Default::default()
         };
 
         let config = personality.to_agent_config_for(PersonalityContext::Subagent);
+        // Excluded: Bootstrap (startup-only), Heartbeat (periodic tasks), Memory (personal context)
         assert!(
             !config.system_prompt.contains("Bootstrap"),
             "Subagent should NOT include Bootstrap"
         );
         assert!(
-            !config.system_prompt.contains("User prefers terse"),
-            "Subagent should NOT include User section content"
+            !config.system_prompt.contains("Heartbeat"),
+            "Subagent should NOT include Heartbeat"
         );
+        assert!(
+            !config.system_prompt.contains("User likes coffee"),
+            "Subagent should NOT include Memory section content"
+        );
+        // Included: Identity, Soul, Agents, Tools, User
         assert!(config.system_prompt.contains("Identity"));
         assert!(config.system_prompt.contains("Soul"));
         assert!(config.system_prompt.contains("Agents"));
         assert!(config.system_prompt.contains("Tools"));
+        assert!(config.system_prompt.contains("User prefers terse"));
     }
 
     #[test]

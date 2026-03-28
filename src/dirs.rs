@@ -119,6 +119,13 @@ pub fn default_log_file() -> PathBuf {
     logs_dir().join("daemon.log")
 }
 
+/// Get the workspace state file path (~/.manta/workspace/.manta/workspace-state.json)
+pub fn workspace_state_file() -> PathBuf {
+    workspace_data_dir()
+        .join(".manta")
+        .join("workspace-state.json")
+}
+
 /// Initialize all Manta directories
 ///
 /// Creates the ~/.manta directory structure if it doesn't exist.
@@ -206,6 +213,8 @@ pub fn path_for(file_type: FileType) -> PathBuf {
         FileType::User => workspace_data_dir().join("USER.md"),
         FileType::Agents => workspace_data_dir().join("AGENTS.md"),
         FileType::Tools => workspace_data_dir().join("TOOLS.md"),
+        FileType::Heartbeat => workspace_data_dir().join("HEARTBEAT.md"),
+        FileType::Memory => workspace_data_dir().join("MEMORY.md"),
     }
 }
 
@@ -232,6 +241,10 @@ pub enum FileType {
     Agents,
     /// TOOLS.md tool notes and conventions file
     Tools,
+    /// HEARTBEAT.md periodic task checklist file
+    Heartbeat,
+    /// MEMORY.md curated long-term memory file
+    Memory,
 }
 
 #[cfg(test)]

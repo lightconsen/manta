@@ -15,6 +15,7 @@ pub mod pipeline;
 pub mod session_search;
 pub mod sqlite;
 pub mod vector;
+pub mod workspace_state;
 
 #[cfg(feature = "local-embeddings")]
 pub mod local_embeddings;
@@ -39,6 +40,7 @@ pub use vector::{
     EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
     VectorBackend, VectorMemoryService, VectorStore, VectorStoreStats,
 };
+pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Unique identifier for a memory entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
