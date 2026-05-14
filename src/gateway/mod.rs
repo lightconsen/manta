@@ -43,6 +43,7 @@ use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
 pub mod auth;
+pub mod hooks;
 pub mod middleware;
 pub mod rate_limit;
 pub mod send_policy;
@@ -466,6 +467,8 @@ pub struct GatewayState {
     pub tool_registry: Arc<ToolRegistry>,
     /// Event broadcast channel
     pub event_tx: broadcast::Sender<GatewayEvent>,
+    /// Event hook registry for intercepting/transforming events
+    pub hook_registry: Arc<hooks::EventHookRegistry>,
     /// Message queue for processing
     pub message_queue: mpsc::Sender<QueuedMessage>,
     /// Canvas manager for dynamic UI
@@ -960,6 +963,7 @@ impl Gateway {
             model_router,
             tool_registry,
             event_tx,
+            hook_registry: Arc::new(hooks::EventHookRegistry::new()),
             message_queue: message_queue_tx,
             canvas_manager: Arc::new(CanvasManager::new()),
             plugin_manager,
@@ -1528,6 +1532,9 @@ impl Gateway {
             .route("/api/v1/mcp/servers/:id/resources/read", post(read_mcp_resource_handler))
             // Manta as MCP server (9.9) – Streamable-HTTP endpoint
             .route("/mcp", post(manta_as_mcp_server_handler))
+            // ── Event Hooks API ────────────────────────────────────────────
+            .route("/api/v1/hooks", get(list_hooks_handler))
+            .route("/api/v1/hooks/:name", delete(unregister_hook_handler))
             // ── SSE real-time event streaming ──────────────────────────────
             .route("/api/events", get(sse_events_handler))
             // ── Web terminal API ───────────────────────────────────────────
@@ -7745,4 +7752,31 @@ async fn web_terminal_events_handler(
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// List all registered event hooks
+async fn list_hooks_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let hooks = state.hook_registry.list_hooks().await;
+    Json(hooks)
+}
+
+/// Unregister a hook by name
+async fn unregister_hook_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let removed = state.hook_registry.unregister(&name).await;
+    if removed {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "removed", "name": name})),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Hook not found", "name": name})),
+        )
+            .into_response()
+    }
 }
