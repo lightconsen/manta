@@ -543,3 +543,298 @@ commandGating: CommandGatingConfig
 - macOS/iOS ecosystem integration
 
 Manta excels at being a lightweight, reliable gateway with modern Rust patterns and now matches OpenClaw's core pipeline architecture. OpenClaw excels at being a full-featured personal assistant with rich UI, voice, and mobile capabilities.
+
+---
+
+## 14. Detailed Module-by-Module Comparison
+
+### 14.1 Gateway / Web Control Plane
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Framework** | Express + ws (Node.js) | Axum + tokio-tungstenite (Rust) |
+| **WebSocket** | Full-duplex control plane, custom protocol | Axum native WebSocket, `/ws` endpoint |
+| **REST API** | Complete, with control interface | `/api/v1/*` management endpoints |
+| **Authentication** | OAuth + API Key + rate limiting | localhost/Tailscale restriction + optional API Key |
+| **Rate Limiting** | Sophisticated `auth-rate-limit.ts` | Basic configurable |
+| **Middleware** | Express middleware stack | Tower middleware chain |
+| **Control UI** | Full web control interface | Web Terminal (HTML/JS) |
+| **Config Hot Reload** | ✅ `config-reload.ts` | ❌ Restart required |
+| **Boot Sequence** | Multi-stage with health checks | Single-thread async init |
+| **CSP Security Headers** | ✅ `control-ui-csp.ts` | ❌ |
+
+**Gap**: Manta lacks hot reload and full web control interface.
+
+---
+
+### 14.2 Agent Runtime
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Runtime** | ACP (Agent Control Plane) + actor queue | Tokio async + mpsc channels |
+| **Modes** | `run` (one-shot) / `session` (persistent) | Single persistent mode |
+| **Subagent Spawning** | ✅ Thread-bound persistent subagents | ❌ Not implemented |
+| **Planner** | Integrated into ACP | ✅ `TaskPlanner` (LLM decomposition) |
+| **Prompt Builder** | Model overrides, level overrides | ✅ Dynamic context building |
+| **Memory Files** | SOUL.md, IDENTITY.md, BOOTSTRAP.md | AGENTS.md, TOOLS.md |
+| **Context Compression** | Integrated | ✅ `ContextCompressor` |
+| **Cost Guard** | Basic | ✅ `CostGuard` (daily limit + hourly action rate) |
+
+**Gap**: Manta lacks ACP-level session orchestration and subagent spawning.
+
+---
+
+### 14.3 Inbound Pipeline (Message Ingress)
+
+| Stage | OpenClaw | Manta | Status |
+|---|---|---|---|
+| **Debounce** | ✅ Key debounce | ✅ `InboundDebouncer` + flush mechanism | ✅ Aligned |
+| **Media Understanding** | Full media pipeline (vision/STT/video) | ✅ `MediaUnderstandingPipeline` — images routed via `ModelRouter` to vision providers | ✅ Aligned |
+| **AutoReply Dispatch** | `send-policy.ts` rich rules | ✅ `AutoReplyDispatch` + suppress logic | ✅ Aligned |
+| **Queue Mode** | ✅ Interrupt/Steer/FollowUp/Collect/Normal | ✅ `QueueModeResolver` — 5 modes + session-level heuristics + message buffering | ✅ Aligned |
+| **Agent Router** | `resolve-route.ts` (600+ lines, complex binding) | ✅ `AgentRouter` — workspace-aware multi-agent routing | ✅ Aligned |
+
+**All inbound stages are now skeleton-aligned.**
+
+---
+
+### 14.4 Outbound Pipeline (Response Egress)
+
+| Stage | OpenClaw | Manta | Status |
+|---|---|---|---|
+| **Trajectory** | Execution trace recording | ✅ `TrajectoryLog` — built by agent, forwarded through pipeline | ✅ Aligned |
+| **Canvas** | Live Canvas A2UI | ✅ `CanvasComponent` JSON detection in `DefaultOutboundPipeline` → applied via `CanvasManager` | ✅ Aligned |
+| **SSE** | Streaming event push | ✅ `SseStreamer` — per-session broadcast, subscriber tracking, GC | ✅ Aligned |
+| **Reply Dispatcher** | Route by channel | ✅ `ReplyDispatcher` — multi-channel routing | ✅ Aligned |
+| **Side Effects** | Memory, cron, webhooks | ✅ `SideEffectExecutor` — MemoryStore/CronSchedule/Webhook/Analytics all implemented + runtime context wired | ✅ Aligned |
+
+**All outbound stages are now skeleton-aligned.**
+
+---
+
+### 14.5 Model Router / LLM Providers
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Multi-Provider** | Anthropic, OpenAI, GitHub Copilot, Google | Anthropic, OpenAI, Azure, Ollama |
+| **Model Aliases** | ✅ | ✅ |
+| **Fallback Chains** | ✅ Configured | ✅ Dynamic runtime |
+| **Circuit Breaker** | ❌ | ✅ `CircuitState` (Closed/Open/HalfOpen) |
+| **Health Tracking** | Provider usage stats | ✅ Latency, failures, successes |
+| **Auth Profile Rotation** | ✅ `auth-profiles/` | ❌ |
+| **Runtime Switching** | CLI commands | ✅ REST API |
+| **Provider SDK** | Dynamic discovery | ✅ `ProviderSdk` + `sync_from_model_router()` |
+
+**Manta advantage**: Circuit breaker, runtime REST API, health tracking.
+**OpenClaw advantage**: More providers, auth profile rotation.
+
+---
+
+### 14.6 Tool System
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Registry** | `ToolCatalog` + policy | `ToolRegistry` |
+| **Policy** | `tool-policy.ts` granular rules | Basic allowlist |
+| **File Operations** | Extensive | ✅ read/write/edit/glob/grep |
+| **Shell** | ✅ | ✅ `ShellTool` |
+| **Browser** | Dedicated `browser/` module | ✅ `BrowserTool` (chromiumoxide) |
+| **Web Search** | Rich | ✅ search/fetch |
+| **Canvas Tools** | ✅ `pi-tools` | ✅ via `CanvasManager` |
+| **Subagent Tools** | ✅ Session spawning | ❌ |
+| **Plugin Tools** | ✅ Plugin SDK | ❌ |
+| **Security Audit** | `audit-tool-policy.ts` | Basic validation |
+| **Sandbox** | ✅ Sandbox modes | ❌ |
+| **Tool SDK** | Dynamic tool pack | ✅ `ToolSdk` + `sync_from_tool_registry()` |
+| **Hooks** | Event hooks | ✅ `ToolHooks` |
+| **Approval Queue** | Human-in-the-loop | ✅ `ApprovalQueue` |
+
+**Gap**: Manta lacks subagent tools, plugin tools, sandbox mode.
+
+---
+
+### 14.7 Memory / Persistence
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Database** | Multiple backends (builtin/qmd/lancedb) | SQLite (sqlx) + WAL + FTS5 |
+| **Chat History** | `transcripts.ts` | ✅ `messages` table |
+| **Semantic Memory** | Vector DB | ✅ `Memory` table + embedding |
+| **Vector Search** | QMD / LanceDB | ✅ `VectorMemoryService` (pgvector, SQLite-vec) |
+| **Hybrid Search** | Partial | ✅ Vector + FTS5 + MMR re-ranking |
+| **Embeddings** | Gemini/OpenAI/Voyage batch | ✅ `LocalGgufEmbeddingProvider` + API providers |
+| **Chunking** | `embedding-chunk-limits.ts` | ✅ `TextChunker` |
+| **Batch Processing** | Gemini/OpenAI/Voyage | ✅ `BatchEmbeddingProcessor` |
+| **Session Files** | `session-files.ts` | ❌ |
+| **MemoryManager** | No unified orchestrator | ✅ `MemoryManager` (observe/retrieve/session_context) |
+| **Workspace State** | Basic | ✅ `WorkspaceManager` + `WorkspaceState` |
+
+**Manta advantage**: Hybrid search (vector + FTS5 + MMR), unified `MemoryManager`.
+**OpenClaw advantage**: More backend choices, session file system.
+
+---
+
+### 14.8 Channels (Messaging)
+
+| Channel | OpenClaw | Manta |
+|---|---|---|
+| **Telegram** | ✅ grammY | ✅ teloxide |
+| **Discord** | ✅ discord.js | ✅ serenity |
+| **Slack** | ✅ Bolt | stub (reqwest) |
+| **WhatsApp** | ✅ Baileys | ✅ Webhooks + HMAC |
+| **Signal** | ✅ signal-cli | ❌ |
+| **iMessage** | ✅ BlueBubbles | ❌ |
+| **WebChat** | Full web interface | Web Terminal |
+| **QQ** | Extension | stub |
+| **Lark/Feishu** | Extension | ✅ |
+| **Total Channels** | 20+ | 6 |
+| **Architecture** | Plugin-based `dock.ts` | Trait-based (`Channel` trait) |
+| **ChannelExtension** | Unified interface | ✅ `ChannelExtension` trait + `TelegramChannelExtension` |
+| **Mention Gating** | ✅ `mention-gating.ts` | ❌ |
+| **Command Gating** | ✅ `command-gating.ts` | ❌ |
+| **Allowlist** | Sophisticated pattern matching | Basic |
+
+**Gap**: Manta lacks Signal/iMessage, mention/command gating, sophisticated allowlist.
+
+---
+
+### 14.9 Canvas / A2UI
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Component System** | `canvas-host/` (full) | ✅ `CanvasComponent` enum (16 component types) |
+| **Session Management** | Full | ✅ `CanvasSession` + `CanvasManager` |
+| **WebSocket Protocol** | Custom | ✅ `CanvasWebSocketHandler` |
+| **Real-time Updates** | ✅ | ✅ `broadcast::Sender<CanvasUpdate>` |
+| **Helper Functions** | Rich | ✅ create_form/create_progress/create_alert/etc. |
+| **Outbound Integration** | Integrated | ✅ `DefaultOutboundPipeline` detects JSON and applies |
+
+**Status**: Skeleton aligned. OpenClaw's UI is richer.
+
+---
+
+### 14.10 SSE / Real-time Streaming
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Event Types** | token/tool/start/end/error | ✅ Token/ToolStart/ToolEnd/Done/Error/Heartbeat |
+| **Broadcast** | Global / session-level | ✅ Per-session `broadcast::Sender` |
+| **Subscription Management** | Client connections | ✅ `subscribe()` + receiver count |
+| **Back-pressure** | Yes | ✅ Channel capacity (256) |
+| **GC** | Automatic | ✅ `gc()` cleans sessions with no receivers |
+| **Endpoint** | WebSocket events | ✅ `/api/events` (axum SSE) |
+
+**Status**: Fully implemented.
+
+---
+
+### 14.11 Cron / Scheduled Tasks
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Scheduler** | Basic cron | ✅ `CronScheduler` (production-grade) |
+| **Trigger Types** | Cron only | ✅ At / Every / Cron three `Schedule` types |
+| **Execution Targets** | Shell / agent / webhook | ✅ `ExecutionTarget` (Shell/Agent) |
+| **Delivery Modes** | None | ✅ None / Announce / Webhook |
+| **Retry** | None | ✅ `RetryConfig` |
+| **State Tracking** | None | ✅ `JobState` (next_run/last_run/run_count/errors) |
+| **Crash Recovery** | None | ✅ Persist to JSON + recover on startup |
+| **Announce Integration** | None | ✅ Broadcast via `event_tx` to Gateway |
+| **Side Effect Trigger** | None | ✅ `CronSchedule` side effect from outbound pipeline |
+
+**Manta advantage**: Production-grade cron scheduler. OpenClaw's cron is simpler.
+
+---
+
+### 14.12 Security
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **DM Pairing** | ✅ Full pairing system | ❌ |
+| **Allowlist** | Sophisticated pattern matching | Basic |
+| **Webhook Verification** | ✅ Signature verification | ✅ HMAC-SHA256 |
+| **Audit Logging** | `audit.ts` comprehensive | ❌ |
+| **Tool Auditing** | `audit-tool-policy.ts` | Basic |
+| **CSP** | ✅ | ❌ |
+| **Rate Limiting** | Sophisticated per-channel | Basic middleware |
+| **Sandbox** | ✅ Sandbox modes | ❌ |
+| **Sliding Window** | Basic | ✅ `SlidingWindow` rate limiter |
+
+**Gap**: Manta lacks pairing system, audit logging, sandbox, CSP.
+
+---
+
+### 14.13 Plugin System
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Runtime** | jiti (ESM hot reload) | ❌ |
+| **SDK** | Full Plugin SDK | ❌ |
+| **Channel Plugins** | Dynamic registration | ❌ |
+| **Tool Plugins** | Dynamic registration | ❌ |
+| **WASM** | None | ✅ wasmtime (feature flag) |
+
+**Gap**: Manta's plugin system is immature; only WASM foundation exists.
+
+---
+
+### 14.14 Session Management
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Storage** | File + transcript | SQLite |
+| **Routing** | `resolve-route.ts` (600+ lines) | `AgentRouter` + `QueueModeResolver` |
+| **Session Key** | Normalized + account/agent scope | `{channel}:{user_id}` |
+| **Group Sessions** | `group.ts` full implementation | Basic support |
+| **Transcripts** | `transcript.ts` | ❌ |
+| **Artifacts** | `artifacts.ts` | ❌ |
+| **Disk Budget** | `disk-budget.ts` | ❌ |
+| **Session Buffers** | Basic | ✅ `session_message_buffer` for FollowUp/Collect |
+
+**Gap**: Manta's session management is simpler; lacks transcripts, artifacts, disk budget.
+
+---
+
+## 15. Module Maturity Scorecard
+
+| Module | OpenClaw | Manta | Gap |
+|---|---|---|---|
+| **Gateway** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing hot reload, control UI |
+| **Agent Runtime** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing ACP, subagent spawning |
+| **Inbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
+| **Outbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
+| **Model Router** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta has circuit breaker advantage |
+| **Tool System** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing subagent/plugin tools |
+| **Memory** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing session files, multi-backend |
+| **Channels** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing Signal/iMessage/mention gating |
+| **Canvas** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Skeleton aligned, UI richness gap |
+| **SSE** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Fully implemented |
+| **Cron** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta more production-grade |
+| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing pairing/audit/sandbox |
+| **Plugin** | ⭐⭐⭐⭐⭐ | ⭐ | Far from mature |
+| **Session Mgmt** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing transcripts/artifacts |
+
+---
+
+## 16. Manta's Core Advantages
+
+1. **Circuit Breaker** — Automatic provider failover with health tracking (OpenClaw lacks this)
+2. **Rust Single Binary** — Low memory footprint, cross-platform, no runtime dependency
+3. **Production Cron** — At/Every/Cron schedules with retry, crash recovery, state tracking
+4. **Hybrid Search** — Vector + FTS5 + MMR re-ranking in unified `MemoryManager`
+5. **Pipeline DAG** — OpenClaw-aligned skeleton: debounce → media → queue → router → trajectory → canvas → sse → side effects
+6. **Tailscale** — Built-in remote access (OpenClaw lacks this)
+7. **Task Planner** — LLM-based natural language task decomposition
+8. **Runtime Provider API** — Hot switch providers via REST (OpenClaw only CLI)
+
+## 17. OpenClaw's Core Advantages
+
+1. **ACP** — Sophisticated session orchestration with actor queue
+2. **Rich Channels** — 20+ channels including Signal, iMessage
+3. **Plugin Ecosystem** — jiti runtime loading, full SDK
+4. **Voice/TTS** — Text-to-speech and voice wake
+5. **Mobile Apps** — iOS and Android companion apps
+6. **Hot Config Reload** — Runtime configuration updates without restart
+7. **Subagent Spawning** — Thread-bound persistent subagents
+8. **Security** — DM pairing, audit logging, sandbox modes, CSP
+9. **macOS Integration** — Deep ecosystem integration (BlueBubbles, launchd)
