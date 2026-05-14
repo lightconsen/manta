@@ -22,7 +22,10 @@ pub enum SseEvent {
     /// A tool call started.
     ToolStart { name: String },
     /// A tool call finished.
-    ToolEnd { name: String, result: serde_json::Value },
+    ToolEnd {
+        name: String,
+        result: serde_json::Value,
+    },
     /// The stream finished.
     Done,
     /// An error occurred.
@@ -80,10 +83,7 @@ impl SseStreamer {
                 return;
             }
             if let Err(e) = sender.send(event) {
-                warn!(
-                    "SSE send failed for session {} (no active receivers): {:?}",
-                    session_id, e
-                );
+                warn!("SSE send failed for session {} (no active receivers): {:?}", session_id, e);
             } else {
                 debug!("SSE event sent to session {}", session_id);
             }
@@ -166,9 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_event_serialization() {
-        let event = SseEvent::Token {
-            text: "hello".to_string(),
-        };
+        let event = SseEvent::Token { text: "hello".to_string() };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("token"));
         assert!(json.contains("hello"));

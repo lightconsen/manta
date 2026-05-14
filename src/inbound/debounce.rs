@@ -30,8 +30,8 @@ impl Default for InboundDebouncerConfig {
             max_tracked_keys: 2048,
             debounce_ms: 500,
             bypass_prefixes: vec![
-                "/".to_string(),     // commands
-                "!".to_string(),     // bot commands
+                "/".to_string(), // commands
+                "!".to_string(), // bot commands
             ],
         }
     }
@@ -90,10 +90,7 @@ impl InboundDebouncer {
     /// (e.g., commands starting with `/`).
     ///
     /// Returns `None` if the message is absorbed into a pending batch.
-    pub async fn enqueue(
-        self: &Arc<Self>,
-        message: IncomingMessage,
-    ) -> Option<IncomingMessage> {
+    pub async fn enqueue(self: &Arc<Self>, message: IncomingMessage) -> Option<IncomingMessage> {
         let key = Self::resolve_key(&message);
         let content = message.content.trim();
 
@@ -106,25 +103,24 @@ impl InboundDebouncer {
         let mut buffers = self.buffers.write().await;
 
         // LRU eviction: if we're at capacity, drop the oldest key.
-        if buffers.len() >= self.config.max_tracked_keys
-            && !buffers.contains_key(&key)
-        {
+        if buffers.len() >= self.config.max_tracked_keys && !buffers.contains_key(&key) {
             if let Some(oldest) = buffers.keys().next().cloned() {
-                warn!("Debouncer at capacity ({}), evicting key {}", self.config.max_tracked_keys, oldest);
+                warn!(
+                    "Debouncer at capacity ({}), evicting key {}",
+                    self.config.max_tracked_keys, oldest
+                );
                 buffers.remove(&oldest);
             }
         }
 
-        let buffer = buffers
-            .entry(key.clone())
-            .or_insert_with(|| {
-                let tx = self.flush_tx.clone();
-                Mutex::new(DebounceBuffer {
-                    items: Vec::new(),
-                    flush_tx: tx,
-                    timer_handle: None,
-                })
-            });
+        let buffer = buffers.entry(key.clone()).or_insert_with(|| {
+            let tx = self.flush_tx.clone();
+            Mutex::new(DebounceBuffer {
+                items: Vec::new(),
+                flush_tx: tx,
+                timer_handle: None,
+            })
+        });
 
         let mut guard = buffer.lock().await;
 
@@ -165,10 +161,7 @@ impl InboundDebouncer {
     }
 
     /// Flush all pending items for a given key immediately.
-    pub async fn flush_key(
-        self: &Arc<Self>,
-        key: &str,
-    ) -> Vec<IncomingMessage> {
+    pub async fn flush_key(self: &Arc<Self>, key: &str) -> Vec<IncomingMessage> {
         let batch = {
             let mut buffers = self.buffers.write().await;
             if let Some(buf) = buffers.remove(key) {
@@ -186,9 +179,7 @@ impl InboundDebouncer {
     }
 
     /// Flush **all** pending buffers (useful at shutdown).
-    pub async fn flush_all(
-        self: &Arc<Self>,
-    ) -> Vec<IncomingMessage> {
+    pub async fn flush_all(self: &Arc<Self>) -> Vec<IncomingMessage> {
         let mut all = Vec::new();
         let keys: Vec<String> = {
             let buffers = self.buffers.read().await;

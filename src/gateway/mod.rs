@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
@@ -41,6 +42,7 @@ use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
+pub mod auth;
 pub mod middleware;
 pub mod send_policy;
 pub mod webhooks;
@@ -283,6 +285,15 @@ pub struct SecurityConfig {
     pub rate_limit: RateLimitConfig,
     /// Enable security headers
     pub security_headers: bool,
+    /// OAuth2 configuration
+    #[serde(default)]
+    pub oauth: crate::gateway::auth::OAuthConfig,
+    /// CORS configuration
+    #[serde(default)]
+    pub cors: crate::gateway::auth::CorsConfig,
+    /// CSP configuration
+    #[serde(default)]
+    pub csp: crate::gateway::auth::CspConfig,
 }
 
 /// Rate limiting configuration
@@ -304,6 +315,9 @@ impl Default for SecurityConfig {
             pairing_required: false,
             rate_limit: RateLimitConfig::default(),
             security_headers: true,
+            oauth: crate::gateway::auth::OAuthConfig::default(),
+            cors: crate::gateway::auth::CorsConfig::default(),
+            csp: crate::gateway::auth::CspConfig::default(),
         }
     }
 }
@@ -903,36 +917,33 @@ impl Gateway {
         ));
 
         let (debounce_flush_tx, debounce_flush_rx) = mpsc::channel(256);
-        let debouncer = InboundDebouncer::new(
-            InboundDebouncerConfig::default(),
-            debounce_flush_tx,
-        );
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), debounce_flush_tx);
 
-        let inbound_concrete = Arc::new(
-            crate::inbound::DefaultInboundPipeline::new(
-                debouncer.clone(),
-                crate::inbound::MediaUnderstandingPipeline::new()
-                    .with_model_router(Arc::clone(&model_router)),
-                crate::inbound::AutoReplyDispatch::new(crate::inbound::AutoReplyDispatchConfig::default()),
-                crate::inbound::QueueModeResolver::new(),
-                (*agent_router).clone(),
-                routed_tx.clone(),
-                debounce_flush_rx,
+        let inbound_concrete = Arc::new(crate::inbound::DefaultInboundPipeline::new(
+            debouncer.clone(),
+            crate::inbound::MediaUnderstandingPipeline::new()
+                .with_model_router(Arc::clone(&model_router)),
+            crate::inbound::AutoReplyDispatch::new(
+                crate::inbound::AutoReplyDispatchConfig::default(),
             ),
-        );
+            crate::inbound::QueueModeResolver::new(),
+            (*agent_router).clone(),
+            routed_tx.clone(),
+            debounce_flush_rx,
+        ));
         inbound_concrete.clone().start();
         let inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline> = inbound_concrete;
 
         let side_effect_registry = Arc::new(crate::outbound::SideEffectRegistry::new());
-        let side_effect_executor = Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
+        let side_effect_executor =
+            Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
         let sse_streamer = Arc::new(crate::outbound::SseStreamer::new());
-        let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> = Arc::new(
-            crate::outbound::DefaultOutboundPipeline::new(
+        let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> =
+            Arc::new(crate::outbound::DefaultOutboundPipeline::new(
                 reply_dispatcher.clone(),
                 side_effect_executor.clone(),
                 Some(sse_streamer.clone()),
-            ),
-        );
+            ));
 
         // Create state with placeholder values for vector_memory and hot_reload
         // We'll fill them in after state creation to allow callbacks to reference state
@@ -976,7 +987,9 @@ impl Gateway {
             outbound_pipeline,
             side_effect_executor: side_effect_executor.clone(),
             sse_streamer: sse_streamer.clone(),
-            channel_extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
+            channel_extensions: Arc::new(RwLock::new(
+                crate::channels::ChannelExtensionRegistry::new(),
+            )),
             provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
             tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
             session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
@@ -985,7 +998,9 @@ impl Gateway {
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
             let mut provider_sdk = state.provider_sdk.write().await;
-            provider_sdk.sync_from_model_router(&state.model_router).await;
+            provider_sdk
+                .sync_from_model_router(&state.model_router)
+                .await;
         }
         {
             let mut tool_sdk = state.tool_sdk.write().await;
@@ -1223,7 +1238,10 @@ impl Gateway {
                     .unwrap_or_default(),
             )),
         };
-        state.side_effect_executor.set_context(side_effect_ctx).await;
+        state
+            .side_effect_executor
+            .set_context(side_effect_ctx)
+            .await;
         info!("✅ SideEffectExecutor context wired");
 
         // Start message processing worker (legacy QueuedMessage path)
@@ -1324,7 +1342,7 @@ impl Gateway {
         self.init_channels().await?;
 
         // Build HTTP router
-        let app = self.build_router();
+        let app = self.build_router().await;
 
         // Bind to address
         let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
@@ -1384,11 +1402,22 @@ impl Gateway {
     }
 
     /// Build the HTTP router
-    fn build_router(&self) -> Router {
+    async fn build_router(&self) -> Router {
         let state = self.state.clone();
 
         // Public tier: Webhooks (no authentication, signature verification per-channel)
         let public_router = webhooks::create_webhook_router(state.clone());
+
+        // Auth tier: OAuth login/logout (public-facing, no tailscale restriction)
+        let auth_router = Router::new()
+            .route("/auth/github", get(auth::oauth::github_login_handler))
+            .route("/auth/github/callback", get(auth::oauth::github_callback_handler))
+            .route("/auth/google", get(auth::oauth::google_login_handler))
+            .route("/auth/google/callback", get(auth::oauth::google_callback_handler))
+            .route("/auth/logout", post(auth::oauth::logout_handler))
+            .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
+            .layer(from_fn(middleware::security_headers_middleware))
+            .with_state(state.clone());
 
         // Admin tier: Protected APIs (localhost/Tailscale only)
         let admin_router = Router::new()
@@ -1528,12 +1557,62 @@ impl Gateway {
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
+            .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
             .layer(from_fn(middleware::tailscale_only_middleware))
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
-        // Merge public and admin routers
-        public_router.merge(admin_router)
+        // Build CORS layer from config
+        let cors_layer = {
+            let config = state.config.read().await;
+            if config.security.cors.enabled {
+                let mut cors = CorsLayer::new();
+                if config.security.cors.allow_credentials {
+                    cors = cors.allow_credentials(true);
+                }
+                // Allow configured origins
+                for origin in &config.security.cors.allowed_origins {
+                    if origin == "*" {
+                        cors = cors.allow_origin(tower_http::cors::Any);
+                    } else if let Ok(header_value) = origin.parse() {
+                        cors = cors.allow_origin([header_value]);
+                    }
+                }
+                // Allow configured methods
+                let methods: Vec<_> = config
+                    .security
+                    .cors
+                    .allowed_methods
+                    .iter()
+                    .filter_map(|m| m.parse().ok())
+                    .collect();
+                if !methods.is_empty() {
+                    cors = cors.allow_methods(methods);
+                }
+                // Allow configured headers
+                let headers: Vec<_> = config
+                    .security
+                    .cors
+                    .allowed_headers
+                    .iter()
+                    .filter_map(|h| h.parse().ok())
+                    .collect();
+                if !headers.is_empty() {
+                    cors = cors.allow_headers(headers);
+                }
+                cors.max_age(std::time::Duration::from_secs(
+                    config.security.cors.max_age_secs as u64,
+                ))
+            } else {
+                CorsLayer::new()
+            }
+        };
+
+        // Merge all routers and apply global CORS
+        public_router
+            .merge(auth_router)
+            .merge(admin_router)
+            .layer(cors_layer)
     }
 
     /// Spawn a new agent
@@ -2198,9 +2277,7 @@ impl Gateway {
 
             // Register a bridge with the reply dispatcher so outbound pipeline
             // messages flow into the extension's run_outbound.
-            let bridge = Arc::new(crate::channels::ChannelSenderBridge::new(
-                name, outbound_tx,
-            ));
+            let bridge = Arc::new(crate::channels::ChannelSenderBridge::new(name, outbound_tx));
             self.state
                 .reply_dispatcher
                 .register_channel(name, bridge)
@@ -2366,15 +2443,12 @@ impl Gateway {
 
             // Convert QueuedMessage to IncomingMessage and route through
             // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
-            let incoming = crate::channels::IncomingMessage::new(
-                msg.user_id,
-                msg.session_id,
-                msg.content,
-            )
-            .with_provenance(crate::channels::InputProvenance::ExternalUser {
-                channel: msg.channel,
-                is_direct: true,
-            });
+            let incoming =
+                crate::channels::IncomingMessage::new(msg.user_id, msg.session_id, msg.content)
+                    .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                        channel: msg.channel,
+                        is_direct: true,
+                    });
 
             let _ = state.inbound_pipeline.process(incoming).await;
             // The pipeline forwards RoutedMessage to routed_tx; process_routed_messages
@@ -2411,9 +2485,14 @@ impl Gateway {
                         buffers.remove(&session_id);
                     }
                     Self::send_to_agent(
-                        &state, &agent_id, &session_id,
-                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
-                    ).await;
+                        &state,
+                        &agent_id,
+                        &session_id,
+                        &routed.incoming.content,
+                        &routed.incoming.user_id.0,
+                        &channel,
+                    )
+                    .await;
                 }
 
                 crate::inbound::QueueMode::Steer => {
@@ -2427,9 +2506,14 @@ impl Gateway {
                     // Small delay to let cancel take effect
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     Self::send_to_agent(
-                        &state, &agent_id, &session_id,
-                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
-                    ).await;
+                        &state,
+                        &agent_id,
+                        &session_id,
+                        &routed.incoming.content,
+                        &routed.incoming.user_id.0,
+                        &channel,
+                    )
+                    .await;
                 }
 
                 crate::inbound::QueueMode::FollowUp => {
@@ -2454,7 +2538,12 @@ impl Gateway {
                         let session_id_clone = session_id.clone();
                         tokio::spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                            Self::flush_session_buffer(&state_clone, &agent_id_clone, &session_id_clone).await;
+                            Self::flush_session_buffer(
+                                &state_clone,
+                                &agent_id_clone,
+                                &session_id_clone,
+                            )
+                            .await;
                         });
                     }
                 }
@@ -2463,7 +2552,10 @@ impl Gateway {
                     // /done trigger: flush the buffer
                     let has_buffered = {
                         let buffers = state.session_message_buffer.read().await;
-                        buffers.get(&session_id).map(|b| !b.is_empty()).unwrap_or(false)
+                        buffers
+                            .get(&session_id)
+                            .map(|b| !b.is_empty())
+                            .unwrap_or(false)
                     };
 
                     if has_buffered {
@@ -2471,28 +2563,34 @@ impl Gateway {
                     } else {
                         // No buffer to flush; treat as normal message
                         Self::send_to_agent(
-                            &state, &agent_id, &session_id,
-                            &routed.incoming.content, &routed.incoming.user_id.0, &channel,
-                        ).await;
+                            &state,
+                            &agent_id,
+                            &session_id,
+                            &routed.incoming.content,
+                            &routed.incoming.user_id.0,
+                            &channel,
+                        )
+                        .await;
                     }
                 }
 
                 crate::inbound::QueueMode::Normal => {
                     Self::send_to_agent(
-                        &state, &agent_id, &session_id,
-                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
-                    ).await;
+                        &state,
+                        &agent_id,
+                        &session_id,
+                        &routed.incoming.content,
+                        &routed.incoming.user_id.0,
+                        &channel,
+                    )
+                    .await;
                 }
             }
         }
     }
 
     /// Flush buffered messages for a session and send as a single batch.
-    async fn flush_session_buffer(
-        state: &Arc<GatewayState>,
-        agent_id: &str,
-        session_id: &str,
-    ) {
+    async fn flush_session_buffer(state: &Arc<GatewayState>, agent_id: &str, session_id: &str) {
         let messages: Vec<BufferedMessage> = {
             let mut buffers = state.session_message_buffer.write().await;
             buffers.remove(session_id).unwrap_or_default()
@@ -2508,8 +2606,14 @@ impl Gateway {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let first_user_id = messages.first().map(|m| m.user_id.clone()).unwrap_or_default();
-        let first_channel = messages.first().map(|m| m.channel.clone()).unwrap_or_default();
+        let first_user_id = messages
+            .first()
+            .map(|m| m.user_id.clone())
+            .unwrap_or_default();
+        let first_channel = messages
+            .first()
+            .map(|m| m.channel.clone())
+            .unwrap_or_default();
 
         info!(
             "Flushing {} buffered messages for session {} (combined length: {})",
@@ -2518,10 +2622,8 @@ impl Gateway {
             combined.len()
         );
 
-        Self::send_to_agent(
-            state, agent_id, session_id,
-            &combined, &first_user_id, &first_channel,
-        ).await;
+        Self::send_to_agent(state, agent_id, session_id, &combined, &first_user_id, &first_channel)
+            .await;
     }
 
     /// Send a single message to an agent.
@@ -4114,7 +4216,9 @@ async fn send_message_handler(
 
     // Otherwise, route through inbound pipeline for normal agent processing
     let incoming = crate::channels::IncomingMessage::new(
-        body.user_id.clone().unwrap_or_else(|| "api_user".to_string()),
+        body.user_id
+            .clone()
+            .unwrap_or_else(|| "api_user".to_string()),
         session_id.clone(),
         body.message,
     )

@@ -318,15 +318,33 @@ pub async fn rate_limit_middleware(
 
 /// Middleware: Security headers
 ///
-/// Adds security headers to all responses
+/// Adds comprehensive security headers to all responses, including:
+/// - Content-Security-Policy (with optional nonce)
+/// - X-Content-Type-Options
+/// - X-Frame-Options
+/// - Referrer-Policy
+/// - Permissions-Policy
+/// - Strict-Transport-Security
 pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
 
     let headers = response.headers_mut();
+
+    // Content Security Policy
+    let csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
+    headers.insert("Content-Security-Policy", csp.parse().unwrap());
+
     headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
     headers.insert("X-Frame-Options", "DENY".parse().unwrap());
-    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
     headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    headers.insert(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()".parse().unwrap(),
+    );
+    headers.insert(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains".parse().unwrap(),
+    );
 
     response
 }

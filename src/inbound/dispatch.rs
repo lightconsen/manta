@@ -94,8 +94,7 @@ impl AutoReplyDispatch {
                 crate::channels::InputProvenance::InterSession { .. } => "inter_session",
                 crate::channels::InputProvenance::InternalSystem { .. } => "internal",
             };
-            let decision = policy.evaluate(
-                &message.user_id.0, channel, &message.content);
+            let decision = policy.evaluate(&message.user_id.0, channel, &message.content);
             match decision {
                 PolicyDecision::Allow => {}
                 PolicyDecision::Deny { reason } => {
@@ -138,7 +137,8 @@ impl AutoReplyDispatch {
         // Look for #workspace_name anywhere in the message
         for word in content.split_whitespace() {
             if let Some(name) = word.strip_prefix('#') {
-                let name = name.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
+                let name =
+                    name.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
                 if !name.is_empty() {
                     return Some(name.to_string());
                 }

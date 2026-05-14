@@ -20,10 +20,7 @@ pub enum SideEffect {
         tags: Vec<String>,
     },
     /// Schedule a cron job.
-    CronSchedule {
-        expression: String,
-        payload: String,
-    },
+    CronSchedule { expression: String, payload: String },
     /// Trigger a webhook.
     Webhook {
         url: String,
@@ -62,17 +59,13 @@ impl SideEffectRegistry {
         }
     }
 
-    pub async fn register(&self,
-        handler: Arc<dyn SideEffectHandler>,
-    ) {
+    pub async fn register(&self, handler: Arc<dyn SideEffectHandler>) {
         let mut handlers = self.handlers.write().await;
         info!("Registered side-effect handler: {}", handler.name());
         handlers.insert(handler.name().to_string(), handler);
     }
 
-    pub async fn get(&self,
-        name: &str,
-    ) -> Option<Arc<dyn SideEffectHandler>> {
+    pub async fn get(&self, name: &str) -> Option<Arc<dyn SideEffectHandler>> {
         let handlers = self.handlers.read().await;
         handlers.get(name).cloned()
     }
@@ -134,10 +127,19 @@ impl SideEffectExecutor {
         let ctx = self.ctx.read().await.clone();
 
         match effect {
-            SideEffect::MemoryStore { session_id, content, tags: _tags } => {
+            SideEffect::MemoryStore {
+                session_id,
+                content,
+                tags: _tags,
+            } => {
                 if let Some(ref mm) = ctx.memory_manager {
-                    match mm.observe(session_id, content.clone(), "side_effect", 0.5).await {
-                        Ok(id) => debug!("MemoryStore: saved entry {} for session {}", id, session_id),
+                    match mm
+                        .observe(session_id, content.clone(), "side_effect", 0.5)
+                        .await
+                    {
+                        Ok(id) => {
+                            debug!("MemoryStore: saved entry {} for session {}", id, session_id)
+                        }
                         Err(e) => error!("MemoryStore side-effect failed: {}", e),
                     }
                 } else {
@@ -172,10 +174,12 @@ impl SideEffectExecutor {
 
             SideEffect::Webhook { url, payload } => {
                 let client = ctx.webhook_client.unwrap_or_else(|| {
-                    Arc::new(reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(10))
-                        .build()
-                        .unwrap_or_default())
+                    Arc::new(
+                        reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(10))
+                            .build()
+                            .unwrap_or_default(),
+                    )
                 });
                 let url = url.clone();
                 let payload = payload.clone();
@@ -228,7 +232,9 @@ mod tests {
         struct TestHandler;
         #[async_trait::async_trait]
         impl SideEffectHandler for TestHandler {
-            fn name(&self) -> &str { "test" }
+            fn name(&self) -> &str {
+                "test"
+            }
             async fn execute(&self, _effect: &SideEffect) -> Result<(), SideEffectError> {
                 Ok(())
             }
@@ -244,13 +250,11 @@ mod tests {
         let registry = Arc::new(SideEffectRegistry::new());
         let executor = SideEffectExecutor::new(registry);
 
-        let effects = vec![
-            SideEffect::MemoryStore {
-                session_id: "s1".to_string(),
-                content: "hello".to_string(),
-                tags: vec!["greeting".to_string()],
-            },
-        ];
+        let effects = vec![SideEffect::MemoryStore {
+            session_id: "s1".to_string(),
+            content: "hello".to_string(),
+            tags: vec!["greeting".to_string()],
+        }];
 
         executor.execute_batch(&effects).await;
     }

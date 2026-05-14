@@ -49,17 +49,15 @@ impl ReplyDispatcher {
     }
 
     /// Register a channel for dispatch.
-    pub async fn register_channel(&self,
-        name: &str,
-        channel: Arc<dyn Channel>,
-    ) {
+    pub async fn register_channel(&self, name: &str, channel: Arc<dyn Channel>) {
         let mut channels = self.channels.write().await;
         channels.insert(name.to_string(), channel);
         info!("Registered channel '{}' for reply dispatch", name);
     }
 
     /// Dispatch an outgoing message to its target channel.
-    pub async fn dispatch(&self,
+    pub async fn dispatch(
+        &self,
         channel_name: &str,
         message: OutgoingMessage,
     ) -> Result<(), ReplyDispatchError> {
@@ -82,10 +80,7 @@ impl ReplyDispatcher {
             message.content.clone()
         };
 
-        let msg = OutgoingMessage {
-            content,
-            ..message
-        };
+        let msg = OutgoingMessage { content, ..message };
 
         debug!(
             "Dispatching reply to channel {} (conversation {})",

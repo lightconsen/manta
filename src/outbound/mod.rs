@@ -92,8 +92,8 @@ impl OutboundPipeline for DefaultOutboundPipeline {
 
         // Stage 2: Canvas rendering — detect A2UI components in agent output
         let canvas_update = if let Ok(component) =
-            serde_json::from_str::<crate::canvas::CanvasComponent>(&ctx.raw_output
-            ) {
+            serde_json::from_str::<crate::canvas::CanvasComponent>(&ctx.raw_output)
+        {
             Some(crate::canvas::CanvasUpdate::Init {
                 canvas_id: ctx.session_id.clone(),
                 root: component,
@@ -106,9 +106,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
         let mut sse_events = Vec::new();
         if let Some(ref sse) = self.sse {
             for tc in &ctx.tool_calls {
-                let evt = SseEvent::ToolStart {
-                    name: tc.function.name.clone(),
-                };
+                let evt = SseEvent::ToolStart { name: tc.function.name.clone() };
                 sse.send(&ctx.session_id, evt.clone()).await;
                 sse_events.push(evt);
             }
@@ -141,7 +139,11 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             },
             usage: ctx.usage,
         };
-        if let Err(e) = self.reply_dispatcher.dispatch(&ctx.channel, outbound_msg).await {
+        if let Err(e) = self
+            .reply_dispatcher
+            .dispatch(&ctx.channel, outbound_msg)
+            .await
+        {
             tracing::warn!("Reply dispatch failed for channel {}: {}", ctx.channel, e);
         }
 

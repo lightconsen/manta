@@ -13,7 +13,7 @@
 //! Design matches OpenClaw's `src/media-understanding/`.
 
 use crate::channels::{Attachment, IncomingMessage};
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use std::sync::Arc;
 
 /// Capability types supported by the media understanding pipeline.
@@ -120,18 +120,15 @@ impl MediaUnderstandingPipeline {
                     )
                 }
             }
-            MediaCapability::Audio => format!(
-                "[Audio attachment: {} ({} bytes)]",
-                attachment.filename, attachment.size
-            ),
-            MediaCapability::Video => format!(
-                "[Video attachment: {} ({} bytes)]",
-                attachment.filename, attachment.size
-            ),
-            MediaCapability::File => format!(
-                "[File attachment: {} ({} bytes)]",
-                attachment.filename, attachment.size
-            ),
+            MediaCapability::Audio => {
+                format!("[Audio attachment: {} ({} bytes)]", attachment.filename, attachment.size)
+            }
+            MediaCapability::Video => {
+                format!("[Video attachment: {} ({} bytes)]", attachment.filename, attachment.size)
+            }
+            MediaCapability::File => {
+                format!("[File attachment: {} ({} bytes)]", attachment.filename, attachment.size)
+            }
         };
 
         AttachmentResult {
@@ -156,7 +153,12 @@ impl MediaUnderstandingPipeline {
             format!("URL: {}", url)
         } else if let Some(ref data) = attachment.data {
             let b64 = general_purpose::STANDARD.encode(data);
-            format!("data:{};base64,{}... ({} bytes)", attachment.content_type, &b64[..b64.len().min(32)], attachment.size)
+            format!(
+                "data:{};base64,{}... ({} bytes)",
+                attachment.content_type,
+                &b64[..b64.len().min(32)],
+                attachment.size
+            )
         } else {
             format!("filename: {}", attachment.filename)
         };
@@ -171,10 +173,7 @@ impl MediaUnderstandingPipeline {
             Ok(resp) => resp.message.content.trim().to_string(),
             Err(e) => {
                 tracing::warn!("Vision provider failed for image {}: {}", attachment.filename, e);
-                format!(
-                    "[Image attachment: {} ({} bytes)]",
-                    attachment.filename, attachment.size
-                )
+                format!("[Image attachment: {} ({} bytes)]", attachment.filename, attachment.size)
             }
         }
     }
@@ -209,20 +208,20 @@ mod tests {
     async fn test_classify_image() {
         let pipeline = MediaUnderstandingPipeline::new();
         let attachment = Attachment::new("photo.png", "image/png").with_data(vec![1, 2, 3]);
-        let result = pipeline.process_attachment(&attachment, MediaCapability::Image).await;
+        let result = pipeline
+            .process_attachment(&attachment, MediaCapability::Image)
+            .await;
         assert!(result.description.contains("Image"));
     }
 
     #[tokio::test]
     async fn test_format_combined() {
-        let results = vec![
-            AttachmentResult {
-                attachment_id: "a1".to_string(),
-                capability: MediaCapability::Image,
-                description: "An image of a cat".to_string(),
-                transcript: None,
-            },
-        ];
+        let results = vec![AttachmentResult {
+            attachment_id: "a1".to_string(),
+            capability: MediaCapability::Image,
+            description: "An image of a cat".to_string(),
+            transcript: None,
+        }];
         let text = MediaUnderstandingPipeline::format_combined_text(&results);
         assert!(text.contains("attachments"));
         assert!(text.contains("cat"));

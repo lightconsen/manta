@@ -228,15 +228,12 @@ async fn whatsapp_webhook_handler(
                                 }
 
                                 // Route through inbound pipeline
-                                let incoming = IncomingMessage::new(
-                                    from,
-                                    session_id.clone(),
-                                    text_body,
-                                )
-                                .with_provenance(InputProvenance::ExternalUser {
-                                    channel: "whatsapp".to_string(),
-                                    is_direct: true,
-                                });
+                                let incoming =
+                                    IncomingMessage::new(from, session_id.clone(), text_body)
+                                        .with_provenance(InputProvenance::ExternalUser {
+                                            channel: "whatsapp".to_string(),
+                                            is_direct: true,
+                                        });
                                 let _ = state.inbound_pipeline.process(incoming).await;
                             }
                         }
@@ -324,15 +321,11 @@ async fn telegram_webhook_handler(
             );
 
             // Route through inbound pipeline
-            let incoming = IncomingMessage::new(
-                user_id,
-                format!("telegram:{}", chat_id),
-                text,
-            )
-            .with_provenance(InputProvenance::ExternalUser {
-                channel: "telegram".to_string(),
-                is_direct: true,
-            });
+            let incoming = IncomingMessage::new(user_id, format!("telegram:{}", chat_id), text)
+                .with_provenance(InputProvenance::ExternalUser {
+                    channel: "telegram".to_string(),
+                    is_direct: true,
+                });
             let _ = state.inbound_pipeline.process(incoming).await;
         }
     }
@@ -436,15 +429,11 @@ async fn feishu_webhook_handler(
                 }
 
                 // Route through inbound pipeline
-                let incoming = IncomingMessage::new(
-                    user_id,
-                    session_id.clone(),
-                    text,
-                )
-                .with_provenance(InputProvenance::ExternalUser {
-                    channel: "feishu".to_string(),
-                    is_direct: true,
-                });
+                let incoming = IncomingMessage::new(user_id, session_id.clone(), text)
+                    .with_provenance(InputProvenance::ExternalUser {
+                        channel: "feishu".to_string(),
+                        is_direct: true,
+                    });
                 let _ = state.inbound_pipeline.process(incoming).await;
             }
         }
@@ -550,15 +539,12 @@ async fn generic_webhook_handler(
 
         // Route through inbound pipeline
         drop(config); // Release read lock before await
-        let incoming = IncomingMessage::new(
-            user_id,
-            session_id,
-            content,
-        )
-        .with_provenance(InputProvenance::ExternalUser {
-            channel: channel.clone(),
-            is_direct: true,
-        });
+        let incoming = IncomingMessage::new(user_id, session_id, content).with_provenance(
+            InputProvenance::ExternalUser {
+                channel: channel.clone(),
+                is_direct: true,
+            },
+        );
         let _ = state.inbound_pipeline.process(incoming).await;
     }
 

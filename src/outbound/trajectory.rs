@@ -97,10 +97,7 @@ impl TrajectoryLog {
             _ => None,
         });
         match (start, end) {
-            (Some(s), Some(e)) => e
-                .duration_since(s)
-                .unwrap_or_default()
-                .as_millis() as u64,
+            (Some(s), Some(e)) => e.duration_since(s).unwrap_or_default().as_millis() as u64,
             _ => 0,
         }
     }

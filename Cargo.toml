@@ -82,6 +82,9 @@ glob = "0.3"
 # URL encoding
 urlencoding = "2.1"
 
+# OAuth2
+oauth2 = "4.4"
+
 # Regex for security scanning
 regex = "1.10"
 

@@ -94,7 +94,8 @@ impl QueueModeResolver {
         {
             let sessions = self.sessions.read().await;
             if let Some(timing) = sessions.get(&session_id) {
-                let within_window = now.duration_since(timing.last_message_at) < self.follow_up_window;
+                let within_window =
+                    now.duration_since(timing.last_message_at) < self.follow_up_window;
                 let same_user = timing.last_user_id == user_id;
                 if within_window && same_user && timing.message_count >= 1 {
                     drop(sessions);
@@ -118,11 +119,13 @@ impl QueueModeResolver {
     /// Update session timing state.
     async fn update_session(&self, session_id: &str, user_id: &str, now: Instant) {
         let mut sessions = self.sessions.write().await;
-        let entry = sessions.entry(session_id.to_string()).or_insert(SessionTiming {
-            last_message_at: now,
-            last_user_id: user_id.to_string(),
-            message_count: 0,
-        });
+        let entry = sessions
+            .entry(session_id.to_string())
+            .or_insert(SessionTiming {
+                last_message_at: now,
+                last_user_id: user_id.to_string(),
+                message_count: 0,
+            });
         entry.last_message_at = now;
         entry.last_user_id = user_id.to_string();
         entry.message_count += 1;

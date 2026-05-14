@@ -65,8 +65,7 @@ pub mod extension;
 pub mod telegram_extension;
 
 pub use extension::{
-    ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry,
-    ChannelSenderBridge,
+    ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry, ChannelSenderBridge,
 };
 
 #[cfg(feature = "telegram")]

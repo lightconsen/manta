@@ -426,12 +426,12 @@ pub mod hooks;
 pub mod mcp;
 pub mod memory;
 pub mod sandbox;
+pub mod sdk;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
 pub mod todo_tool;
 pub mod web;
-pub mod sdk;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use browser::BrowserTool;
@@ -444,12 +444,12 @@ pub use hooks::{ToolHooks, ToolPolicyDecision};
 pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use sandbox::{SandboxConfig, SandboxedTool};
+pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
 pub use shell::ShellTool;
 pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use web::{WebFetchTool, WebSearchTool};
-pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
 
 /// Cached tool result entry
 #[derive(Debug, Clone)]

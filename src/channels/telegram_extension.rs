@@ -24,10 +24,7 @@ impl TelegramChannelExtension {
         channel: Arc<crate::channels::telegram::TelegramChannel>,
         session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
     ) -> Self {
-        Self {
-            channel,
-            session_channels,
-        }
+        Self { channel, session_channels }
     }
 }
 
@@ -37,10 +34,7 @@ impl ChannelExtension for TelegramChannelExtension {
         "telegram"
     }
 
-    async fn run_inbound(
-        &self,
-        inbound_tx: mpsc::Sender<IncomingMessage>,
-    ) -> crate::Result<()> {
+    async fn run_inbound(&self, inbound_tx: mpsc::Sender<IncomingMessage>) -> crate::Result<()> {
         // Create an internal unbounded channel to receive messages
         // from the TelegramChannel's update handler.
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel::<IncomingMessage>();
@@ -65,10 +59,7 @@ impl ChannelExtension for TelegramChannelExtension {
                 // Store session -> (channel, chat_id) mapping for response routing.
                 {
                     let mut sessions = session_channels.write().await;
-                    sessions.insert(
-                        session_id,
-                        ("telegram".to_string(), chat_id.to_string()),
-                    );
+                    sessions.insert(session_id, ("telegram".to_string(), chat_id.to_string()));
                 }
 
                 if inbound_tx.send(msg).await.is_err() {

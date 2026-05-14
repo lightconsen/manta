@@ -132,7 +132,10 @@ impl InboundPipeline for DefaultInboundPipeline {
         };
 
         // Stage 3: Dispatch (send policy, plugin-owned binding, etc.)
-        let dispatch_result = self.dispatch.process(&debounced, media_results.as_ref()).await;
+        let dispatch_result = self
+            .dispatch
+            .process(&debounced, media_results.as_ref())
+            .await;
         if dispatch_result.suppress {
             return None;
         }
@@ -143,10 +146,7 @@ impl InboundPipeline for DefaultInboundPipeline {
         // Stage 5: Agent routing
         let route = self
             .router
-            .route(
-                &debounced,
-                dispatch_result.workspace_hint.as_deref(),
-            )
+            .route(&debounced, dispatch_result.workspace_hint.as_deref())
             .await;
 
         let routed = RoutedMessage {

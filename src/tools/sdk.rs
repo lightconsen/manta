@@ -62,9 +62,7 @@ pub struct ToolSdk {
 
 impl ToolSdk {
     pub fn new() -> Self {
-        Self {
-            packs: HashMap::new(),
-        }
+        Self { packs: HashMap::new() }
     }
 
     pub fn register_pack(&mut self, pack: ToolPack) {

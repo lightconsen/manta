@@ -171,10 +171,8 @@ impl AgentRouter {
     /// Bind a session to a specific agent.
     pub async fn bind_session(&self, session_id: &str, route: &RouteResult) {
         let mut bindings = self.session_bindings.write().await;
-        bindings.insert(
-            session_id.to_string(),
-            (route.agent_id.clone(), route.workspace_id.clone()),
-        );
+        bindings
+            .insert(session_id.to_string(), (route.agent_id.clone(), route.workspace_id.clone()));
         info!(
             "Bound session {} to agent {} (workspace: {:?})",
             session_id, route.agent_id, route.workspace_id
@@ -251,7 +249,11 @@ impl AgentRouter {
         // Look for @agent_name at the very beginning
         if let Some(rest) = content.strip_prefix('@') {
             let name = rest.split_whitespace().next()?;
-            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            {
                 return Some(name.to_string());
             }
         }

@@ -25,10 +25,7 @@ pub trait ChannelExtension: Send + Sync {
     ///
     /// The extension should convert raw channel events into `IncomingMessage`s
     /// and push them to `inbound_tx`.
-    async fn run_inbound(
-        &self,
-        inbound_tx: mpsc::Sender<IncomingMessage>,
-    ) -> crate::Result<()>;
+    async fn run_inbound(&self, inbound_tx: mpsc::Sender<IncomingMessage>) -> crate::Result<()>;
 
     /// Start dispatching outbound messages back to the channel.
     ///
@@ -47,14 +44,10 @@ pub struct ChannelExtensionRegistry {
 
 impl ChannelExtensionRegistry {
     pub fn new() -> Self {
-        Self {
-            extensions: Vec::new(),
-        }
+        Self { extensions: Vec::new() }
     }
 
-    pub fn register(&mut self,
-        ext: Arc<dyn ChannelExtension>,
-    ) {
+    pub fn register(&mut self, ext: Arc<dyn ChannelExtension>) {
         self.extensions.push(ext);
     }
 
@@ -90,10 +83,7 @@ pub struct ChannelSenderBridge {
 
 impl ChannelSenderBridge {
     pub fn new(name: impl Into<String>, outbound_tx: mpsc::Sender<OutgoingMessage>) -> Self {
-        Self {
-            name: name.into(),
-            outbound_tx,
-        }
+        Self { name: name.into(), outbound_tx }
     }
 }
 
@@ -129,15 +119,9 @@ impl Channel for ChannelSenderBridge {
     }
 
     async fn send(&self, message: OutgoingMessage) -> crate::Result<Id> {
-        self.outbound_tx
-            .send(message)
-            .await
-            .map_err(|e| {
-                crate::error::MantaError::Internal(format!(
-                    "Extension outbound channel closed: {}",
-                    e
-                ))
-            })?;
+        self.outbound_tx.send(message).await.map_err(|e| {
+            crate::error::MantaError::Internal(format!("Extension outbound channel closed: {}", e))
+        })?;
         Ok(Id::new())
     }
 
@@ -165,15 +149,21 @@ mod tests {
     struct DummyExtension;
     #[async_trait::async_trait]
     impl ChannelExtension for DummyExtension {
-        fn name(&self) -> &str { "dummy" }
+        fn name(&self) -> &str {
+            "dummy"
+        }
         async fn run_inbound(
             &self,
             _inbound_tx: mpsc::Sender<IncomingMessage>,
-        ) -> crate::Result<()> { Ok(()) }
+        ) -> crate::Result<()> {
+            Ok(())
+        }
         async fn run_outbound(
             &self,
             _outbound_rx: mpsc::Receiver<OutgoingMessage>,
-        ) -> crate::Result<()> { Ok(()) }
+        ) -> crate::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]

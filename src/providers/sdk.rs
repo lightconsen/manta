@@ -82,14 +82,10 @@ pub struct ProviderSdk {
 
 impl ProviderSdk {
     pub fn new() -> Self {
-        Self {
-            packs: HashMap::new(),
-        }
+        Self { packs: HashMap::new() }
     }
 
-    pub fn register_pack(&mut self,
-        pack: ProviderPack,
-    ) {
+    pub fn register_pack(&mut self, pack: ProviderPack) {
         self.packs.insert(pack.name.clone(), pack);
     }
 
