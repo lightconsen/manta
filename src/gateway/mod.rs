@@ -47,6 +47,7 @@ pub mod middleware;
 pub mod rate_limit;
 pub mod send_policy;
 pub mod webhooks;
+pub mod ws;
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1429,7 +1430,7 @@ impl Gateway {
             // Simple chat endpoint (backwards compatibility with DaemonClient)
             .route("/chat", post(chat_handler))
             // WebSocket endpoints (localhost/Tailscale only)
-            .route("/ws", get(ws_handler))
+            .route("/ws", get(ws::ws_handler))
             .route("/ws/canvas/:id", get(canvas_ws_handler))
             // Agent management
             .route("/api/v1/agents", get(list_agents_handler).post(create_agent_handler))
@@ -3908,62 +3909,6 @@ async fn chat_handler(
             })),
         )
     }
-}
-
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_websocket(socket, state))
-}
-
-async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: Arc<GatewayState>) {
-    use axum::extract::ws::Message;
-    use futures_util::{SinkExt, StreamExt};
-
-    info!("Gateway events WebSocket connected");
-
-    // Subscribe to gateway events
-    let mut event_rx = state.event_tx.subscribe();
-
-    // Split socket for send/receive
-    let (mut sender, mut receiver) = socket.split();
-
-    // Task to receive gateway events and send to client
-    let event_task = tokio::spawn(async move {
-        while let Ok(event) = event_rx.recv().await {
-            let msg = Message::Text(serde_json::to_string(&event).unwrap_or_default());
-            if sender.send(msg).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    // Task to receive client messages (ping/pong, commands)
-    let recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Close(_) => break,
-                Message::Ping(data) => {
-                    // Pong is handled automatically by axum
-                    debug!("Received ping: {:?}", data);
-                }
-                Message::Text(text) => {
-                    // Client can send commands (optional)
-                    debug!("Received WebSocket message: {}", text);
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Wait for either task to complete
-    tokio::select! {
-        _ = event_task => {}
-        _ = recv_task => {}
-    }
-
-    info!("Gateway events WebSocket disconnected");
 }
 
 async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
