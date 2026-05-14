@@ -1605,16 +1605,31 @@ async fn spawn_agent_inner(
                             message.clone(),
                         );
 
+                        // Build trajectory log for this turn
+                        let trajectory = Arc::new(tokio::sync::Mutex::new(
+                            crate::outbound::TrajectoryLog::new()
+                        ));
+                        {
+                            let mut traj = trajectory.lock().await;
+                            traj.push(crate::outbound::TrajectoryEntry::Start {
+                                timestamp: std::time::SystemTime::now(),
+                                session_id: session_id.clone(),
+                                agent_id: agent_id.clone(),
+                            });
+                        }
+
                         // Create progress callback that broadcasts tool events
-                        // and also fans them out to SSE subscribers.
+                        // and also records trajectory entries.
                         let progress_state = state.clone();
                         let progress_session_id = session_id.clone();
                         let progress_agent_id = agent_id.clone();
+                        let progress_trajectory = trajectory.clone();
                         let progress_cb: crate::agent::ProgressCallback =
                             Arc::new(move |event: crate::agent::ProgressEvent| {
                                 let state = progress_state.clone();
                                 let session_id = progress_session_id.clone();
                                 let agent_id = progress_agent_id.clone();
+                                let trajectory = progress_trajectory.clone();
                                 Box::pin(async move {
                                     match event {
                                         crate::agent::ProgressEvent::ToolCalling {
@@ -1632,6 +1647,12 @@ async fn spawn_agent_inner(
                                                     tool_name: name.clone(),
                                                     arguments: arguments.clone(),
                                                 });
+                                            let mut traj = trajectory.lock().await;
+                                            traj.push(crate::outbound::TrajectoryEntry::ToolCall {
+                                                timestamp: std::time::SystemTime::now(),
+                                                name: name.clone(),
+                                                arguments: serde_json::from_str(&arguments).unwrap_or(serde_json::Value::String(arguments)),
+                                            });
                                         }
                                         crate::agent::ProgressEvent::ToolResult {
                                             name,
@@ -1646,6 +1667,13 @@ async fn spawn_agent_inner(
                                                 agent_id: agent_id.clone(),
                                                 tool_name: name.clone(),
                                                 result: result.clone(),
+                                            });
+                                            let mut traj = trajectory.lock().await;
+                                            traj.push(crate::outbound::TrajectoryEntry::ToolResult {
+                                                timestamp: std::time::SystemTime::now(),
+                                                name: name.clone(),
+                                                result: serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result)),
+                                                duration_ms: 0, // Would need actual timing
                                             });
                                         }
                                         crate::agent::ProgressEvent::Completed { response } => {
@@ -1672,9 +1700,21 @@ async fn spawn_agent_inner(
                             .process_message_with_progress(incoming_msg, progress_cb)
                             .await
                         {
-                            Ok(outgoing) => (outgoing.content, outgoing.usage),
+                            Ok(outgoing) => {
+                                let mut traj = trajectory.lock().await;
+                                traj.push(crate::outbound::TrajectoryEntry::Finish {
+                                    timestamp: std::time::SystemTime::now(),
+                                    output: outgoing.content.clone(),
+                                });
+                                (outgoing.content, outgoing.usage)
+                            }
                             Err(e) => {
                                 error!("Agent {} failed to process message: {}", agent_id, e);
+                                let mut traj = trajectory.lock().await;
+                                traj.push(crate::outbound::TrajectoryEntry::Error {
+                                    timestamp: std::time::SystemTime::now(),
+                                    message: e.to_string(),
+                                });
                                 (format!("Error processing message: {}", e), None)
                             }
                         };
@@ -1699,6 +1739,12 @@ async fn spawn_agent_inner(
                             usage: response_usage,
                         });
 
+                        // Extract the populated trajectory
+                        let trajectory = {
+                            let traj = trajectory.lock().await;
+                            traj.clone()
+                        };
+
                         // Route through the outbound pipeline (trajectory → canvas → sse → reply → side effects)
                         let outbound_ctx = crate::outbound::OutboundContext {
                             session_id: session_id.clone(),
@@ -1706,7 +1752,7 @@ async fn spawn_agent_inner(
                             agent_id: agent_id.clone(),
                             raw_output: response_content,
                             tool_calls: vec![],
-                            trajectory: crate::outbound::TrajectoryLog::new(),
+                            trajectory,
                             usage: response_usage,
                         };
                         let _ = state.outbound_pipeline.process(outbound_ctx).await;
@@ -3893,25 +3939,17 @@ async fn web_terminal_chat_handler(
         .conversation_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let queued_msg = QueuedMessage {
-        id: message_id.clone(),
+    // Route through inbound pipeline
+    let incoming = crate::channels::IncomingMessage::new(
+        body.user_id.unwrap_or_else(|| "web_user".to_string()),
+        conversation_id.clone(),
+        body.message,
+    )
+    .with_provenance(crate::channels::InputProvenance::ExternalUser {
         channel: "web".to_string(),
-        user_id: body.user_id.unwrap_or_else(|| "web_user".to_string()),
-        content: body.message,
-        session_id: conversation_id.clone(),
-        timestamp: chrono::Utc::now(),
-        model_alias: None,
-    };
-
-    if let Err(e) = state.message_queue.send(queued_msg).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Failed to queue message: {}", e),
-            })),
-        )
-            .into_response();
-    }
+        is_direct: true,
+    });
+    let _ = state.inbound_pipeline.process(incoming).await;
 
     let resp = WebTerminalChatResponse {
         message_id,
@@ -3965,29 +4003,17 @@ async fn send_message_handler(
         }
     }
 
-    // Otherwise, queue for normal agent processing
-    let queued_msg = QueuedMessage {
-        id: message_id.clone(),
+    // Otherwise, route through inbound pipeline for normal agent processing
+    let incoming = crate::channels::IncomingMessage::new(
+        body.user_id.clone().unwrap_or_else(|| "api_user".to_string()),
+        session_id.clone(),
+        body.message,
+    )
+    .with_provenance(crate::channels::InputProvenance::ExternalUser {
         channel: "api".to_string(),
-        user_id: body
-            .user_id
-            .clone()
-            .unwrap_or_else(|| "api_user".to_string()),
-        content: body.message,
-        session_id: session_id.clone(),
-        timestamp: chrono::Utc::now(),
-        model_alias: body.model_alias.clone(),
-    };
-
-    if let Err(e) = state.message_queue.send(queued_msg).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Failed to queue message: {}", e),
-            })),
-        )
-            .into_response();
-    }
+        is_direct: true,
+    });
+    let _ = state.inbound_pipeline.process(incoming).await;
 
     let resp = serde_json::json!({
         "message_id": message_id,
@@ -7025,33 +7051,26 @@ async fn assign_team_task_handler(
         }
     };
 
-    // Route the task through the message queue using the team as a session
+    // Route the task through the inbound pipeline using the team as a session
     let session_id = format!("team:{}", id);
-    let queued = crate::gateway::QueuedMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        channel: "team".to_string(),
-        user_id: format!("team:{}", team.name),
-        content: format!("[priority:{}] {}", req.priority, req.task),
+    let incoming = crate::channels::IncomingMessage::new(
+        format!("team:{}", team.name),
         session_id,
-        timestamp: chrono::Utc::now(),
-        model_alias: None,
-    };
+        format!("[priority:{}] {}", req.priority, req.task),
+    )
+    .with_provenance(crate::channels::InputProvenance::InternalSystem {
+        source: "team".to_string(),
+    });
+    let _ = state.inbound_pipeline.process(incoming).await;
 
-    match state.message_queue.send(queued).await {
-        Ok(()) => Json(serde_json::json!({
-            "success": true,
-            "team": id,
-            "task": req.task,
-            "priority": req.priority,
-            "queued": true,
-        }))
-        .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to queue task: {}", e) })),
-        )
-            .into_response(),
-    }
+    Json(serde_json::json!({
+        "success": true,
+        "team": id,
+        "task": req.task,
+        "priority": req.priority,
+        "queued": true,
+    }))
+    .into_response()
 }
 
 // ── Session / Thread / Turn API ───────────────────────────────────────────────

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::GatewayState;
-use crate::channels::{ConversationId, OutgoingMessage};
+use crate::channels::{ConversationId, IncomingMessage, InputProvenance, OutgoingMessage};
 
 /// Query params for webhook verification (used by some platforms)
 #[derive(Debug, Deserialize)]
@@ -227,20 +227,17 @@ async fn whatsapp_webhook_handler(
                                     );
                                 }
 
-                                // Queue message for processing
-                                let queued_msg = super::QueuedMessage {
-                                    id: uuid::Uuid::new_v4().to_string(),
+                                // Route through inbound pipeline
+                                let incoming = IncomingMessage::new(
+                                    from,
+                                    session_id.clone(),
+                                    text_body,
+                                )
+                                .with_provenance(InputProvenance::ExternalUser {
                                     channel: "whatsapp".to_string(),
-                                    user_id: from.to_string(),
-                                    content: text_body.to_string(),
-                                    session_id, // Use UUID session
-                                    timestamp: chrono::Utc::now(),
-                                    model_alias: None,
-                                };
-
-                                if let Err(e) = state.message_queue.send(queued_msg).await {
-                                    error!("Failed to queue WhatsApp message: {}", e);
-                                }
+                                    is_direct: true,
+                                });
+                                let _ = state.inbound_pipeline.process(incoming).await;
                             }
                         }
                     }
@@ -326,20 +323,17 @@ async fn telegram_webhook_handler(
                 text.chars().take(50).collect::<String>()
             );
 
-            // Queue message
-            let queued_msg = super::QueuedMessage {
-                id: uuid::Uuid::new_v4().to_string(),
+            // Route through inbound pipeline
+            let incoming = IncomingMessage::new(
+                user_id,
+                format!("telegram:{}", chat_id),
+                text,
+            )
+            .with_provenance(InputProvenance::ExternalUser {
                 channel: "telegram".to_string(),
-                user_id: user_id.clone(),
-                content: text,
-                session_id: format!("telegram:{}", chat_id),
-                timestamp: chrono::Utc::now(),
-                model_alias: None,
-            };
-
-            if let Err(e) = state.message_queue.send(queued_msg).await {
-                error!("Failed to queue Telegram message: {}", e);
-            }
+                is_direct: true,
+            });
+            let _ = state.inbound_pipeline.process(incoming).await;
         }
     }
 
@@ -441,20 +435,17 @@ async fn feishu_webhook_handler(
                         .insert(session_id.clone(), ("feishu".to_string(), user_id.to_string()));
                 }
 
-                // Queue message
-                let queued_msg = super::QueuedMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
+                // Route through inbound pipeline
+                let incoming = IncomingMessage::new(
+                    user_id,
+                    session_id.clone(),
+                    text,
+                )
+                .with_provenance(InputProvenance::ExternalUser {
                     channel: "feishu".to_string(),
-                    user_id: user_id.to_string(),
-                    content: text.to_string(),
-                    session_id, // Use UUID session
-                    timestamp: chrono::Utc::now(),
-                    model_alias: None,
-                };
-
-                if let Err(e) = state.message_queue.send(queued_msg).await {
-                    error!("Failed to queue Feishu message: {}", e);
-                }
+                    is_direct: true,
+                });
+                let _ = state.inbound_pipeline.process(incoming).await;
             }
         }
     }
@@ -557,22 +548,18 @@ async fn generic_webhook_handler(
             sessions.insert(session_id.clone(), (channel.clone(), user_id.clone()));
         }
 
-        // Queue message
-        let queued_msg = super::QueuedMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            channel: channel.clone(),
-            user_id: user_id.clone(),
-            content,
-            session_id, // Use UUID session
-            timestamp: chrono::Utc::now(),
-            model_alias: None,
-        };
-
+        // Route through inbound pipeline
         drop(config); // Release read lock before await
-
-        if let Err(e) = state.message_queue.send(queued_msg).await {
-            error!("Failed to queue {} message: {}", channel, e);
-        }
+        let incoming = IncomingMessage::new(
+            user_id,
+            session_id,
+            content,
+        )
+        .with_provenance(InputProvenance::ExternalUser {
+            channel: channel.clone(),
+            is_direct: true,
+        });
+        let _ = state.inbound_pipeline.process(incoming).await;
     }
 
     Json(WebhookResponse {
