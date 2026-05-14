@@ -44,6 +44,7 @@ use crate::tools::ToolRegistry;
 
 pub mod auth;
 pub mod middleware;
+pub mod rate_limit;
 pub mod send_policy;
 pub mod webhooks;
 
@@ -1421,8 +1422,10 @@ impl Gateway {
 
         // Admin tier: Protected APIs (localhost/Tailscale only)
         let admin_router = Router::new()
-            // Health check (public)
+            // Health checks (public)
             .route("/health", get(health_handler))
+            .route("/ready", get(ready_handler))
+            .route("/live", get(live_handler))
             // Simple chat endpoint (backwards compatibility with DaemonClient)
             .route("/chat", post(chat_handler))
             // WebSocket endpoints (localhost/Tailscale only)
@@ -3589,14 +3592,78 @@ async fn run_repair_loop(state: Arc<GatewayState>) {
 }
 
 // HTTP Handlers
+
+/// Comprehensive health check with all subsystem statuses.
+/// Returns 200 if healthy, 503 if any critical subsystem is down.
 async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    // Check if default agent is available
+    let report = build_health_report(&state).await;
+    let status_code = if report.overall_healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (status_code, Json(report))
+}
+
+/// Readiness probe — returns 200 when the gateway is ready to serve traffic.
+/// Checks: agents, providers, channels.
+async fn ready_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let agents = state.agents.read().await;
     let agent_ready = agents.get("default").is_some();
     let agent_count = agents.len();
     drop(agents);
 
-    // Check model router health (Closed = healthy/normal operation)
+    let router_health = state.model_router.get_health_status().await;
+    let healthy_providers = router_health
+        .values()
+        .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
+        .count();
+
+    let channels = state.channels.read().await;
+    let channel_count = channels.len();
+    drop(channels);
+
+    let ready = agent_ready && healthy_providers > 0 && channel_count > 0;
+
+    let status_code = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status_code,
+        Json(serde_json::json!({
+            "ready": ready,
+            "agents": { "ready": agent_ready, "count": agent_count },
+            "providers": { "healthy": healthy_providers, "total": router_health.len() },
+            "channels": { "count": channel_count },
+        })),
+    )
+}
+
+/// Liveness probe — returns 200 if the gateway process is alive.
+/// Lightweight check that just confirms the process is running.
+async fn live_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "alive": true,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        })),
+    )
+}
+
+/// Build a comprehensive health report covering all subsystems.
+async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
+    // Agents
+    let agents = state.agents.read().await;
+    let agent_ready = agents.get("default").is_some();
+    let agent_count = agents.len();
+    drop(agents);
+
+    // Providers
     let router_health = state.model_router.get_health_status().await;
     let healthy_providers = router_health
         .values()
@@ -3604,28 +3671,139 @@ async fn health_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResp
         .count();
     let total_providers = router_health.len();
 
+    // Channels
+    let channels = state.channels.read().await;
+    let channel_count = channels.len();
+    drop(channels);
+
+    // Vector memory
+    let vector_memory_ready = state.vector_memory.read().await.is_some();
+
+    // Memory manager
+    let memory_manager_ready = state.memory_manager.read().await.is_some();
+
+    // Cron scheduler
+    let cron_ready = state.cron_scheduler.read().await.is_some();
+
+    // Plugins
+    let plugin_count = state.plugin_manager.list_plugins().await.len();
+
+    // MCP servers
+    let mcp_count = state.mcp_manager.list_servers().await.len();
+
+    // Storage
+    let storage_healthy = state.storage.read().await.health_check().await.is_ok();
+
+    // Cost guard
+    let cost_exceeded = state.cost_guard.is_exceeded();
+    let daily_spend = state.cost_guard.daily_spend_cents() as f64 / 100.0;
+
+    // Overall: agents + providers are critical; others are warnings
     let overall_healthy = agent_ready && healthy_providers > 0;
 
-    let status_code = if overall_healthy {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-
-    let body = Json(serde_json::json!({
-        "status": if overall_healthy { "healthy" } else { "degraded" },
-        "version": crate::VERSION,
-        "agent": {
-            "ready": agent_ready,
-            "count": agent_count,
+    HealthReport {
+        status: if overall_healthy {
+            "healthy".to_string()
+        } else {
+            "degraded".to_string()
         },
-        "providers": {
-            "healthy": healthy_providers,
-            "total": total_providers,
+        version: crate::VERSION.to_string(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        overall_healthy,
+        subsystems: SubsystemHealth {
+            agents: HealthStatus {
+                healthy: agent_ready,
+                message: format!("{} agents active", agent_count),
+            },
+            providers: HealthStatus {
+                healthy: healthy_providers > 0,
+                message: format!("{}/{} healthy", healthy_providers, total_providers),
+            },
+            channels: HealthStatus {
+                healthy: channel_count > 0,
+                message: format!("{} channels configured", channel_count),
+            },
+            vector_memory: HealthStatus {
+                healthy: vector_memory_ready,
+                message: if vector_memory_ready {
+                    "ready".to_string()
+                } else {
+                    "not initialized".to_string()
+                },
+            },
+            memory_manager: HealthStatus {
+                healthy: memory_manager_ready,
+                message: if memory_manager_ready {
+                    "ready".to_string()
+                } else {
+                    "not initialized".to_string()
+                },
+            },
+            cron: HealthStatus {
+                healthy: cron_ready,
+                message: if cron_ready {
+                    "running".to_string()
+                } else {
+                    "not initialized".to_string()
+                },
+            },
+            plugins: HealthStatus {
+                healthy: true,
+                message: format!("{} plugins loaded", plugin_count),
+            },
+            mcp: HealthStatus {
+                healthy: mcp_count > 0,
+                message: format!("{} MCP servers connected", mcp_count),
+            },
+            storage: HealthStatus {
+                healthy: storage_healthy,
+                message: if storage_healthy {
+                    "healthy".to_string()
+                } else {
+                    "unavailable".to_string()
+                },
+            },
+            cost_guard: HealthStatus {
+                healthy: !cost_exceeded,
+                message: format!("${:.4} today", daily_spend),
+            },
         },
-    }));
+    }
+}
 
-    (status_code, body)
+/// Health report response structure
+#[derive(Debug, Serialize)]
+struct HealthReport {
+    status: String,
+    version: String,
+    timestamp: String,
+    overall_healthy: bool,
+    subsystems: SubsystemHealth,
+}
+
+/// Per-subsystem health statuses
+#[derive(Debug, Serialize)]
+struct SubsystemHealth {
+    agents: HealthStatus,
+    providers: HealthStatus,
+    channels: HealthStatus,
+    #[serde(rename = "vector_memory")]
+    vector_memory: HealthStatus,
+    #[serde(rename = "memory_manager")]
+    memory_manager: HealthStatus,
+    cron: HealthStatus,
+    plugins: HealthStatus,
+    mcp: HealthStatus,
+    storage: HealthStatus,
+    #[serde(rename = "cost_guard")]
+    cost_guard: HealthStatus,
+}
+
+/// Individual subsystem health status
+#[derive(Debug, Serialize)]
+struct HealthStatus {
+    healthy: bool,
+    message: String,
 }
 
 /// Simple chat handler for backwards compatibility with DaemonClient
