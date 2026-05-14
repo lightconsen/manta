@@ -264,7 +264,7 @@ impl DaemonManager {
         });
 
         // Create and start the Gateway
-        let gateway = Gateway::new(gateway_config.clone()).await?;
+        let gateway = Gateway::new(gateway_config.clone(), Some(config_path.clone())).await?;
 
         println!("✅ Gateway ready");
         println!("   API: http://{}:{}", gateway_config.host, gateway_config.port);

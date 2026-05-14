@@ -19,6 +19,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -501,6 +502,8 @@ pub struct GatewayState {
     pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
     /// MCP manager for server connections (shared with McpConnectionTool)
     pub mcp_manager: Arc<McpManager>,
+    /// Path to the config file (for runtime persistence)
+    pub config_path: Option<PathBuf>,
     /// Runtime settings store — mutable key/value pairs changeable without restart.
     pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     /// Approval queue for human-in-the-loop tool policy enforcement.
@@ -802,7 +805,7 @@ pub struct Gateway {
 
 impl Gateway {
     /// Create a new gateway instance
-    pub async fn new(config: GatewayConfig) -> crate::Result<Self> {
+    pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
@@ -954,6 +957,7 @@ impl Gateway {
         // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
+            config_path: config_path.clone(),
             channels: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
@@ -1535,6 +1539,9 @@ impl Gateway {
             // ── Event Hooks API ────────────────────────────────────────────
             .route("/api/v1/hooks", get(list_hooks_handler))
             .route("/api/v1/hooks/:name", delete(unregister_hook_handler))
+            // ── Config Runtime Modification API ───────────────────────────
+            .route("/api/v1/config", get(get_config_handler).put(put_config_handler))
+            .route("/api/v1/config/validate", post(validate_config_handler))
             // ── SSE real-time event streaming ──────────────────────────────
             .route("/api/events", get(sse_events_handler))
             // ── Web terminal API ───────────────────────────────────────────
@@ -7778,5 +7785,98 @@ async fn unregister_hook_handler(
             Json(serde_json::json!({"error": "Hook not found", "name": name})),
         )
             .into_response()
+    }
+}
+
+/// Get current gateway configuration
+async fn get_config_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let config = state.config.read().await;
+    match serde_json::to_value(&*config) {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Serialization failed: {}", e)})),
+        )
+            .into_response(),
+    }
+}
+
+/// Update gateway configuration and persist to disk
+async fn put_config_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(new_config): Json<GatewayConfig>,
+) -> impl IntoResponse {
+    let config_path = match state.config_path.clone() {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(
+                    serde_json::json!({"error": "No config file path configured — cannot persist changes"}),
+                ),
+            )
+                .into_response();
+        }
+    };
+
+    // Serialize to TOML
+    let toml_str = match toml::to_string_pretty(&new_config) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("TOML serialization failed: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    // Write to disk
+    if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to write config file: {}", e)})),
+        )
+            .into_response();
+    }
+
+    // Update in-memory config
+    {
+        let mut config = state.config.write().await;
+        *config = new_config;
+    }
+
+    info!("Config updated and persisted to {:?}", config_path);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "updated", "path": config_path.to_string_lossy()})),
+    )
+        .into_response()
+}
+
+/// Validate a configuration without persisting it
+async fn validate_config_handler(Json(config): Json<GatewayConfig>) -> impl IntoResponse {
+    // Basic validation: try to serialize and deserialize as TOML
+    match toml::to_string(&config) {
+        Ok(toml_str) => {
+            match toml::from_str::<GatewayConfig>(&toml_str) {
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"valid": true, "message": "Configuration is valid"})),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"valid": false, "error": format!("TOML deserialization failed: {}", e)})),
+                )
+                    .into_response(),
+            }
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"valid": false, "error": format!("TOML serialization failed: {}", e)})),
+        )
+            .into_response(),
     }
 }
