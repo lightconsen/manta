@@ -280,7 +280,7 @@ class AuthProfileManager {
 | **Browser** | ✅ Chromiumoxide (optional) | ✅ Dedicated browser/ module |
 | **File Operations** | Read, Write, Edit, Glob, Grep | Extensive file operations |
 | **Web Tools** | Search, Fetch | Similar + more |
-| **Canvas/A2UI** | ✅ CanvasComponent enum | ✅ Full canvas-host/ |
+| **Canvas/A2UI** | ✅ CanvasComponent + CanvasManager + outbound pipeline wired | ✅ Full canvas-host/ |
 | **Subagent Tools** | ❌ Not implemented | ✅ Session spawning tools |
 | **Plugin Tools** | ❌ Not implemented | ✅ Plugin SDK |
 | **Dangerous Tools** | Basic validation | Security audit system |
@@ -322,12 +322,13 @@ plugin runtime tools
 |---------|-------|----------|
 | **Database** | SQLite (sqlx) | Multiple: builtin, qmd, lancedb |
 | **Chat History** | ✅ messages table | transcripts.ts |
-| **Embeddings** | ❌ Not implemented | ✅ Full embedding system |
-| **Vector DB** | ❌ Not implemented | ✅ QMD, LanceDB support |
+| **Embeddings** | ✅ Local GGUF + API providers | ✅ Full embedding system |
+| **Vector DB** | ✅ pgvector, SQLite-vec | ✅ QMD, LanceDB support |
+| **Hybrid Search** | ✅ Vector + FTS5 | Partial |
 | **Session Files** | ❌ Not implemented | ✅ session-files.ts |
 | **Memory Files** | AGENTS.md, TOOLS.md | SOUL.md, IDENTITY.md, BOOTSTRAP.md |
-| **Chunking** | ❌ Not implemented | ✅ embedding-chunk-limits.ts |
-| **Batch Processing** | ❌ Not implemented | ✅ Gemini, OpenAI, Voyage batching |
+| **Chunking** | ✅ TextChunker | ✅ embedding-chunk-limits.ts |
+| **Batch Processing** | ✅ BatchEmbeddingProcessor | ✅ Gemini, OpenAI, Voyage batching |
 
 ### Manta Memory
 ```rust
@@ -426,12 +427,14 @@ commandGating: CommandGatingConfig
 4. **Task Planner** - LLM-based natural language task decomposition
 5. **Dynamic Prompt Builder** - Context-aware prompt construction
 6. **Feature Flags** - Compile-time channel selection (Cargo features)
+7. **Hybrid Search** - Vector + FTS5 with MMR re-ranking
+8. **Inbound/Outbound Pipeline DAG** - OpenClaw-aligned skeleton with debounce → media → queue → router → trajectory → canvas → sse → side effects
 
 ### OpenClaw Unique Features
 1. **ACP (Agent Control Plane)** - Sophisticated session orchestration
 2. **Canvas Host** - Live A2UI with visual workspace manipulation
 3. **Voice/TTS** - Text-to-speech and voice wake
-4. **Media Pipeline** - Images, audio, video processing
+4. **Media Pipeline** - Images, audio, video processing (Manta has image routing)
 5. **Plugin SDK** - Extensible plugin architecture with jiti
 6. **Mobile Apps** - iOS and Android companion apps
 7. **Browser Control** - Dedicated Chrome automation
@@ -466,7 +469,7 @@ commandGating: CommandGatingConfig
 | **REST API** | ✅ | ✅ |
 | **Multi-Agent** | ✅ | ✅ |
 | **Agent Spawning** | ✅ | ✅ |
-| **Session Management** | Basic | Advanced |
+| **Session Management** | AgentRouter + QueueModeResolver + session buffers | Advanced |
 | **Model Aliases** | ✅ | ✅ |
 | **Fallback Chains** | ✅ | ✅ |
 | **Circuit Breaker** | ✅ | ❌ |
@@ -481,9 +484,12 @@ commandGating: CommandGatingConfig
 | **Shell Execution** | ✅ | ✅ |
 | **Todo Management** | ✅ | ❌ |
 | **Cron Jobs** | ✅ | ✅ |
+| **Side Effects** | ✅ (memory, cron, webhook, analytics) | ✅ |
+| **Queue Mode** | ✅ (Interrupt/Steer/FollowUp/Collect/Normal) | ✅ |
+| **SSE Streaming** | ✅ Per-session broadcast | ✅ |
 | **SQLite Memory** | ✅ | Optional |
-| **Vector DB** | ❌ | ✅ |
-| **Embeddings** | ❌ | ✅ |
+| **Vector DB** | ✅ (pgvector, SQLite-vec) | ✅ |
+| **Embeddings** | ✅ (local GGUF + API providers) | ✅ |
 | **Multi-Channel (6+)** | 6 | 20+ |
 | **Telegram** | ✅ | ✅ |
 | **Discord** | ✅ | ✅ |
@@ -497,7 +503,7 @@ commandGating: CommandGatingConfig
 | **Mention Gating** | ❌ | ✅ |
 | **Command Gating** | ❌ | ✅ |
 | **Voice/TTS** | ❌ | ✅ |
-| **Media Pipeline** | ❌ | ✅ |
+| **Media Pipeline** | ✅ Image routing via ModelRouter | ✅ |
 | **Plugin System** | ❌ | ✅ |
 | **Mobile Apps** | ❌ | ✅ |
 | **Hot Reload** | ❌ | ✅ |
@@ -527,6 +533,7 @@ commandGating: CommandGatingConfig
 - Runtime provider management (hot switching, health monitoring)
 - Extensible architecture (traits, feature flags)
 - Modern async patterns (Tokio, Axum)
+- **OpenClaw-aligned skeleton** with full inbound/outbound pipeline DAG
 
 **OpenClaw** is a comprehensive TypeScript AI assistant platform with:
 - Rich UI integration (Canvas, WebChat, mobile apps)
@@ -535,4 +542,4 @@ commandGating: CommandGatingConfig
 - Extensive plugin ecosystem
 - macOS/iOS ecosystem integration
 
-Manta excels at being a lightweight, reliable gateway with modern Rust patterns. OpenClaw excels at being a full-featured personal assistant with rich UI and media capabilities.
+Manta excels at being a lightweight, reliable gateway with modern Rust patterns and now matches OpenClaw's core pipeline architecture. OpenClaw excels at being a full-featured personal assistant with rich UI, voice, and mobile capabilities.
