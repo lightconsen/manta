@@ -78,6 +78,23 @@ impl ToolSdk {
     pub fn get_pack(&self, name: &str) -> Option<&ToolPack> {
         self.packs.get(name)
     }
+
+    /// Synchronize tool packs from the ToolRegistry.
+    ///
+    /// Creates a tool pack containing all tools currently registered
+    /// in the tool registry (both static and dynamic).
+    pub fn sync_from_tool_registry(&mut self, tool_registry: &crate::tools::ToolRegistry) {
+        let tools = tool_registry.list();
+        if tools.is_empty() {
+            return;
+        }
+        self.register_pack(ToolPack {
+            name: "default_tools".to_string(),
+            version: "1.0".to_string(),
+            description: "Tools synchronized from ToolRegistry".to_string(),
+            tools,
+        });
+    }
 }
 
 impl Default for ToolSdk {

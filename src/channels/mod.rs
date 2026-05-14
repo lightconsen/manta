@@ -61,9 +61,16 @@ pub mod plugin_host;
 
 pub mod extension;
 
+#[cfg(feature = "telegram")]
+pub mod telegram_extension;
+
 pub use extension::{
     ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry,
+    ChannelSenderBridge,
 };
+
+#[cfg(feature = "telegram")]
+pub use telegram_extension::TelegramChannelExtension;
 
 pub use formatter::{
     DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,

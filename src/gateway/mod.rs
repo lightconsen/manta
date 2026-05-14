@@ -27,7 +27,7 @@ use tracing::{debug, error, info, warn};
 use crate::acp::AcpControlPlane;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
-use crate::channels::{Channel, ChannelType};
+use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
 use crate::inbound::*;
 use crate::memory::vector::{
@@ -960,6 +960,16 @@ impl Gateway {
             {
                 warn!("Failed to add provider '{}': {}", name, e);
             }
+        }
+
+        // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
+        {
+            let mut provider_sdk = state.provider_sdk.write().await;
+            provider_sdk.sync_from_model_router(&state.model_router).await;
+        }
+        {
+            let mut tool_sdk = state.tool_sdk.write().await;
+            tool_sdk.sync_from_tool_registry(&state.tool_registry);
         }
 
         // Initialize vector memory service if enabled
@@ -2079,9 +2089,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Process message queue
-
-    /// Initialize Telegram channel
+    /// Initialize Telegram channel via ChannelExtension (skeleton alignment)
     #[cfg(feature = "telegram")]
     async fn init_telegram_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
@@ -2091,16 +2099,12 @@ impl Gateway {
             let channel =
                 Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
 
-            // Create message channel for routing Telegram -> Gateway agent
-            let (message_tx, mut message_rx) =
-                mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
-
-            // Set up the message sender for this Telegram channel instance
-            channel.set_message_sender(message_tx).await;
-
             // Agent routing is now handled by the InboundPipeline (AgentRouter)
             let agent_name = config.agent_id.as_deref().unwrap_or("default");
-            info!("Telegram channel '{}' will route via InboundPipeline (default agent: '{}')", name, agent_name);
+            info!(
+                "Telegram channel '{}' will route via InboundPipeline (default agent: '{}')",
+                name, agent_name
+            );
 
             // Set channel default so the router knows which agent to use for Telegram
             self.state
@@ -2108,135 +2112,71 @@ impl Gateway {
                 .set_channel_default(name, agent_name.to_string(), None)
                 .await;
 
-            // Spawn task to process messages from Telegram through the InboundPipeline
+            // Create the channel extension
+            let ext = Arc::new(crate::channels::TelegramChannelExtension::new(
+                channel.clone(),
+                self.state.session_channels.clone(),
+            ));
+
+            // Create inbound channel: extension -> inbound pipeline
+            let (inbound_tx, mut inbound_rx) =
+                mpsc::channel::<crate::channels::IncomingMessage>(1000);
+
+            // Spawn extension inbound task (Telegram bot -> inbound pipeline)
+            let ext_inbound = ext.clone();
+            tokio::spawn(async move {
+                if let Err(e) = ext_inbound.run_inbound(inbound_tx).await {
+                    error!("Telegram extension inbound task failed: {}", e);
+                }
+            });
+
+            // Bridge inbound messages into the pipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
-                info!("DEBUG: Telegram message processing task started (InboundPipeline)");
-                while let Some(message) = message_rx.recv().await {
-                    let session_id = message.conversation_id.0.clone();
-                    let chat_id = message
-                        .metadata
-                        .extra
-                        .get("telegram_chat_id")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or_else(|| {
-                            // Fallback: try to parse session_id as chat_id for backward compatibility
-                            session_id.parse().unwrap_or(0)
-                        });
-
-                    info!(
-                        "DEBUG: Received message from Telegram queue: session={}, chat_id={}, user={}, content={}",
-                        session_id, chat_id, message.user_id.0, message.content
-                    );
-
-                    // Store session -> channel mapping for response routing
-                    {
-                        let mut session_channels = state_clone.session_channels.write().await;
-                        session_channels.insert(
-                            session_id.clone(),
-                            ("telegram".to_string(), chat_id.to_string()),
-                        );
-                    }
-
-                    // Route through the inbound pipeline (debounce -> dispatch -> router)
+                while let Some(message) = inbound_rx.recv().await {
                     if let Some(routed) = state_clone.inbound_pipeline.process(message).await {
                         info!(
-                            "DEBUG: Telegram message routed through pipeline: agent={}",
+                            "Telegram message routed through pipeline: agent={}",
                             routed.agent_id
                         );
                     } else {
-                        info!("DEBUG: Telegram message absorbed by pipeline (debounced or suppressed)");
+                        info!("Telegram message absorbed by pipeline (debounced or suppressed)");
                     }
                 }
-                info!("DEBUG: Telegram message processing task ended");
             });
 
-            // Subscribe to agent responses and send back to Telegram
-            let mut event_rx = self.state.event_tx.subscribe();
-            let channel_for_telegram = channel.clone();
-            let channel_name = name.to_string();
-            let state_for_responses = self.state.clone();
+            // Create outbound channel: reply dispatcher -> extension outbound
+            let (outbound_tx, outbound_rx) =
+                mpsc::channel::<crate::channels::OutgoingMessage>(1000);
+
+            // Spawn extension outbound task (outbound pipeline -> Telegram)
+            let ext_outbound = ext.clone();
             tokio::spawn(async move {
-                info!("DEBUG: Telegram response handler task started");
-                loop {
-                    match event_rx.recv().await {
-                        Ok(GatewayEvent::AgentResponse {
-                            session_id,
-                            content,
-                            channel: response_channel,
-                            conversation_id,
-                            ..
-                        }) => {
-                            // Only handle responses from Telegram messages
-                            if response_channel != "telegram" {
-                                debug!(
-                                    "Skipping non-Telegram response for channel: {}",
-                                    response_channel
-                                );
-                                continue;
-                            }
-                            info!(
-                                "DEBUG: Received AgentResponse event for Telegram session: {}",
-                                session_id
-                            );
-
-                            // Look up the chat_id from session mapping
-                            let chat_id = {
-                                let sessions = state_for_responses.session_channels.read().await;
-                                sessions
-                                    .get(&session_id)
-                                    .map(|(_, cid)| cid.clone())
-                                    .unwrap_or_else(|| {
-                                        // Fallback to conversation_id from event
-                                        conversation_id.clone()
-                                    })
-                            };
-
-                            // Send response back to Telegram using chat_id
-                            let conversation = crate::channels::ConversationId::new(chat_id);
-                            let outgoing = crate::channels::OutgoingMessage::new(
-                                conversation,
-                                content.clone(),
-                            );
-                            info!("DEBUG: Sending response back to Telegram: {}", content);
-                            if let Err(e) = channel_for_telegram.send(outgoing).await {
-                                error!(
-                                    "Failed to send response to Telegram channel '{}': {}",
-                                    channel_name, e
-                                );
-                            } else {
-                                info!("Sent agent response to Telegram session {}", session_id);
-                            }
-                        }
-                        Err(e) => {
-                            info!("DEBUG: Event channel error: {:?}", e);
-                            // Event channel closed or lagged, break loop
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                info!("DEBUG: Telegram response handler task ended");
-            });
-
-            let channel_name = name.to_string();
-            // Start the channel in a background task
-            let channel_for_task = channel.clone();
-            tokio::spawn(async move {
-                if let Err(e) = channel_for_task.start().await {
-                    error!("Telegram channel {} failed: {}", channel_name, e);
+                if let Err(e) = ext_outbound.run_outbound(outbound_rx).await {
+                    error!("Telegram extension outbound task failed: {}", e);
                 }
             });
+
+            // Register a bridge with the reply dispatcher so outbound pipeline
+            // messages flow into the extension's run_outbound.
+            let bridge = Arc::new(crate::channels::ChannelSenderBridge::new(
+                name, outbound_tx,
+            ));
             self.state
                 .reply_dispatcher
-                .register_channel(name, channel.clone())
+                .register_channel(name, bridge)
                 .await;
+
+            // Register extension in the extension registry
+            self.register_channel_extension(ext).await;
+
+            // Keep the raw channel in the channels map for direct access
             self.state
                 .channels
                 .write()
                 .await
                 .insert(name.to_string(), channel);
-            info!("✅ Telegram channel '{}' initialized", name);
+            info!("✅ Telegram channel '{}' initialized via ChannelExtension", name);
         } else {
             warn!("Telegram channel '{}' missing 'token' in credentials", name);
         }

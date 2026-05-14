@@ -6,7 +6,10 @@
 //!
 //! Design matches OpenClaw's channel extension architecture.
 
-use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::channels::{
+    Channel, ChannelCapabilities, ChatType, ConversationId, IncomingMessage, OutgoingMessage,
+};
+use crate::core::models::Id;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -72,6 +75,87 @@ pub struct ChannelExtensionConfig {
     pub name: String,
     pub enabled: bool,
     pub credentials: std::collections::HashMap<String, String>,
+}
+
+/// A lightweight bridge that implements `Channel` by forwarding `send()`
+/// calls to an mpsc sender.
+///
+/// Used to wire a `ChannelExtension`'s `run_outbound` into the
+/// `ReplyDispatcher` without requiring the extension to implement the
+/// full `Channel` trait.
+pub struct ChannelSenderBridge {
+    name: String,
+    outbound_tx: mpsc::Sender<OutgoingMessage>,
+}
+
+impl ChannelSenderBridge {
+    pub fn new(name: impl Into<String>, outbound_tx: mpsc::Sender<OutgoingMessage>) -> Self {
+        Self {
+            name: name.into(),
+            outbound_tx,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Channel for ChannelSenderBridge {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities {
+            chat_types: vec![ChatType::Direct],
+            supports_formatting: true,
+            supports_attachments: false,
+            supports_images: false,
+            supports_threads: false,
+            supports_typing: false,
+            supports_buttons: false,
+            supports_commands: false,
+            supports_reactions: false,
+            supports_edit: false,
+            supports_unsend: false,
+            supports_effects: false,
+        }
+    }
+
+    async fn start(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn stop(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn send(&self, message: OutgoingMessage) -> crate::Result<Id> {
+        self.outbound_tx
+            .send(message)
+            .await
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!(
+                    "Extension outbound channel closed: {}",
+                    e
+                ))
+            })?;
+        Ok(Id::new())
+    }
+
+    async fn send_typing(&self, _conversation_id: &ConversationId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn health_check(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

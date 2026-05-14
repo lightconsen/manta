@@ -96,6 +96,26 @@ impl ProviderSdk {
     pub fn list_packs(&self) -> Vec<&ProviderPack> {
         self.packs.values().collect()
     }
+
+    /// Synchronize provider packs from the ModelRouter.
+    ///
+    /// Creates a provider pack containing all providers currently
+    /// registered in the model router.
+    pub async fn sync_from_model_router(
+        &mut self,
+        model_router: &crate::model_router::ModelRouter,
+    ) {
+        let providers = model_router.list_providers().await;
+        if providers.is_empty() {
+            return;
+        }
+        let names: Vec<String> = providers.iter().map(|p| p.name.clone()).collect();
+        self.register_pack(ProviderPack {
+            name: "model_router_sync".to_string(),
+            version: "1.0".to_string(),
+            providers: names,
+        });
+    }
 }
 
 impl Default for ProviderSdk {
