@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manta Control</title>
+    <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="brand">
+                <svg class="logo" viewBox="0 0 32 32" fill="none"><path d="M16 2L4 9v14l12 7 12-7V9L16 2z" stroke="#58a6ff" stroke-width="2"/><path d="M16 2v28M4 9l12 7 12-7" stroke="#58a6ff" stroke-width="1.5" opacity="0.5"/></svg>
+                <span>Manta Control</span>
+            </div>
+            <nav class="nav">
+                <a href="#dashboard" class="nav-item active" data-page="dashboard">
+                    <span class="icon">&#9679;</span> Dashboard
+                </a>
+                <a href="#agents" class="nav-item" data-page="agents">
+                    <span class="icon">&#9632;</span> Agents
+                </a>
+                <a href="#channels" class="nav-item" data-page="channels">
+                    <span class="icon">&#9660;</span> Channels
+                </a>
+                <a href="#providers" class="nav-item" data-page="providers">
+                    <span class="icon">&#9670;</span> Providers
+                </a>
+                <a href="#memory" class="nav-item" data-page="memory">
+                    <span class="icon">&#9679;</span> Memory
+                </a>
+                <a href="#cron" class="nav-item" data-page="cron">
+                    <span class="icon">&#8635;</span> Cron
+                </a>
+                <a href="#config" class="nav-item" data-page="config">
+                    <span class="icon">&#9881;</span> Config
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="status-row">
+                    <span class="status-dot" id="healthDot"></span>
+                    <span id="healthText">Checking...</span>
+                </div>
+            </div>
+        </aside>
+        <main class="main">
+            <header class="topbar">
+                <h1 id="pageTitle">Dashboard</h1>
+                <div class="actions">
+                    <button class="btn btn-refresh" id="refreshBtn">Refresh</button>
+                </div>
+            </header>
+            <div class="content" id="content">
+                <!-- Pages injected by JS -->
+            </div>
+        </main>
+    </div>
+    <script src="/admin/app.js"></script>
+</body>
+</html>

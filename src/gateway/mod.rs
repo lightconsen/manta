@@ -24,6 +24,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
@@ -1571,6 +1572,11 @@ impl Gateway {
             .route(
                 "/api/sessions/:id/threads/:thread_id/redo",
                 post(redo_turn_handler),
+            )
+            // Control UI static files
+            .nest_service(
+                "/admin",
+                ServeDir::new("assets/control_ui").append_index_html_on_directories(true),
             )
             // Apply security middleware (order matters - applied in reverse)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
