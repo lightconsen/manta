@@ -431,6 +431,7 @@ pub mod team_communicate_tool;
 pub mod time;
 pub mod todo_tool;
 pub mod web;
+pub mod sdk;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
 pub use browser::BrowserTool;
@@ -448,6 +449,7 @@ pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
 pub use web::{WebFetchTool, WebSearchTool};
+pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
 
 /// Cached tool result entry
 #[derive(Debug, Clone)]

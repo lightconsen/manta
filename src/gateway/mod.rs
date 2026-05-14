@@ -29,6 +29,7 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
     MemoryVectorStore, VectorMemoryService,
@@ -432,7 +433,10 @@ pub struct GatewayState {
     /// Active agents by ID
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
     /// Session routing table: session_id -> agent_id
+    /// DEPRECATED: use `agent_router` instead for new code.
     pub session_routing: Arc<RwLock<HashMap<String, String>>>,
+    /// Agent router for workspace-aware multi-agent routing.
+    pub agent_router: Arc<AgentRouter>,
     /// Session to channel mapping: session_id -> (channel_name, channel_specific_id)
     /// Used to route responses back to the correct channel endpoint
     pub session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
@@ -487,6 +491,20 @@ pub struct GatewayState {
     /// Shared live cost guard — tracks daily spend and hourly action rate
     /// across all agents. `Arc` allows every spawned agent to share one guard.
     pub cost_guard: Arc<crate::agent::CostGuard>,
+    /// Reply dispatcher for routing agent responses to channels.
+    pub reply_dispatcher: Arc<crate::outbound::ReplyDispatcher>,
+    /// Sender for the inbound pipeline to deliver `RoutedMessage`s.
+    pub routed_tx: mpsc::Sender<crate::inbound::RoutedMessage>,
+    /// Inbound pipeline for processing incoming messages.
+    pub inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline>,
+    /// Outbound pipeline for processing agent outputs.
+    pub outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline>,
+    /// Channel extension registry for unified channel management.
+    pub channel_extensions: Arc<RwLock<crate::channels::ChannelExtensionRegistry>>,
+    /// Provider SDK for dynamic provider registration and discovery.
+    pub provider_sdk: Arc<RwLock<crate::providers::ProviderSdk>>,
+    /// Tool SDK for dynamic tool pack registration.
+    pub tool_sdk: Arc<RwLock<crate::tools::ToolSdk>>,
 }
 
 /// Handle to a running agent
@@ -753,6 +771,7 @@ impl Gateway {
     pub async fn new(config: GatewayConfig) -> crate::Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
+        let (routed_tx, routed_rx) = mpsc::channel(1000);
 
         // Create ACP control plane first (needed for tool registration)
         let acp = Arc::new(AcpControlPlane::new());
@@ -850,6 +869,42 @@ impl Gateway {
             }
         };
 
+        // Create inbound / outbound pipelines (skeleton alignment)
+        let agent_router = Arc::new(AgentRouter::new(crate::inbound::AgentRouterConfig::default()));
+        let reply_dispatcher = Arc::new(crate::outbound::ReplyDispatcher::new(
+            crate::outbound::ReplyDispatchConfig::default(),
+        ));
+
+        let (debounce_flush_tx, debounce_flush_rx) = mpsc::channel(256);
+        let debouncer = InboundDebouncer::new(
+            InboundDebouncerConfig::default(),
+            debounce_flush_tx,
+        );
+
+        let inbound_concrete = Arc::new(
+            crate::inbound::DefaultInboundPipeline::new(
+                debouncer.clone(),
+                crate::inbound::MediaUnderstandingPipeline::new(),
+                crate::inbound::AutoReplyDispatch::new(crate::inbound::AutoReplyDispatchConfig::default()),
+                crate::inbound::QueueModeResolver::new(),
+                (*agent_router).clone(),
+                routed_tx.clone(),
+                debounce_flush_rx,
+            ),
+        );
+        inbound_concrete.clone().start();
+        let inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline> = inbound_concrete;
+
+        let side_effect_registry = Arc::new(crate::outbound::SideEffectRegistry::new());
+        let side_effect_executor = Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
+        let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> = Arc::new(
+            crate::outbound::DefaultOutboundPipeline::new(
+                reply_dispatcher.clone(),
+                side_effect_executor,
+                None,
+            ),
+        );
+
         // Create state with placeholder values for vector_memory and hot_reload
         // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
@@ -857,6 +912,7 @@ impl Gateway {
             channels: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
+            agent_router,
             session_channels: Arc::new(RwLock::new(HashMap::new())),
             webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
             model_router: Arc::new(ModelRouter::new(model_router_config)),
@@ -885,6 +941,13 @@ impl Gateway {
                 config.cost_guard.daily_limit_cents,
                 config.cost_guard.hourly_action_limit,
             ),
+            reply_dispatcher,
+            routed_tx,
+            inbound_pipeline,
+            outbound_pipeline,
+            channel_extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
+            provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
+            tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
         });
 
         // Configure providers from config
@@ -1119,8 +1182,10 @@ impl Gateway {
             info!("Cron scheduler disabled");
         }
 
-        // Start message processing worker
+        // Start message processing worker (legacy QueuedMessage path)
         tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
+        // Start routed-message worker (new InboundPipeline path)
+        tokio::spawn(Self::process_routed_messages(state.clone(), routed_rx));
 
         Ok(Self { state, config })
     }
@@ -1628,11 +1693,23 @@ async fn spawn_agent_inner(
                         let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                             session_id: session_id.clone(),
                             agent_id: agent_id.clone(),
-                            content: response_content,
-                            channel: source_channel,
-                            conversation_id,
+                            content: response_content.clone(),
+                            channel: source_channel.clone(),
+                            conversation_id: conversation_id.clone(),
                             usage: response_usage,
                         });
+
+                        // Route through the outbound pipeline (trajectory → canvas → sse → reply → side effects)
+                        let outbound_ctx = crate::outbound::OutboundContext {
+                            session_id: session_id.clone(),
+                            channel: source_channel.clone(),
+                            agent_id: agent_id.clone(),
+                            raw_output: response_content,
+                            tool_calls: vec![],
+                            trajectory: crate::outbound::TrajectoryLog::new(),
+                            usage: response_usage,
+                        };
+                        let _ = state.outbound_pipeline.process(outbound_ctx).await;
 
                         // Update status to idle
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
@@ -1772,6 +1849,19 @@ impl Gateway {
 
         info!("Auto-spawned {} agents from registry", spawned);
         Ok(spawned)
+    }
+
+    /// Register a channel extension with the gateway.
+    ///
+    /// Extensions are wired into the inbound/outbound pipelines and replace
+    /// the ad-hoc per-channel initialisation code.
+    pub async fn register_channel_extension(
+        &self,
+        ext: Arc<dyn crate::channels::ChannelExtension>,
+    ) {
+        let mut registry = self.state.channel_extensions.write().await;
+        registry.register(ext.clone());
+        info!("Registered channel extension: {}", ext.name());
     }
 
     /// Get or spawn agent by ID (on-demand)
@@ -1962,23 +2052,20 @@ impl Gateway {
             // Set up the message sender for this Telegram channel instance
             channel.set_message_sender(message_tx).await;
 
-            // Get agent for routing messages (use channel's agent_id or default)
+            // Agent routing is now handled by the InboundPipeline (AgentRouter)
             let agent_name = config.agent_id.as_deref().unwrap_or("default");
-            let agent_handle = self.state.agents.read().await.get(agent_name).cloned();
-            if agent_handle.is_none() {
-                warn!(
-                    "No '{}' agent available for Telegram channel '{}', messages will not be routed",
-                    agent_name, name
-                );
-            } else {
-                info!("Telegram channel '{}' connected to agent '{}'", name, agent_name);
-            }
+            info!("Telegram channel '{}' will route via InboundPipeline (default agent: '{}')", name, agent_name);
 
-            // Spawn task to process messages from Telegram and route to agent
-            let agent_for_task = agent_handle.clone();
+            // Set channel default so the router knows which agent to use for Telegram
+            self.state
+                .agent_router
+                .set_channel_default(name, agent_name.to_string(), None)
+                .await;
+
+            // Spawn task to process messages from Telegram through the InboundPipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
-                info!("DEBUG: Telegram message processing task started");
+                info!("DEBUG: Telegram message processing task started (InboundPipeline)");
                 while let Some(message) = message_rx.recv().await {
                     let session_id = message.conversation_id.0.clone();
                     let chat_id = message
@@ -2005,22 +2092,14 @@ impl Gateway {
                         );
                     }
 
-                    if let Some(ref handle) = agent_for_task {
-                        info!("DEBUG: Sending to agent via command channel");
-                        // Send to agent via its command channel
-                        let cmd = AgentCommand::ProcessMessage {
-                            session_id,
-                            message: message.content.clone(),
-                            user_id: message.user_id.0.clone(),
-                            channel: "telegram".to_string(),
-                        };
-                        if let Err(e) = handle.tx.send(cmd).await {
-                            error!("Failed to send message to agent: {}", e);
-                        } else {
-                            info!("DEBUG: Message sent to agent successfully");
-                        }
+                    // Route through the inbound pipeline (debounce -> dispatch -> router)
+                    if let Some(routed) = state_clone.inbound_pipeline.process(message).await {
+                        info!(
+                            "DEBUG: Telegram message routed through pipeline: agent={}",
+                            routed.agent_id
+                        );
                     } else {
-                        error!("No default agent available to process Telegram message");
+                        info!("DEBUG: Telegram message absorbed by pipeline (debounced or suppressed)");
                     }
                 }
                 info!("DEBUG: Telegram message processing task ended");
@@ -2103,6 +2182,10 @@ impl Gateway {
                 }
             });
             self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
+            self.state
                 .channels
                 .write()
                 .await
@@ -2129,6 +2212,10 @@ impl Gateway {
                 }
             });
             self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
+            self.state
                 .channels
                 .write()
                 .await
@@ -2154,6 +2241,10 @@ impl Gateway {
                     error!("Slack channel {} failed: {}", channel_name, e);
                 }
             });
+            self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
             self.state
                 .channels
                 .write()
@@ -2184,6 +2275,10 @@ impl Gateway {
                     error!("WhatsApp channel {} failed: {}", channel_name, e);
                 }
             });
+            self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
             self.state
                 .channels
                 .write()
@@ -2218,6 +2313,10 @@ impl Gateway {
                 }
             });
             self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
+            self.state
                 .channels
                 .write()
                 .await
@@ -2240,34 +2339,60 @@ impl Gateway {
         while let Some(msg) = rx.recv().await {
             info!("Processing queued message: {}", msg.id);
 
-            // Route to appropriate agent
-            let agent_id = Self::resolve_agent_for_session(&state, &msg.session_id).await;
+            // Convert QueuedMessage to IncomingMessage and route through
+            // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
+            let incoming = crate::channels::IncomingMessage::new(
+                msg.user_id,
+                msg.session_id,
+                msg.content,
+            )
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: msg.channel,
+                is_direct: true,
+            });
+
+            let _ = state.inbound_pipeline.process(incoming).await;
+            // The pipeline forwards RoutedMessage to routed_tx; process_routed_messages
+            // handles the actual agent dispatch.
+        }
+    }
+
+    /// Process routed messages from the inbound pipeline.
+    ///
+    /// Converts `RoutedMessage` into `AgentCommand::ProcessMessage` and
+    /// forwards it to the resolved agent.
+    async fn process_routed_messages(
+        state: Arc<GatewayState>,
+        mut rx: mpsc::Receiver<crate::inbound::RoutedMessage>,
+    ) {
+        while let Some(routed) = rx.recv().await {
+            if routed.suppress_delivery {
+                debug!("Suppressing delivery for session {}", routed.incoming.conversation_id.0);
+                continue;
+            }
+
+            let session_id = routed.incoming.conversation_id.0.clone();
+            let agent_id = routed.agent_id;
 
             let agents = state.agents.read().await;
             if let Some(agent) = agents.get(&agent_id) {
                 let cmd = AgentCommand::ProcessMessage {
-                    session_id: msg.session_id,
-                    message: msg.content,
-                    user_id: msg.user_id,
-                    channel: msg.channel,
+                    session_id: session_id.clone(),
+                    message: routed.incoming.content,
+                    user_id: routed.incoming.user_id.0,
+                    channel: match &routed.incoming.provenance {
+                        crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
+                        _ => "unknown".to_string(),
+                    },
                 };
 
                 if let Err(e) = agent.tx.send(cmd).await {
-                    error!("Failed to send command to agent {}: {}", agent_id, e);
+                    error!("Failed to send routed command to agent {}: {}", agent_id, e);
                 }
             } else {
-                error!("Agent {} not found for session {}", agent_id, msg.id);
+                error!("Agent {} not found for routed session {}", agent_id, session_id);
             }
         }
-    }
-
-    /// Resolve which agent should handle a session
-    async fn resolve_agent_for_session(state: &Arc<GatewayState>, session_id: &str) -> String {
-        let routing = state.session_routing.read().await;
-        routing
-            .get(session_id)
-            .cloned()
-            .unwrap_or_else(|| "default".to_string())
     }
 
     /// Start Tailscale for remote access
@@ -6933,13 +7058,14 @@ async fn assign_team_task_handler(
 
 /// `GET /api/sessions` — list all active sessions and their routing info.
 async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let routing = state.session_routing.read().await;
-    let sessions: Vec<_> = routing
+    let bindings = state.agent_router.list_bindings().await;
+    let sessions: Vec<_> = bindings
         .iter()
-        .map(|(session_id, agent_id)| {
+        .map(|(session_id, (agent_id, workspace_id))| {
             serde_json::json!({
                 "session_id": session_id,
                 "agent_id": agent_id,
+                "workspace_id": workspace_id,
             })
         })
         .collect();
@@ -6958,19 +7084,18 @@ async fn resolve_session_query_tx(
     session_id: &str,
 ) -> Result<mpsc::Sender<AgentQuery>, axum::response::Response> {
     let agent_id = {
-        let routing = state.session_routing.read().await;
-        match routing.get(session_id) {
-            Some(id) => id.clone(),
-            None => {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": format!("Session '{}' not found", session_id)
-                    })),
-                )
-                    .into_response());
-            }
+        let route = state.agent_router.resolve_by_session(session_id).await;
+        if route.agent_id == "default" && route.created_binding {
+            // No existing binding and fell back to default — treat as not found
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": format!("Session '{}' not found", session_id)
+                })),
+            )
+                .into_response());
         }
+        route.agent_id
     };
 
     let agents = state.agents.read().await;

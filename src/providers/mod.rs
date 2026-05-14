@@ -354,10 +354,12 @@ impl ProviderRegistry {
 pub mod anthropic;
 pub mod fallback;
 pub mod openai;
+pub mod sdk;
 
 pub use anthropic::AnthropicProvider;
 pub use fallback::{FallbackChainBuilder, FallbackProvider};
 pub use openai::OpenAiProvider;
+pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
 
 #[cfg(test)]
 mod tests {

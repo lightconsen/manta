@@ -59,6 +59,12 @@ pub mod lark;
 #[cfg(feature = "plugins")]
 pub mod plugin_host;
 
+pub mod extension;
+
+pub use extension::{
+    ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry,
+};
+
 pub use formatter::{
     DiscordFormatter, MessageFormatter, PlainTextFormatter, SlackFormatter, TelegramHtmlFormatter,
 };
