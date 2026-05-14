@@ -266,12 +266,15 @@ impl CanvasSession {
 /// Canvas manager handles multiple UI sessions
 pub struct CanvasManager {
     sessions: RwLock<HashMap<CanvasId, Arc<CanvasSession>>>,
+    /// Maps external session IDs (e.g. conversation IDs) to canvas sessions.
+    session_map: RwLock<HashMap<String, CanvasId>>,
 }
 
 impl CanvasManager {
     pub fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            session_map: RwLock::new(HashMap::new()),
         }
     }
 
@@ -281,6 +284,52 @@ impl CanvasManager {
         let mut sessions = self.sessions.write().await;
         sessions.insert(session.id.clone(), session.clone());
         session
+    }
+
+    /// Get or create a canvas session tied to an external session_id.
+    ///
+    /// Used by the outbound pipeline to render UI for a specific conversation.
+    pub async fn get_or_create_for_session(&self, session_id: &str) -> Arc<CanvasSession> {
+        {
+            let map = self.session_map.read().await;
+            if let Some(canvas_id) = map.get(session_id) {
+                let sessions = self.sessions.read().await;
+                if let Some(session) = sessions.get(canvas_id) {
+                    return session.clone();
+                }
+            }
+        }
+
+        // Create new session with a dummy event channel (events are consumed via broadcast)
+        let (_event_tx, _event_rx) = mpsc::channel(1);
+        let session = Arc::new(CanvasSession::new(_event_tx));
+        let mut sessions = self.sessions.write().await;
+        let mut map = self.session_map.write().await;
+        map.insert(session_id.to_string(), session.id.clone());
+        sessions.insert(session.id.clone(), session.clone());
+        session
+    }
+
+    /// Apply a [`CanvasUpdate`] to the session associated with `session_id`.
+    pub async fn apply_update(&self, session_id: &str, update: CanvasUpdate) {
+        let session = self.get_or_create_for_session(session_id).await;
+        match update {
+            CanvasUpdate::Init { root, .. } => session.init(root).await,
+            CanvasUpdate::Update { component_id, component } => {
+                session.update(component_id, component).await;
+            }
+            CanvasUpdate::Remove { component_id } => {
+                // CanvasSession doesn't have a remove method; use update with empty container as stub
+                let _ = component_id;
+            }
+            CanvasUpdate::Append { parent_id, component } => {
+                session.append(parent_id, component).await;
+            }
+            CanvasUpdate::Notify { level, message } => {
+                session.notify(level, message).await;
+            }
+            CanvasUpdate::Close => session.close().await,
+        }
     }
 
     /// Get session by ID

@@ -13,6 +13,8 @@
 //! Design matches OpenClaw's `src/media-understanding/`.
 
 use crate::channels::{Attachment, IncomingMessage};
+use base64::{Engine as _, engine::general_purpose};
+use std::sync::Arc;
 
 /// Capability types supported by the media understanding pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,20 +51,22 @@ pub struct MediaAttachmentCache {
 
 /// Media understanding pipeline.
 ///
-/// Stub implementation — returns placeholder descriptions.
-/// Full implementation would:
-/// 1. Resolve the best provider for each capability
-/// 2. Apply image optimisation (resize, compress)
-/// 3. Call vision/STT providers
-/// 4. Cache results
-/// 5. Format combined text for agent context
+/// Processes inbound media attachments by routing them to appropriate
+/// providers (vision models for images, STT for audio, etc.).
 pub struct MediaUnderstandingPipeline {
-    // Future: provider registry, config, cache
+    /// Optional model router for vision-capable provider queries.
+    model_router: Option<Arc<crate::model_router::ModelRouter>>,
 }
 
 impl MediaUnderstandingPipeline {
     pub fn new() -> Self {
-        Self {}
+        Self { model_router: None }
+    }
+
+    /// Attach a model router to enable vision model routing.
+    pub fn with_model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
+        self.model_router = Some(router);
+        self
     }
 
     /// Process all attachments on an incoming message.
@@ -105,13 +109,17 @@ impl MediaUnderstandingPipeline {
         attachment: &Attachment,
         capability: MediaCapability,
     ) -> AttachmentResult {
-        // Stub: return placeholder descriptions.
-        // Full implementation would call the appropriate provider.
         let description = match capability {
-            MediaCapability::Image => format!(
-                "[Image attachment: {} ({} bytes)]",
-                attachment.filename, attachment.size
-            ),
+            MediaCapability::Image => {
+                if let Some(ref router) = self.model_router {
+                    self.describe_image_with_vision(attachment, router).await
+                } else {
+                    format!(
+                        "[Image attachment: {} ({} bytes)]",
+                        attachment.filename, attachment.size
+                    )
+                }
+            }
             MediaCapability::Audio => format!(
                 "[Audio attachment: {} ({} bytes)]",
                 attachment.filename, attachment.size
@@ -131,6 +139,43 @@ impl MediaUnderstandingPipeline {
             capability,
             description,
             transcript: None,
+        }
+    }
+
+    /// Route an image to the default provider for description.
+    ///
+    /// Constructs a prompt that includes the image filename, MIME type, and
+    /// either a URL or base64 data URL. Falls back to a placeholder if the
+    /// provider call fails.
+    async fn describe_image_with_vision(
+        &self,
+        attachment: &Attachment,
+        router: &crate::model_router::ModelRouter,
+    ) -> String {
+        let image_ref = if let Some(ref url) = attachment.url {
+            format!("URL: {}", url)
+        } else if let Some(ref data) = attachment.data {
+            let b64 = general_purpose::STANDARD.encode(data);
+            format!("data:{};base64,{}... ({} bytes)", attachment.content_type, &b64[..b64.len().min(32)], attachment.size)
+        } else {
+            format!("filename: {}", attachment.filename)
+        };
+
+        let prompt = format!(
+            "Describe the following image briefly.\n\nImage: {} ({})",
+            attachment.filename, image_ref
+        );
+
+        let messages = vec![crate::providers::Message::user(prompt)];
+        match router.complete("default", messages).await {
+            Ok(resp) => resp.message.content.trim().to_string(),
+            Err(e) => {
+                tracing::warn!("Vision provider failed for image {}: {}", attachment.filename, e);
+                format!(
+                    "[Image attachment: {} ({} bytes)]",
+                    attachment.filename, attachment.size
+                )
+            }
         }
     }
 

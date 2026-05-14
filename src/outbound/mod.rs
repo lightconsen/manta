@@ -20,7 +20,7 @@ pub mod sse;
 pub mod trajectory;
 
 pub use reply_dispatcher::{ReplyDispatchConfig, ReplyDispatcher};
-pub use side_effects::{SideEffect, SideEffectExecutor, SideEffectRegistry};
+pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEffectRegistry};
 pub use sse::{SseEvent, SseStreamer};
 pub use trajectory::{TrajectoryEntry, TrajectoryLog};
 
@@ -90,11 +90,32 @@ impl OutboundPipeline for DefaultOutboundPipeline {
         // Stage 1: Trajectory is already built by the agent; we just forward it.
         let _trajectory = ctx.trajectory;
 
-        // Stage 2: Canvas rendering (stub — would convert output to components)
-        let canvas_update = None;
+        // Stage 2: Canvas rendering — detect A2UI components in agent output
+        let canvas_update = if let Ok(component) =
+            serde_json::from_str::<crate::canvas::CanvasComponent>(&ctx.raw_output
+            ) {
+            Some(crate::canvas::CanvasUpdate::Init {
+                canvas_id: ctx.session_id.clone(),
+                root: component,
+            })
+        } else {
+            None
+        };
 
-        // Stage 3: SSE streaming (stub — would emit token events)
-        let sse_events = Vec::new();
+        // Stage 3: SSE streaming — emit tool call and completion events
+        let mut sse_events = Vec::new();
+        if let Some(ref sse) = self.sse {
+            for tc in &ctx.tool_calls {
+                let evt = SseEvent::ToolStart {
+                    name: tc.function.name.clone(),
+                };
+                sse.send(&ctx.session_id, evt.clone()).await;
+                sse_events.push(evt);
+            }
+            let done_evt = SseEvent::Done;
+            sse.send(&ctx.session_id, done_evt.clone()).await;
+            sse_events.push(done_evt);
+        }
 
         // Stage 4: Build the outbound result
         let result = OutboundResult {

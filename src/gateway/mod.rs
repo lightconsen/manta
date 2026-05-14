@@ -499,12 +499,27 @@ pub struct GatewayState {
     pub inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline>,
     /// Outbound pipeline for processing agent outputs.
     pub outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline>,
+    /// Side effect executor for post-response actions.
+    pub side_effect_executor: Arc<crate::outbound::SideEffectExecutor>,
+    /// SSE streamer for real-time event streaming.
+    pub sse_streamer: Arc<crate::outbound::SseStreamer>,
     /// Channel extension registry for unified channel management.
     pub channel_extensions: Arc<RwLock<crate::channels::ChannelExtensionRegistry>>,
     /// Provider SDK for dynamic provider registration and discovery.
     pub provider_sdk: Arc<RwLock<crate::providers::ProviderSdk>>,
     /// Tool SDK for dynamic tool pack registration.
     pub tool_sdk: Arc<RwLock<crate::tools::ToolSdk>>,
+    /// Session message buffer for FollowUp / Collect queue modes.
+    /// session_id -> buffered messages (content + metadata)
+    pub session_message_buffer: Arc<RwLock<HashMap<String, Vec<BufferedMessage>>>>,
+}
+
+/// A buffered message awaiting batch processing (FollowUp / Collect modes).
+#[derive(Debug, Clone)]
+pub struct BufferedMessage {
+    pub content: String,
+    pub user_id: String,
+    pub channel: String,
 }
 
 /// Handle to a running agent
@@ -801,6 +816,18 @@ impl Gateway {
             default_alias.model = config.model.clone();
         }
 
+        // Create and initialize model router early so it can be shared
+        let model_router = Arc::new(crate::model_router::ModelRouter::new(model_router_config));
+        for (name, provider_config) in &config.providers {
+            info!("Configuring provider: {}", name);
+            if let Err(e) = model_router
+                .add_provider(name, provider_config.clone())
+                .await
+            {
+                warn!("Failed to add provider '{}': {}", name, e);
+            }
+        }
+
         // Initialize security components
         let auth_manager = Arc::new(
             crate::security::AuthManager::new()
@@ -884,7 +911,8 @@ impl Gateway {
         let inbound_concrete = Arc::new(
             crate::inbound::DefaultInboundPipeline::new(
                 debouncer.clone(),
-                crate::inbound::MediaUnderstandingPipeline::new(),
+                crate::inbound::MediaUnderstandingPipeline::new()
+                    .with_model_router(Arc::clone(&model_router)),
                 crate::inbound::AutoReplyDispatch::new(crate::inbound::AutoReplyDispatchConfig::default()),
                 crate::inbound::QueueModeResolver::new(),
                 (*agent_router).clone(),
@@ -897,11 +925,12 @@ impl Gateway {
 
         let side_effect_registry = Arc::new(crate::outbound::SideEffectRegistry::new());
         let side_effect_executor = Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
+        let sse_streamer = Arc::new(crate::outbound::SseStreamer::new());
         let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> = Arc::new(
             crate::outbound::DefaultOutboundPipeline::new(
                 reply_dispatcher.clone(),
-                side_effect_executor,
-                None,
+                side_effect_executor.clone(),
+                Some(sse_streamer.clone()),
             ),
         );
 
@@ -915,7 +944,7 @@ impl Gateway {
             agent_router,
             session_channels: Arc::new(RwLock::new(HashMap::new())),
             webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-            model_router: Arc::new(ModelRouter::new(model_router_config)),
+            model_router,
             tool_registry,
             event_tx,
             message_queue: message_queue_tx,
@@ -945,22 +974,13 @@ impl Gateway {
             routed_tx,
             inbound_pipeline,
             outbound_pipeline,
+            side_effect_executor: side_effect_executor.clone(),
+            sse_streamer: sse_streamer.clone(),
             channel_extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
             provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
             tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
+            session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
         });
-
-        // Configure providers from config
-        for (name, provider_config) in &config.providers {
-            info!("Configuring provider: {}", name);
-            if let Err(e) = state
-                .model_router
-                .add_provider(name, provider_config.clone())
-                .await
-            {
-                warn!("Failed to add provider '{}': {}", name, e);
-            }
-        }
 
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
@@ -1191,6 +1211,20 @@ impl Gateway {
         } else {
             info!("Cron scheduler disabled");
         }
+
+        // Wire side-effect executor with runtime context (memory + cron)
+        let side_effect_ctx = crate::outbound::SideEffectContext {
+            memory_manager: state.memory_manager.read().await.clone(),
+            cron_scheduler: state.cron_scheduler.read().await.clone(),
+            webhook_client: Some(Arc::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .unwrap_or_default(),
+            )),
+        };
+        state.side_effect_executor.set_context(side_effect_ctx).await;
+        info!("✅ SideEffectExecutor context wired");
 
         // Start message processing worker (legacy QueuedMessage path)
         tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
@@ -1765,7 +1799,12 @@ async fn spawn_agent_inner(
                             trajectory,
                             usage: response_usage,
                         };
-                        let _ = state.outbound_pipeline.process(outbound_ctx).await;
+                        let outbound_result = state.outbound_pipeline.process(outbound_ctx).await;
+
+                        // Apply canvas updates if the pipeline produced any
+                        if let Some(canvas_update) = outbound_result.canvas_update {
+                            state.canvas_manager.apply_update(&session_id, canvas_update).await;
+                        }
 
                         // Update status to idle
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
@@ -2346,7 +2385,7 @@ impl Gateway {
     /// Process routed messages from the inbound pipeline.
     ///
     /// Converts `RoutedMessage` into `AgentCommand::ProcessMessage` and
-    /// forwards it to the resolved agent.
+    /// forwards it to the resolved agent, respecting `QueueMode`.
     async fn process_routed_messages(
         state: Arc<GatewayState>,
         mut rx: mpsc::Receiver<crate::inbound::RoutedMessage>,
@@ -2358,26 +2397,156 @@ impl Gateway {
             }
 
             let session_id = routed.incoming.conversation_id.0.clone();
-            let agent_id = routed.agent_id;
+            let agent_id = routed.agent_id.clone();
+            let channel = match &routed.incoming.provenance {
+                crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
+                _ => "unknown".to_string(),
+            };
 
-            let agents = state.agents.read().await;
-            if let Some(agent) = agents.get(&agent_id) {
-                let cmd = AgentCommand::ProcessMessage {
-                    session_id: session_id.clone(),
-                    message: routed.incoming.content,
-                    user_id: routed.incoming.user_id.0,
-                    channel: match &routed.incoming.provenance {
-                        crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
-                        _ => "unknown".to_string(),
-                    },
-                };
-
-                if let Err(e) = agent.tx.send(cmd).await {
-                    error!("Failed to send routed command to agent {}: {}", agent_id, e);
+            match routed.queue_mode {
+                crate::inbound::QueueMode::Interrupt => {
+                    // Clear any buffered messages for this session
+                    {
+                        let mut buffers = state.session_message_buffer.write().await;
+                        buffers.remove(&session_id);
+                    }
+                    Self::send_to_agent(
+                        &state, &agent_id, &session_id,
+                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
+                    ).await;
                 }
-            } else {
-                error!("Agent {} not found for routed session {}", agent_id, session_id);
+
+                crate::inbound::QueueMode::Steer => {
+                    // Send Cancel to agent (best-effort), then send the steer message
+                    {
+                        let agents = state.agents.read().await;
+                        if let Some(agent) = agents.get(&agent_id) {
+                            let _ = agent.tx.send(AgentCommand::Cancel).await;
+                        }
+                    }
+                    // Small delay to let cancel take effect
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    Self::send_to_agent(
+                        &state, &agent_id, &session_id,
+                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
+                    ).await;
+                }
+
+                crate::inbound::QueueMode::FollowUp => {
+                    // Buffer message; flush after a delay if no more arrive
+                    let should_flush = {
+                        let mut buffers = state.session_message_buffer.write().await;
+                        let buffer = buffers.entry(session_id.clone()).or_default();
+                        buffer.push(BufferedMessage {
+                            content: routed.incoming.content.clone(),
+                            user_id: routed.incoming.user_id.0.clone(),
+                            channel: channel.clone(),
+                        });
+                        buffer.len() >= 5 // Max 5 messages before forced flush
+                    };
+
+                    if should_flush {
+                        Self::flush_session_buffer(&state, &agent_id, &session_id).await;
+                    } else {
+                        // Spawn a delayed flush task
+                        let state_clone = state.clone();
+                        let agent_id_clone = agent_id.clone();
+                        let session_id_clone = session_id.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                            Self::flush_session_buffer(&state_clone, &agent_id_clone, &session_id_clone).await;
+                        });
+                    }
+                }
+
+                crate::inbound::QueueMode::Collect => {
+                    // /done trigger: flush the buffer
+                    let has_buffered = {
+                        let buffers = state.session_message_buffer.read().await;
+                        buffers.get(&session_id).map(|b| !b.is_empty()).unwrap_or(false)
+                    };
+
+                    if has_buffered {
+                        Self::flush_session_buffer(&state, &agent_id, &session_id).await;
+                    } else {
+                        // No buffer to flush; treat as normal message
+                        Self::send_to_agent(
+                            &state, &agent_id, &session_id,
+                            &routed.incoming.content, &routed.incoming.user_id.0, &channel,
+                        ).await;
+                    }
+                }
+
+                crate::inbound::QueueMode::Normal => {
+                    Self::send_to_agent(
+                        &state, &agent_id, &session_id,
+                        &routed.incoming.content, &routed.incoming.user_id.0, &channel,
+                    ).await;
+                }
             }
+        }
+    }
+
+    /// Flush buffered messages for a session and send as a single batch.
+    async fn flush_session_buffer(
+        state: &Arc<GatewayState>,
+        agent_id: &str,
+        session_id: &str,
+    ) {
+        let messages: Vec<BufferedMessage> = {
+            let mut buffers = state.session_message_buffer.write().await;
+            buffers.remove(session_id).unwrap_or_default()
+        };
+
+        if messages.is_empty() {
+            return;
+        }
+
+        let combined = messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let first_user_id = messages.first().map(|m| m.user_id.clone()).unwrap_or_default();
+        let first_channel = messages.first().map(|m| m.channel.clone()).unwrap_or_default();
+
+        info!(
+            "Flushing {} buffered messages for session {} (combined length: {})",
+            messages.len(),
+            session_id,
+            combined.len()
+        );
+
+        Self::send_to_agent(
+            state, agent_id, session_id,
+            &combined, &first_user_id, &first_channel,
+        ).await;
+    }
+
+    /// Send a single message to an agent.
+    async fn send_to_agent(
+        state: &Arc<GatewayState>,
+        agent_id: &str,
+        session_id: &str,
+        message: &str,
+        user_id: &str,
+        channel: &str,
+    ) {
+        let agents = state.agents.read().await;
+        if let Some(agent) = agents.get(agent_id) {
+            let cmd = AgentCommand::ProcessMessage {
+                session_id: session_id.to_string(),
+                message: message.to_string(),
+                user_id: user_id.to_string(),
+                channel: channel.to_string(),
+            };
+
+            if let Err(e) = agent.tx.send(cmd).await {
+                error!("Failed to send command to agent {}: {}", agent_id, e);
+            }
+        } else {
+            error!("Agent {} not found for session {}", agent_id, session_id);
         }
     }
 
