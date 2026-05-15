@@ -22,7 +22,10 @@ pub use runtime::{PluginInstance, PluginRuntime};
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+
+use crate::tools::ToolRegistry;
 
 /// Plugin manager - high-level interface for plugin operations
 pub struct PluginManager {
@@ -30,6 +33,7 @@ pub struct PluginManager {
     hook_registry: Arc<HookRegistry>,
     plugins_dir: PathBuf,
     auto_load: bool,
+    tool_registry: RwLock<Option<Arc<ToolRegistry>>>,
 }
 
 impl PluginManager {
@@ -46,7 +50,15 @@ impl PluginManager {
             hook_registry,
             plugins_dir,
             auto_load: true,
+            tool_registry: RwLock::new(None),
         })
+    }
+
+    /// Attach a `ToolRegistry` so that plugin tools are automatically
+    /// registered on load / unregistered on unload.
+    pub async fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
+        let mut tr = self.tool_registry.write().await;
+        *tr = Some(registry);
     }
 
     /// Initialize and load all plugins
@@ -62,7 +74,7 @@ impl PluginManager {
             if path.is_dir() {
                 let manifest_path = path.join("plugin.json");
                 if manifest_path.exists() {
-                    match self.runtime.load_plugin(&path).await {
+                    match self.load_plugin(&path).await {
                         Ok(plugin_id) => {
                             debug!("Auto-loaded plugin '{}'", plugin_id);
                             count += 1;
@@ -79,18 +91,79 @@ impl PluginManager {
         Ok(count)
     }
 
-    /// Load a plugin from a directory
+    /// Load a plugin from a directory and register its tools.
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
-        self.runtime.load_plugin(path).await
+        let plugin_id = self.runtime.load_plugin(path).await?;
+
+        if let Some(plugin) = self.runtime.get_plugin(&plugin_id).await {
+            self.register_plugin_tools(&plugin).await;
+        }
+
+        Ok(plugin_id)
     }
 
-    /// Unload a plugin
+    /// Unload a plugin, unregistering its tools and hooks.
     pub async fn unload_plugin(&self, plugin_id: &str) -> crate::Result<bool> {
-        // Unregister hooks first
+        self.deregister_plugin_tools(plugin_id).await;
+        self.hook_registry.unregister_plugin(plugin_id).await;
+        self.runtime.unload_plugin(plugin_id).await
+    }
+
+    /// Reload a plugin with state preservation.
+    ///
+    /// Preserves `PluginState::memory`, re-reads the manifest from disk,
+    /// and re-registers tools into the `ToolRegistry`.
+    pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
+        info!("Reloading plugin '{}'...", plugin_id);
+
+        self.deregister_plugin_tools(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
 
-        // Unload the plugin
-        self.runtime.unload_plugin(plugin_id).await
+        let reloaded_id = self.runtime.reload_plugin(plugin_id).await?;
+
+        if let Some(plugin) = self.runtime.get_plugin(&reloaded_id).await {
+            self.register_plugin_tools(&plugin).await;
+        }
+
+        info!("Plugin '{}' reloaded successfully", reloaded_id);
+        Ok(reloaded_id)
+    }
+
+    /// Register a plugin's tools into the `ToolRegistry`.
+    async fn register_plugin_tools(&self, plugin: &PluginInstance) {
+        let tool_registry = self.tool_registry.read().await;
+        if let Some(ref registry) = *tool_registry {
+            for tool in plugin.manifest.get_tools() {
+                let wrapper = Arc::new(PluginToolWrapper::new(
+                    plugin.id().to_string(),
+                    tool,
+                    self.runtime.clone(),
+                ));
+                registry.register_dynamic(wrapper);
+                info!(
+                    "Registered plugin tool '{}' from plugin '{}'",
+                    tool.name,
+                    plugin.id()
+                );
+            }
+        }
+    }
+
+    /// Deregister a plugin's tools from the `ToolRegistry`.
+    async fn deregister_plugin_tools(&self, plugin_id: &str) {
+        let tool_registry = self.tool_registry.read().await;
+        if let Some(ref registry) = *tool_registry {
+            if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
+                for tool in plugin.manifest.get_tools() {
+                    registry.deregister_dynamic(&tool.name);
+                    debug!(
+                        "Deregistered plugin tool '{}' from plugin '{}'",
+                        tool.name,
+                        plugin_id
+                    );
+                }
+            }
+        }
     }
 
     /// Get a plugin instance

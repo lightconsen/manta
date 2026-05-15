@@ -54,6 +54,13 @@ impl PluginState {
             memory: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+
+    pub fn new_with_memory(config: serde_json::Value, memory: HashMap<String, Vec<u8>>) -> Self {
+        Self {
+            config,
+            memory: Arc::new(RwLock::new(memory)),
+        }
+    }
 }
 
 /// Plugin runtime - manages plugin lifecycle
@@ -192,7 +199,7 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone()).await?
+                    self.load_wasm_plugin(&wasm_path, config.clone(), None).await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
                     (None, None)
@@ -226,6 +233,7 @@ impl PluginRuntime {
         &self,
         wasm_path: &std::path::Path,
         config: serde_json::Value,
+        preserved_memory: Option<HashMap<String, Vec<u8>>>,
     ) -> crate::Result<(Option<wasmtime::Store<PluginState>>, Option<wasmtime::Instance>)> {
         use wasmtime::Module;
 
@@ -240,7 +248,11 @@ impl PluginRuntime {
             crate::error::MantaError::Internal(format!("Failed to compile WASM: {}", e))
         })?;
 
-        let state = PluginState::new(config);
+        let state = if let Some(memory) = preserved_memory {
+            PluginState::new_with_memory(config, memory)
+        } else {
+            PluginState::new(config)
+        };
         let mut store = wasmtime::Store::new(&self.engine, state);
 
         let instance = self.linker.instantiate(&mut store, &module).map_err(|e| {
@@ -276,6 +288,102 @@ impl PluginRuntime {
         } else {
             Ok(false)
         }
+    }
+
+    /// Reload a plugin while preserving its runtime state (memory).
+    ///
+    /// Re-reads the manifest from disk so changes to `plugin.json` are picked up,
+    /// then re-compiles and re-instantiates the WASM module, injecting the
+    /// previously stored `PluginState::memory` into the new instance.
+    pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
+        let mut plugins = self.plugins.write().await;
+        let existing = plugins.get_mut(plugin_id).ok_or_else(|| {
+            crate::error::ConfigError::InvalidValue {
+                key: "plugin_id".to_string(),
+                message: format!("Plugin '{}' not found", plugin_id),
+            }
+        })?;
+
+        let path = existing.path.clone();
+
+        // Extract preserved memory before dropping the old store.
+        let preserved_memory = if cfg!(feature = "plugins") {
+            if let Some(store) = existing.wasm_store.take() {
+                let state = store.into_data();
+                let memory = state.memory.read().await.clone();
+                Some(memory)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        drop(plugins);
+
+        // Re-read manifest from disk to pick up edits.
+        let manifest_path = path.join("plugin.json");
+        let manifest_content = tokio::fs::read_to_string(&manifest_path)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to read plugin manifest".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
+
+        let manifest: PluginManifest = serde_json::from_str(&manifest_content).map_err(|e| {
+            crate::error::ConfigError::InvalidValue {
+                key: "plugin.json".to_string(),
+                message: format!("Invalid plugin manifest: {}", e),
+            }
+        })?;
+
+        // Load config
+        let config_path = path.join("config.json");
+        let config = if config_path.exists() {
+            let config_content = tokio::fs::read_to_string(&config_path)
+                .await
+                .unwrap_or_default();
+            serde_json::from_str(&config_content).unwrap_or(serde_json::json!({}))
+        } else {
+            manifest.config.clone().unwrap_or(serde_json::json!({}))
+        };
+
+        // Re-compile WASM with preserved memory.
+        #[cfg(feature = "plugins")]
+        let (wasm_store, instance) = {
+            if let Some(ref main) = manifest.main {
+                let wasm_path = path.join(main);
+                if wasm_path.exists() {
+                    self.load_wasm_plugin(&wasm_path, config.clone(), preserved_memory)
+                        .await?
+                } else {
+                    warn!("WASM file not found: {:?}", wasm_path);
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        };
+
+        #[cfg(not(feature = "plugins"))]
+        let (wasm_store, instance) = (None, None);
+
+        let new_instance = PluginInstance {
+            manifest,
+            path,
+            enabled: true,
+            config,
+            #[cfg(feature = "plugins")]
+            wasm_store,
+            #[cfg(feature = "plugins")]
+            instance,
+        };
+
+        let mut plugins = self.plugins.write().await;
+        plugins.insert(plugin_id.to_string(), new_instance);
+
+        info!("Plugin '{}' reloaded successfully", plugin_id);
+        Ok(plugin_id.to_string())
     }
 
     /// Get a plugin instance

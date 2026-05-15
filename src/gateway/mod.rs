@@ -1006,7 +1006,11 @@ impl Gateway {
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
-        let plugin_manager = Arc::new(PluginManager::new(plugins_dir).await?);
+        let plugin_manager = {
+            let pm = PluginManager::new(plugins_dir).await?;
+            pm.set_tool_registry(tool_registry.clone()).await;
+            Arc::new(pm)
+        };
 
         // Create model router config with custom model settings
         let mut model_router_config = crate::model_router::ModelRouterConfig::default();
@@ -1472,6 +1476,34 @@ impl Gateway {
                 if let Err(e) = self.state.plugin_manager.initialize().await {
                     warn!("Failed to initialize plugins: {}", e);
                 }
+
+                // Watch WASM files for hot-reload
+                if let Some(ref hot_reload) = *self.state.hot_reload.read().await {
+                    let plugins = self.state.plugin_manager.list_plugins().await;
+                    for plugin in plugins {
+                        if let Some(ref main) = plugin.manifest.main {
+                            let wasm_path = plugin.path.join(main);
+                            if wasm_path.exists() {
+                                if let Err(e) = hot_reload
+                                    .watch_file(&wasm_path, ConfigFileType::Plugin)
+                                    .await
+                                {
+                                    warn!(
+                                        "Failed to watch WASM file for plugin '{}': {}",
+                                        plugin.id(),
+                                        e
+                                    );
+                                } else {
+                                    debug!(
+                                        "Watching WASM file for plugin '{}': {:?}",
+                                        plugin.id(),
+                                        wasm_path
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 info!("Plugin auto-load disabled, skipping initialization");
             }
@@ -1684,6 +1716,7 @@ impl Gateway {
             // Plugin management API
             .route("/api/v1/plugins", get(list_plugins_handler))
             .route("/api/v1/plugins/reload", post(reload_plugins_handler))
+            .route("/api/v1/plugins/:id/reload", post(reload_plugin_handler))
             .route("/api/v1/plugins/:id/enable", post(enable_plugin_handler))
             .route("/api/v1/plugins/:id/disable", post(disable_plugin_handler))
             .route("/api/v1/plugins/:id/unload", delete(unload_plugin_handler))
@@ -3268,8 +3301,6 @@ impl Gateway {
                 .register_handler(ConfigFileType::Plugin, move |event| {
                     let state = state.clone();
                     async move {
-                        // The plugin config file lives inside the plugin dir:
-                        // ~/.manta/plugins/<plugin_id>/manifest.json (or similar)
                         let plugin_dir = event.path.parent().unwrap_or(&event.path).to_path_buf();
                         let plugin_id = plugin_dir
                             .file_name()
@@ -3277,45 +3308,62 @@ impl Gateway {
                             .unwrap_or_default()
                             .to_string();
 
-                        info!("Plugin config changed for '{}': {:?}", plugin_id, event.path);
+                        info!("Plugin file changed for '{}': {:?}", plugin_id, event.path);
 
                         if plugin_id.is_empty() {
                             warn!("Could not determine plugin ID from path {:?}", event.path);
                             return Ok(());
                         }
 
-                        // Unload existing instance, then reload from plugin dir
-                        match state.plugin_manager.unload_plugin(&plugin_id).await {
-                            Ok(true) => {
-                                info!("Unloaded plugin '{}' for reload", plugin_id);
-                                match state.plugin_manager.load_plugin(&plugin_dir).await {
-                                    Ok(loaded_id) => {
-                                        info!(
-                                            "✅ Reloaded plugin '{}' (id={})",
-                                            plugin_id, loaded_id
-                                        )
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to reload plugin '{}': {}", plugin_id, e)
-                                    }
-                                }
-                            }
-                            Ok(false) => {
-                                // Plugin wasn't loaded, try a fresh load
-                                match state.plugin_manager.load_plugin(&plugin_dir).await {
-                                    Ok(loaded_id) => {
-                                        info!(
-                                            "✅ Loaded new plugin '{}' (id={})",
-                                            plugin_id, loaded_id
-                                        )
-                                    }
-                                    Err(e) => {
-                                        warn!("Could not load plugin '{}': {}", plugin_id, e)
-                                    }
-                                }
+                        // Try state-preserving reload first
+                        match state.plugin_manager.reload_plugin(&plugin_id).await {
+                            Ok(reloaded_id) => {
+                                info!("✅ Reloaded plugin '{}' (preserved state)", reloaded_id);
                             }
                             Err(e) => {
-                                error!("Failed to unload plugin '{}': {}", plugin_id, e)
+                                warn!(
+                                    "State-preserving reload failed for '{}', falling back to unload+load: {}",
+                                    plugin_id, e
+                                );
+                                match state.plugin_manager.unload_plugin(&plugin_id).await {
+                                    Ok(true) => {
+                                        match state.plugin_manager.load_plugin(&plugin_dir).await
+                                        {
+                                            Ok(loaded_id) => {
+                                                info!(
+                                                    "✅ Reloaded plugin '{}' (id={})",
+                                                    plugin_id, loaded_id
+                                                )
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    "Failed to reload plugin '{}': {}",
+                                                    plugin_id, e
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Ok(false) => {
+                                        match state.plugin_manager.load_plugin(&plugin_dir).await
+                                        {
+                                            Ok(loaded_id) => {
+                                                info!(
+                                                    "✅ Loaded new plugin '{}' (id={})",
+                                                    plugin_id, loaded_id
+                                                )
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Could not load plugin '{}': {}",
+                                                    plugin_id, e
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to unload plugin '{}': {}", plugin_id, e)
+                                    }
+                                }
                             }
                         }
 
@@ -5293,6 +5341,27 @@ async fn unload_plugin_handler(
         Err(e) => {
             let error = serde_json::json!({
                 "error": format!("Failed to unload plugin: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+async fn reload_plugin_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.plugin_manager.reload_plugin(&id).await {
+        Ok(reloaded_id) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Plugin '{}' reloaded", reloaded_id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to reload plugin: {}", e),
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
         }
