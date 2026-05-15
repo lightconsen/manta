@@ -36,6 +36,7 @@ pub type ProgressCallback = Arc<
     dyn Fn(ProgressEvent) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 
+pub mod acp;
 pub mod artifacts;
 pub mod budget;
 pub mod compaction;
@@ -55,6 +56,9 @@ pub mod todo;
 pub mod transcript;
 pub mod turns;
 
+pub use acp::{
+    AcpCommand, AcpController, AcpSessionStatus, ExecutionController, ExecutionMode, RuntimeState,
+};
 pub use artifacts::{Artifact, ArtifactStore, ArtifactStoreStats, ArtifactType};
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compaction::{
@@ -451,6 +455,9 @@ pub struct Agent {
     /// When set, skills are dynamically filtered based on user message triggers
     /// before being included in the system prompt.
     skill_manager: Option<Arc<crate::skills::SkillManager>>,
+    /// Optional execution controller for pause/resume/step/cancel.
+    /// Set by the ACP before dispatching a command; cleared afterward.
+    execution_controller: Arc<RwLock<Option<Arc<ExecutionController>>>>,
 }
 
 impl Agent {
@@ -477,6 +484,7 @@ impl Agent {
             cost_guard: None,
             active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
             skill_manager: None,
+            execution_controller: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1318,6 +1326,86 @@ impl Agent {
         Ok(outgoing)
     }
 
+    /// Process a message in persistent session mode with an execution controller.
+    ///
+    /// The controller is attached before processing and detached afterward,
+    /// enabling pause/resume/step/cancel during the tool-call loop.
+    pub async fn process_message_with_controller(
+        &self,
+        message: IncomingMessage,
+        controller: Arc<ExecutionController>,
+        _max_iterations: usize,
+    ) -> crate::Result<OutgoingMessage> {
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = Some(controller);
+        }
+
+        let result = self.process_message(message).await;
+
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = None;
+        }
+
+        result
+    }
+
+    /// Process a message with progress callbacks and an execution controller.
+    pub async fn process_message_with_progress_and_controller(
+        &self,
+        message: IncomingMessage,
+        progress_cb: ProgressCallback,
+        controller: Arc<ExecutionController>,
+        _max_iterations: usize,
+    ) -> crate::Result<OutgoingMessage> {
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = Some(controller);
+        }
+
+        let result = self.process_message_with_progress(message, progress_cb).await;
+
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = None;
+        }
+
+        result
+    }
+
+    /// Run a message in one-shot mode (no persistence) with an execution controller.
+    ///
+    /// The thread context is discarded after execution completes.
+    pub async fn run_message_with_controller(
+        &self,
+        message: IncomingMessage,
+        controller: Arc<ExecutionController>,
+        _max_iterations: usize,
+    ) -> crate::Result<OutgoingMessage> {
+        let conversation_id = message.conversation_id.0.clone();
+
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = Some(controller);
+        }
+
+        let result = self.process_message(message).await;
+
+        {
+            let mut ctrl = self.execution_controller.write().await;
+            *ctrl = None;
+        }
+
+        // Run mode: discard the thread after execution
+        {
+            let mut map = self.thread_map.lock().await;
+            map.remove(&conversation_id);
+        }
+
+        result
+    }
+
     /// Get a completion from the LLM, handling tool calls
     async fn get_completion(
         &self,
@@ -1505,6 +1593,28 @@ impl Agent {
                 tool_call_id: Some(result.tool_call_id),
                 metadata: None,
             });
+        }
+
+        // Check execution controller before next iteration
+        {
+            let ctrl_guard = self.execution_controller.read().await;
+            if let Some(ref ctrl) = *ctrl_guard {
+                if let Err(reason) = ctrl.check_and_wait().await {
+                    return Ok(crate::providers::CompletionResponse {
+                        message: Message {
+                            role: Role::Assistant,
+                            content: format!("Execution halted: {}", reason),
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            metadata: None,
+                        },
+                        usage: None,
+                        model: "system".to_string(),
+                        finish_reason: Some("cancelled".to_string()),
+                    });
+                }
+            }
         }
 
         // Get final response (boxed to avoid recursive async issue)
@@ -1719,6 +1829,34 @@ impl Agent {
                 tool_call_id: Some(result.tool_call_id),
                 metadata: None,
             });
+        }
+
+        // Check execution controller before next iteration
+        {
+            let ctrl_guard = self.execution_controller.read().await;
+            if let Some(ref ctrl) = *ctrl_guard {
+                if let Err(reason) = ctrl.check_and_wait().await {
+                    // Notify cancellation
+                    (progress_cb)(ProgressEvent::Error {
+                        message: format!("Execution halted: {}", reason),
+                    })
+                    .await;
+
+                    return Ok(crate::providers::CompletionResponse {
+                        message: Message {
+                            role: Role::Assistant,
+                            content: format!("Execution halted: {}", reason),
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            metadata: None,
+                        },
+                        usage: None,
+                        model: "system".to_string(),
+                        finish_reason: Some("cancelled".to_string()),
+                    });
+                }
+            }
         }
 
         // Get final response with progress

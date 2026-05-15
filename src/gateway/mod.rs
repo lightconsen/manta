@@ -555,6 +555,8 @@ pub struct GatewayState {
     pub disk_budget: Arc<crate::agent::DiskBudgetManager>,
     /// Group session manager for multi-member sessions with role awareness.
     pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
+    /// ACP (Agent Control Plane) controller for centralized execution orchestration.
+    pub acp_controller: Arc<crate::agent::AcpController>,
 }
 
 impl GatewayState {
@@ -699,6 +701,8 @@ pub struct AgentHandle {
     pub query_tx: mpsc::Sender<AgentQuery>,
     /// Whether agent is currently processing
     pub busy: bool,
+    /// Reference to the agent for ACP orchestration
+    pub agent: Arc<Agent>,
 }
 
 /// Commands sent to agents
@@ -1198,6 +1202,7 @@ impl Gateway {
                 Arc::new(manager)
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+            acp_controller: Arc::new(crate::agent::AcpController::new()),
         });
 
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
@@ -1721,6 +1726,14 @@ impl Gateway {
             .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
             .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
             .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
+            // ACP Runtime Controls (OpenClaw-aligned)
+            .route("/api/v1/acp/sessions/:id/status", get(acp_session_status_handler))
+            .route("/api/v1/acp/sessions/:id/pause", post(acp_session_pause_handler))
+            .route("/api/v1/acp/sessions/:id/resume", post(acp_session_resume_handler))
+            .route("/api/v1/acp/sessions/:id/step", post(acp_session_step_handler))
+            .route("/api/v1/acp/sessions/:id/cancel", post(acp_session_cancel_handler))
+            .route("/api/v1/acp/execute/session", post(acp_execute_session_handler))
+            .route("/api/v1/acp/execute/run", post(acp_execute_run_handler))
             // MCP API (9.5)
             .route("/api/v1/mcp/servers", get(list_mcp_servers_handler))
             .route("/api/v1/mcp/servers/:id/connect", post(connect_mcp_server_handler))
@@ -1911,6 +1924,7 @@ async fn spawn_agent_inner(
         tx: tx.clone(),
         query_tx: query_tx.clone(),
         busy: false,
+        agent: agent.clone(),
     };
 
     {
@@ -4263,6 +4277,7 @@ async fn create_agent_handler(
         tx: tx.clone(),
         query_tx: query_tx.clone(),
         busy: false,
+        agent: agent.clone(),
     };
 
     // Insert into agents map
@@ -5716,6 +5731,191 @@ async fn acp_session_message_handler(
     }
 }
 
+/// Get ACP session runtime status
+async fn acp_session_status_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.acp_controller.get_status(id.clone()).await {
+        Some(status) => {
+            let resp = serde_json::json!({
+                "session_id": status.session_id,
+                "runtime_state": format!("{}", status.runtime_state),
+                "mode": format!("{:?}", status.mode),
+                "current_iteration": status.current_iteration,
+                "max_iterations": status.max_iterations,
+            });
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        None => {
+            let error = serde_json::json!({
+                "error": "Session not found",
+                "session_id": id,
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
+/// Pause an ACP session
+async fn acp_session_pause_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    state.acp_controller.pause(id.clone()).await;
+    let resp = serde_json::json!({
+        "session_id": id,
+        "action": "pause",
+        "status": "requested",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Resume a paused ACP session
+async fn acp_session_resume_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    state.acp_controller.resume(id.clone()).await;
+    let resp = serde_json::json!({
+        "session_id": id,
+        "action": "resume",
+        "status": "requested",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Single-step a paused ACP session
+async fn acp_session_step_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    state.acp_controller.step(id.clone()).await;
+    let resp = serde_json::json!({
+        "session_id": id,
+        "action": "step",
+        "status": "requested",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Cancel a running ACP session
+async fn acp_session_cancel_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    state.acp_controller.cancel(id.clone()).await;
+    let resp = serde_json::json!({
+        "session_id": id,
+        "action": "cancel",
+        "status": "requested",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcpExecuteRequest {
+    message: String,
+    user_id: String,
+    agent_id: Option<String>,
+}
+
+/// Execute a message in ACP session mode (persistent context)
+async fn acp_execute_session_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<AcpExecuteRequest>,
+) -> impl IntoResponse {
+    let agent_id = body.agent_id.unwrap_or_else(|| "default".to_string());
+    let agents = state.agents.read().await;
+    let agent_handle = match agents.get(&agent_id) {
+        Some(h) => h.clone(),
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Agent '{}' not found", agent_id),
+            });
+            return (StatusCode::NOT_FOUND, Json(error)).into_response();
+        }
+    };
+    drop(agents);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let incoming = crate::channels::IncomingMessage::new(
+        body.user_id.clone(),
+        session_id.clone(),
+        body.message,
+    );
+
+    match state
+        .acp_controller
+        .execute_session(agent_handle.agent, incoming)
+        .await
+    {
+        Ok(outgoing) => {
+            let resp = serde_json::json!({
+                "session_id": session_id,
+                "mode": "session",
+                "response": outgoing.content,
+                "usage": outgoing.usage,
+            });
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Execution failed: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
+/// Execute a message in ACP run mode (one-shot, no persistence)
+async fn acp_execute_run_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<AcpExecuteRequest>,
+) -> impl IntoResponse {
+    let agent_id = body.agent_id.unwrap_or_else(|| "default".to_string());
+    let agents = state.agents.read().await;
+    let agent_handle = match agents.get(&agent_id) {
+        Some(h) => h.clone(),
+        None => {
+            let error = serde_json::json!({
+                "error": format!("Agent '{}' not found", agent_id),
+            });
+            return (StatusCode::NOT_FOUND, Json(error)).into_response();
+        }
+    };
+    drop(agents);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let incoming = crate::channels::IncomingMessage::new(
+        body.user_id.clone(),
+        session_id.clone(),
+        body.message,
+    );
+
+    match state
+        .acp_controller
+        .execute_run(agent_handle.agent, incoming)
+        .await
+    {
+        Ok(outgoing) => {
+            let resp = serde_json::json!({
+                "session_id": session_id,
+                "mode": "run",
+                "response": outgoing.content,
+                "usage": outgoing.usage,
+            });
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Execution failed: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}
+
 /// Handler to spawn a discovered agent from the registry
 async fn spawn_discovered_agent_handler(
     Path(id): Path<String>,
@@ -5800,6 +6000,7 @@ async fn spawn_discovered_agent_handler(
             tx: tx.clone(),
             query_tx: query_tx.clone(),
             busy: false,
+            agent: agent.clone(),
         };
 
         {
@@ -5971,6 +6172,7 @@ async fn spawn_all_discovered_agents_handler(
                     tx: tx.clone(),
                     query_tx: query_tx.clone(),
                     busy: false,
+                    agent: agent.clone(),
                 };
 
                 {
