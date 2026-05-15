@@ -1579,6 +1579,9 @@ pub mod audit;
 /// Runtime audit log for security-relevant events
 pub mod runtime_audit;
 
+/// Persistent SQLite-backed audit log
+pub mod persistent_audit;
+
 /// DM pairing and access control
 pub mod pairing;
 

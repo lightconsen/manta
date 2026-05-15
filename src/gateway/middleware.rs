@@ -221,7 +221,8 @@ pub async fn auth_middleware(
 
 /// Middleware: Rate limiting
 ///
-/// Uses token bucket algorithm per user (identified by IP or user ID from auth).
+/// Supports both legacy token bucket and multi-tier sliding window rate limiting.
+/// Multi-tier mode checks global, per-user, per-IP, and per-endpoint limits.
 /// Adds X-RateLimit-* headers to responses.
 pub async fn rate_limit_middleware(
     State(state): State<Arc<GatewayState>>,
@@ -229,9 +230,9 @@ pub async fn rate_limit_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     // Check if rate limiting is enabled
-    let rate_limit_enabled = {
+    let (rate_limit_enabled, use_multi_tier) = {
         let config = state.config.read().await;
-        config.security.rate_limit.enabled
+        (config.security.rate_limit.enabled, config.security.rate_limit.multi_tier)
     };
 
     if !rate_limit_enabled {
@@ -248,7 +249,6 @@ pub async fn rate_limit_middleware(
                     if let Some(session) = state.auth_manager.validate_session(token).await {
                         session.user_id
                     } else {
-                        // Invalid token, use IP
                         extract_client_ip(&req)
                             .map(|ip| UserId::new(ip.to_string()))
                             .unwrap_or_else(|| UserId::new("anonymous"))
@@ -270,48 +270,123 @@ pub async fn rate_limit_middleware(
         }
     };
 
-    // Check rate limit
-    let result = state.rate_limiter.check(&user_id).await;
+    if use_multi_tier {
+        // Multi-tier sliding window rate limiting
+        let ip = extract_client_ip(&req);
+        let endpoint = req.uri().path().to_string();
 
-    match result {
-        crate::security::RateLimitResult::Allowed { remaining, reset_after_secs } => {
-            let mut response = next.run(req).await;
+        let result = state
+            .multi_tier_rate_limiter
+            .check(&user_id, ip, &endpoint)
+            .await;
 
-            // Add rate limit headers
-            let headers = response.headers_mut();
-            headers.insert(
-                "X-RateLimit-Limit",
-                state
-                    .rate_limiter
-                    .get_state(&user_id)
-                    .await
-                    .map(|s| s.capacity)
-                    .unwrap_or(100)
-                    .to_string()
-                    .parse()
-                    .unwrap(),
-            );
-            headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
-            headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().unwrap());
-
-            Ok(response)
+        match result {
+            crate::gateway::rate_limit::MultiTierResult::Allowed { remaining } => {
+                let mut response = next.run(req).await;
+                let headers = response.headers_mut();
+                headers.insert("X-RateLimit-Limit", "100".parse().unwrap());
+                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
+                Ok(response)
+            }
+            crate::gateway::rate_limit::MultiTierResult::Denied {
+                tier,
+                retry_after_secs,
+            } => {
+                warn!("Rate limit exceeded for user: {} on tier: {}", user_id, tier);
+                let mut response = Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .body(Body::from(format!(
+                        "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
+                        tier, retry_after_secs
+                    )))
+                    .unwrap();
+                response
+                    .headers_mut()
+                    .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+                response
+                    .headers_mut()
+                    .insert("X-RateLimit-Tier", tier.parse().unwrap());
+                Ok(response)
+            }
         }
-        crate::security::RateLimitResult::Denied { retry_after_secs } => {
-            warn!("Rate limit exceeded for user: {}", user_id);
-            let mut response = Response::builder()
-                .status(StatusCode::TOO_MANY_REQUESTS)
-                .body(Body::from(format!(
-                    "Rate limit exceeded. Retry after {} seconds.",
-                    retry_after_secs
-                )))
-                .unwrap();
+    } else {
+        // Legacy token bucket rate limiting
+        let result = state.rate_limiter.check(&user_id).await;
 
-            // Add retry-after header
-            response
-                .headers_mut()
-                .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+        match result {
+            crate::security::RateLimitResult::Allowed {
+                remaining,
+                reset_after_secs,
+            } => {
+                let mut response = next.run(req).await;
 
-            Ok(response)
+                let headers = response.headers_mut();
+                headers.insert(
+                    "X-RateLimit-Limit",
+                    state
+                        .rate_limiter
+                        .get_state(&user_id)
+                        .await
+                        .map(|s| s.capacity)
+                        .unwrap_or(100)
+                        .to_string()
+                        .parse()
+                        .unwrap(),
+                );
+                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
+                headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().unwrap());
+
+                Ok(response)
+            }
+            crate::security::RateLimitResult::Denied { retry_after_secs } => {
+                warn!("Rate limit exceeded for user: {}", user_id);
+                let mut response = Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .body(Body::from(format!(
+                        "Rate limit exceeded. Retry after {} seconds.",
+                        retry_after_secs
+                    )))
+                    .unwrap();
+
+                response
+                    .headers_mut()
+                    .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+
+                Ok(response)
+            }
+        }
+    }
+}
+
+/// Generate a random CSP nonce (16 bytes hex = 32 chars)
+fn generate_nonce() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// CSP policy configuration per route type
+#[derive(Debug, Clone)]
+pub enum CspPolicy {
+    /// Strict default policy
+    Strict,
+    /// API-specific policy (no inline restrictions)
+    Api,
+    /// Web terminal / admin UI policy with nonce support
+    Admin { nonce: String },
+}
+
+impl CspPolicy {
+    /// Build the CSP string
+    pub fn to_header_value(&self) -> String {
+        match self {
+            CspPolicy::Strict => "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';".to_string(),
+            CspPolicy::Api => "default-src 'none'; frame-ancestors 'none';".to_string(),
+            CspPolicy::Admin { nonce } => format!(
+                "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+                nonce = nonce
+            ),
         }
     }
 }
@@ -319,20 +394,29 @@ pub async fn rate_limit_middleware(
 /// Middleware: Security headers
 ///
 /// Adds comprehensive security headers to all responses, including:
-/// - Content-Security-Policy (with optional nonce)
+/// - Content-Security-Policy (with nonce for admin routes)
 /// - X-Content-Type-Options
 /// - X-Frame-Options
 /// - Referrer-Policy
 /// - Permissions-Policy
 /// - Strict-Transport-Security
 pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
-    let mut response = next.run(req).await;
+    let path = req.uri().path();
 
+    // Determine CSP policy based on route
+    let csp_policy = if path.starts_with("/api/") {
+        CspPolicy::Api
+    } else if path.starts_with("/admin") || path.starts_with("/terminal") {
+        CspPolicy::Admin { nonce: generate_nonce() }
+    } else {
+        CspPolicy::Strict
+    };
+
+    let mut response = next.run(req).await;
     let headers = response.headers_mut();
 
-    // Content Security Policy
-    let csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
-    headers.insert("Content-Security-Policy", csp.parse().unwrap());
+    // Content Security Policy with route-aware strategy
+    headers.insert("Content-Security-Policy", csp_policy.to_header_value().parse().unwrap());
 
     headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
     headers.insert("X-Frame-Options", "DENY".parse().unwrap());

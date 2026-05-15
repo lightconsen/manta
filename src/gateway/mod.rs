@@ -306,10 +306,46 @@ pub struct SecurityConfig {
 pub struct RateLimitConfig {
     /// Enable rate limiting
     pub enabled: bool,
+    /// Maximum requests per window (legacy token bucket)
+    pub capacity: u32,
+    /// Refill rate (tokens per second) (legacy token bucket)
+    pub refill_rate: f64,
+    /// Use multi-tier sliding window rate limiting instead of token bucket
+    #[serde(default)]
+    pub multi_tier: bool,
+    /// Global tier: overall API rate limit
+    #[serde(default)]
+    pub global: TierConfig,
+    /// Per-authenticated-user rate limit
+    #[serde(default)]
+    pub per_user: TierConfig,
+    /// Per-IP rate limit (for anonymous requests)
+    #[serde(default)]
+    pub per_ip: TierConfig,
+    /// Per-endpoint rate limit
+    #[serde(default)]
+    pub per_endpoint: TierConfig,
+}
+
+/// Single tier configuration for multi-tier rate limiting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TierConfig {
+    /// Enable this tier
+    pub enabled: bool,
     /// Maximum requests per window
     pub capacity: u32,
-    /// Refill rate (tokens per second)
-    pub refill_rate: f64,
+    /// Window size in seconds
+    pub window_secs: u64,
+}
+
+impl Default for TierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            capacity: 100,
+            window_secs: 60,
+        }
+    }
 }
 
 impl Default for SecurityConfig {
@@ -333,6 +369,27 @@ impl Default for RateLimitConfig {
             enabled: true,
             capacity: 100,
             refill_rate: 10.0,
+            multi_tier: true,
+            global: TierConfig {
+                enabled: true,
+                capacity: 1000,
+                window_secs: 60,
+            },
+            per_user: TierConfig {
+                enabled: true,
+                capacity: 100,
+                window_secs: 60,
+            },
+            per_ip: TierConfig {
+                enabled: true,
+                capacity: 30,
+                window_secs: 60,
+            },
+            per_endpoint: TierConfig {
+                enabled: false,
+                capacity: 50,
+                window_secs: 60,
+            },
         }
     }
 }
@@ -499,10 +556,12 @@ pub struct GatewayState {
     pub pairing_store: Arc<crate::security::pairing::PairingStore>,
     /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
-    /// Runtime audit log for security-relevant events
-    pub audit_log: Arc<crate::security::runtime_audit::RuntimeAuditLog>,
-    /// Rate limiter for API protection
+    /// Persistent audit log for security-relevant events (SQLite-backed)
+    pub audit_log: Arc<crate::security::persistent_audit::PersistentAuditLog>,
+    /// Rate limiter for API protection (legacy token bucket)
     pub rate_limiter: Arc<crate::security::RateLimiter>,
+    /// Multi-tier rate limiter (sliding window per user/ip/endpoint)
+    pub multi_tier_rate_limiter: Arc<crate::gateway::rate_limit::MultiTierRateLimiter>,
     /// Storage adapter for persistence
     pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
     /// Skills manager for hot-reloadable skills
@@ -1043,6 +1102,33 @@ impl Gateway {
             config.security.rate_limit.refill_rate,
         ));
 
+        // Initialize multi-tier rate limiter with sliding window per user/ip/endpoint
+        let multi_tier_config = crate::gateway::rate_limit::MultiTierRateLimitConfig {
+            global: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.global.enabled,
+                capacity: config.security.rate_limit.global.capacity,
+                window_secs: config.security.rate_limit.global.window_secs,
+            },
+            per_user: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.per_user.enabled,
+                capacity: config.security.rate_limit.per_user.capacity,
+                window_secs: config.security.rate_limit.per_user.window_secs,
+            },
+            per_ip: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.per_ip.enabled,
+                capacity: config.security.rate_limit.per_ip.capacity,
+                window_secs: config.security.rate_limit.per_ip.window_secs,
+            },
+            per_endpoint: crate::gateway::rate_limit::TierConfig {
+                enabled: config.security.rate_limit.per_endpoint.enabled,
+                capacity: config.security.rate_limit.per_endpoint.capacity,
+                window_secs: config.security.rate_limit.per_endpoint.window_secs,
+            },
+        };
+        let multi_tier_rate_limiter = Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
+            multi_tier_config,
+        ));
+
         // Initialize storage adapter and shared SQLite pool (for SessionSearch)
         // For unified storage (sqlite), we keep a separate Arc to use for VectorStore/MemoryStore
         let (storage, unified_vector_store, sqlite_pool): (
@@ -1163,8 +1249,16 @@ impl Gateway {
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             command_gate: Arc::new(crate::tools::command_gate::CommandGate::new()),
-            audit_log: Arc::new(crate::security::runtime_audit::RuntimeAuditLog::default()),
+            audit_log: {
+                let audit = if let Some(ref pool) = sqlite_pool {
+                    crate::security::persistent_audit::PersistentAuditLog::with_pool(pool.clone())
+                } else {
+                    crate::security::persistent_audit::PersistentAuditLog::new()
+                };
+                Arc::new(audit)
+            },
             rate_limiter,
+            multi_tier_rate_limiter,
             storage,
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
