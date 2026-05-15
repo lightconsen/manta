@@ -281,8 +281,10 @@ class AuthProfileManager {
 | **File Operations** | Read, Write, Edit, Glob, Grep | Extensive file operations |
 | **Web Tools** | Search, Fetch | Similar + more |
 | **Canvas/A2UI** | ✅ CanvasComponent + CanvasManager + outbound pipeline wired | ✅ Full canvas-host/ |
+| **Session Tools** | ✅ sessions_list, sessions_history, sessions_send, sessions_yield, session_status | ✅ openclaw-tools.ts |
 | **Subagent Tools** | ✅ `AcpSpawnTool` + `DelegateTool` | ✅ Session spawning tools |
 | **Plugin Tools** | ✅ `PluginToolWrapper` + dynamic registration | ✅ Plugin SDK |
+| **Agent/Gateway Tools** | ✅ agents_list, gateway, message, apply_patch | ✅ pi-tools, openclaw-tools |
 | **Dangerous Tools** | Basic validation | Security audit system |
 
 ### Manta Tools
@@ -297,6 +299,11 @@ ShellTool, CodeExecutionTool
 WebSearchTool, WebFetchTool
 TodoTool, CronTool, TimeTool
 BrowserTool (optional feature)
+
+// OpenClaw-compatible tools
+SessionsListTool, SessionsHistoryTool, SessionsSendTool
+SessionsYieldTool, SessionStatusTool, SubagentsTool
+AgentsListTool, GatewayTool, MessageTool, ApplyPatchTool
 ```
 
 ### OpenClaw Tools
