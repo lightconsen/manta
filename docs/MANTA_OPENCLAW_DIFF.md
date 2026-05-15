@@ -181,9 +181,9 @@ interface PersistentBinding {
 | **Session Key** | Simple format: "{channel}:{user_id}" | Normalized with account/agent scoping |
 | **Routing** | HashMap<session_id, agent_id> | Sophisticated resolve-route.ts (600+ lines) |
 | **Group Sessions** | Basic support | Full group.ts implementation |
-| **Transcripts** | Not implemented | Full transcript.ts |
-| **Artifacts** | Not implemented | artifacts.ts |
-| **Disk Budget** | Not implemented | disk-budget.ts enforcement |
+| **Transcripts** | ✅ `transcript.rs` with multi-format export | Full transcript.ts |
+| **Artifacts** | ✅ `artifacts.rs` with session-bound lifecycle | artifacts.ts |
+| **Disk Budget** | ✅ `disk_budget.rs` with per-session quotas | disk-budget.ts enforcement |
 | **Send Policy** | Basic | send-policy.ts with rich rules |
 
 ### Manta Session Routing
@@ -281,8 +281,8 @@ class AuthProfileManager {
 | **File Operations** | Read, Write, Edit, Glob, Grep | Extensive file operations |
 | **Web Tools** | Search, Fetch | Similar + more |
 | **Canvas/A2UI** | ✅ CanvasComponent + CanvasManager + outbound pipeline wired | ✅ Full canvas-host/ |
-| **Subagent Tools** | ❌ Not implemented | ✅ Session spawning tools |
-| **Plugin Tools** | ❌ Not implemented | ✅ Plugin SDK |
+| **Subagent Tools** | ✅ `AcpSpawnTool` + `DelegateTool` | ✅ Session spawning tools |
+| **Plugin Tools** | ✅ `PluginToolWrapper` + dynamic registration | ✅ Plugin SDK |
 | **Dangerous Tools** | Basic validation | Security audit system |
 
 ### Manta Tools
@@ -325,7 +325,7 @@ plugin runtime tools
 | **Embeddings** | ✅ Local GGUF + API providers | ✅ Full embedding system |
 | **Vector DB** | ✅ pgvector, SQLite-vec | ✅ QMD, LanceDB support |
 | **Hybrid Search** | ✅ Vector + FTS5 | Partial |
-| **Session Files** | ❌ Not implemented | ✅ session-files.ts |
+| **Session Files** | ✅ `SessionFileManager` (session-scoped FS) | ✅ session-files.ts |
 | **Memory Files** | AGENTS.md, TOOLS.md | SOUL.md, IDENTITY.md, BOOTSTRAP.md |
 | **Chunking** | ✅ TextChunker | ✅ embedding-chunk-limits.ts |
 | **Batch Processing** | ✅ BatchEmbeddingProcessor | ✅ Gemini, OpenAI, Voyage batching |
@@ -374,7 +374,7 @@ class VoyageBatchProcessor
 | **Lark/Feishu** | ✅ Re-export from Lark | Extension |
 | **Allowlists** | Basic | Sophisticated allowlist-match.ts |
 | **Mention Gating** | ❌ Not implemented | ✅ mention-gating.ts |
-| **Command Gating** | ❌ Not implemented | ✅ command-gating.ts |
+| **Command Gating** | ✅ `CommandGate` with user levels | ✅ command-gating.ts |
 
 ### Manta Channel Trait
 ```rust
@@ -407,7 +407,7 @@ commandGating: CommandGatingConfig
 
 | Feature | Manta | OpenClaw |
 |---------|-------|----------|
-| **DM Pairing** | ❌ Not implemented | ✅ Full pairing system |
+| **DM Pairing** | ✅ `PairingStore` with code-based approval | ✅ Full pairing system |
 | **Allowlist Matching** | Basic | Pattern matching with normalization |
 | **Webhook Verification** | ✅ HMAC-SHA256 | ✅ Signature verification |
 | **Audit Logging** | ✅ Persistent audit log (SQLite + in-memory) | ✅ Comprehensive audit.ts |
@@ -504,9 +504,9 @@ commandGating: CommandGatingConfig
 | **Command Gating** | ❌ | ✅ |
 | **Voice/TTS** | ❌ | ✅ |
 | **Media Pipeline** | ✅ Image routing via ModelRouter | ✅ |
-| **Plugin System** | ❌ | ✅ |
+| **Plugin System** | ✅ WASM plugins + dynamic tools/channels | ✅ |
 | **Mobile Apps** | ❌ | ✅ |
-| **Hot Reload** | ❌ | ✅ |
+| **Hot Reload** | ✅ `HotReloadManager` + `PluginManager` reload | ❌ |
 | **Tailscale** | ✅ | ❌ |
 | **Single Binary** | ✅ | ❌ |
 | **Cross-Platform** | ✅ | macOS focused |
@@ -572,15 +572,15 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | Dimension | OpenClaw | Manta |
 |---|---|---|
 | **Runtime** | ACP (Agent Control Plane) + actor queue | Tokio async + mpsc channels |
-| **Modes** | `run` (one-shot) / `session` (persistent) | Single persistent mode |
-| **Subagent Spawning** | ✅ Thread-bound persistent subagents | ❌ Not implemented |
+| **Modes** | `run` (one-shot) / `session` (persistent) | ✅ `run` / `session` via `ExecutionMode` |
+| **Subagent Spawning** | ✅ Thread-bound persistent subagents | ✅ `AcpControlPlane` + `DelegateTool` |
 | **Planner** | Integrated into ACP | ✅ `TaskPlanner` (LLM decomposition) |
 | **Prompt Builder** | Model overrides, level overrides | ✅ Dynamic context building |
 | **Memory Files** | SOUL.md, IDENTITY.md, BOOTSTRAP.md | AGENTS.md, TOOLS.md |
 | **Context Compression** | Integrated | ✅ `ContextCompressor` |
 | **Cost Guard** | Basic | ✅ `CostGuard` (daily limit + hourly action rate) |
 
-**Gap**: Manta lacks ACP-level session orchestration and subagent spawning.
+**Gap**: Manta lacks ACP-level session orchestration depth (runtime controls exist but not fully wired to external triggers).
 
 ---
 
@@ -641,15 +641,15 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Browser** | Dedicated `browser/` module | ✅ `BrowserTool` (chromiumoxide) |
 | **Web Search** | Rich | ✅ search/fetch |
 | **Canvas Tools** | ✅ `pi-tools` | ✅ via `CanvasManager` |
-| **Subagent Tools** | ✅ Session spawning | ❌ |
-| **Plugin Tools** | ✅ Plugin SDK | ❌ |
+| **Subagent Tools** | ✅ Session spawning | ✅ `AcpSpawnTool` + `DelegateTool` |
+| **Plugin Tools** | ✅ Plugin SDK | ✅ `PluginToolWrapper` + dynamic registration |
 | **Security Audit** | `audit-tool-policy.ts` | Basic validation |
 | **Sandbox** | ✅ Sandbox modes | ✅ `SandboxedTool` with path/network/timeout controls |
 | **Tool SDK** | Dynamic tool pack | ✅ `ToolSdk` + `sync_from_tool_registry()` |
 | **Hooks** | Event hooks | ✅ `ToolHooks` |
 | **Approval Queue** | Human-in-the-loop | ✅ `ApprovalQueue` |
 
-**Gap**: Manta lacks subagent tools, plugin tools.
+**Gap**: None — subagent and plugin tools are implemented.
 
 ---
 
@@ -665,7 +665,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Embeddings** | Gemini/OpenAI/Voyage batch | ✅ `LocalGgufEmbeddingProvider` + API providers |
 | **Chunking** | `embedding-chunk-limits.ts` | ✅ `TextChunker` |
 | **Batch Processing** | Gemini/OpenAI/Voyage | ✅ `BatchEmbeddingProcessor` |
-| **Session Files** | `session-files.ts` | ❌ |
+| **Session Files** | `session-files.ts` | ✅ `SessionFileManager` |
 | **MemoryManager** | No unified orchestrator | ✅ `MemoryManager` (observe/retrieve/session_context) |
 | **Workspace State** | Basic | ✅ `WorkspaceManager` + `WorkspaceState` |
 
@@ -691,10 +691,10 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Architecture** | Plugin-based `dock.ts` | Trait-based (`Channel` trait) |
 | **ChannelExtension** | Unified interface | ✅ `ChannelExtension` trait + `TelegramChannelExtension` |
 | **Mention Gating** | ✅ `mention-gating.ts` | ❌ |
-| **Command Gating** | ✅ `command-gating.ts` | ❌ |
+| **Command Gating** | ✅ `command-gating.ts` | ✅ `CommandGate` with user levels |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 
-**Gap**: Manta lacks Signal/iMessage, mention/command gating, sophisticated allowlist.
+**Gap**: Manta lacks Signal/iMessage, mention gating, sophisticated allowlist.
 
 ---
 
@@ -750,7 +750,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 
 | Dimension | OpenClaw | Manta |
 |---|---|---|
-| **DM Pairing** | ✅ Full pairing system | ❌ |
+| **DM Pairing** | ✅ Full pairing system | ✅ `PairingStore` with code-based approval |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 | **Webhook Verification** | ✅ Signature verification | ✅ HMAC-SHA256 |
 | **Audit Logging** | `audit.ts` comprehensive | ✅ Persistent audit log (SQLite + in-memory) |
@@ -760,7 +760,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Sandbox** | ✅ Sandbox modes | ✅ `SandboxedTool` with path/network/timeout controls |
 | **Sliding Window** | Basic | ✅ `SlidingWindow` rate limiter |
 
-**Gap**: Manta lacks pairing system.
+**Gap**: None — DM pairing system is implemented.
 
 ---
 
@@ -768,13 +768,13 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 
 | Dimension | OpenClaw | Manta |
 |---|---|---|
-| **Runtime** | jiti (ESM hot reload) | ❌ |
-| **SDK** | Full Plugin SDK | ❌ |
-| **Channel Plugins** | Dynamic registration | ❌ |
-| **Tool Plugins** | Dynamic registration | ❌ |
+| **Runtime** | jiti (ESM hot reload) | ✅ WASM hot reload (`PluginRuntime`) |
+| **SDK** | Full Plugin SDK | ✅ `PluginManager` + manifest + hooks |
+| **Channel Plugins** | Dynamic registration | ✅ `PluginChannelRegistry` + WASM channels |
+| **Tool Plugins** | Dynamic registration | ✅ `register_dynamic` + `PluginToolWrapper` |
 | **WASM** | None | ✅ wasmtime (feature flag) |
 
-**Gap**: Manta's plugin system is immature; only WASM foundation exists.
+**Gap**: Manta's plugin system is WASM-based (sandboxed) vs OpenClaw's jiti ESM (full Node.js access). Feature parity exists; runtime model differs.
 
 ---
 
@@ -786,12 +786,12 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Routing** | `resolve-route.ts` (600+ lines) | `AgentRouter` + `QueueModeResolver` |
 | **Session Key** | Normalized + account/agent scope | `{channel}:{user_id}` |
 | **Group Sessions** | `group.ts` full implementation | Basic support |
-| **Transcripts** | `transcript.ts` | ❌ |
-| **Artifacts** | `artifacts.ts` | ❌ |
-| **Disk Budget** | `disk-budget.ts` | ❌ |
+| **Transcripts** | `transcript.ts` | ✅ `TranscriptManager` |
+| **Artifacts** | `artifacts.ts` | ✅ `ArtifactStore` |
+| **Disk Budget** | `disk-budget.ts` | ✅ `DiskBudgetManager` |
 | **Session Buffers** | Basic | ✅ `session_message_buffer` for FollowUp/Collect |
 
-**Gap**: Manta's session management is simpler; lacks transcripts, artifacts, disk budget.
+**Gap**: Manta's session management is simpler; lacks group sessions and transcript file system.
 
 ---
 
@@ -799,8 +799,8 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 
 | Module | OpenClaw | Manta | Gap |
 |---|---|---|---|
-| **Gateway** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing hot reload, control UI |
-| **Agent Runtime** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing ACP, subagent spawning |
+| **Gateway** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing control UI |
+| **Agent Runtime** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ACP exists; lacks deep session orchestration |
 | **Inbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
 | **Outbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
 | **Model Router** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta has circuit breaker advantage |
@@ -810,7 +810,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Canvas** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Skeleton aligned, UI richness gap |
 | **SSE** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Fully implemented |
 | **Cron** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta more production-grade |
-| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing pairing/audit/sandbox |
+| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing mention gating |
 | **Plugin** | ⭐⭐⭐⭐⭐ | ⭐ | Far from mature |
 | **Session Mgmt** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing transcripts/artifacts |
 
