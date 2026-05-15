@@ -1354,6 +1354,9 @@ impl Gateway {
         state.tool_registry.register_dynamic(Arc::new(
             crate::tools::MessageTool::new(state.clone()),
         ));
+        state.tool_registry.register_dynamic(Arc::new(
+            crate::tools::CanvasTool::new(state.canvas_manager.clone()),
+        ));
 
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
@@ -3877,6 +3880,25 @@ async fn create_default_tool_registry(
     // Register MCP (Model Context Protocol) connection tool (uses shared manager)
     registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));
 
+    // Register plan management tool
+    registry.register(Box::new(UpdatePlanTool::new()));
+
+    // Register process management tool
+    registry.register(Box::new(ProcessTool::new()));
+
+    // Register PDF generation tool
+    registry.register(Box::new(PdfTool::new()));
+
+    // Register image tools
+    registry.register(Box::new(ImageTool::new()));
+    registry.register(Box::new(ImageGenerateTool::new()));
+
+    // Register TTS tool
+    registry.register(Box::new(TtsTool::new()));
+
+    // Register nodes/Tailscale tool
+    registry.register(Box::new(NodesTool::new()));
+
     // Gate high-privilege tools behind SkillTrust::Trusted.
     // Community-trust skills see only read-only / informational tools.
     registry.mark_privileged("shell");
@@ -3892,6 +3914,8 @@ async fn create_default_tool_registry(
     registry.mark_privileged("subagents");
     registry.mark_privileged("apply_patch");
     registry.mark_privileged("message");
+    registry.mark_privileged("process");
+    registry.mark_privileged("image_generate");
 
     Ok(registry)
 }

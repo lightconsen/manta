@@ -416,6 +416,7 @@ pub type BoxedTool = Box<dyn Tool>;
 
 pub mod acp_tool;
 pub mod browser;
+pub mod canvas;
 pub mod code_exec;
 pub mod command_gate;
 pub mod cron_tool;
@@ -423,38 +424,51 @@ pub mod delegate_tool;
 pub mod file;
 pub mod grep;
 pub mod hooks;
+pub mod image;
 pub mod mcp;
 pub mod memory;
+pub mod nodes;
+pub mod pdf;
+pub mod process;
 pub mod sandbox;
 pub mod sdk;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
+pub mod tts;
 pub mod openclaw_tools;
 pub mod todo_tool;
+pub mod update_plan;
 pub mod web;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
-pub use openclaw_tools::{
-    AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
-    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
-    SubagentsTool,
-};
 pub use browser::BrowserTool;
+pub use canvas::CanvasTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use grep::GrepTool;
 pub use hooks::{ToolHooks, ToolPolicyDecision};
+pub use image::{ImageGenerateTool, ImageTool};
 pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
+pub use nodes::NodesTool;
+pub use openclaw_tools::{
+    AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
+    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
+    SubagentsTool,
+};
+pub use pdf::PdfTool;
+pub use process::ProcessTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
 pub use shell::ShellTool;
 pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
+pub use tts::TtsTool;
+pub use update_plan::UpdatePlanTool;
 pub use web::{WebFetchTool, WebSearchTool};
 
 /// Cached tool result entry
