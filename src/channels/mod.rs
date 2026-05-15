@@ -132,6 +132,7 @@ impl Default for InputProvenance {
 
 /// Mention state for a message received in a group/room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MentionState {
     /// The message was sent in a direct conversation (mention not required).
     DirectMessage,
@@ -224,7 +225,7 @@ impl MessageMetadata {
 }
 
 /// An incoming message from a user
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomingMessage {
     /// Unique message ID
     pub id: Id,
@@ -295,7 +296,7 @@ impl IncomingMessage {
 }
 
 /// An outgoing message to a user
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OutgoingMessage {
     /// The conversation to send to
     pub conversation_id: ConversationId,
@@ -359,7 +360,7 @@ impl OutgoingMessage {
 }
 
 /// Formatted content for rich messages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum FormattedContent {
     /// Markdown formatted text
     Markdown(String),
@@ -372,7 +373,7 @@ pub enum FormattedContent {
 }
 
 /// Discord embed structure
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct DiscordEmbed {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -381,7 +382,7 @@ pub struct DiscordEmbed {
 }
 
 /// A field in a Discord embed
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EmbedField {
     pub name: String,
     pub value: String,
@@ -389,7 +390,7 @@ pub struct EmbedField {
 }
 
 /// Message sending options
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MessageOptions {
     /// Whether to send silently (no notification)
     pub silent: bool,
@@ -400,7 +401,7 @@ pub struct MessageOptions {
 }
 
 /// An attachment to a message
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attachment {
     /// Unique ID for this attachment
     pub id: Id,

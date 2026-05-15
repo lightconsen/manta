@@ -281,11 +281,19 @@ impl ToolContext {
         if self.allowed_paths.is_empty() {
             return true;
         }
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path_canon = path.canonicalize().ok();
+        let path_raw = path.to_path_buf();
         self.allowed_paths.iter().any(|allowed| {
-            allowed
-                .canonicalize()
-                .map_or(false, |a| path.starts_with(&a))
+            // Try canonical comparison first (handles symlinks)
+            if let Ok(ref ac) = allowed.canonicalize() {
+                if let Some(ref pc) = path_canon {
+                    if pc.starts_with(ac) {
+                        return true;
+                    }
+                }
+            }
+            // Fallback to raw path comparison for non-existent paths
+            path_raw.starts_with(allowed)
         })
     }
 
@@ -312,6 +320,47 @@ pub struct ToolExecutionResult {
     pub data: Option<Value>,
     /// Execution time
     pub execution_time: Duration,
+}
+
+impl Serialize for ToolExecutionResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ToolExecutionResult", 5)?;
+        state.serialize_field("success", &self.success)?;
+        state.serialize_field("output", &self.output)?;
+        state.serialize_field("error", &self.error)?;
+        state.serialize_field("data", &self.data)?;
+        state.serialize_field("execution_time", &self.execution_time.as_millis())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolExecutionResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            success: bool,
+            output: String,
+            error: Option<String>,
+            data: Option<Value>,
+            execution_time: u64,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(ToolExecutionResult {
+            success: helper.success,
+            output: helper.output,
+            error: helper.error,
+            data: helper.data,
+            execution_time: Duration::from_millis(helper.execution_time),
+        })
+    }
 }
 
 impl std::fmt::Display for ToolExecutionResult {
