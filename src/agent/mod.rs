@@ -460,6 +460,14 @@ pub struct Agent {
     /// Optional execution controller for pause/resume/step/cancel.
     /// Set by the ACP before dispatching a command; cleared afterward.
     execution_controller: Arc<RwLock<Option<Arc<ExecutionController>>>>,
+    /// Transcript store for session conversation records.
+    transcript_store: Option<Arc<crate::agent::TranscriptStore>>,
+    /// Artifact store for session-bound artifacts (code, docs, links).
+    artifact_store: Option<Arc<crate::agent::ArtifactStore>>,
+    /// Disk budget manager for per-session storage quota.
+    disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
+    /// Session file manager for isolated per-session file operations.
+    session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
 }
 
 impl Agent {
@@ -487,6 +495,10 @@ impl Agent {
             active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
             skill_manager: None,
             execution_controller: Arc::new(RwLock::new(None)),
+            transcript_store: None,
+            artifact_store: None,
+            disk_budget: None,
+            session_file_manager: None,
         }
     }
 
@@ -579,6 +591,44 @@ impl Agent {
     /// that match the user's message.
     pub fn with_skill_manager(mut self, manager: Arc<crate::skills::SkillManager>) -> Self {
         self.skill_manager = Some(manager);
+        self
+    }
+
+    /// Attach a `TranscriptStore` for conversation recording.
+    ///
+    /// When set, every user and assistant message is appended to a
+    /// per-session transcript that can be exported in multiple formats.
+    pub fn with_transcript_store(mut self, store: Arc<crate::agent::TranscriptStore>) -> Self {
+        self.transcript_store = Some(store);
+        self
+    }
+
+    /// Attach an `ArtifactStore` for session-bound artifacts.
+    ///
+    /// When set, code blocks and documents produced during tool execution
+    /// are automatically captured as artifacts.
+    pub fn with_artifact_store(mut self, store: Arc<crate::agent::ArtifactStore>) -> Self {
+        self.artifact_store = Some(store);
+        self
+    }
+
+    /// Attach a `DiskBudgetManager` for per-session storage quota.
+    ///
+    /// When set, file operations are checked against the session's
+    /// disk budget before proceeding.
+    pub fn with_disk_budget(mut self, budget: Arc<crate::agent::DiskBudgetManager>) -> Self {
+        self.disk_budget = Some(budget);
+        self
+    }
+
+    /// Attach a `SessionFileManager` for isolated per-session file ops.
+    ///
+    /// When set, each conversation gets its own scoped directory.
+    pub fn with_session_file_manager(
+        mut self,
+        manager: Arc<crate::agent::SessionFileManager>,
+    ) -> Self {
+        self.session_file_manager = Some(manager);
         self
     }
 
@@ -845,6 +895,27 @@ impl Agent {
             }
         }
 
+        // Record user message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                &conversation_id,
+                "agent",
+                &user_id,
+                &conversation_id,
+                TranscriptMessage::new("user", &content),
+            );
+            // Track transcript size in disk budget
+            if let Some(ref budget) = self.disk_budget {
+                let transcript_size = content.len();
+                let _ = budget.track_item(
+                    &conversation_id,
+                    format!("transcript-user-{}", message_id),
+                    BudgetCategory::Transcript,
+                    transcript_size,
+                );
+            }
+        }
+
         // Check if we need task planning
         let needs_planning = self.task_planner.needs_planning(&content).await;
 
@@ -983,6 +1054,27 @@ impl Agent {
 
         // Store assistant response in chat history and index for search
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
+
+        // Record assistant message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                &conversation_id,
+                "agent",
+                &user_id,
+                &conversation_id,
+                TranscriptMessage::new("assistant", &response.message.content),
+            );
+            // Track transcript size in disk budget
+            if let Some(ref budget) = self.disk_budget {
+                let transcript_size = response.message.content.len();
+                let _ = budget.track_item(
+                    &conversation_id,
+                    format!("transcript-assistant-{}", assistant_message_id),
+                    BudgetCategory::Transcript,
+                    transcript_size,
+                );
+            }
+        }
 
         // Persist assistant response via MemoryManager (episodic memory)
         if let Some(ref mm) = self.memory_manager {
@@ -1173,6 +1265,25 @@ impl Agent {
             }
         }
 
+        // Record user message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                &conversation_id,
+                "agent",
+                &user_id,
+                &conversation_id,
+                TranscriptMessage::new("user", &content),
+            );
+            if let Some(ref budget) = self.disk_budget {
+                let _ = budget.track_item(
+                    &conversation_id,
+                    format!("transcript-user-{}", message_id),
+                    BudgetCategory::Transcript,
+                    content.len(),
+                );
+            }
+        }
+
         // ── Thread take-out (same pattern as process_message) ────────────────
         let mut thread = {
             let mut map = self.thread_map.lock().await;
@@ -1256,6 +1367,26 @@ impl Agent {
 
         // Store assistant response
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
+
+        // Record assistant message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                &conversation_id,
+                "agent",
+                &user_id,
+                &conversation_id,
+                TranscriptMessage::new("assistant", &response.message.content),
+            );
+            if let Some(ref budget) = self.disk_budget {
+                let _ = budget.track_item(
+                    &conversation_id,
+                    format!("transcript-assistant-{}", assistant_message_id),
+                    BudgetCategory::Transcript,
+                    response.message.content.len(),
+                );
+            }
+        }
+
         if let Some(ref store) = self.chat_history {
             use crate::memory::{ChatHistoryStore, ChatMessage};
             let chat_msg = ChatMessage::new(
@@ -1571,6 +1702,12 @@ impl Agent {
                     // Reset circuit-breaker on success
                     self.tools.reset_failure(&tool_call.function.name);
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
+                    // Extract artifacts from successful tool results
+                    self.extract_and_store_artifacts(
+                        context.id(),
+                        &tool_result.content,
+                        &tool_call.function.name,
+                    );
                     info!("Tool {} executed successfully", tool_call.function.name);
                     tool_result
                 }
@@ -1790,6 +1927,9 @@ impl Agent {
                     self.tools.reset_failure(&tool_name);
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     let result_str = tool_result.content.clone();
+
+                    // Extract artifacts from successful tool results
+                    self.extract_and_store_artifacts(context.id(), &result_str, &tool_name);
 
                     // Notify tool result
                     (progress_cb)(ProgressEvent::ToolResult {
@@ -2068,6 +2208,7 @@ impl Agent {
     /// conversation history into semantic memories via the MemoryManager.
     ///
     /// The thread is removed from `thread_map` regardless of compaction.
+    /// Also flushes transcript and cleans up session files.
     pub async fn close_conversation(&self, conversation_id: &str) {
         const MAX_TURNS_BEFORE_COMPACT: usize = 50;
         const MAX_AGE_DAYS: u64 = 7;
@@ -2082,6 +2223,29 @@ impl Agent {
             Some(t) => t,
             None => return, // Nothing to close
         };
+
+        // Flush transcript to disk
+        if let Some(ref transcript_store) = self.transcript_store {
+            if let Err(e) = transcript_store.flush(conversation_id) {
+                warn!("Failed to flush transcript for {}: {}", conversation_id, e);
+            } else {
+                info!("Flushed transcript for {}", conversation_id);
+            }
+        }
+
+        // Cleanup session files
+        if let Some(ref file_manager) = self.session_file_manager {
+            if let Err(e) = file_manager.cleanup_session(conversation_id).await {
+                warn!("Failed to cleanup session files for {}: {}", conversation_id, e);
+            } else {
+                info!("Cleaned up session files for {}", conversation_id);
+            }
+        }
+
+        // Clear disk budget tracking for this session
+        if let Some(ref budget) = self.disk_budget {
+            budget.clear_session(conversation_id);
+        }
 
         // Determine if compaction is needed
         let age_secs = thread.created_at.elapsed().unwrap_or_default().as_secs();
@@ -2140,6 +2304,75 @@ impl Agent {
     pub fn get_tools(&self) -> &ToolRegistry {
         &self.tools
     }
+
+    /// Extract artifacts (code blocks, links) from tool result content
+    /// and store them in the artifact store.
+    fn extract_and_store_artifacts(
+        &self,
+        session_id: &str,
+        content: &str,
+        tool_name: &str,
+    ) {
+        use regex::Regex;
+
+        let Some(ref artifact_store) = self.artifact_store else {
+            return;
+        };
+
+        // Extract code blocks: ```language\ncode\n```
+        let code_block_re =
+            Regex::new(r"```(\w+)?\n(.*?)\n```").expect("valid code block regex");
+        for (idx, cap) in code_block_re.captures_iter(content).enumerate() {
+            let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
+            let code = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            if code.len() < 20 {
+                continue; // Skip trivial snippets
+            }
+            let artifact = Artifact::code(
+                format!("{}-code-{}", tool_name, idx),
+                session_id,
+                format!("Code from {} ({})", tool_name, language),
+                language,
+                code,
+            );
+            let size = artifact.size_bytes;
+            artifact_store.add(artifact);
+            // Track in disk budget
+            if let Some(ref budget) = self.disk_budget {
+                let _ = budget.track_item(
+                    session_id,
+                    format!("artifact-{}-code-{}", tool_name, idx),
+                    BudgetCategory::Artifact,
+                    size,
+                );
+            }
+        }
+
+        // Extract URLs/links
+        let url_re = Regex::new(r#"https?://[^\s\)\]\>'"`]+"#).expect("valid url regex");
+        for (idx, cap) in url_re.captures_iter(content).enumerate() {
+            let url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
+            if url.len() < 10 {
+                continue;
+            }
+            let artifact = Artifact::link(
+                format!("{}-link-{}", tool_name, idx),
+                session_id,
+                format!("Link from {}", tool_name),
+                url,
+            );
+            let size = artifact.size_bytes;
+            artifact_store.add(artifact);
+            if let Some(ref budget) = self.disk_budget {
+                let _ = budget.track_item(
+                    session_id,
+                    format!("artifact-{}-link-{}", tool_name, idx),
+                    BudgetCategory::Artifact,
+                    size,
+                );
+            }
+        }
+    }
 }
 
 /// Builder for Agent
@@ -2151,6 +2384,10 @@ pub struct AgentBuilder {
     memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
     chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
     session_search: Option<Arc<crate::memory::SessionSearch>>,
+    transcript_store: Option<Arc<crate::agent::TranscriptStore>>,
+    artifact_store: Option<Arc<crate::agent::ArtifactStore>>,
+    disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
+    session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
 }
 
 impl AgentBuilder {
@@ -2203,6 +2440,30 @@ impl AgentBuilder {
         self
     }
 
+    /// Set transcript store for conversation recording
+    pub fn transcript_store(mut self, store: Arc<crate::agent::TranscriptStore>) -> Self {
+        self.transcript_store = Some(store);
+        self
+    }
+
+    /// Set artifact store for session-bound artifacts
+    pub fn artifact_store(mut self, store: Arc<crate::agent::ArtifactStore>) -> Self {
+        self.artifact_store = Some(store);
+        self
+    }
+
+    /// Set disk budget manager for per-session storage quota
+    pub fn disk_budget(mut self, budget: Arc<crate::agent::DiskBudgetManager>) -> Self {
+        self.disk_budget = Some(budget);
+        self
+    }
+
+    /// Set session file manager for isolated per-session file ops
+    pub fn session_file_manager(mut self, manager: Arc<crate::agent::SessionFileManager>) -> Self {
+        self.session_file_manager = Some(manager);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -2223,6 +2484,22 @@ impl AgentBuilder {
 
         if let Some(search) = self.session_search {
             agent = agent.with_session_search(search);
+        }
+
+        if let Some(store) = self.transcript_store {
+            agent = agent.with_transcript_store(store);
+        }
+
+        if let Some(store) = self.artifact_store {
+            agent = agent.with_artifact_store(store);
+        }
+
+        if let Some(budget) = self.disk_budget {
+            agent = agent.with_disk_budget(budget);
+        }
+
+        if let Some(manager) = self.session_file_manager {
+            agent = agent.with_session_file_manager(manager);
         }
 
         Ok(agent)

@@ -2076,7 +2076,8 @@ async fn spawn_agent_inner(
     // Get the model from config for this agent
     let model = state.config.read().await.model.clone();
 
-    // Create the actual Agent instance with model, memory manager, chat history, and shared cost guard
+    // Create the actual Agent instance with model, memory manager, chat history,
+    // shared cost guard, and session management stores.
     let memory_manager = state.memory_manager.read().await.clone();
     let cost_guard = Arc::clone(&state.cost_guard);
     let agent = if let Some(ref mm) = memory_manager {
@@ -2086,13 +2087,21 @@ async fn spawn_agent_inner(
                 .with_model(model)
                 .with_memory_manager(mm.clone())
                 .with_chat_history(chat_history)
-                .with_cost_guard(cost_guard),
+                .with_cost_guard(cost_guard)
+                .with_transcript_store(Arc::clone(&state.transcript_store))
+                .with_artifact_store(Arc::clone(&state.artifact_store))
+                .with_disk_budget(Arc::clone(&state.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
         )
     } else {
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
-                .with_cost_guard(cost_guard),
+                .with_cost_guard(cost_guard)
+                .with_transcript_store(Arc::clone(&state.transcript_store))
+                .with_artifact_store(Arc::clone(&state.artifact_store))
+                .with_disk_budget(Arc::clone(&state.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
         )
     };
 
@@ -4498,15 +4507,26 @@ async fn create_agent_handler(
     let model = state.config.read().await.model.clone();
     let memory_manager = state.memory_manager.read().await.clone();
 
-    // Create agent instance with memory manager if available
+    // Create agent instance with memory manager and session management stores
     let agent = if let Some(mm) = memory_manager {
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)
-                .with_memory_manager(mm),
+                .with_memory_manager(mm)
+                .with_transcript_store(Arc::clone(&state.transcript_store))
+                .with_artifact_store(Arc::clone(&state.artifact_store))
+                .with_disk_budget(Arc::clone(&state.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
         )
     } else {
-        Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+        Arc::new(
+            Agent::new(config.clone(), provider, tools)
+                .with_model(model)
+                .with_transcript_store(Arc::clone(&state.transcript_store))
+                .with_artifact_store(Arc::clone(&state.artifact_store))
+                .with_disk_budget(Arc::clone(&state.disk_budget))
+                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+        )
     };
 
     let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
@@ -6295,10 +6315,21 @@ async fn spawn_discovered_agent_handler(
             Arc::new(
                 Agent::new(config.clone(), provider, tools)
                     .with_model(model)
-                    .with_memory_manager(mm),
+                    .with_memory_manager(mm)
+                    .with_transcript_store(Arc::clone(&state.transcript_store))
+                    .with_artifact_store(Arc::clone(&state.artifact_store))
+                    .with_disk_budget(Arc::clone(&state.disk_budget))
+                    .with_session_file_manager(Arc::clone(&state.session_file_manager)),
             )
         } else {
-            Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+            Arc::new(
+                Agent::new(config.clone(), provider, tools)
+                    .with_model(model)
+                    .with_transcript_store(Arc::clone(&state.transcript_store))
+                    .with_artifact_store(Arc::clone(&state.artifact_store))
+                    .with_disk_budget(Arc::clone(&state.disk_budget))
+                    .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+            )
         };
 
         let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
@@ -6467,10 +6498,21 @@ async fn spawn_all_discovered_agents_handler(
                     Arc::new(
                         Agent::new(config.clone(), provider, tools)
                             .with_model(model)
-                            .with_memory_manager(mm),
+                            .with_memory_manager(mm)
+                            .with_transcript_store(Arc::clone(&state.transcript_store))
+                            .with_artifact_store(Arc::clone(&state.artifact_store))
+                            .with_disk_budget(Arc::clone(&state.disk_budget))
+                            .with_session_file_manager(Arc::clone(&state.session_file_manager)),
                     )
                 } else {
-                    Arc::new(Agent::new(config.clone(), provider, tools).with_model(model))
+                    Arc::new(
+                        Agent::new(config.clone(), provider, tools)
+                            .with_model(model)
+                            .with_transcript_store(Arc::clone(&state.transcript_store))
+                            .with_artifact_store(Arc::clone(&state.artifact_store))
+                            .with_disk_budget(Arc::clone(&state.disk_budget))
+                            .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                    )
                 };
 
                 let (query_tx, mut query_rx) = mpsc::channel::<AgentQuery>(32);
