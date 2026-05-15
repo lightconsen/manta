@@ -111,6 +111,11 @@ pub fn budget_dir() -> PathBuf {
     manta_dir().join("budget")
 }
 
+/// Get the session files directory (~/.manta/session_files)
+pub fn session_files_dir() -> PathBuf {
+    manta_dir().join("session_files")
+}
+
 /// Get the group sessions directory (~/.manta/groups)
 pub fn groups_dir() -> PathBuf {
     manta_dir().join("groups")

@@ -50,6 +50,7 @@ pub mod planner;
 pub mod prompt_builder;
 pub mod route_resolution;
 pub mod session;
+pub mod session_files;
 pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
@@ -88,6 +89,7 @@ pub use session::{
     AgentInstanceStatus, MultiAgentSession, SessionAgent, SessionManager, SessionMessage,
     SessionStatus, ThreadBinding,
 };
+pub use session_files::{SessionFileDir, SessionFileManager};
 pub use subagent_registry::{SubagentMetrics, SubagentRegistry, SubagentRun, SubagentStatus};
 pub use todo::{Task, TaskStatus, TodoStore};
 pub use transcript::{

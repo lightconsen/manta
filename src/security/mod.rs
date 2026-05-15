@@ -1585,6 +1585,9 @@ pub mod persistent_audit;
 /// DM pairing and access control
 pub mod pairing;
 
+/// Mention gating for controlling agent responses to mentions
+pub mod mention_gate;
+
 /// Penetration testing module
 pub mod pentest;
 

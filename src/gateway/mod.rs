@@ -299,6 +299,9 @@ pub struct SecurityConfig {
     /// CSP configuration
     #[serde(default)]
     pub csp: crate::gateway::auth::CspConfig,
+    /// Mention gating configuration
+    #[serde(default)]
+    pub mention_gating: crate::security::mention_gate::MentionGatingConfig,
 }
 
 /// Rate limiting configuration
@@ -359,6 +362,7 @@ impl Default for SecurityConfig {
             oauth: crate::gateway::auth::OAuthConfig::default(),
             cors: crate::gateway::auth::CorsConfig::default(),
             csp: crate::gateway::auth::CspConfig::default(),
+            mention_gating: crate::security::mention_gate::MentionGatingConfig::default(),
         }
     }
 }
@@ -556,6 +560,8 @@ pub struct GatewayState {
     pub pairing_store: Arc<crate::security::pairing::PairingStore>,
     /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
+    /// Mention gate for controlling which mentions trigger agent responses
+    pub mention_gate: Arc<crate::security::mention_gate::MentionGate>,
     /// Persistent audit log for security-relevant events (SQLite-backed)
     pub audit_log: Arc<crate::security::persistent_audit::PersistentAuditLog>,
     /// Rate limiter for API protection (legacy token bucket)
@@ -612,6 +618,8 @@ pub struct GatewayState {
     pub artifact_store: Arc<crate::agent::ArtifactStore>,
     /// Disk budget manager for per-session storage quota enforcement.
     pub disk_budget: Arc<crate::agent::DiskBudgetManager>,
+    /// Session file manager for isolated per-session file operations.
+    pub session_file_manager: Arc<crate::agent::SessionFileManager>,
     /// Group session manager for multi-member sessions with role awareness.
     pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
     /// ACP (Agent Control Plane) controller for centralized execution orchestration.
@@ -696,7 +704,7 @@ impl GatewayState {
                 }
             }
 
-            // 3. Mention gating
+            // 3. Mention gating (require_mention + MentionGate)
             if !mention.should_process(ch_cfg.require_mention) {
                 let reason = format!(
                     "Message from {} on channel {} ignored (mention required in groups)",
@@ -706,6 +714,22 @@ impl GatewayState {
                     .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
+            }
+
+            // 3b. MentionGate policy check
+            if matches!(mention, crate::channels::MentionState::Mentioned) {
+                let mention_allowed = self.mention_gate.check(channel, "*").await;
+                if !mention_allowed {
+                    let reason = format!(
+                        "Mention gate blocked message on channel {} (policy: {})",
+                        channel,
+                        self.mention_gate.policy().await
+                    );
+                    self.audit_log
+                        .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
+                        .await;
+                    return Err(reason);
+                }
             }
         }
 
@@ -1249,6 +1273,18 @@ impl Gateway {
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             command_gate: Arc::new(crate::tools::command_gate::CommandGate::new()),
+            mention_gate: {
+                let gate = crate::security::mention_gate::MentionGate::new(
+                    config.security.mention_gating.policy,
+                );
+                for pattern in &config.security.mention_gating.allowlist {
+                    gate.add_allowlist("*", pattern.clone()).await;
+                }
+                for pattern in &config.security.mention_gating.blocklist {
+                    gate.add_blocklist("*", pattern.clone()).await;
+                }
+                Arc::new(gate)
+            },
             audit_log: {
                 let audit = if let Some(ref pool) = sqlite_pool {
                     crate::security::persistent_audit::PersistentAuditLog::with_pool(pool.clone())
@@ -1297,6 +1333,11 @@ impl Gateway {
             disk_budget: {
                 let manager = crate::agent::DiskBudgetManager::new(crate::dirs::budget_dir());
                 let _ = manager.init();
+                Arc::new(manager)
+            },
+            session_file_manager: {
+                let manager = crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
+                let _ = manager.init().await;
                 Arc::new(manager)
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
@@ -1890,6 +1931,12 @@ impl Gateway {
             // ── Command Gate API ───────────────────────────────────────────
             .route("/api/v1/gate/levels", get(list_gate_levels_handler).post(set_gate_level_handler))
             .route("/api/v1/gate/levels/:user_id", delete(clear_gate_level_handler))
+            // ── Mention Gate API ───────────────────────────────────────────
+            .route("/api/v1/mentions/policy", get(get_mention_policy_handler).post(set_mention_policy_handler))
+            .route("/api/v1/mentions/allowlist", get(list_mention_allowlist_handler).post(add_mention_allowlist_handler))
+            .route("/api/v1/mentions/allowlist/:channel/:pattern", delete(remove_mention_allowlist_handler))
+            .route("/api/v1/mentions/blocklist", get(list_mention_blocklist_handler).post(add_mention_blocklist_handler))
+            .route("/api/v1/mentions/blocklist/:channel/:pattern", delete(remove_mention_blocklist_handler))
             // ── Audit Log API ──────────────────────────────────────────────
             .route("/api/v1/audit/log", get(list_audit_log_handler))
             // ── SSE real-time event streaming ──────────────────────────────
@@ -8942,6 +8989,149 @@ async fn clear_gate_level_handler(
         Json(serde_json::json!({
             "status": "cleared",
             "user_id": user_id,
+        })),
+    )
+        .into_response()
+}
+
+// ── Mention Gate Handlers ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SetMentionPolicyRequest {
+    policy: crate::security::mention_gate::MentionPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddMentionPatternRequest {
+    channel: String,
+    pattern: String,
+}
+
+/// `GET /api/v1/mentions/policy` — get current mention gate policy.
+async fn get_mention_policy_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let policy = state.mention_gate.policy().await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "policy": policy.to_string(),
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/mentions/policy` — set mention gate policy.
+async fn set_mention_policy_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<SetMentionPolicyRequest>,
+) -> impl IntoResponse {
+    state.mention_gate.set_policy(req.policy).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ok",
+            "policy": req.policy.to_string(),
+        })),
+    )
+        .into_response()
+}
+
+/// `GET /api/v1/mentions/allowlist` — list allowlist entries for a channel.
+async fn list_mention_allowlist_handler(
+    State(state): State<Arc<GatewayState>>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let channel = params.get("channel").cloned().unwrap_or_else(|| "*".to_string());
+    let entries = state.mention_gate.list_allowlist(&channel).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "channel": channel,
+            "allowlist": entries,
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/mentions/allowlist` — add a pattern to the allowlist.
+async fn add_mention_allowlist_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<AddMentionPatternRequest>,
+) -> impl IntoResponse {
+    state.mention_gate.add_allowlist(&req.channel, &req.pattern).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "added",
+            "channel": req.channel,
+            "pattern": req.pattern,
+        })),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/v1/mentions/allowlist/:channel/:pattern` — remove from allowlist.
+async fn remove_mention_allowlist_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path((channel, pattern)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let removed = state.mention_gate.remove_allowlist(&channel, &pattern).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": if removed { "removed" } else { "not_found" },
+            "channel": channel,
+            "pattern": pattern,
+        })),
+    )
+        .into_response()
+}
+
+/// `GET /api/v1/mentions/blocklist` — list blocklist entries for a channel.
+async fn list_mention_blocklist_handler(
+    State(state): State<Arc<GatewayState>>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let channel = params.get("channel").cloned().unwrap_or_else(|| "*".to_string());
+    let entries = state.mention_gate.list_blocklist(&channel).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "channel": channel,
+            "blocklist": entries,
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/mentions/blocklist` — add a pattern to the blocklist.
+async fn add_mention_blocklist_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<AddMentionPatternRequest>,
+) -> impl IntoResponse {
+    state.mention_gate.add_blocklist(&req.channel, &req.pattern).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "added",
+            "channel": req.channel,
+            "pattern": req.pattern,
+        })),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/v1/mentions/blocklist/:channel/:pattern` — remove from blocklist.
+async fn remove_mention_blocklist_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path((channel, pattern)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let removed = state.mention_gate.remove_blocklist(&channel, &pattern).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": if removed { "removed" } else { "not_found" },
+            "channel": channel,
+            "pattern": pattern,
         })),
     )
         .into_response()
