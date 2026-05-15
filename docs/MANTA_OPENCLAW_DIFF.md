@@ -373,7 +373,7 @@ class VoyageBatchProcessor
 | **QQ** | Stub | Extension |
 | **Lark/Feishu** | ✅ Re-export from Lark | Extension |
 | **Allowlists** | Basic | Sophisticated allowlist-match.ts |
-| **Mention Gating** | ❌ Not implemented | ✅ mention-gating.ts |
+| **Mention Gating** | ✅ `MentionGate` with wildcard patterns | ✅ mention-gating.ts |
 | **Command Gating** | ✅ `CommandGate` with user levels | ✅ command-gating.ts |
 
 ### Manta Channel Trait
@@ -498,10 +498,10 @@ commandGating: CommandGatingConfig
 | **Signal** | ❌ | ✅ |
 | **iMessage** | ❌ | ✅ |
 | **WebChat** | Terminal | Full UI |
-| **DM Pairing** | ❌ | ✅ |
+| **DM Pairing** | ✅ `PairingStore` with code approval | ✅ |
 | **Allowlists** | Basic | Advanced |
-| **Mention Gating** | ❌ | ✅ |
-| **Command Gating** | ❌ | ✅ |
+| **Mention Gating** | ✅ `MentionGate` with wildcard patterns | ✅ |
+| **Command Gating** | ✅ `CommandGate` with user levels | ✅ |
 | **Voice/TTS** | ❌ | ✅ |
 | **Media Pipeline** | ✅ Image routing via ModelRouter | ✅ |
 | **Plugin System** | ✅ WASM plugins + dynamic tools/channels | ✅ |
@@ -621,12 +621,12 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Fallback Chains** | ✅ Configured | ✅ Dynamic runtime |
 | **Circuit Breaker** | ❌ | ✅ `CircuitState` (Closed/Open/HalfOpen) |
 | **Health Tracking** | Provider usage stats | ✅ Latency, failures, successes |
-| **Auth Profile Rotation** | ✅ `auth-profiles/` | ❌ |
+| **Auth Profile Rotation** | ❌ | ✅ `auth-profiles/` |
 | **Runtime Switching** | CLI commands | ✅ REST API |
 | **Provider SDK** | Dynamic discovery | ✅ `ProviderSdk` + `sync_from_model_router()` |
 
-**Manta advantage**: Circuit breaker, runtime REST API, health tracking.
-**OpenClaw advantage**: More providers, auth profile rotation.
+**Manta advantage**: Circuit breaker, auth profile rotation, runtime REST API, health tracking.
+**OpenClaw advantage**: More providers (GitHub Copilot, Google).
 
 ---
 
@@ -690,11 +690,11 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Total Channels** | 20+ | 6 |
 | **Architecture** | Plugin-based `dock.ts` | Trait-based (`Channel` trait) |
 | **ChannelExtension** | Unified interface | ✅ `ChannelExtension` trait + `TelegramChannelExtension` |
-| **Mention Gating** | ✅ `mention-gating.ts` | ❌ |
+| **Mention Gating** | ✅ `mention-gating.ts` | ✅ `MentionGate` with wildcard patterns |
 | **Command Gating** | ✅ `command-gating.ts` | ✅ `CommandGate` with user levels |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 
-**Gap**: Manta lacks Signal/iMessage, mention gating, sophisticated allowlist.
+**Gap**: Manta lacks Signal/iMessage, sophisticated allowlist.
 
 ---
 
