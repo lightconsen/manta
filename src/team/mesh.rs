@@ -4,7 +4,7 @@
 //! communication patterns for agent teams.
 
 use super::{CommunicationPattern, Team};
-use crate::assistants::mesh::{AssistantMesh, MeshMessage};
+use crate::team::assistant_mesh::{AssistantMesh, MeshMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

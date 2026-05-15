@@ -280,7 +280,7 @@ if let Some(skill) = manager.find_matching_skill("what's the weather?") {
 ### Mesh Communication
 
 ```rust
-use manta::assistants::mesh::{AssistantMesh, MeshMessage};
+use manta::team::assistant_mesh::{AssistantMesh, MeshMessage};
 
 // Create mesh
 let mesh = AssistantMesh::new();

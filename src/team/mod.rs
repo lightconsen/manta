@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
 
+pub mod assistant_mesh;
 pub mod mesh;
 
 pub use mesh::{get_team_mesh_manager, TeamMeshManager, TeamMeshSession, TeamMessageResult};

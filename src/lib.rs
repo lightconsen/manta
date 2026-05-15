@@ -37,7 +37,6 @@
 pub mod acp;
 pub mod adapters;
 pub mod agent;
-pub mod assistants;
 pub mod canvas;
 pub mod channels;
 pub mod cli;
@@ -52,7 +51,6 @@ pub mod export;
 pub mod gateway;
 pub mod inbound;
 pub mod logs;
-pub mod media;
 pub mod memory;
 pub mod model_router;
 pub mod outbound;
@@ -66,7 +64,6 @@ pub mod team;
 pub mod tools;
 pub mod utils;
 pub mod web;
-pub mod webhook;
 
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
