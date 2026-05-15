@@ -1,0 +1,202 @@
+//! Runtime Audit Log for Manta
+//!
+//! Provides an in-memory ring buffer of audit entries capturing runtime
+//! security-relevant events: access decisions, pairing operations,
+//! command gate evaluations, config changes, and tool invocations.
+
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::sync::RwLock;
+
+/// Category of audit event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditEventType {
+    /// Incoming message access check
+    AccessCheck,
+    /// Pairing request created
+    PairingRequest,
+    /// Pairing approved
+    PairingApprove,
+    /// Pairing rejected
+    PairingReject,
+    /// Access revoked
+    PairingRevoke,
+    /// Command gate evaluation
+    CommandGate,
+    /// Config updated
+    ConfigChange,
+    /// Tool invoked
+    ToolInvocation,
+    /// Tool denied by policy
+    ToolDeny,
+    /// Generic security event
+    Security,
+}
+
+/// A single audit log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    /// Unique entry ID
+    pub id: String,
+    /// When the event occurred
+    pub timestamp: SystemTime,
+    /// Event category
+    pub event_type: AuditEventType,
+    /// Actor who triggered the event (user ID, admin, system)
+    pub actor: String,
+    /// Target of the action (user ID, channel, etc.)
+    pub target: String,
+    /// Whether the action was allowed
+    pub allowed: bool,
+    /// Human-readable description
+    pub description: String,
+    /// Optional details (JSON)
+    pub details: Option<serde_json::Value>,
+}
+
+/// In-memory ring buffer for runtime audit entries.
+///
+/// Oldest entries are evicted when capacity is exceeded.
+#[derive(Debug, Clone)]
+pub struct RuntimeAuditLog {
+    entries: Arc<RwLock<VecDeque<AuditEntry>>>,
+    capacity: usize,
+}
+
+impl Default for RuntimeAuditLog {
+    fn default() -> Self {
+        Self::with_capacity(10_000)
+    }
+}
+
+impl RuntimeAuditLog {
+    /// Create a new audit log with the given capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(VecDeque::with_capacity(capacity))),
+            capacity,
+        }
+    }
+
+    /// Log a new audit entry.
+    pub async fn log(
+        &self,
+        event_type: AuditEventType,
+        actor: impl Into<String>,
+        target: impl Into<String>,
+        allowed: bool,
+        description: impl Into<String>,
+        details: Option<serde_json::Value>,
+    ) {
+        let entry = AuditEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: SystemTime::now(),
+            event_type,
+            actor: actor.into(),
+            target: target.into(),
+            allowed,
+            description: description.into(),
+            details,
+        };
+
+        let mut entries = self.entries.write().await;
+        if entries.len() >= self.capacity {
+            entries.pop_front();
+        }
+        entries.push_back(entry);
+    }
+
+    /// Retrieve the most recent `n` entries (newest first).
+    pub async fn recent(&self, n: usize) -> Vec<AuditEntry> {
+        let entries = self.entries.read().await;
+        entries.iter().rev().take(n).cloned().collect()
+    }
+
+    /// Retrieve all entries (oldest first).
+    pub async fn all(&self) -> Vec<AuditEntry> {
+        let entries = self.entries.read().await;
+        entries.iter().cloned().collect()
+    }
+
+    /// Filter entries by event type.
+    pub async fn filter(&self, event_type: AuditEventType) -> Vec<AuditEntry> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|e| e.event_type == event_type)
+            .cloned()
+            .collect()
+    }
+
+    /// Count of entries currently stored.
+    pub async fn len(&self) -> usize {
+        self.entries.read().await.len()
+    }
+
+    /// Clear all entries.
+    pub async fn clear(&self) {
+        self.entries.write().await.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_log_and_retrieve() {
+        let log = RuntimeAuditLog::with_capacity(100);
+        log.log(
+            AuditEventType::AccessCheck,
+            "user1",
+            "telegram",
+            true,
+            "Access allowed",
+            None,
+        )
+        .await;
+
+        let entries = log.all().await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].actor, "user1");
+        assert!(entries[0].allowed);
+    }
+
+    #[tokio::test]
+    async fn test_ring_buffer_eviction() {
+        let log = RuntimeAuditLog::with_capacity(3);
+        for i in 0..5 {
+            log.log(
+                AuditEventType::AccessCheck,
+                format!("user{}", i),
+                "telegram",
+                true,
+                "test",
+                None,
+            )
+            .await;
+        }
+
+        let entries = log.all().await;
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].actor, "user2");
+        assert_eq!(entries[2].actor, "user4");
+    }
+
+    #[tokio::test]
+    async fn test_filter_by_type() {
+        let log = RuntimeAuditLog::with_capacity(100);
+        log.log(AuditEventType::AccessCheck, "u1", "c1", true, "", None)
+            .await;
+        log.log(AuditEventType::PairingRequest, "u2", "c1", true, "", None)
+            .await;
+        log.log(AuditEventType::AccessCheck, "u3", "c1", true, "", None)
+            .await;
+
+        let filtered = log.filter(AuditEventType::AccessCheck).await;
+        assert_eq!(filtered.len(), 2);
+    }
+}

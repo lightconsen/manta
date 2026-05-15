@@ -20,6 +20,10 @@ const pages = {
   providers: { title: 'Providers', render: renderProviders },
   memory:    { title: 'Memory',    render: renderMemory },
   cron:      { title: 'Cron Jobs', render: renderCron },
+  pairing:   { title: 'Pairing',   render: renderPairing },
+  gate:      { title: 'Command Gate', render: renderGate },
+  audit:     { title: 'Audit Log', render: renderAudit },
+  subagents: { title: 'Subagents', render: renderSubagents },
   config:    { title: 'Config',    render: renderConfig },
 };
 
@@ -269,6 +273,384 @@ window.deleteCron = async function(id) {
   if (!confirm('Delete this cron job?')) return;
   try { await API.delete(`/api/v1/cron/${id}`); navigate('cron'); }
   catch (e) { alert('Failed: ' + e.message); }
+};
+
+/* ── Pairing ── */
+async function renderPairing(el) {
+  try {
+    const [pending, authorized] = await Promise.all([
+      API.get('/api/v1/pairing/pending').catch(() => []),
+      API.get('/api/v1/pairing/authorized').catch(() => []),
+    ]);
+
+    const pendingList = Array.isArray(pending) ? pending : [];
+    const authList = Array.isArray(authorized) ? authorized : [];
+
+    el.innerHTML = `
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Pending</span></div>
+          <div class="card-value">${pendingList.length}</div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Authorized</span></div>
+          <div class="card-value">${authList.length}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <button class="btn btn-primary" onclick="showAddAllowlistModal()">+ Add to Allowlist</button>
+      </div>
+
+      <div class="table-container" style="margin-bottom:24px;">
+        <div class="table-header"><h3>Pending Requests</h3></div>
+        <table>
+          <thead><tr><th>Channel</th><th>User ID</th><th>Username</th><th>Code</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${pendingList.length ? pendingList.map(r => `
+              <tr>
+                <td>${r.channel || '-'}</td>
+                <td>${r.user_id || '-'}</td>
+                <td>${r.username || '-'}</td>
+                <td><code>${r.code || '-'}</code></td>
+                <td>${r.created_at ? new Date(r.created_at.secs_since_epoch * 1000).toLocaleString() : '-'}</td>
+                <td>
+                  <button class="btn btn-sm btn-primary" onclick="approvePairing('${r.channel}', '${r.code}')">Approve</button>
+                  <button class="btn btn-sm btn-danger" onclick="rejectPairing('${r.channel}', '${r.code}')">Reject</button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="empty-state">No pending requests</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-container">
+        <div class="table-header"><h3>Authorized Users</h3></div>
+        <table>
+          <thead><tr><th>Channel</th><th>User ID</th><th>Username</th><th>Approved By</th><th>Authorized At</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${authList.length ? authList.map(u => `
+              <tr>
+                <td>${u.channel || '-'}</td>
+                <td>${u.user_id || '-'}</td>
+                <td>${u.username || '-'}</td>
+                <td>${u.approved_by || '-'}</td>
+                <td>${u.authorized_at ? new Date(u.authorized_at.secs_since_epoch * 1000).toLocaleString() : '-'}</td>
+                <td>
+                  <button class="btn btn-sm btn-danger" onclick="revokePairing('${u.channel}', '${u.user_id}')">Revoke</button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="empty-state">No authorized users</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="allowlistModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:100;">
+        <div class="card" style="width:400px;max-width:90%;">
+          <div class="card-header"><span class="card-title">Add to Allowlist</span></div>
+          <div class="form-group">
+            <label>Channel</label>
+            <input type="text" id="allowlistChannel" placeholder="telegram">
+          </div>
+          <div class="form-group">
+            <label>User ID</label>
+            <input type="text" id="allowlistUserId" placeholder="123456">
+          </div>
+          <div class="form-group">
+            <label>Username (optional)</label>
+            <input type="text" id="allowlistUsername" placeholder="@alice">
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn" onclick="hideAddAllowlistModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitAllowlist()">Add</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = errorAlert(e.message);
+  }
+}
+
+window.approvePairing = async function(channel, code) {
+  try {
+    await API.post('/api/v1/pairing/approve', { channel, code });
+    alert('User approved');
+    navigate('pairing');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.rejectPairing = async function(channel, code) {
+  if (!confirm('Reject this pairing request?')) return;
+  try {
+    await API.post('/api/v1/pairing/reject', { channel, code });
+    navigate('pairing');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.revokePairing = async function(channel, userId) {
+  if (!confirm('Revoke access for this user?')) return;
+  try {
+    await API.post('/api/v1/pairing/revoke', { channel, user_id: userId });
+    navigate('pairing');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.showAddAllowlistModal = function() {
+  document.getElementById('allowlistModal').style.display = 'flex';
+};
+window.hideAddAllowlistModal = function() {
+  document.getElementById('allowlistModal').style.display = 'none';
+};
+window.submitAllowlist = async function() {
+  const channel = document.getElementById('allowlistChannel').value;
+  const userId = document.getElementById('allowlistUserId').value;
+  const username = document.getElementById('allowlistUsername').value || undefined;
+  if (!channel || !userId) { alert('Channel and User ID are required'); return; }
+  try {
+    await API.post('/api/v1/pairing/allowlist', { channel, user_id: userId, username });
+    hideAddAllowlistModal();
+    navigate('pairing');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+/* ── Command Gate ── */
+async function renderGate(el) {
+  try {
+    const data = await API.get('/api/v1/gate/levels').catch(() => ({}));
+    const levels = data.levels || {};
+    const entries = Object.entries(levels);
+
+    el.innerHTML = `
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <button class="btn btn-primary" onclick="showSetGateModal()">+ Set Level</button>
+      </div>
+      <div class="table-container">
+        <div class="table-header"><h3>User Levels</h3></div>
+        <table>
+          <thead><tr><th>User ID</th><th>Level</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${entries.length ? entries.map(([userId, level]) => `
+              <tr>
+                <td>${userId}</td>
+                <td>${badge(level, level === 'admin' ? 'danger' : level === 'user' ? 'success' : 'muted')}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="clearGateLevel('${userId}')">Clear</button></td>
+              </tr>
+            `).join('') : '<tr><td colspan="3" class="empty-state">No custom levels configured</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:24px;">
+        <div class="card-header"><span class="card-title">About Command Gate</span></div>
+        <div style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+          <p><strong>Chat</strong> — Can send messages but cannot invoke slash commands.</p>
+          <p><strong>User</strong> — Can send messages and invoke user-level commands (e.g., <code>/skill list</code>).</p>
+          <p><strong>Admin</strong> — Full access including admin-only commands (e.g., <code>/admin providers</code>).</p>
+          <p>Unknown users default to <strong>Chat</strong> level.</p>
+        </div>
+      </div>
+      <div id="gateModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:100;">
+        <div class="card" style="width:400px;max-width:90%;">
+          <div class="card-header"><span class="card-title">Set User Level</span></div>
+          <div class="form-group">
+            <label>User ID</label>
+            <input type="text" id="gateUserId" placeholder="user123">
+          </div>
+          <div class="form-group">
+            <label>Level</label>
+            <select id="gateLevel">
+              <option value="chat">Chat</option>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn" onclick="hideSetGateModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitGateLevel()">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = errorAlert(e.message);
+  }
+}
+
+window.showSetGateModal = function() {
+  document.getElementById('gateModal').style.display = 'flex';
+};
+window.hideSetGateModal = function() {
+  document.getElementById('gateModal').style.display = 'none';
+};
+window.submitGateLevel = async function() {
+  const userId = document.getElementById('gateUserId').value;
+  const level = document.getElementById('gateLevel').value;
+  if (!userId) { alert('User ID is required'); return; }
+  try {
+    await API.post('/api/v1/gate/levels', { user_id: userId, level });
+    hideSetGateModal();
+    navigate('gate');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+window.clearGateLevel = async function(userId) {
+  if (!confirm('Clear custom level for ' + userId + '?')) return;
+  try {
+    await API.delete('/api/v1/gate/levels/' + userId);
+    navigate('gate');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+/* ── Audit Log ── */
+async function renderAudit(el) {
+  try {
+    const data = await API.get('/api/v1/audit/log');
+    const entries = data.entries || [];
+
+    el.innerHTML = `
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Total Entries</span></div>
+          <div class="card-value">${data.count || 0}</div>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <div class="table-header"><h3>Recent Audit Events</h3></div>
+        <table>
+          <thead><tr><th>Time</th><th>Type</th><th>Actor</th><th>Target</th><th>Allowed</th><th>Description</th></tr></thead>
+          <tbody>
+            ${entries.length ? entries.map(e => `
+              <tr>
+                <td>${e.timestamp ? new Date(e.timestamp.secs_since_epoch * 1000).toLocaleString() : '-'}</td>
+                <td>${badge(e.event_type || '-')}</td>
+                <td>${e.actor || '-'}</td>
+                <td>${e.target || '-'}</td>
+                <td>${badge(e.allowed ? 'yes' : 'no', e.allowed ? 'success' : 'danger')}</td>
+                <td>${e.description || '-'}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="empty-state">No audit entries</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = errorAlert(e.message);
+  }
+}
+
+/* ── Subagents ── */
+async function renderSubagents(el) {
+  try {
+    const sessions = await API.get('/api/v1/acp/sessions').catch(() => []);
+    const list = Array.isArray(sessions) ? sessions : sessions.sessions || [];
+
+    el.innerHTML = `
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <button class="btn btn-primary" onclick="showSpawnSubagentModal()">+ Spawn Subagent</button>
+      </div>
+      <div class="table-container">
+        <div class="table-header"><h3>Active Subagents</h3></div>
+        <table>
+          <thead><tr><th>ID</th><th>Session</th><th>Parent</th><th>Mode</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${list.length ? list.map(s => `
+              <tr>
+                <td>${s.subagent_id || s.id || '-'}</td>
+                <td><code>${s.session_id || '-'}</code></td>
+                <td>${s.parent_id || '-'}</td>
+                <td>${s.mode || '-'}</td>
+                <td>${badge(s.status || 'unknown', s.status === 'Running' ? 'success' : 'muted')}</td>
+                <td>
+                  <button class="btn btn-sm btn-primary" onclick="showSendMessageModal('${s.session_id || s.id}')">Message</button>
+                  <button class="btn btn-sm btn-danger" onclick="terminateSubagent('${s.session_id || s.id}')">Terminate</button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="empty-state">No active subagents</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div id="spawnModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:100;">
+        <div class="card" style="width:400px;max-width:90%;">
+          <div class="card-header"><span class="card-title">Spawn Subagent</span></div>
+          <div class="form-group">
+            <label>Task</label>
+            <input type="text" id="spawnTask" placeholder="Research quantum computing">
+          </div>
+          <div class="form-group">
+            <label>Mode</label>
+            <select id="spawnMode">
+              <option value="run">Run</option>
+              <option value="session">Session</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn" onclick="hideSpawnModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitSpawn()">Spawn</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="messageModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:100;">
+        <div class="card" style="width:400px;max-width:90%;">
+          <div class="card-header"><span class="card-title">Send Message</span></div>
+          <input type="hidden" id="messageSessionId">
+          <div class="form-group">
+            <label>Message</label>
+            <input type="text" id="messageText" placeholder="Hello subagent">
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn" onclick="hideMessageModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitMessage()">Send</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = errorAlert(e.message);
+  }
+}
+
+window.showSpawnSubagentModal = function() {
+  document.getElementById('spawnModal').style.display = 'flex';
+};
+window.hideSpawnModal = function() {
+  document.getElementById('spawnModal').style.display = 'none';
+};
+window.submitSpawn = async function() {
+  const task = document.getElementById('spawnTask').value;
+  const mode = document.getElementById('spawnMode').value;
+  if (!task) { alert('Task is required'); return; }
+  try {
+    await API.post('/api/v1/acp/sessions', { task, mode });
+    hideSpawnModal();
+    navigate('subagents');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.showSendMessageModal = function(sessionId) {
+  document.getElementById('messageSessionId').value = sessionId;
+  document.getElementById('messageModal').style.display = 'flex';
+};
+window.hideMessageModal = function() {
+  document.getElementById('messageModal').style.display = 'none';
+};
+window.submitMessage = async function() {
+  const sessionId = document.getElementById('messageSessionId').value;
+  const message = document.getElementById('messageText').value;
+  if (!message) { alert('Message is required'); return; }
+  try {
+    await API.post(`/api/v1/acp/sessions/${sessionId}/message`, { message });
+    hideMessageModal();
+    alert('Message sent');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+window.terminateSubagent = async function(sessionId) {
+  if (!confirm('Terminate this subagent?')) return;
+  try {
+    await API.delete(`/api/v1/acp/sessions/${sessionId}`);
+    navigate('subagents');
+  } catch (e) { alert('Failed: ' + e.message); }
 };
 
 /* ── Config ── */

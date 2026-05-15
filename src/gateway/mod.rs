@@ -396,6 +396,9 @@ pub struct ChannelConfig {
     /// DM policy: open, pairing, or allowlist
     #[serde(default)]
     pub dm_policy: DmPolicy,
+    /// Require explicit mention in group chats (ignored for DMs)
+    #[serde(default)]
+    pub require_mention: bool,
     /// Allowlist of users/numbers (for allowlist policy)
     #[serde(default)]
     pub allow_from: Vec<String>,
@@ -414,6 +417,7 @@ impl ChannelConfig {
             enabled: true,
             credentials: HashMap::new(),
             dm_policy: DmPolicy::Open,
+            require_mention: false,
             allow_from: Vec::new(),
             block_from: Vec::new(),
             agent_id: None,
@@ -491,6 +495,12 @@ pub struct GatewayState {
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
+    /// DM pairing store for access control
+    pub pairing_store: Arc<crate::security::pairing::PairingStore>,
+    /// Command gate for slash-command permission control
+    pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
+    /// Runtime audit log for security-relevant events
+    pub audit_log: Arc<crate::security::runtime_audit::RuntimeAuditLog>,
     /// Rate limiter for API protection
     pub rate_limiter: Arc<crate::security::RateLimiter>,
     /// Storage adapter for persistence
@@ -535,6 +545,147 @@ pub struct GatewayState {
     /// Session message buffer for FollowUp / Collect queue modes.
     /// session_id -> buffered messages (content + metadata)
     pub session_message_buffer: Arc<RwLock<HashMap<String, Vec<BufferedMessage>>>>,
+}
+
+impl GatewayState {
+    /// Centralized access check for incoming messages.
+    ///
+    /// Returns `Ok(())` if the message is allowed, or `Err(reason)` if it
+    /// should be dropped.
+    pub async fn check_incoming_access(
+        &self,
+        channel: &str,
+        user_id: &str,
+        content: &str,
+        mention: &crate::channels::MentionState,
+    ) -> Result<(), String> {
+        use crate::security::runtime_audit::AuditEventType;
+
+        let channel_config = {
+            let config = self.config.read().await;
+            config.channels.get(channel).cloned()
+        };
+
+        if let Some(ref ch_cfg) = channel_config {
+            // 1. Blocklist check
+            if ch_cfg.is_blocked(user_id) {
+                let reason = format!("User {} is blocked on channel {}", user_id, channel);
+                self.audit_log
+                    .log(
+                        AuditEventType::AccessCheck,
+                        user_id,
+                        channel,
+                        false,
+                        &reason,
+                        None,
+                    )
+                    .await;
+                return Err(reason);
+            }
+
+            // 2. DM Policy check
+            use crate::security::pairing::DmPolicy;
+            match ch_cfg.dm_policy {
+                DmPolicy::Open => {}
+                DmPolicy::Pairing => {
+                    if !self.pairing_store.is_authorized(channel, user_id).await {
+                        // Create pairing request silently and drop message
+                        let _ = self.pairing_store.request_access(channel, user_id, None).await;
+                        let reason = format!(
+                            "User {} not authorized on channel {} (pairing required)",
+                            user_id, channel
+                        );
+                        self.audit_log
+                            .log(
+                                AuditEventType::PairingRequest,
+                                user_id,
+                                channel,
+                                false,
+                                &reason,
+                                None,
+                            )
+                            .await;
+                        return Err(reason);
+                    }
+                }
+                DmPolicy::Allowlist => {
+                    if !ch_cfg.is_in_allowlist(user_id)
+                        && !self.pairing_store.is_authorized(channel, user_id).await
+                    {
+                        let reason = format!(
+                            "User {} not in allowlist for channel {}",
+                            user_id, channel
+                        );
+                        self.audit_log
+                            .log(
+                                AuditEventType::AccessCheck,
+                                user_id,
+                                channel,
+                                false,
+                                &reason,
+                                None,
+                            )
+                            .await;
+                        return Err(reason);
+                    }
+                }
+            }
+
+            // 3. Mention gating
+            if !mention.should_process(ch_cfg.require_mention) {
+                let reason = format!(
+                    "Message from {} on channel {} ignored (mention required in groups)",
+                    user_id, channel
+                );
+                self.audit_log
+                    .log(
+                        AuditEventType::AccessCheck,
+                        user_id,
+                        channel,
+                        false,
+                        &reason,
+                        None,
+                    )
+                    .await;
+                return Err(reason);
+            }
+        }
+
+        // 4. Command gate check
+        let decision = self.command_gate.check(user_id, content);
+        if !decision.is_allowed() {
+            let reason = match decision {
+                crate::tools::command_gate::AccessDecision::Denied { reason, .. } => reason,
+                _ => "Unknown denial reason".to_string(),
+            };
+            let msg = format!("Command gate denied for user {}: {}", user_id, reason);
+            self.audit_log
+                .log(
+                    AuditEventType::CommandGate,
+                    user_id,
+                    channel,
+                    false,
+                    &msg,
+                    Some(serde_json::json!({"reason": reason})),
+                )
+                .await;
+            return Err(msg);
+        }
+
+        // Log successful access
+        self.audit_log
+            .log(
+                AuditEventType::AccessCheck,
+                user_id,
+                channel,
+                true,
+                "Access allowed",
+                None,
+            )
+            .await;
+
+        Ok(())
+    }
 }
 
 /// A buffered message awaiting batch processing (FollowUp / Collect modes).
@@ -765,6 +916,39 @@ pub struct QueuedMessage {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// Optional model alias hint for agent routing
     pub model_alias: Option<String>,
+    /// Mention state of the message (for group chat mention gating)
+    pub mention: crate::channels::MentionState,
+}
+
+impl QueuedMessage {
+    pub fn new(
+        id: impl Into<String>,
+        channel: impl Into<String>,
+        user_id: impl Into<String>,
+        content: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            channel: channel.into(),
+            user_id: user_id.into(),
+            content: content.into(),
+            session_id: session_id.into(),
+            timestamp: chrono::Utc::now(),
+            model_alias: None,
+            mention: crate::channels::MentionState::DirectMessage,
+        }
+    }
+
+    pub fn with_mention(mut self, mention: crate::channels::MentionState) -> Self {
+        self.mention = mention;
+        self
+    }
+
+    pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
+        self.model_alias = Some(alias.into());
+        self
+    }
 }
 
 /// Query parameters for WebSocket connection
@@ -979,6 +1163,9 @@ impl Gateway {
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
             auth_manager,
+            pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
+            command_gate: Arc::new(crate::tools::command_gate::CommandGate::new()),
+            audit_log: Arc::new(crate::security::runtime_audit::RuntimeAuditLog::default()),
             rate_limiter,
             storage,
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
@@ -1543,6 +1730,18 @@ impl Gateway {
             // ── Config Runtime Modification API ───────────────────────────
             .route("/api/v1/config", get(get_config_handler).put(put_config_handler))
             .route("/api/v1/config/validate", post(validate_config_handler))
+            // ── Pairing / DM Access Control API ────────────────────────────
+            .route("/api/v1/pairing/pending", get(list_pairing_pending_handler))
+            .route("/api/v1/pairing/authorized", get(list_pairing_authorized_handler))
+            .route("/api/v1/pairing/approve", post(approve_pairing_handler))
+            .route("/api/v1/pairing/reject", post(reject_pairing_handler))
+            .route("/api/v1/pairing/revoke", post(revoke_pairing_handler))
+            .route("/api/v1/pairing/allowlist", post(add_allowlist_handler))
+            // ── Command Gate API ───────────────────────────────────────────
+            .route("/api/v1/gate/levels", get(list_gate_levels_handler).post(set_gate_level_handler))
+            .route("/api/v1/gate/levels/:user_id", delete(clear_gate_level_handler))
+            // ── Audit Log API ──────────────────────────────────────────────
+            .route("/api/v1/audit/log", get(list_audit_log_handler))
             // ── SSE real-time event streaming ──────────────────────────────
             .route("/api/events", get(sse_events_handler))
             // ── Web terminal API ───────────────────────────────────────────
@@ -2464,6 +2663,15 @@ impl Gateway {
     ) {
         while let Some(msg) = rx.recv().await {
             info!("Processing queued message: {}", msg.id);
+
+            // Centralized access check (blocklist, DM policy, mention, command gate)
+            if let Err(reason) = state
+                .check_incoming_access(&msg.channel, &msg.user_id, &msg.content, &msg.mention)
+                .await
+            {
+                debug!("Message dropped: {}", reason);
+                continue;
+            }
 
             // Convert QueuedMessage to IncomingMessage and route through
             // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
@@ -4293,9 +4501,23 @@ async fn web_terminal_chat_handler(
         .conversation_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    let user_id = body.user_id.unwrap_or_else(|| "web_user".to_string());
+
+    // Access control check
+    if let Err(reason) = state
+        .check_incoming_access("web", &user_id, &body.message, &crate::channels::MentionState::DirectMessage)
+        .await
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response();
+    }
+
     // Route through inbound pipeline
     let incoming = crate::channels::IncomingMessage::new(
-        body.user_id.unwrap_or_else(|| "web_user".to_string()),
+        user_id,
         conversation_id.clone(),
         body.message,
     )
@@ -4323,6 +4545,19 @@ async fn send_message_handler(
 
     // Queue message for processing with provider override
     let message_id = uuid::Uuid::new_v4().to_string();
+    let user_id = body.user_id.clone().unwrap_or_else(|| "api_user".to_string());
+
+    // Access control check
+    if let Err(reason) = state
+        .check_incoming_access("api", &user_id, &body.message, &crate::channels::MentionState::DirectMessage)
+        .await
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response();
+    }
 
     // If provider override is specified, we route through that provider
     if let Some(provider_name) = provider_override {
@@ -4359,9 +4594,7 @@ async fn send_message_handler(
 
     // Otherwise, route through inbound pipeline for normal agent processing
     let incoming = crate::channels::IncomingMessage::new(
-        body.user_id
-            .clone()
-            .unwrap_or_else(|| "api_user".to_string()),
+        user_id,
         session_id.clone(),
         body.message,
     )
@@ -7854,6 +8087,18 @@ async fn put_config_handler(
 
     info!("Config updated and persisted to {:?}", config_path);
 
+    state
+        .audit_log
+        .log(
+            crate::security::runtime_audit::AuditEventType::ConfigChange,
+            "admin",
+            "gateway",
+            true,
+            format!("Config updated and persisted to {}", config_path.display()),
+            Some(serde_json::json!({"path": config_path.to_string_lossy()})),
+        )
+        .await;
+
     (
         StatusCode::OK,
         Json(serde_json::json!({"status": "updated", "path": config_path.to_string_lossy()})),
@@ -7885,4 +8130,434 @@ async fn validate_config_handler(Json(config): Json<GatewayConfig>) -> impl Into
         )
             .into_response(),
     }
+}
+
+// ── Pairing / DM Access Control Handlers ───────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct PairingChannelQuery {
+    channel: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovePairingRequest {
+    channel: String,
+    code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RejectPairingRequest {
+    channel: String,
+    code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevokePairingRequest {
+    channel: String,
+    user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddAllowlistRequest {
+    channel: String,
+    user_id: String,
+    username: Option<String>,
+}
+
+/// `GET /api/v1/pairing/pending` — list pending pairing requests.
+async fn list_pairing_pending_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<PairingChannelQuery>,
+) -> impl IntoResponse {
+    let pending = if let Some(channel) = query.channel {
+        state.pairing_store.list_pending(&channel).await
+    } else {
+        // List all pending across all channels
+        let mut all = Vec::new();
+        let channels = {
+            let cfg = state.config.read().await;
+            cfg.channels.keys().cloned().collect::<Vec<_>>()
+        };
+        for channel in channels {
+            let mut channel_pending = state.pairing_store.list_pending(&channel).await;
+            all.append(&mut channel_pending);
+        }
+        all
+    };
+    Json(pending)
+}
+
+/// `GET /api/v1/pairing/authorized` — list authorized users.
+async fn list_pairing_authorized_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<PairingChannelQuery>,
+) -> impl IntoResponse {
+    let authorized = if let Some(channel) = query.channel {
+        state.pairing_store.list_authorized_for_channel(&channel).await
+    } else {
+        state.pairing_store.list_authorized().await
+    };
+    Json(authorized)
+}
+
+/// `POST /api/v1/pairing/approve` — approve a pending request by code.
+async fn approve_pairing_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<ApprovePairingRequest>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    match state
+        .pairing_store
+        .approve(&req.channel, &req.code, Some("admin"))
+        .await
+    {
+        Some(user) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::PairingApprove,
+                    "admin",
+                    &req.channel,
+                    true,
+                    format!("Approved user {} on channel {}", user.user_id, user.channel),
+                    Some(serde_json::json!({"user_id": user.user_id, "code": req.code})),
+                )
+                .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": "approved",
+                    "user_id": user.user_id,
+                    "channel": user.channel,
+                })),
+            )
+                .into_response()
+        }
+        None => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::PairingApprove,
+                    "admin",
+                    &req.channel,
+                    false,
+                    format!("Approve failed: code {} not found or expired", req.code),
+                    None,
+                )
+                .await;
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "Pairing request not found or expired",
+                    "code": req.code,
+                    "channel": req.channel,
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `POST /api/v1/pairing/reject` — reject a pending request by code.
+async fn reject_pairing_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<RejectPairingRequest>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    match state
+        .pairing_store
+        .reject(&req.channel, &req.code)
+        .await
+    {
+        Some(r) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::PairingReject,
+                    "admin",
+                    &req.channel,
+                    true,
+                    format!("Rejected user {} on channel {}", r.user_id, r.channel),
+                    Some(serde_json::json!({"user_id": r.user_id, "code": req.code})),
+                )
+                .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": "rejected",
+                    "user_id": r.user_id,
+                    "channel": r.channel,
+                })),
+            )
+                .into_response()
+        }
+        None => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::PairingReject,
+                    "admin",
+                    &req.channel,
+                    false,
+                    format!("Reject failed: code {} not found", req.code),
+                    None,
+                )
+                .await;
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "Pairing request not found",
+                    "code": req.code,
+                    "channel": req.channel,
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `POST /api/v1/pairing/revoke` — revoke an authorized user.
+async fn revoke_pairing_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<RevokePairingRequest>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    let removed = state
+        .pairing_store
+        .revoke(&req.channel, &req.user_id)
+        .await;
+    if removed {
+        state
+            .audit_log
+            .log(
+                AuditEventType::PairingRevoke,
+                "admin",
+                &req.channel,
+                true,
+                format!("Revoked user {} on channel {}", req.user_id, req.channel),
+                Some(serde_json::json!({"user_id": req.user_id})),
+            )
+            .await;
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "revoked",
+                "user_id": req.user_id,
+                "channel": req.channel,
+            })),
+        )
+            .into_response()
+    } else {
+        state
+            .audit_log
+            .log(
+                AuditEventType::PairingRevoke,
+                "admin",
+                &req.channel,
+                false,
+                format!(
+                    "Revoke failed: user {} not found in authorized list",
+                    req.user_id
+                ),
+                None,
+            )
+            .await;
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "User not found in authorized list",
+                "user_id": req.user_id,
+                "channel": req.channel,
+            })),
+        )
+            .into_response()
+    }
+}
+
+/// `POST /api/v1/pairing/allowlist` — add a user directly to the allowlist.
+async fn add_allowlist_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<AddAllowlistRequest>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    let user = state
+        .pairing_store
+        .add_to_allowlist(&req.channel, &req.user_id, req.username.as_deref(), Some("admin"))
+        .await;
+    state
+        .audit_log
+        .log(
+            AuditEventType::PairingApprove,
+            "admin",
+            &req.channel,
+            true,
+            format!(
+                "Added user {} to allowlist on channel {}",
+                req.user_id, req.channel
+            ),
+            Some(serde_json::json!({"user_id": req.user_id, "username": req.username})),
+        )
+        .await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "added",
+            "user_id": user.user_id,
+            "channel": user.channel,
+        })),
+    )
+        .into_response()
+}
+
+// ── Command Gate Handlers ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SetGateLevelRequest {
+    user_id: String,
+    level: String,
+}
+
+/// `GET /api/v1/gate/levels` — list all configured user levels.
+async fn list_gate_levels_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let levels = state.command_gate.user_levels();
+    let json_levels: std::collections::HashMap<String, String> = levels
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+    Json(serde_json::json!({
+        "levels": json_levels,
+        "default": "chat",
+    }))
+}
+
+/// `POST /api/v1/gate/levels` — set a user's permission level.
+async fn set_gate_level_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<SetGateLevelRequest>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    let level = match req.level.as_str() {
+        "chat" => crate::tools::command_gate::UserLevel::Chat,
+        "user" => crate::tools::command_gate::UserLevel::User,
+        "admin" => crate::tools::command_gate::UserLevel::Admin,
+        _ => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::CommandGate,
+                    "admin",
+                    "gateway",
+                    false,
+                    format!("Invalid level '{}' for user {}", req.level, req.user_id),
+                    None,
+                )
+                .await;
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Invalid level '{}'. Expected: chat, user, admin", req.level)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    state.command_gate.set_user_level(&req.user_id, level);
+    state
+        .audit_log
+        .log(
+            AuditEventType::CommandGate,
+            "admin",
+            "gateway",
+            true,
+            format!("Set user {} level to {}", req.user_id, req.level),
+            Some(serde_json::json!({"user_id": req.user_id, "level": req.level})),
+        )
+        .await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "updated",
+            "user_id": req.user_id,
+            "level": req.level,
+        })),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/v1/gate/levels/:user_id` — clear a user's custom level.
+async fn clear_gate_level_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(user_id): Path<String>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+    state.command_gate.clear_user_level(&user_id);
+    state
+        .audit_log
+        .log(
+            AuditEventType::CommandGate,
+            "admin",
+            "gateway",
+            true,
+            format!("Cleared custom level for user {}", user_id),
+            Some(serde_json::json!({"user_id": user_id})),
+        )
+        .await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "cleared",
+            "user_id": user_id,
+        })),
+    )
+        .into_response()
+}
+
+// ── Audit Log Handler ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct AuditLogQuery {
+    limit: Option<usize>,
+    event_type: Option<String>,
+}
+
+/// `GET /api/v1/audit/log` — retrieve recent audit log entries.
+async fn list_audit_log_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<AuditLogQuery>,
+) -> impl IntoResponse {
+    use crate::security::runtime_audit::AuditEventType;
+
+    let entries = if let Some(ref etype) = query.event_type {
+        let event_type = match etype.as_str() {
+            "access_check" => AuditEventType::AccessCheck,
+            "pairing_request" => AuditEventType::PairingRequest,
+            "pairing_approve" => AuditEventType::PairingApprove,
+            "pairing_reject" => AuditEventType::PairingReject,
+            "pairing_revoke" => AuditEventType::PairingRevoke,
+            "command_gate" => AuditEventType::CommandGate,
+            "config_change" => AuditEventType::ConfigChange,
+            "tool_invocation" => AuditEventType::ToolInvocation,
+            "tool_deny" => AuditEventType::ToolDeny,
+            "security" => AuditEventType::Security,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("Unknown event_type: {}", etype)
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        state.audit_log.filter(event_type).await
+    } else {
+        state.audit_log.recent(query.limit.unwrap_or(100)).await
+    };
+
+    Json(serde_json::json!({
+        "entries": entries,
+        "count": entries.len(),
+    }))
+        .into_response()
 }

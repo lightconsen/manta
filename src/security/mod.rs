@@ -174,11 +174,106 @@ impl AuthManager {
     }
 }
 
+/// Pattern type for allowlist matching
+#[derive(Debug, Clone)]
+pub enum UserPattern {
+    /// Exact user ID match
+    Exact(String),
+    /// Prefix match (e.g., `admin_` matches `admin_alice`)
+    Prefix(String),
+    /// Glob pattern (e.g., `user_*` matches `user_123`)
+    Glob(String),
+    /// Regular expression pattern
+    Regex(String),
+}
+
+impl UserPattern {
+    /// Check if a user ID matches this pattern
+    pub fn matches(&self, user_id: &str) -> bool {
+        match self {
+            UserPattern::Exact(pattern) => pattern == user_id,
+            UserPattern::Prefix(prefix) => user_id.starts_with(prefix),
+            UserPattern::Glob(glob) => match_glob(glob, user_id),
+            UserPattern::Regex(pattern) => {
+                regex::Regex::new(pattern).map(|re| re.is_match(user_id)).unwrap_or(false)
+            }
+        }
+    }
+
+    /// Human-readable description of the pattern
+    pub fn description(&self) -> String {
+        match self {
+            UserPattern::Exact(s) => format!("exact: {}", s),
+            UserPattern::Prefix(s) => format!("prefix: {}*", s),
+            UserPattern::Glob(s) => format!("glob: {}", s),
+            UserPattern::Regex(s) => format!("regex: {}", s),
+        }
+    }
+}
+
+/// Simple glob-to-matcher: supports `*` (any chars) and `?` (single char).
+fn match_glob(pattern: &str, text: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+    let mut text_chars = text.chars().peekable();
+
+    while let Some(p) = chars.next() {
+        match p {
+            '*' => {
+                // Skip consecutive stars
+                while chars.peek() == Some(&'*') {
+                    chars.next();
+                }
+                let next = chars.peek().copied();
+                if next.is_none() {
+                    return true; // trailing star matches everything
+                }
+                // Try to match the rest of the pattern at each position
+                let rest: String = chars.collect();
+                for i in 0..=text_chars.clone().count() {
+                    let suffix: String = text_chars.clone().skip(i).collect();
+                    if match_glob(&rest, &suffix) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            '?' => {
+                if text_chars.next().is_none() {
+                    return false;
+                }
+            }
+            c => {
+                if text_chars.next() != Some(c) {
+                    return false;
+                }
+            }
+        }
+    }
+    text_chars.next().is_none()
+}
+
+/// Allowlist pattern entry
+#[derive(Debug, Clone)]
+pub struct PatternAllowlistEntry {
+    /// Pattern used for matching
+    pub pattern: UserPattern,
+    /// When access was granted
+    pub granted_at: chrono::DateTime<chrono::Utc>,
+    /// When access expires (None = never)
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Who granted access
+    pub granted_by: Option<String>,
+    /// Reason for access
+    pub reason: Option<String>,
+}
+
 /// Allowlist for controlling access
 #[derive(Debug, Clone, Default)]
 pub struct Allowlist {
     /// Allowed user IDs
     users: Arc<RwLock<HashMap<UserId, AllowlistEntry>>>,
+    /// Allowed patterns
+    patterns: Arc<RwLock<Vec<PatternAllowlistEntry>>>,
     /// Allowed IP addresses
     ips: Arc<RwLock<Vec<IpAddr>>>,
     /// Default allow policy
@@ -239,23 +334,62 @@ impl Allowlist {
         users.remove(user_id).is_some()
     }
 
-    /// Check if a user is allowed
+    /// Add a pattern to the allowlist
+    pub async fn allow_pattern(
+        &self,
+        pattern: UserPattern,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        granted_by: Option<String>,
+        reason: Option<String>,
+    ) {
+        let mut patterns = self.patterns.write().await;
+        patterns.push(PatternAllowlistEntry {
+            pattern,
+            granted_at: chrono::Utc::now(),
+            expires_at,
+            granted_by,
+            reason,
+        });
+    }
+
+    /// Remove all patterns of a given description
+    pub async fn deny_pattern(&self, description: &str) -> usize {
+        let mut patterns = self.patterns.write().await;
+        let before = patterns.len();
+        patterns.retain(|p| p.pattern.description() != description);
+        before - patterns.len()
+    }
+
+    /// Check if a user is allowed (exact match or pattern match)
     pub async fn is_allowed(&self, user_id: &UserId) -> bool {
         if self.default_allow {
             return true;
         }
 
+        // Check exact match first
         let users = self.users.read().await;
-        match users.get(user_id) {
-            Some(entry) => {
-                if let Some(expires) = entry.expires_at {
-                    chrono::Utc::now() < expires
-                } else {
-                    true
+        if let Some(entry) = users.get(user_id) {
+            if let Some(expires) = entry.expires_at {
+                return chrono::Utc::now() < expires;
+            }
+            return true;
+        }
+        drop(users);
+
+        // Check pattern matches
+        let patterns = self.patterns.read().await;
+        let now = chrono::Utc::now();
+        for entry in patterns.iter() {
+            if let Some(expires) = entry.expires_at {
+                if now >= expires {
+                    continue;
                 }
             }
-            None => false,
+            if entry.pattern.matches(&user_id.0) {
+                return true;
+            }
         }
+        false
     }
 
     /// Add an IP to the allowlist
@@ -276,6 +410,12 @@ impl Allowlist {
     pub async fn list_allowed_users(&self) -> Vec<AllowlistEntry> {
         let users = self.users.read().await;
         users.values().cloned().collect()
+    }
+
+    /// List all allowed patterns
+    pub async fn list_allowed_patterns(&self) -> Vec<PatternAllowlistEntry> {
+        let patterns = self.patterns.read().await;
+        patterns.clone()
     }
 }
 
@@ -1435,6 +1575,9 @@ mod header_tests {
 
 /// Security audit module
 pub mod audit;
+
+/// Runtime audit log for security-relevant events
+pub mod runtime_audit;
 
 /// DM pairing and access control
 pub mod pairing;

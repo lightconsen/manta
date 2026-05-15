@@ -227,6 +227,20 @@ async fn whatsapp_webhook_handler(
                                     );
                                 }
 
+                                // Access control check
+                                if state
+                                    .check_incoming_access(
+                                        "whatsapp",
+                                        from,
+                                        text_body,
+                                        &crate::channels::MentionState::DirectMessage,
+                                    )
+                                    .await
+                                    .is_err()
+                                {
+                                    continue;
+                                }
+
                                 // Route through inbound pipeline
                                 let incoming =
                                     IncomingMessage::new(from, session_id.clone(), text_body)
@@ -320,6 +334,25 @@ async fn telegram_webhook_handler(
                 text.chars().take(50).collect::<String>()
             );
 
+            // Determine mention state from chat type
+            let mention = match message.chat.chat_type.as_str() {
+                "private" => crate::channels::MentionState::DirectMessage,
+                _ => crate::channels::MentionState::NotMentioned,
+            };
+
+            // Access control check
+            if state
+                .check_incoming_access("telegram", &user_id, &text, &mention)
+                .await
+                .is_err()
+            {
+                return Json(WebhookResponse {
+                    success: true,
+                    message: "OK".to_string(),
+                })
+                .into_response();
+            }
+
             // Route through inbound pipeline
             let incoming = IncomingMessage::new(user_id, format!("telegram:{}", chat_id), text)
                 .with_provenance(InputProvenance::ExternalUser {
@@ -409,6 +442,19 @@ async fn feishu_webhook_handler(
                     user_id,
                     text.chars().take(50).collect::<String>()
                 );
+
+                // Access control check
+                if state
+                    .check_incoming_access("feishu", user_id, text, &crate::channels::MentionState::DirectMessage)
+                    .await
+                    .is_err()
+                {
+                    return Json(WebhookResponse {
+                        success: true,
+                        message: "OK".to_string(),
+                    })
+                    .into_response();
+                }
 
                 // Handle /new command to reset session
                 let platform_key = format!("feishu:{}", user_id);
@@ -520,6 +566,19 @@ async fn generic_webhook_handler(
         .to_string();
 
     if !content.is_empty() {
+        // Access control check
+        if state
+            .check_incoming_access(&channel, &user_id, &content, &crate::channels::MentionState::DirectMessage)
+            .await
+            .is_err()
+        {
+            return Json(WebhookResponse {
+                success: true,
+                message: "OK".to_string(),
+            })
+            .into_response();
+        }
+
         // Handle /new command to reset session
         let platform_key = format!("{}:{}", channel, user_id);
         let session_id = if content.trim() == "/new" {
