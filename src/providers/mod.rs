@@ -78,6 +78,13 @@ impl Message {
         }
     }
 
+    /// Create a new user message with an identifiable name (for multi-user / group chats).
+    pub fn user_named(name: impl Into<String>, content: impl Into<String>) -> Self {
+        let mut msg = Self::user(content);
+        msg.name = Some(name.into());
+        msg
+    }
+
     /// Create a new assistant message
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {

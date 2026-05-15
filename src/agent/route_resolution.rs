@@ -169,7 +169,11 @@ impl std::fmt::Display for BindingMode {
 
 impl ResolvedBinding {
     /// Create a new resolved binding.
-    pub fn new(thread_id: impl Into<String>, agent_id: impl Into<String>, mode: BindingMode) -> Self {
+    pub fn new(
+        thread_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        mode: BindingMode,
+    ) -> Self {
         Self {
             thread_id: thread_id.into(),
             agent_id: agent_id.into(),

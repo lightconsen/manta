@@ -149,15 +149,8 @@ mod tests {
     #[tokio::test]
     async fn test_log_and_retrieve() {
         let log = RuntimeAuditLog::with_capacity(100);
-        log.log(
-            AuditEventType::AccessCheck,
-            "user1",
-            "telegram",
-            true,
-            "Access allowed",
-            None,
-        )
-        .await;
+        log.log(AuditEventType::AccessCheck, "user1", "telegram", true, "Access allowed", None)
+            .await;
 
         let entries = log.all().await;
         assert_eq!(entries.len(), 1);

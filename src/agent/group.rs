@@ -164,10 +164,8 @@ impl GroupSession {
             return Err(GroupSessionError::MemberAlreadyExists(user_id));
         }
 
-        self.members.insert(
-            user_id.clone(),
-            GroupMember::new(user_id, display_name, role),
-        );
+        self.members
+            .insert(user_id.clone(), GroupMember::new(user_id, display_name, role));
         self.last_activity = std::time::Instant::now();
         debug!("Added member to group session {}", self.id);
         Ok(())
@@ -230,10 +228,7 @@ impl GroupSession {
 
     /// Get members by role.
     pub fn get_members_by_role(&self, role: GroupRole) -> Vec<&GroupMember> {
-        self.members
-            .values()
-            .filter(|m| m.role == role)
-            .collect()
+        self.members.values().filter(|m| m.role == role).collect()
     }
 
     /// Check if a user is a member.
@@ -499,7 +494,9 @@ mod tests {
     fn test_role_level_check() {
         let mut group = GroupSession::new("g1", "Test Group", "user1", "Alice");
         group.add_member("user2", "Bob", GroupRole::Admin).unwrap();
-        group.add_member("user3", "Charlie", GroupRole::Member).unwrap();
+        group
+            .add_member("user3", "Charlie", GroupRole::Member)
+            .unwrap();
 
         assert!(group.has_role("user1", GroupRole::Admin));
         assert!(group.has_role("user2", GroupRole::Member));

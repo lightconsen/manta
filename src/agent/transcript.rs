@@ -200,16 +200,18 @@ pub fn render_transcript(transcript: &Transcript, format: TranscriptFormat) -> S
 }
 
 fn render_json(transcript: &Transcript) -> String {
-    serde_json::to_string_pretty(transcript).unwrap_or_else(|e| {
-        format!(r#"{{"error": "Failed to serialize transcript: {}"}}"#, e)
-    })
+    serde_json::to_string_pretty(transcript)
+        .unwrap_or_else(|e| format!(r#"{{"error": "Failed to serialize transcript: {}"}}"#, e))
 }
 
 fn render_markdown(transcript: &Transcript) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "# Transcript: {}\n\n",
-        transcript.title.as_deref().unwrap_or(&transcript.session_id)
+        transcript
+            .title
+            .as_deref()
+            .unwrap_or(&transcript.session_id)
     ));
     output.push_str(&format!("- **Session**: `{}`\n", transcript.session_id));
     output.push_str(&format!("- **Channel**: {}\n", transcript.channel));
@@ -218,10 +220,7 @@ fn render_markdown(transcript: &Transcript) -> String {
         "- **Started**: {}\n",
         transcript.started_at.format("%Y-%m-%d %H:%M:%S UTC")
     ));
-    output.push_str(&format!(
-        "- **Messages**: {}\n\n",
-        transcript.message_count()
-    ));
+    output.push_str(&format!("- **Messages**: {}\n\n", transcript.message_count()));
     output.push_str("---\n\n");
 
     for msg in &transcript.messages {
@@ -242,11 +241,7 @@ fn render_markdown(transcript: &Transcript) -> String {
             }
             _ => &format!("**{}**", msg.role),
         };
-        output.push_str(&format!(
-            "{} @ {}\n\n",
-            role_label,
-            msg.timestamp.format("%H:%M:%S")
-        ));
+        output.push_str(&format!("{} @ {}\n\n", role_label, msg.timestamp.format("%H:%M:%S")));
         output.push_str(&msg.content);
         output.push_str("\n\n---\n\n");
     }
@@ -258,7 +253,10 @@ fn render_text(transcript: &Transcript) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "Transcript: {}\n",
-        transcript.title.as_deref().unwrap_or(&transcript.session_id)
+        transcript
+            .title
+            .as_deref()
+            .unwrap_or(&transcript.session_id)
     ));
     output.push_str(&format!("Session: {}\n", transcript.session_id));
     output.push_str(&format!("Channel: {} | Peer: {}\n", transcript.channel, transcript.peer));
@@ -358,7 +356,10 @@ body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; pa
 </div>
 </body>
 </html>"#,
-        transcript.title.as_deref().unwrap_or(&transcript.session_id),
+        transcript
+            .title
+            .as_deref()
+            .unwrap_or(&transcript.session_id),
         transcript.title.as_deref().unwrap_or("Transcript"),
         transcript.session_id,
         transcript.channel,
@@ -411,9 +412,9 @@ impl TranscriptStore {
     ) -> std::sync::MutexGuard<'_, HashMap<String, Transcript>> {
         let session_id = session_id.into();
         let mut active = self.active.lock().unwrap();
-        active.entry(session_id.clone()).or_insert_with(|| {
-            Transcript::new(session_id, channel, peer, scope)
-        });
+        active
+            .entry(session_id.clone())
+            .or_insert_with(|| Transcript::new(session_id, channel, peer, scope));
         active
     }
 
@@ -439,11 +440,7 @@ impl TranscriptStore {
     }
 
     /// Export a transcript to a file.
-    pub fn export(
-        &self,
-        session_id: &str,
-        format: TranscriptFormat,
-    ) -> Result<PathBuf, String> {
+    pub fn export(&self, session_id: &str, format: TranscriptFormat) -> Result<PathBuf, String> {
         let transcript = self.get(session_id).ok_or("Transcript not found")?;
         let content = render_transcript(&transcript, format);
 
@@ -594,20 +591,8 @@ mod tests {
         let store = TranscriptStore::new(tmp.path());
         store.init().unwrap();
 
-        store.append(
-            "s1",
-            "telegram",
-            "user1",
-            "dm",
-            TranscriptMessage::new("user", "Hello"),
-        );
-        store.append(
-            "s1",
-            "telegram",
-            "user1",
-            "dm",
-            TranscriptMessage::new("assistant", "Hi!"),
-        );
+        store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("user", "Hello"));
+        store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("assistant", "Hi!"));
 
         let path = store.export("s1", TranscriptFormat::Markdown).unwrap();
         assert!(path.exists());
@@ -622,13 +607,7 @@ mod tests {
         let store = TranscriptStore::new(tmp.path());
         store.init().unwrap();
 
-        store.append(
-            "s1",
-            "telegram",
-            "user1",
-            "dm",
-            TranscriptMessage::new("user", "Hello"),
-        );
+        store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("user", "Hello"));
         store.flush("s1").unwrap();
 
         let files = store.list_files();

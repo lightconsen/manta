@@ -224,12 +224,7 @@ impl Artifact {
             ArtifactType::Code => {
                 let lang = self.language.as_deref().unwrap_or("");
                 let content = self.get_content().unwrap_or_default();
-                format!(
-                    "### {}\n\n```{lang}\n{}\n```\n",
-                    self.title,
-                    content,
-                    lang = lang
-                )
+                format!("### {}\n\n```{lang}\n{}\n```\n", self.title, content, lang = lang)
             }
             ArtifactType::Document => {
                 let content = self.get_content().unwrap_or_default();
@@ -304,9 +299,9 @@ impl ArtifactStore {
     /// Get a specific artifact by ID.
     pub fn get(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
         let artifacts = self.artifacts.lock().unwrap();
-        artifacts.get(session_id).and_then(|list| {
-            list.iter().find(|a| a.id == artifact_id).cloned()
-        })
+        artifacts
+            .get(session_id)
+            .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned())
     }
 
     /// List all artifacts across all sessions.
@@ -340,19 +335,12 @@ impl ArtifactStore {
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
         let mut artifacts = self.artifacts.lock().unwrap();
         let removed = artifacts.remove(session_id).unwrap_or_default();
-        info!(
-            "Cleared {} artifacts for session {}",
-            removed.len(),
-            session_id
-        );
+        info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
     }
 
     /// Export all artifacts for a session as a single markdown file.
-    pub fn export_session(
-        &self,
-        session_id: &str,
-    ) -> Result<PathBuf, String> {
+    pub fn export_session(&self, session_id: &str) -> Result<PathBuf, String> {
         let artifacts = self.get_for_session(session_id);
         if artifacts.is_empty() {
             return Err("No artifacts for session".to_string());
@@ -376,11 +364,7 @@ impl ArtifactStore {
     pub fn stats(&self) -> ArtifactStoreStats {
         let artifacts = self.artifacts.lock().unwrap();
         let total = artifacts.values().map(|v| v.len()).sum();
-        let total_size: usize = artifacts
-            .values()
-            .flatten()
-            .map(|a| a.size_bytes)
-            .sum();
+        let total_size: usize = artifacts.values().flatten().map(|a| a.size_bytes).sum();
         ArtifactStoreStats {
             session_count: artifacts.len(),
             artifact_count: total,

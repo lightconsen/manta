@@ -156,7 +156,10 @@ impl SessionBudget {
         if let Some(pos) = self.items.iter().position(|i| i.id == id) {
             let item = self.items.remove(pos);
             self.used_bytes -= item.size_bytes;
-            debug!("Removed item {} ({} bytes), total: {} / {}", id, item.size_bytes, self.used_bytes, self.limit_bytes);
+            debug!(
+                "Removed item {} ({} bytes), total: {} / {}",
+                id, item.size_bytes, self.used_bytes, self.limit_bytes
+            );
             true
         } else {
             false
@@ -175,15 +178,24 @@ impl SessionBudget {
     /// Select the index of the victim item to evict based on the strategy.
     fn select_victim(&self) -> Option<usize> {
         match self.eviction {
-            EvictionStrategy::OldestFirst => {
-                self.items.iter().enumerate().min_by_key(|(_, i)| i.created_at).map(|(i, _)| i)
-            }
-            EvictionStrategy::Lru => {
-                self.items.iter().enumerate().min_by_key(|(_, i)| i.last_accessed).map(|(i, _)| i)
-            }
-            EvictionStrategy::LargestFirst => {
-                self.items.iter().enumerate().max_by_key(|(_, i)| i.size_bytes).map(|(i, _)| i)
-            }
+            EvictionStrategy::OldestFirst => self
+                .items
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, i)| i.created_at)
+                .map(|(i, _)| i),
+            EvictionStrategy::Lru => self
+                .items
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, i)| i.last_accessed)
+                .map(|(i, _)| i),
+            EvictionStrategy::LargestFirst => self
+                .items
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, i)| i.size_bytes)
+                .map(|(i, _)| i),
             EvictionStrategy::Reject => None,
         }
     }
@@ -222,11 +234,14 @@ impl DiskBudgetManager {
     }
 
     /// Get or create a budget for a session.
-    pub fn get_or_create(&self, session_id: &str) -> std::sync::MutexGuard<'_, HashMap<String, SessionBudget>> {
+    pub fn get_or_create(
+        &self,
+        session_id: &str,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, SessionBudget>> {
         let mut budgets = self.budgets.lock().unwrap();
-        budgets.entry(session_id.to_string()).or_insert_with(|| {
-            SessionBudget::new(self.default_limit)
-        });
+        budgets
+            .entry(session_id.to_string())
+            .or_insert_with(|| SessionBudget::new(self.default_limit));
         budgets
     }
 
@@ -256,7 +271,10 @@ impl DiskBudgetManager {
     /// Remove a tracked item.
     pub fn remove_item(&self, session_id: &str, item_id: &str) -> bool {
         let mut budgets = self.budgets.lock().unwrap();
-        budgets.get_mut(session_id).map(|b| b.remove_item(item_id)).unwrap_or(false)
+        budgets
+            .get_mut(session_id)
+            .map(|b| b.remove_item(item_id))
+            .unwrap_or(false)
     }
 
     /// Touch an item (mark as accessed).
@@ -384,7 +402,9 @@ mod tests {
     #[test]
     fn test_manager_track() {
         let manager = DiskBudgetManager::new("/tmp/test_budget");
-        let evicted = manager.track_item("s1", "a1", BudgetCategory::Artifact, 50).unwrap();
+        let evicted = manager
+            .track_item("s1", "a1", BudgetCategory::Artifact, 50)
+            .unwrap();
         assert!(evicted.is_empty());
 
         let stats = manager.session_stats("s1").unwrap();
@@ -395,8 +415,12 @@ mod tests {
     #[test]
     fn test_manager_over_budget() {
         let manager = DiskBudgetManager::new("/tmp/test_budget2").with_default_limit(100);
-        manager.track_item("s1", "a1", BudgetCategory::Artifact, 60).unwrap();
-        manager.track_item("s1", "a2", BudgetCategory::Artifact, 60).unwrap();
+        manager
+            .track_item("s1", "a1", BudgetCategory::Artifact, 60)
+            .unwrap();
+        manager
+            .track_item("s1", "a2", BudgetCategory::Artifact, 60)
+            .unwrap();
 
         let stats = manager.session_stats("s1").unwrap();
         assert_eq!(stats.used_bytes, 60); // evicted one item

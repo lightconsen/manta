@@ -194,9 +194,9 @@ impl UserPattern {
             UserPattern::Exact(pattern) => pattern == user_id,
             UserPattern::Prefix(prefix) => user_id.starts_with(prefix),
             UserPattern::Glob(glob) => match_glob(glob, user_id),
-            UserPattern::Regex(pattern) => {
-                regex::Regex::new(pattern).map(|re| re.is_match(user_id)).unwrap_or(false)
-            }
+            UserPattern::Regex(pattern) => regex::Regex::new(pattern)
+                .map(|re| re.is_match(user_id))
+                .unwrap_or(false),
         }
     }
 

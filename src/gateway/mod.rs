@@ -581,14 +581,7 @@ impl GatewayState {
             if ch_cfg.is_blocked(user_id) {
                 let reason = format!("User {} is blocked on channel {}", user_id, channel);
                 self.audit_log
-                    .log(
-                        AuditEventType::AccessCheck,
-                        user_id,
-                        channel,
-                        false,
-                        &reason,
-                        None,
-                    )
+                    .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
             }
@@ -600,7 +593,10 @@ impl GatewayState {
                 DmPolicy::Pairing => {
                     if !self.pairing_store.is_authorized(channel, user_id).await {
                         // Create pairing request silently and drop message
-                        let _ = self.pairing_store.request_access(channel, user_id, None).await;
+                        let _ = self
+                            .pairing_store
+                            .request_access(channel, user_id, None)
+                            .await;
                         let reason = format!(
                             "User {} not authorized on channel {} (pairing required)",
                             user_id, channel
@@ -622,10 +618,8 @@ impl GatewayState {
                     if !ch_cfg.is_in_allowlist(user_id)
                         && !self.pairing_store.is_authorized(channel, user_id).await
                     {
-                        let reason = format!(
-                            "User {} not in allowlist for channel {}",
-                            user_id, channel
-                        );
+                        let reason =
+                            format!("User {} not in allowlist for channel {}", user_id, channel);
                         self.audit_log
                             .log(
                                 AuditEventType::AccessCheck,
@@ -648,14 +642,7 @@ impl GatewayState {
                     user_id, channel
                 );
                 self.audit_log
-                    .log(
-                        AuditEventType::AccessCheck,
-                        user_id,
-                        channel,
-                        false,
-                        &reason,
-                        None,
-                    )
+                    .log(AuditEventType::AccessCheck, user_id, channel, false, &reason, None)
                     .await;
                 return Err(reason);
             }
@@ -684,14 +671,7 @@ impl GatewayState {
 
         // Log successful access
         self.audit_log
-            .log(
-                AuditEventType::AccessCheck,
-                user_id,
-                channel,
-                true,
-                "Access allowed",
-                None,
-            )
+            .log(AuditEventType::AccessCheck, user_id, channel, true, "Access allowed", None)
             .await;
 
         Ok(())
@@ -2736,6 +2716,31 @@ impl Gateway {
                 _ => "unknown".to_string(),
             };
 
+            // ── Group session membership check ───────────────────────────────
+            {
+                let user_id = &routed.incoming.user_id.0;
+                let groups = state.group_session_manager.read().await;
+                if let Some(group) = groups.get_group(&session_id) {
+                    let group = group.read().await;
+                    if !group.is_member(user_id) {
+                        warn!(
+                            "User {} is not a member of group session {}, dropping message",
+                            user_id, session_id
+                        );
+                        continue;
+                    }
+                    if let Some(member) = group.get_member(user_id) {
+                        if !member.role.can_participate() {
+                            warn!(
+                                "User {} (role: {}) cannot participate in group session {}, dropping message",
+                                user_id, member.role, session_id
+                            );
+                            continue;
+                        }
+                    }
+                }
+            }
+
             match routed.queue_mode {
                 crate::inbound::QueueMode::Interrupt => {
                     // Clear any buffered messages for this session
@@ -4532,26 +4537,25 @@ async fn web_terminal_chat_handler(
 
     // Access control check
     if let Err(reason) = state
-        .check_incoming_access("web", &user_id, &body.message, &crate::channels::MentionState::DirectMessage)
+        .check_incoming_access(
+            "web",
+            &user_id,
+            &body.message,
+            &crate::channels::MentionState::DirectMessage,
+        )
         .await
     {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": reason })),
-        )
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": reason })))
             .into_response();
     }
 
     // Route through inbound pipeline
-    let incoming = crate::channels::IncomingMessage::new(
-        user_id,
-        conversation_id.clone(),
-        body.message,
-    )
-    .with_provenance(crate::channels::InputProvenance::ExternalUser {
-        channel: "web".to_string(),
-        is_direct: true,
-    });
+    let incoming =
+        crate::channels::IncomingMessage::new(user_id, conversation_id.clone(), body.message)
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: "web".to_string(),
+                is_direct: true,
+            });
     let _ = state.inbound_pipeline.process(incoming).await;
 
     let resp = WebTerminalChatResponse {
@@ -4572,17 +4576,22 @@ async fn send_message_handler(
 
     // Queue message for processing with provider override
     let message_id = uuid::Uuid::new_v4().to_string();
-    let user_id = body.user_id.clone().unwrap_or_else(|| "api_user".to_string());
+    let user_id = body
+        .user_id
+        .clone()
+        .unwrap_or_else(|| "api_user".to_string());
 
     // Access control check
     if let Err(reason) = state
-        .check_incoming_access("api", &user_id, &body.message, &crate::channels::MentionState::DirectMessage)
+        .check_incoming_access(
+            "api",
+            &user_id,
+            &body.message,
+            &crate::channels::MentionState::DirectMessage,
+        )
         .await
     {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": reason })),
-        )
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": reason })))
             .into_response();
     }
 
@@ -4620,15 +4629,11 @@ async fn send_message_handler(
     }
 
     // Otherwise, route through inbound pipeline for normal agent processing
-    let incoming = crate::channels::IncomingMessage::new(
-        user_id,
-        session_id.clone(),
-        body.message,
-    )
-    .with_provenance(crate::channels::InputProvenance::ExternalUser {
-        channel: "api".to_string(),
-        is_direct: true,
-    });
+    let incoming = crate::channels::IncomingMessage::new(user_id, session_id.clone(), body.message)
+        .with_provenance(crate::channels::InputProvenance::ExternalUser {
+            channel: "api".to_string(),
+            is_direct: true,
+        });
     let _ = state.inbound_pipeline.process(incoming).await;
 
     let resp = serde_json::json!({
@@ -8040,10 +8045,7 @@ async fn unregister_hook_handler(
 ) -> impl IntoResponse {
     let removed = state.hook_registry.unregister(&name).await;
     if removed {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({"status": "removed", "name": name})),
-        )
+        (StatusCode::OK, Json(serde_json::json!({"status": "removed", "name": name})))
             .into_response()
     } else {
         (
@@ -8220,7 +8222,10 @@ async fn list_pairing_authorized_handler(
     Query(query): Query<PairingChannelQuery>,
 ) -> impl IntoResponse {
     let authorized = if let Some(channel) = query.channel {
-        state.pairing_store.list_authorized_for_channel(&channel).await
+        state
+            .pairing_store
+            .list_authorized_for_channel(&channel)
+            .await
     } else {
         state.pairing_store.list_authorized().await
     };
@@ -8291,11 +8296,7 @@ async fn reject_pairing_handler(
     Json(req): Json<RejectPairingRequest>,
 ) -> impl IntoResponse {
     use crate::security::runtime_audit::AuditEventType;
-    match state
-        .pairing_store
-        .reject(&req.channel, &req.code)
-        .await
-    {
+    match state.pairing_store.reject(&req.channel, &req.code).await {
         Some(r) => {
             state
                 .audit_log
@@ -8349,10 +8350,7 @@ async fn revoke_pairing_handler(
     Json(req): Json<RevokePairingRequest>,
 ) -> impl IntoResponse {
     use crate::security::runtime_audit::AuditEventType;
-    let removed = state
-        .pairing_store
-        .revoke(&req.channel, &req.user_id)
-        .await;
+    let removed = state.pairing_store.revoke(&req.channel, &req.user_id).await;
     if removed {
         state
             .audit_log
@@ -8382,10 +8380,7 @@ async fn revoke_pairing_handler(
                 "admin",
                 &req.channel,
                 false,
-                format!(
-                    "Revoke failed: user {} not found in authorized list",
-                    req.user_id
-                ),
+                format!("Revoke failed: user {} not found in authorized list", req.user_id),
                 None,
             )
             .await;
@@ -8418,10 +8413,7 @@ async fn add_allowlist_handler(
             "admin",
             &req.channel,
             true,
-            format!(
-                "Added user {} to allowlist on channel {}",
-                req.user_id, req.channel
-            ),
+            format!("Added user {} to allowlist on channel {}", req.user_id, req.channel),
             Some(serde_json::json!({"user_id": req.user_id, "username": req.username})),
         )
         .await;
@@ -8586,5 +8578,5 @@ async fn list_audit_log_handler(
         "entries": entries,
         "count": entries.len(),
     }))
-        .into_response()
+    .into_response()
 }

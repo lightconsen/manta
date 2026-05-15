@@ -36,11 +36,14 @@ pub type ProgressCallback = Arc<
     dyn Fn(ProgressEvent) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 
+pub mod artifacts;
 pub mod budget;
 pub mod compaction;
 pub mod compressor;
 pub mod context;
 pub mod cost_guard;
+pub mod disk_budget;
+pub mod group;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
@@ -50,11 +53,9 @@ pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
 pub mod transcript;
-pub mod artifacts;
-pub mod disk_budget;
-pub mod group;
 pub mod turns;
 
+pub use artifacts::{Artifact, ArtifactStore, ArtifactStoreStats, ArtifactType};
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
 pub use compaction::{
     compute_context_hash, should_run_memory_flush, MemoryFlushConfig, SessionCompactionState,
@@ -65,13 +66,20 @@ pub use compaction::{
 pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use cost_guard::CostGuard;
+pub use disk_budget::{
+    BudgetCategory, DiskBudgetError, DiskBudgetManager, EvictionStrategy, GlobalBudgetStats,
+    SessionBudget, SessionBudgetStats,
+};
+pub use group::{
+    GroupManagerStats, GroupMember, GroupRole, GroupSession, GroupSessionError, GroupSessionManager,
+};
 pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
+pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
+pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use route_resolution::{
     BindingCache, BindingMode, ConversationScope, ResolvedBinding, RouteResolution, RouteResolver,
     RouteRule,
 };
-pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
-pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use session::{
     AgentInstanceStatus, MultiAgentSession, SessionAgent, SessionManager, SessionMessage,
     SessionStatus, ThreadBinding,
@@ -81,17 +89,6 @@ pub use todo::{Task, TaskStatus, TodoStore};
 pub use transcript::{
     render_transcript, Transcript, TranscriptFormat, TranscriptMessage, TranscriptStore,
     TranscriptStoreStats,
-};
-pub use artifacts::{
-    Artifact, ArtifactStore, ArtifactStoreStats, ArtifactType,
-};
-pub use disk_budget::{
-    BudgetCategory, DiskBudgetError, DiskBudgetManager, EvictionStrategy, GlobalBudgetStats,
-    SessionBudget, SessionBudgetStats,
-};
-pub use group::{
-    GroupManagerStats, GroupMember, GroupRole, GroupSession, GroupSessionError,
-    GroupSessionManager,
 };
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
@@ -914,7 +911,9 @@ impl Agent {
 
         // Reset tool tracking and add user message for this turn.
         thread.context.clear_tools_used();
-        thread.context.add_message(Message::user(&content));
+        thread
+            .context
+            .add_message(Message::user_named(&user_id, &content));
 
         // Track this turn in the turn log.
         let turn_idx = thread.push_turn(&content);
@@ -1197,7 +1196,9 @@ impl Agent {
 
         // Reset tool tracking and add user message for this turn.
         thread.context.clear_tools_used();
-        thread.context.add_message(Message::user(&content));
+        thread
+            .context
+            .add_message(Message::user_named(&user_id, &content));
 
         // Track this turn.
         let turn_idx = thread.push_turn(&content);

@@ -445,7 +445,12 @@ async fn feishu_webhook_handler(
 
                 // Access control check
                 if state
-                    .check_incoming_access("feishu", user_id, text, &crate::channels::MentionState::DirectMessage)
+                    .check_incoming_access(
+                        "feishu",
+                        user_id,
+                        text,
+                        &crate::channels::MentionState::DirectMessage,
+                    )
                     .await
                     .is_err()
                 {
@@ -568,7 +573,12 @@ async fn generic_webhook_handler(
     if !content.is_empty() {
         // Access control check
         if state
-            .check_incoming_access(&channel, &user_id, &content, &crate::channels::MentionState::DirectMessage)
+            .check_incoming_access(
+                &channel,
+                &user_id,
+                &content,
+                &crate::channels::MentionState::DirectMessage,
+            )
             .await
             .is_err()
         {

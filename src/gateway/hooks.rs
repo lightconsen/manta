@@ -244,9 +244,7 @@ macro_rules! before_hook {
             $name,
             $priority,
             $filter,
-            std::sync::Arc::new(|event| {
-                Box::pin(async move { $body(event) })
-            }),
+            std::sync::Arc::new(|event| Box::pin(async move { $body(event) })),
         )
     };
 }
@@ -265,9 +263,7 @@ mod tests {
                 "test_log",
                 0,
                 Some("MessageReceived".to_string()),
-                Arc::new(|event| {
-                    Box::pin(async move { HookResult::Continue(event) })
-                }),
+                Arc::new(|event| Box::pin(async move { HookResult::Continue(event) })),
             )
             .await;
 
