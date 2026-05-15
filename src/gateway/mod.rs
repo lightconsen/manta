@@ -1344,6 +1344,17 @@ impl Gateway {
             acp_controller: Arc::new(crate::agent::AcpController::new()),
         });
 
+        // Dynamically register OpenClaw-compatible tools that need GatewayState
+        state.tool_registry.register_dynamic(Arc::new(
+            crate::tools::AgentsListTool::new(state.agent_registry.clone()),
+        ));
+        state.tool_registry.register_dynamic(Arc::new(
+            crate::tools::GatewayTool::new(state.clone()),
+        ));
+        state.tool_registry.register_dynamic(Arc::new(
+            crate::tools::MessageTool::new(state.clone()),
+        ));
+
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
             let mut provider_sdk = state.provider_sdk.write().await;
@@ -3815,6 +3826,15 @@ async fn create_default_tool_registry(
     registry.register(Box::new(AcpSpawnTool::new(acp.clone())));
     registry.register(Box::new(AcpSessionTool::new(acp.clone())));
 
+    // Register OpenClaw-compatible session tools
+    registry.register(Box::new(SessionsListTool::new(acp.clone())));
+    registry.register(Box::new(SessionsHistoryTool::new(acp.clone())));
+    registry.register(Box::new(SessionsSendTool::new(acp.clone())));
+    registry.register(Box::new(SessionsYieldTool::new(acp.clone())));
+    registry.register(Box::new(SessionStatusTool::new(acp.clone())));
+    registry.register(Box::new(SubagentsTool::new(acp.clone())));
+    registry.register(Box::new(ApplyPatchTool::new()));
+
     // Register memory tool for persistent memory storage
     match MemoryTool::new().await {
         Ok(memory_tool) => {
@@ -3867,6 +3887,11 @@ async fn create_default_tool_registry(
     registry.mark_privileged("spawn_subagent");
     registry.mark_privileged("manage_acp_session");
     registry.mark_privileged("memory");
+    registry.mark_privileged("sessions_send");
+    registry.mark_privileged("sessions_yield");
+    registry.mark_privileged("subagents");
+    registry.mark_privileged("apply_patch");
+    registry.mark_privileged("message");
 
     Ok(registry)
 }

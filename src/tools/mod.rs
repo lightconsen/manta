@@ -430,10 +430,16 @@ pub mod sdk;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
+pub mod openclaw_tools;
 pub mod todo_tool;
 pub mod web;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
+pub use openclaw_tools::{
+    AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
+    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
+    SubagentsTool,
+};
 pub use browser::BrowserTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
