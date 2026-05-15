@@ -210,6 +210,8 @@ impl DaemonManager {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type,
                 api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
                 base_url: Some(base_url),
                 timeout: std::time::Duration::from_secs(60),
                 max_retries: 3,
@@ -226,6 +228,8 @@ impl DaemonManager {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::Anthropic,
                 api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
                 base_url: None,
                 timeout: std::time::Duration::from_secs(60),
                 max_retries: 3,
@@ -240,6 +244,8 @@ impl DaemonManager {
             let provider_config = crate::model_router::ProviderConfig {
                 provider_type: crate::model_router::ProviderType::OpenAi,
                 api_key,
+                api_keys: Vec::new(),
+                auth_profile: None,
                 base_url: None,
                 timeout: std::time::Duration::from_secs(60),
                 max_retries: 3,

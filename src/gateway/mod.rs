@@ -1705,6 +1705,9 @@ impl Gateway {
             .route("/api/v1/providers/:id/enable", post(enable_provider_handler))
             .route("/api/v1/providers/:id/disable", post(disable_provider_handler))
             .route("/api/v1/providers/:id/check", post(check_provider_handler))
+            .route("/api/v1/providers/:id/auth-profile", get(get_auth_profile_handler))
+            .route("/api/v1/providers/:id/auth-profile/rotate", post(rotate_auth_profile_handler))
+            .route("/api/v1/auth-profiles", get(list_auth_profiles_handler))
             .route("/api/v1/providers/fallback/:alias", get(get_fallback_chain_handler).post(set_fallback_chain_handler))
             // Model aliases
             .route("/api/v1/models", get(list_models_handler))
@@ -5129,6 +5132,53 @@ async fn set_fallback_chain_handler(
             (StatusCode::BAD_REQUEST, Json(response)).into_response()
         }
     }
+}
+
+// Auth Profile Handlers
+
+async fn get_auth_profile_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.get_auth_profile_status(&id).await {
+        Some(status) => (StatusCode::OK, Json(serde_json::json!(status))).into_response(),
+        None => {
+            let error = serde_json::json!({
+                "error": format!("No auth profile found for provider '{}'", id),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
+async fn rotate_auth_profile_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.rotate_auth_key(&id).await {
+        Ok(new_key) => {
+            let response = serde_json::json!({
+                "success": true,
+                "provider": id,
+                "message": format!("Auth key rotated for provider '{}'", id),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to rotate auth key: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+async fn list_auth_profiles_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let profiles = state.model_router.list_auth_profiles().await;
+    Json(serde_json::json!({
+        "profiles": profiles,
+        "count": profiles.len(),
+    }))
 }
 
 async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {

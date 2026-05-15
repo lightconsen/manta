@@ -5,6 +5,9 @@
 //! - Multi-provider routing (Anthropic, OpenAI, etc.)
 //! - Automatic fallback on failure
 //! - Health checking and load balancing
+//! - Auth profile rotation with cooldown
+
+pub mod auth_profile;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -15,6 +18,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
+
+pub use auth_profile::{AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus};
 
 /// Model alias configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,16 +41,82 @@ pub struct ModelAlias {
 pub struct ProviderConfig {
     /// Provider type
     pub provider_type: ProviderType,
-    /// API key
+    /// API key (single key, backward compatible)
+    #[serde(alias = "api_key")]
     pub api_key: String,
+    /// Multiple API keys for rotation (optional, takes precedence over api_key)
+    #[serde(default, alias = "api_keys")]
+    pub api_keys: Vec<String>,
+    /// Auth profile configuration (optional, most flexible)
+    #[serde(default, alias = "auth_profile")]
+    pub auth_profile: Option<AuthProfileConfig>,
     /// Base URL (for custom deployments)
     pub base_url: Option<String>,
     /// Request timeout
+    #[serde(default = "default_timeout")]
     pub timeout: Duration,
     /// Max retries
+    #[serde(default = "default_max_retries")]
     pub max_retries: u32,
     /// Retry delay base
+    #[serde(default = "default_retry_delay_ms")]
     pub retry_delay_ms: u64,
+}
+
+fn default_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_retry_delay_ms() -> u64 {
+    1000
+}
+
+impl ProviderConfig {
+    /// Get the effective API key to use for provider creation.
+    /// Prefers auth_profile keys, then api_keys, then single api_key.
+    pub fn effective_key(&self) -> String {
+        if let Some(ref profile) = self.auth_profile {
+            if let Some(first) = profile.keys.first() {
+                return first.key.clone();
+            }
+        }
+        if let Some(first) = self.api_keys.first() {
+            return first.clone();
+        }
+        self.api_key.clone()
+    }
+
+    /// Build an AuthProfileConfig from this config if one is not explicitly set.
+    pub fn derived_auth_profile_config(&self) -> AuthProfileConfig {
+        if let Some(ref profile) = self.auth_profile {
+            return profile.clone();
+        }
+        let mut keys = Vec::new();
+        if !self.api_key.is_empty() {
+            keys.push(auth_profile::AuthKeyConfig {
+                key: self.api_key.clone(),
+                label: "primary".to_string(),
+            });
+        }
+        for (i, key) in self.api_keys.iter().enumerate() {
+            if i == 0 && key == &self.api_key {
+                continue; // avoid duplicate
+            }
+            keys.push(auth_profile::AuthKeyConfig {
+                key: key.clone(),
+                label: format!("key-{}", i),
+            });
+        }
+        AuthProfileConfig {
+            keys,
+            cooldown_secs: 60,
+            max_failures: 3,
+        }
+    }
 }
 
 /// Supported provider types
@@ -198,6 +269,8 @@ pub struct ModelRouter {
     health: RwLock<HashMap<String, ProviderHealth>>,
     /// Active fallback chains
     fallback_chains: RwLock<HashMap<String, Vec<FallbackEntry>>>,
+    /// Auth profile manager for API key rotation
+    pub auth_profiles: AuthProfileManager,
 }
 
 impl Default for ModelRouter {
@@ -214,6 +287,7 @@ impl ModelRouter {
             providers: RwLock::new(HashMap::new()),
             health: RwLock::new(HashMap::new()),
             fallback_chains: RwLock::new(HashMap::new()),
+            auth_profiles: AuthProfileManager::new(),
         }
     }
 
@@ -223,6 +297,17 @@ impl ModelRouter {
 
         for (name, provider_config) in &config.providers {
             info!("Initializing provider: {}", name);
+
+            // Register auth profile for this provider
+            let auth_config = provider_config.derived_auth_profile_config();
+            self.auth_profiles
+                .register_from_config(name, &auth_config)
+                .await;
+            info!(
+                "Registered auth profile for '{}' with {} key(s)",
+                name,
+                auth_config.keys.len()
+            );
 
             let provider = self.create_provider(provider_config).await?;
 
@@ -275,16 +360,17 @@ impl ModelRouter {
         &self,
         config: &ProviderConfig,
     ) -> crate::Result<Arc<dyn Provider + Send + Sync>> {
+        let api_key = config.effective_key();
         match config.provider_type {
             ProviderType::Anthropic => {
                 // Create Anthropic provider (with optional custom base_url for Kimi, etc.)
                 let provider = if let Some(ref base_url) = config.base_url {
                     crate::providers::anthropic::AnthropicProvider::with_base_url(
-                        config.api_key.clone(),
+                        api_key,
                         base_url.clone(),
                     )?
                 } else {
-                    crate::providers::anthropic::AnthropicProvider::new(config.api_key.clone())?
+                    crate::providers::anthropic::AnthropicProvider::new(api_key)?
                 };
                 Ok(Arc::new(provider))
             }
@@ -294,10 +380,7 @@ impl ModelRouter {
                     .base_url
                     .clone()
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                let provider = crate::providers::OpenAiProvider::with_base_url(
-                    config.api_key.clone(),
-                    base_url,
-                )?;
+                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
                 Ok(Arc::new(provider))
             }
             _ => Err(crate::error::ConfigError::InvalidValue {
@@ -305,6 +388,50 @@ impl ModelRouter {
                 message: format!("Provider type not supported: {:?}", config.provider_type),
             }
             .into()),
+        }
+    }
+
+    /// Rebuild a provider with the current auth profile key after rotation.
+    async fn rebuild_provider_with_rotated_key(
+        &self,
+        provider_name: &str,
+    ) -> crate::Result<()> {
+        let config = {
+            let cfg = self.config.read().await;
+            cfg.providers.get(provider_name).cloned().ok_or_else(|| {
+                crate::error::ConfigError::InvalidValue {
+                    key: "provider".to_string(),
+                    message: format!("Unknown provider: {}", provider_name),
+                }
+            })?
+        };
+
+        // Rotate to next key
+        if let Some(new_key) = self.auth_profiles.rotate(provider_name).await {
+            let mut new_config = config;
+            new_config.api_key = new_key.clone();
+            new_config.api_keys = vec![new_key];
+            new_config.auth_profile = None;
+
+            // Rebuild provider with new key
+            let provider = self.create_provider(&new_config).await?;
+            let mut providers = self.providers.write().await;
+            providers.insert(provider_name.to_string(), provider);
+
+            // Update config
+            let mut router_config = self.config.write().await;
+            router_config.providers.insert(provider_name.to_string(), new_config);
+
+            info!("Rebuilt provider '{}' with rotated API key", provider_name);
+            Ok(())
+        } else {
+            Err(crate::error::MantaError::ExternalService {
+                source: format!(
+                    "No available API keys for provider '{}' after rotation",
+                    provider_name
+                ),
+                cause: None,
+            })
         }
     }
 
@@ -360,9 +487,55 @@ impl ModelRouter {
 
                 match provider.complete(request.clone()).await {
                     Ok(response) => {
-                        // Record success
+                        // Record success on both health and auth profile
                         self.record_success(&entry.provider, start.elapsed()).await;
+                        self.auth_profiles.record_success(&entry.provider).await;
                         return Ok(response);
+                    }
+                    Err(ref e) if AuthProfileManager::should_rotate(e) => {
+                        warn!(
+                            "Provider {} returned auth/rate-limit error, rotating key: {}",
+                            entry.provider, e
+                        );
+                        drop(providers);
+
+                        match self.rebuild_provider_with_rotated_key(&entry.provider).await {
+                            Ok(()) => {
+                                // Retry once with the new key
+                                let providers = self.providers.read().await;
+                                if let Some(provider) = providers.get(&entry.provider) {
+                                    match provider.complete(request.clone()).await {
+                                        Ok(response) => {
+                                            self.record_success(
+                                                &entry.provider,
+                                                start.elapsed(),
+                                            )
+                                            .await;
+                                            self.auth_profiles
+                                                .record_success(&entry.provider)
+                                                .await;
+                                            return Ok(response);
+                                        }
+                                        Err(e2) => {
+                                            error!(
+                                                "Provider {} failed after key rotation: {}",
+                                                entry.provider, e2
+                                            );
+                                            self.record_failure(&entry.provider).await;
+                                            last_error = Some(e2);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(rotate_err) => {
+                                error!(
+                                    "Key rotation failed for provider {}: {}",
+                                    entry.provider, rotate_err
+                                );
+                                self.record_failure(&entry.provider).await;
+                                last_error = Some(rotate_err);
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Provider {} failed: {}", entry.provider, e);
@@ -531,8 +704,13 @@ impl ModelRouter {
 
             if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
                 info!("Creating default Anthropic provider from environment");
-                let provider = crate::providers::anthropic::AnthropicProvider::new(api_key)?;
+                let provider = crate::providers::anthropic::AnthropicProvider::new(api_key.clone())?;
                 let provider_arc = Arc::new(provider);
+
+                // Register auth profile
+                self.auth_profiles
+                    .register_single_key("anthropic", api_key)
+                    .await;
 
                 // Store it for future use
                 let mut providers = self.providers.write().await;
@@ -662,6 +840,12 @@ impl ModelRouter {
     pub async fn add_provider(&self, name: &str, config: ProviderConfig) -> crate::Result<()> {
         info!("Adding new provider at runtime: {}", name);
 
+        // Register auth profile
+        let auth_config = config.derived_auth_profile_config();
+        self.auth_profiles
+            .register_from_config(name, &auth_config)
+            .await;
+
         // Create provider instance
         let provider = self.create_provider(&config).await?;
 
@@ -790,10 +974,51 @@ impl ModelRouter {
         };
 
         let start = std::time::Instant::now();
-        match provider.complete(request).await {
+        match provider.complete(request.clone()).await {
             Ok(response) => {
                 self.record_success(provider_name, start.elapsed()).await;
+                self.auth_profiles.record_success(provider_name).await;
                 Ok(response)
+            }
+            Err(ref e) if AuthProfileManager::should_rotate(e) => {
+                warn!(
+                    "Provider {} returned auth/rate-limit error, rotating key: {}",
+                    provider_name, e
+                );
+
+                match self.rebuild_provider_with_rotated_key(provider_name).await {
+                    Ok(()) => {
+                        let providers = self.providers.read().await;
+                        if let Some(provider) = providers.get(provider_name) {
+                            match provider.complete(request).await {
+                                Ok(response) => {
+                                    self.record_success(provider_name, start.elapsed()).await;
+                                    self.auth_profiles.record_success(provider_name).await;
+                                    Ok(response)
+                                }
+                                Err(e2) => {
+                                    error!(
+                                        "Provider {} failed after key rotation: {}",
+                                        provider_name, e2
+                                    );
+                                    self.record_failure(provider_name).await;
+                                    Err(e2)
+                                }
+                            }
+                        } else {
+                            Err(crate::error::ConfigError::InvalidValue {
+                                key: "provider".to_string(),
+                                message: format!("Provider '{}' not found after rotation", provider_name),
+                            }
+                            .into())
+                        }
+                    }
+                    Err(rotate_err) => {
+                        error!("Key rotation failed for provider {}: {}", provider_name, rotate_err);
+                        self.record_failure(provider_name).await;
+                        Err(rotate_err)
+                    }
+                }
             }
             Err(e) => {
                 self.record_failure(provider_name).await;
@@ -852,6 +1077,56 @@ impl ModelRouter {
             .insert(alias_name.to_string(), provider_chain);
 
         Ok(())
+    }
+
+    // ==================== AUTH PROFILE MANAGEMENT ====================
+
+    /// Get auth profile status for a provider
+    pub async fn get_auth_profile_status(
+        &self,
+        provider_name: &str,
+    ) -> Option<ProfileStatus> {
+        self.auth_profiles.get_status(provider_name).await
+    }
+
+    /// Get auth profile status for all providers
+    pub async fn list_auth_profiles(&self,
+    ) -> Vec<ProfileStatus> {
+        self.auth_profiles.all_statuses().await
+    }
+
+    /// Manually rotate the auth key for a provider
+    pub async fn rotate_auth_key(
+        &self,
+        provider_name: &str,
+    ) -> crate::Result<String> {
+        // Check provider exists
+        let providers = self.providers.read().await;
+        if !providers.contains_key(provider_name) {
+            return Err(crate::error::ConfigError::InvalidValue {
+                key: "provider".to_string(),
+                message: format!("Unknown provider: {}", provider_name),
+            }
+            .into());
+        }
+        drop(providers);
+
+        // Rotate key
+        match self.auth_profiles.rotate(provider_name).await {
+            Some(new_key) => {
+                // Rebuild provider with new key
+                self.rebuild_provider_with_rotated_key(provider_name).await?;
+                info!("Manually rotated auth key for provider '{}'", provider_name);
+                Ok(new_key)
+            }
+            None => Err(crate::error::MantaError::ExternalService {
+                source: format!(
+                    "No available API keys for provider '{}' after rotation",
+                    provider_name
+                ),
+                cause: None,
+            }),
+        }
     }
 }
 
