@@ -1,0 +1,24 @@
+# Cargo configuration for Manta
+# Provides test-layer aliases matching OpenClaw's 6-layer architecture.
+
+[alias]
+# Unit tests — fast, parallel, no external services
+unit-test = "test --lib"
+
+# Integration tests — test module interactions, still isolated
+integration-test = "test --test integration_tests --test agent_session_flow --test memory_contracts --test provider_contracts --test channel_contracts --test tool_contracts"
+
+# Contract tests — serialization/API contract verification (fast, parallel)
+contract-test = "test --test provider_contracts --test memory_contracts --test channel_contracts --test tool_contracts"
+
+# Provider live tests — wiremock-based API simulation, serial execution
+provider-test = "test --test provider_live"
+
+# End-to-end tests — full system tests (when available)
+e2e-test = "test --test e2e"
+
+# Run all tests (unit + integration + contract)
+test-all = "test"
+
+# Coverage run using tarpaulin
+coverage = "tarpaulin --config .tarpaulin.toml"
