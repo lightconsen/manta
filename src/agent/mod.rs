@@ -44,10 +44,15 @@ pub mod cost_guard;
 pub mod personality;
 pub mod planner;
 pub mod prompt_builder;
+pub mod route_resolution;
 pub mod session;
 pub mod session_store;
 pub mod subagent_registry;
 pub mod todo;
+pub mod transcript;
+pub mod artifacts;
+pub mod disk_budget;
+pub mod group;
 pub mod turns;
 
 pub use budget::{BudgetConfig, BudgetExhaustionAction, IterationBudget};
@@ -61,6 +66,10 @@ pub use compressor::{CompressionStats, CompressionStrategy, ContextCompressor};
 pub use context::Context;
 pub use cost_guard::CostGuard;
 pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
+pub use route_resolution::{
+    BindingCache, BindingMode, ConversationScope, ResolvedBinding, RouteResolution, RouteResolver,
+    RouteRule,
+};
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use session::{
@@ -69,6 +78,21 @@ pub use session::{
 };
 pub use subagent_registry::{SubagentMetrics, SubagentRegistry, SubagentRun, SubagentStatus};
 pub use todo::{Task, TaskStatus, TodoStore};
+pub use transcript::{
+    render_transcript, Transcript, TranscriptFormat, TranscriptMessage, TranscriptStore,
+    TranscriptStoreStats,
+};
+pub use artifacts::{
+    Artifact, ArtifactStore, ArtifactStoreStats, ArtifactType,
+};
+pub use disk_budget::{
+    BudgetCategory, DiskBudgetError, DiskBudgetManager, EvictionStrategy, GlobalBudgetStats,
+    SessionBudget, SessionBudgetStats,
+};
+pub use group::{
+    GroupManagerStats, GroupMember, GroupRole, GroupSession, GroupSessionError,
+    GroupSessionManager,
+};
 pub use turns::{Thread, ThreadManager, Turn, TurnState};
 
 use self::session_store::SessionStore;

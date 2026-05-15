@@ -96,6 +96,26 @@ pub fn extensions_dir() -> PathBuf {
     manta_dir().join("extensions")
 }
 
+/// Get the transcripts directory (~/.manta/transcripts)
+pub fn transcripts_dir() -> PathBuf {
+    manta_dir().join("transcripts")
+}
+
+/// Get the artifacts directory (~/.manta/artifacts)
+pub fn artifacts_dir() -> PathBuf {
+    manta_dir().join("artifacts")
+}
+
+/// Get the disk budget tracking directory (~/.manta/budget)
+pub fn budget_dir() -> PathBuf {
+    manta_dir().join("budget")
+}
+
+/// Get the group sessions directory (~/.manta/groups)
+pub fn groups_dir() -> PathBuf {
+    manta_dir().join("groups")
+}
+
 /// Get the PID file path (~/.manta/daemon.pid)
 pub fn pid_file() -> PathBuf {
     manta_dir().join("daemon.pid")
@@ -145,6 +165,10 @@ pub async fn init() -> crate::Result<PathBuf> {
         &cron_dir(),
         &workspace_data_dir(),
         &todos_dir(),
+        &transcripts_dir(),
+        &artifacts_dir(),
+        &budget_dir(),
+        &groups_dir(),
     ];
 
     for dir in &dirs {
@@ -179,6 +203,10 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         &cron_dir(),
         &workspace_data_dir(),
         &todos_dir(),
+        &transcripts_dir(),
+        &artifacts_dir(),
+        &budget_dir(),
+        &groups_dir(),
     ];
 
     for dir in &dirs {

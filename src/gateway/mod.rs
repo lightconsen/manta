@@ -545,6 +545,16 @@ pub struct GatewayState {
     /// Session message buffer for FollowUp / Collect queue modes.
     /// session_id -> buffered messages (content + metadata)
     pub session_message_buffer: Arc<RwLock<HashMap<String, Vec<BufferedMessage>>>>,
+    /// OpenClaw-aligned route resolver with multi-dimensional matching.
+    pub route_resolver: Arc<crate::agent::RouteResolver>,
+    /// File-based transcript store for session export.
+    pub transcript_store: Arc<crate::agent::TranscriptStore>,
+    /// Artifact store for session-bound code snippets, documents, links.
+    pub artifact_store: Arc<crate::agent::ArtifactStore>,
+    /// Disk budget manager for per-session storage quota enforcement.
+    pub disk_budget: Arc<crate::agent::DiskBudgetManager>,
+    /// Group session manager for multi-member sessions with role awareness.
+    pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
 }
 
 impl GatewayState {
@@ -1191,6 +1201,23 @@ impl Gateway {
             provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
             tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
             session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
+            transcript_store: {
+                let store = crate::agent::TranscriptStore::new(crate::dirs::transcripts_dir());
+                let _ = store.init();
+                Arc::new(store)
+            },
+            artifact_store: {
+                let store = crate::agent::ArtifactStore::new(crate::dirs::artifacts_dir());
+                let _ = store.init();
+                Arc::new(store)
+            },
+            disk_budget: {
+                let manager = crate::agent::DiskBudgetManager::new(crate::dirs::budget_dir());
+                let _ = manager.init();
+                Arc::new(manager)
+            },
+            group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
         });
 
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
