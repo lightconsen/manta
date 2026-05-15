@@ -226,7 +226,7 @@ const bindingCache = new Map<string, ResolvedBinding>()
 | **Fallback Chains** | ✅ Dynamic at runtime | ✅ Configured |
 | **Per-Request Override** | ✅ Provider + model alias | ✅ Model overrides |
 | **Runtime API** | ✅ Full REST API | CLI commands |
-| **Auth Profiles** | ❌ Not implemented | ✅ auth-profiles/ with rotation |
+| **Auth Profiles** | ✅ Multi-key rotation with cooldown/failover | ✅ auth-profiles/ with rotation |
 | **Provider Types** | Anthropic, OpenAI, Azure, Ollama | GitHub Copilot, Google, Anthropic, OpenAI |
 
 ### Manta ModelRouter
@@ -410,11 +410,11 @@ commandGating: CommandGatingConfig
 | **DM Pairing** | ❌ Not implemented | ✅ Full pairing system |
 | **Allowlist Matching** | Basic | Pattern matching with normalization |
 | **Webhook Verification** | ✅ HMAC-SHA256 | ✅ Signature verification |
-| **Audit Logging** | ❌ Not implemented | ✅ Comprehensive audit.ts |
+| **Audit Logging** | ✅ Persistent audit log (SQLite + in-memory) | ✅ Comprehensive audit.ts |
 | **Tool Auditing** | Basic | audit-tool-policy.ts |
-| **CSP Headers** | ❌ Not implemented | ✅ control-ui-csp.ts |
-| **Sandboxing** | ❌ Not implemented | ✅ Sandbox modes for tools |
-| **Rate Limiting** | Basic middleware | Sophisticated per-channel |
+| **CSP Headers** | ✅ Route-aware CSP with nonces | ✅ control-ui-csp.ts |
+| **Sandboxing** | ✅ `SandboxedTool` with path/network/timeout controls | ✅ Sandbox modes for tools |
+| **Rate Limiting** | ✅ Multi-tier sliding window + legacy token bucket | Sophisticated per-channel |
 
 ---
 
@@ -559,11 +559,11 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Rate Limiting** | Sophisticated `auth-rate-limit.ts` | Basic configurable |
 | **Middleware** | Express middleware stack | Tower middleware chain |
 | **Control UI** | Full web control interface | Web Terminal (HTML/JS) |
-| **Config Hot Reload** | ✅ `config-reload.ts` | ❌ Restart required |
+| **Config Hot Reload** | ✅ `config-reload.ts` | ✅ `HotReloadManager` with type-safe handlers |
 | **Boot Sequence** | Multi-stage with health checks | Single-thread async init |
-| **CSP Security Headers** | ✅ `control-ui-csp.ts` | ❌ |
+| **CSP Security Headers** | ✅ `control-ui-csp.ts` | ✅ Route-aware CSP with nonces |
 
-**Gap**: Manta lacks hot reload and full web control interface.
+**Gap**: Manta lacks full web control interface.
 
 ---
 
@@ -644,12 +644,12 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Subagent Tools** | ✅ Session spawning | ❌ |
 | **Plugin Tools** | ✅ Plugin SDK | ❌ |
 | **Security Audit** | `audit-tool-policy.ts` | Basic validation |
-| **Sandbox** | ✅ Sandbox modes | ❌ |
+| **Sandbox** | ✅ Sandbox modes | ✅ `SandboxedTool` with path/network/timeout controls |
 | **Tool SDK** | Dynamic tool pack | ✅ `ToolSdk` + `sync_from_tool_registry()` |
 | **Hooks** | Event hooks | ✅ `ToolHooks` |
 | **Approval Queue** | Human-in-the-loop | ✅ `ApprovalQueue` |
 
-**Gap**: Manta lacks subagent tools, plugin tools, sandbox mode.
+**Gap**: Manta lacks subagent tools, plugin tools.
 
 ---
 
@@ -753,14 +753,14 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **DM Pairing** | ✅ Full pairing system | ❌ |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 | **Webhook Verification** | ✅ Signature verification | ✅ HMAC-SHA256 |
-| **Audit Logging** | `audit.ts` comprehensive | ❌ |
+| **Audit Logging** | `audit.ts` comprehensive | ✅ Persistent audit log (SQLite + in-memory) |
 | **Tool Auditing** | `audit-tool-policy.ts` | Basic |
-| **CSP** | ✅ | ❌ |
-| **Rate Limiting** | Sophisticated per-channel | Basic middleware |
-| **Sandbox** | ✅ Sandbox modes | ❌ |
+| **CSP** | ✅ | ✅ Route-aware CSP with nonces |
+| **Rate Limiting** | Sophisticated per-channel | ✅ Multi-tier sliding window + legacy token bucket |
+| **Sandbox** | ✅ Sandbox modes | ✅ `SandboxedTool` with path/network/timeout controls |
 | **Sliding Window** | Basic | ✅ `SlidingWindow` rate limiter |
 
-**Gap**: Manta lacks pairing system, audit logging, sandbox, CSP.
+**Gap**: Manta lacks pairing system.
 
 ---
 
