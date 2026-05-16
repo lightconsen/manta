@@ -13,7 +13,7 @@ use tempfile::tempdir;
 
 // ── Dummy pipeline implementations (required by GatewayState but unused here) ──
 
-struct DummyInboundPipeline;
+pub struct DummyInboundPipeline;
 
 #[async_trait::async_trait]
 impl crate::inbound::InboundPipeline for DummyInboundPipeline {
@@ -29,7 +29,7 @@ impl crate::inbound::InboundPipeline for DummyInboundPipeline {
     }
 }
 
-struct DummyOutboundPipeline;
+pub struct DummyOutboundPipeline;
 
 #[async_trait::async_trait]
 impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
@@ -50,7 +50,7 @@ impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
 
 // ── Test helper: construct a minimal GatewayState ──────────────────────────────
 
-async fn make_test_state(config: GatewayConfig) -> GatewayState {
+pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);
     let (message_queue_tx, _message_queue_rx) = mpsc::channel(1);
     let (routed_tx, _routed_rx) = mpsc::channel(1);
@@ -502,4 +502,74 @@ async fn open_policy_allows_any_user() {
         .await;
 
     assert!(result.is_ok(), "open policy should allow any user");
+}
+
+// ── HTTP Handler Integration Tests ───────────────────────────────────────────
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::routing::get;
+use axum::Router;
+use std::sync::Arc;
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn live_handler_returns_200() {
+    let app = Router::new().route("/live", get(super::live_handler));
+
+    let req = Request::builder().uri("/live").body(Body::empty()).unwrap();
+    let response = app.oneshot(req).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["alive"], true);
+    assert!(json["timestamp"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn status_handler_returns_summary() {
+    let config = GatewayConfig::default();
+    let state = Arc::new(make_test_state(config).await);
+    let app = Router::new()
+        .route("/status", get(super::status_handler))
+        .with_state(state);
+
+    let req = Request::builder().uri("/status").body(Body::empty()).unwrap();
+    let response = app.oneshot(req).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["agents"]["total"].is_number());
+    assert!(json["channels"].is_number());
+    assert!(json["version"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn health_handler_degraded_without_agents() {
+    let config = GatewayConfig::default();
+    let state = Arc::new(make_test_state(config).await);
+    let app = Router::new()
+        .route("/health", get(super::health_handler))
+        .with_state(state);
+
+    let req = Request::builder().uri("/health").body(Body::empty()).unwrap();
+    let response = app.oneshot(req).await.unwrap();
+
+    // Without a default agent or healthy providers, health is degraded (503)
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "degraded");
+    assert_eq!(json["overall_healthy"], false);
 }

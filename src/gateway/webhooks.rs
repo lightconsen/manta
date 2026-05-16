@@ -728,4 +728,180 @@ mod tests {
         // Verify wrong signature fails
         assert!(!verify_feishu_signature(secret, timestamp, nonce, body, "invalid_sig"));
     }
+
+    // ── Handler-level integration tests ──────────────────────────────────────
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn make_webhook_state() -> GatewayState {
+        let mut config = crate::gateway::GatewayConfig::default();
+
+        let mut whatsapp = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
+        whatsapp.credentials.insert("verify_token".to_string(), "secret123".to_string());
+        config.channels.insert("whatsapp".to_string(), whatsapp);
+
+        let mut telegram = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Telegram);
+        telegram.credentials.insert("webhook_token".to_string(), "mytoken".to_string());
+        config.channels.insert("telegram".to_string(), telegram);
+
+        let mut feishu = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Feishu);
+        feishu.credentials.insert("webhook_secret".to_string(), "feishu_secret".to_string());
+        config.channels.insert("feishu".to_string(), feishu);
+
+        let mut disabled = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
+        disabled.enabled = false;
+        config.channels.insert("disabled".to_string(), disabled);
+
+        crate::gateway::state_tests::make_test_state(config).await
+    }
+
+    #[tokio::test]
+    async fn whatsapp_verify_success() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let req = Request::builder()
+            .uri("/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=secret123&hub_challenge=123456")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, "123456");
+    }
+
+    #[tokio::test]
+    async fn whatsapp_verify_wrong_token() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let req = Request::builder()
+            .uri("/webhooks/whatsapp/verify?hub_mode=subscribe&hub_verify_token=wrong&hub_challenge=123")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn whatsapp_verify_missing_params() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let req = Request::builder()
+            .uri("/webhooks/whatsapp/verify")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn telegram_webhook_valid_token() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "from": { "id": 123, "first_name": "Test" },
+                "chat": { "id": 456, "type": "private" },
+                "date": 1700000000,
+                "text": "Hello"
+            }
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/telegram/mytoken")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn telegram_webhook_invalid_token() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({"update_id": 1});
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/telegram/badtoken")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn feishu_webhook_challenge() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({"challenge": "abc123"});
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/feishu")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["challenge"], "abc123");
+    }
+
+    #[tokio::test]
+    async fn generic_webhook_channel_not_found() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({"user_id": "u1", "message": "hi"});
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/unknown")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn generic_webhook_channel_disabled() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({"user_id": "u1", "message": "hi"});
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/disabled")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
 }
