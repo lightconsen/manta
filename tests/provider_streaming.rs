@@ -21,11 +21,9 @@ async fn openai_provider_streams_text_chunks() {
     let mock_server = MockServer::start().await;
 
     // SSE format: each event is "data: {...}\n\n"
-    // Note: OpenAiStream parser has a known issue with multi-event buffers
-    // where trailing events after the first return may be lost. We test a
-    // single complete response here and verify the done signal separately.
     let sse_body = concat!(
-        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello world\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
         "data: [DONE]\n\n",
     );
@@ -57,19 +55,16 @@ async fn openai_provider_streams_text_chunks() {
         chunks.push(chunk);
     }
 
-    // Verify content was received
-    // Note: The OpenAiStream parser has a known buffering issue where only
-    // the first SSE event in a single chunk is reliably parsed. The done
-    // signal is covered by the anthropic tests and error propagation tests.
+    // Concatenate all text content
     let full_text: String = chunks
         .iter()
         .filter_map(|c| c.content.as_deref())
         .collect();
 
+    assert_eq!(full_text, "Hello world", "streamed text should concatenate");
     assert!(
-        full_text.contains("Hello world"),
-        "streamed text should contain content, got: {:?}",
-        full_text
+        chunks.iter().any(|c| c.is_done),
+        "should receive done chunk"
     );
 }
 

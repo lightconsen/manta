@@ -183,6 +183,9 @@ insta = { version = "1.39", features = ["yaml", "json"] }
 # Benchmark framework
 criterion = { version = "0.5", features = ["html_reports"] }
 
+# Browser automation for E2E tests
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+
 [[bench]]
 name = "message_routing"
 harness = false

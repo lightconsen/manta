@@ -567,29 +567,32 @@ impl Stream for OpenAiStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
+            // First, try to process any complete lines already in the buffer.
+            // This prevents data loss when multiple SSE events arrive in a
+            // single chunk and we returned early after processing the first one.
+            while let Some(pos) = self.buffer.find('\n') {
+                let line = self.buffer[..pos].to_string();
+                self.buffer = self.buffer[pos + 1..].to_string();
+                if let Some(chunk) = self.parse_sse_line(&line) {
+                    return Poll::Ready(Some(chunk));
+                }
+            }
+
+            // No complete lines in buffer — poll for more data.
             match self.inner.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    // Convert bytes to string and add to buffer
                     if let Ok(chunk) = std::str::from_utf8(&bytes) {
                         self.buffer.push_str(chunk);
-
-                        // Process complete lines from buffer
-                        while let Some(pos) = self.buffer.find('\n') {
-                            let line = self.buffer[..pos].to_string();
-                            self.buffer = self.buffer[pos + 1..].to_string();
-
-                            if let Some(chunk) = self.parse_sse_line(&line) {
-                                return Poll::Ready(Some(chunk));
-                            }
-                        }
                     }
+                    // Continue loop to process the newly appended data.
                 }
                 Poll::Ready(Some(Err(e))) => {
                     warn!("Stream error: {}", e);
                     return Poll::Ready(None);
                 }
                 Poll::Ready(None) => {
-                    // Process any remaining data in buffer
+                    // Inner stream is done. Process any remaining text
+                    // that does not end with a newline.
                     if !self.buffer.is_empty() {
                         let line = self.buffer.clone();
                         self.buffer.clear();

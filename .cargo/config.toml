@@ -21,7 +21,10 @@ streaming-test = "test --test provider_streaming"
 snapshot-test = "test --test snapshot_contracts"
 
 # End-to-end tests — full HTTP roundtrip with Agent + Engine
-e2e-test = "test --test e2e_server_flow"
+e2e-test = "test --test e2e_server_flow --test e2e_browser"
+
+# Browser E2E smoke tests — headless Chrome verification
+browser-test = "test --test e2e_browser"
 
 # Run all tests (unit + integration + contract + e2e)
 test-all = "test"

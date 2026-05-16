@@ -116,7 +116,7 @@ fn default_model_provider() -> String {
 }
 
 /// Embedding provider type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingProviderType {
     /// OpenAI API (requires API key)
@@ -955,7 +955,7 @@ pub struct RepairRecord {
 }
 
 impl RepairRecord {
-    fn new(target: impl Into<String>) -> Self {
+    pub fn new(target: impl Into<String>) -> Self {
         Self {
             target: target.into(),
             restart_count: 0,
@@ -9276,3 +9276,6 @@ async fn list_audit_log_handler(
     }))
     .into_response()
 }
+
+#[cfg(test)]
+mod state_tests;

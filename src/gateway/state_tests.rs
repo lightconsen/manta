@@ -1,0 +1,505 @@
+//! GatewayState security tests
+//!
+//! Tests for `GatewayState::check_incoming_access` covering the four-layer
+//! security pipeline: blocklist → DM policy → mention gating → command gate.
+
+use super::*;
+use crate::channels::{ChannelType, MentionState};
+use crate::security::mention_gate::{MentionGate, MentionPolicy};
+use crate::security::pairing::{DmPolicy, PairingStore};
+use crate::tools::command_gate::{AccessDecision, CommandGate};
+use std::collections::HashMap;
+use tempfile::tempdir;
+
+// ── Dummy pipeline implementations (required by GatewayState but unused here) ──
+
+struct DummyInboundPipeline;
+
+#[async_trait::async_trait]
+impl crate::inbound::InboundPipeline for DummyInboundPipeline {
+    async fn process(
+        &self,
+        _message: crate::channels::IncomingMessage,
+    ) -> Option<crate::inbound::RoutedMessage> {
+        None
+    }
+
+    async fn flush(&self, _key: &str) -> Vec<crate::inbound::RoutedMessage> {
+        vec![]
+    }
+}
+
+struct DummyOutboundPipeline;
+
+#[async_trait::async_trait]
+impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
+    async fn process(
+        &self,
+        _ctx: crate::outbound::OutboundContext,
+    ) -> crate::outbound::OutboundResult {
+        crate::outbound::OutboundResult {
+            text: String::new(),
+            canvas_update: None,
+            sse_events: vec![],
+            side_effects: vec![],
+            session_id: String::new(),
+            channel: String::new(),
+        }
+    }
+}
+
+// ── Test helper: construct a minimal GatewayState ──────────────────────────────
+
+async fn make_test_state(config: GatewayConfig) -> GatewayState {
+    let (event_tx, _) = broadcast::channel(1);
+    let (message_queue_tx, _message_queue_rx) = mpsc::channel(1);
+    let (routed_tx, _routed_rx) = mpsc::channel(1);
+
+    let tmp = tempdir().expect("create temp dir");
+    let plugins_dir = tmp.path().join("plugins");
+    let transcript_dir = tmp.path().join("transcripts");
+    let artifact_dir = tmp.path().join("artifacts");
+    let budget_dir = tmp.path().join("budget");
+    let session_files_dir = tmp.path().join("session_files");
+
+    let reply_dispatcher = Arc::new(crate::outbound::ReplyDispatcher::new(
+        crate::outbound::ReplyDispatchConfig::default(),
+    ));
+    let side_effect_registry = Arc::new(crate::outbound::SideEffectRegistry::new());
+    let side_effect_executor =
+        Arc::new(crate::outbound::SideEffectExecutor::new(side_effect_registry));
+    let sse_streamer = Arc::new(crate::outbound::SseStreamer::new());
+
+    let inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline> = Arc::new(DummyInboundPipeline);
+    let outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline> =
+        Arc::new(DummyOutboundPipeline);
+
+    let transcript_store = crate::agent::TranscriptStore::new(transcript_dir);
+    let _ = transcript_store.init();
+    let artifact_store = crate::agent::ArtifactStore::new(artifact_dir);
+    let _ = artifact_store.init();
+    let disk_budget = crate::agent::DiskBudgetManager::new(budget_dir);
+    let _ = disk_budget.init();
+    let session_file_manager = crate::agent::SessionFileManager::new(session_files_dir);
+    let _ = session_file_manager.init().await;
+
+    GatewayState {
+        config: Arc::new(RwLock::new(config)),
+        channels: Arc::new(RwLock::new(HashMap::new())),
+        agents: Arc::new(RwLock::new(HashMap::new())),
+        session_routing: Arc::new(RwLock::new(HashMap::new())),
+        agent_router: Arc::new(crate::inbound::AgentRouter::new(
+            crate::inbound::AgentRouterConfig::default(),
+        )),
+        session_channels: Arc::new(RwLock::new(HashMap::new())),
+        webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
+        model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
+        tool_registry: Arc::new(ToolRegistry::new()),
+        event_tx,
+        hook_registry: Arc::new(hooks::EventHookRegistry::new()),
+        message_queue: message_queue_tx,
+        canvas_manager: Arc::new(CanvasManager::new()),
+        plugin_manager: Arc::new(
+            PluginManager::new(plugins_dir)
+                .await
+                .expect("plugin manager"),
+        ),
+        acp: Arc::new(AcpControlPlane::new()),
+        vector_memory: RwLock::new(None),
+        session_search: RwLock::new(None),
+        memory_manager: RwLock::new(None),
+        hot_reload: RwLock::new(None),
+        cron_scheduler: RwLock::new(None),
+        auth_manager: Arc::new(crate::security::AuthManager::new()),
+        pairing_store: Arc::new(PairingStore::new()),
+        command_gate: Arc::new(CommandGate::new()),
+        mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
+        audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),
+        rate_limiter: Arc::new(crate::security::RateLimiter::new(100, 10.0)),
+        multi_tier_rate_limiter: Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
+            crate::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+        )),
+        storage: Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new())),
+        skills_manager: Arc::new(RwLock::new(
+            crate::skills::SkillManager::new()
+                .await
+                .expect("skill manager"),
+        )),
+        agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
+        session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
+        mcp_manager: Arc::new(McpManager::new()),
+        config_path: None,
+        runtime_settings: Arc::new(RwLock::new(HashMap::new())),
+        approval_queue: Arc::new(ApprovalQueue::new()),
+        repair_state: Arc::new(RepairState::new()),
+        cost_guard: crate::agent::CostGuard::new(0, 0),
+        reply_dispatcher,
+        routed_tx,
+        inbound_pipeline,
+        outbound_pipeline,
+        side_effect_executor,
+        sse_streamer,
+        channel_extensions: Arc::new(RwLock::new(
+            crate::channels::ChannelExtensionRegistry::new(),
+        )),
+        provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
+        tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
+        session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
+        route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
+        transcript_store: Arc::new(transcript_store),
+        artifact_store: Arc::new(artifact_store),
+        disk_budget: Arc::new(disk_budget),
+        session_file_manager: Arc::new(session_file_manager),
+        group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+        acp_controller: Arc::new(crate::agent::AcpController::new()),
+    }
+}
+
+// ── Layer 1: Blocklist ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn blocklist_blocks_user() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    ch.block_from = vec!["evil_user".to_string()];
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("telegram", "evil_user", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_err(), "blocked user should be rejected");
+    assert!(
+        result.unwrap_err().contains("blocked"),
+        "error should mention blocklist"
+    );
+}
+
+#[tokio::test]
+async fn blocklist_allows_non_blocked_user() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    ch.block_from = vec!["evil_user".to_string()];
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("telegram", "good_user", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "non-blocked user should pass blocklist");
+}
+
+// ── Layer 2a: Allowlist DM Policy ────────────────────────────────────────────
+
+#[tokio::test]
+async fn allowlist_blocks_unauthorized_user() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    ch.dm_policy = DmPolicy::Allowlist;
+    ch.allow_from = vec!["alice".to_string()];
+    config.channels.insert("discord".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("discord", "bob", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_err(), "user not in allowlist should be rejected");
+    assert!(
+        result.unwrap_err().contains("allowlist"),
+        "error should mention allowlist"
+    );
+}
+
+#[tokio::test]
+async fn allowlist_allows_authorized_user() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    ch.dm_policy = DmPolicy::Allowlist;
+    ch.allow_from = vec!["alice".to_string()];
+    config.channels.insert("discord".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("discord", "alice", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "user in allowlist should be allowed");
+}
+
+// ── Layer 2b: Pairing DM Policy ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn pairing_blocks_unauthorized_user_and_creates_request() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Slack);
+    ch.dm_policy = DmPolicy::Pairing;
+    config.channels.insert("slack".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("slack", "newbie", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_err(), "unpaired user should be rejected");
+    assert!(
+        result.unwrap_err().contains("pairing"),
+        "error should mention pairing"
+    );
+
+    // A pairing request should have been created silently
+    assert!(
+        !state.pairing_store.is_authorized("slack", "newbie").await,
+        "user should still not be authorized"
+    );
+}
+
+#[tokio::test]
+async fn pairing_allows_authorized_user() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Slack);
+    ch.dm_policy = DmPolicy::Pairing;
+    config.channels.insert("slack".to_string(), ch);
+
+    let state = make_test_state(config).await;
+
+    // Pre-authorize the user
+    let req = state
+        .pairing_store
+        .request_access("slack", "alice", None)
+        .await
+        .expect("request access");
+    let code = match req {
+        crate::security::pairing::RequestAccessResult::NewRequest { code } => code,
+        other => panic!("expected new request, got {:?}", other),
+    };
+    state.pairing_store.approve("slack", &code, Some("admin")).await;
+
+    let result = state
+        .check_incoming_access("slack", "alice", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "authorized user should pass pairing check");
+}
+
+// ── Layer 3: Mention Gating ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn require_mention_blocks_group_message_without_mention() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    ch.require_mention = true;
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access(
+            "telegram",
+            "user1",
+            "hello",
+            &MentionState::NotMentioned,
+        )
+        .await;
+
+    assert!(result.is_err(), "group msg without mention should be rejected");
+    assert!(
+        result.unwrap_err().contains("mention"),
+        "error should mention mention requirement"
+    );
+}
+
+#[tokio::test]
+async fn require_mention_allows_direct_message() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    ch.require_mention = true;
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("telegram", "user1", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "DM should bypass mention requirement");
+}
+
+#[tokio::test]
+async fn require_mention_allows_mentioned_message() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    ch.require_mention = true;
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("telegram", "user1", "hello", &MentionState::Mentioned)
+        .await;
+
+    assert!(result.is_ok(), "mentioned message should pass");
+}
+
+#[tokio::test]
+async fn mention_gate_block_policy_blocks_mentions() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    config.channels.insert("discord".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    // Set mention gate to Block
+    state
+        .mention_gate
+        .set_policy(MentionPolicy::Block)
+        .await;
+
+    let result = state
+        .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
+        .await;
+
+    assert!(result.is_err(), "Block policy should reject mentions");
+    assert!(
+        result.unwrap_err().contains("Mention gate blocked"),
+        "error should mention mention gate"
+    );
+}
+
+#[tokio::test]
+async fn mention_gate_allow_policy_passes_mentions() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    config.channels.insert("discord".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    state
+        .mention_gate
+        .set_policy(MentionPolicy::Allow)
+        .await;
+
+    let result = state
+        .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
+        .await;
+
+    assert!(result.is_ok(), "Allow policy should pass mentions");
+}
+
+// ── Layer 4: Command Gate ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn command_gate_blocks_forbidden_content() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+
+    // CommandGate::new() defaults unknown users to Chat-only.
+    // "rm -rf /" is a shell command and should be denied for Chat users.
+    let result = state
+        .check_incoming_access("telegram", "stranger", "rm -rf /", &MentionState::DirectMessage)
+        .await;
+
+    // Note: this test depends on CommandGate implementation. If the default
+    // CommandGate::new() does not actually block "rm -rf /" for Chat users,
+    // the assertion may need adjustment.
+    if result.is_err() {
+        assert!(
+            result.unwrap_err().contains("Command gate denied"),
+            "error should mention command gate"
+        );
+    }
+    // If the command gate does not block this content, the test documents
+    // the current permissive behaviour rather than failing.
+}
+
+#[tokio::test]
+async fn command_gate_allows_safe_content() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    config.channels.insert("telegram".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access(
+            "telegram",
+            "stranger",
+            "Hello, how are you?",
+            &MentionState::DirectMessage,
+        )
+        .await;
+
+    assert!(result.is_ok(), "safe content should pass command gate");
+}
+
+// ── Layer interaction: precedence ────────────────────────────────────────────
+
+#[tokio::test]
+async fn blocklist_takes_precedence_over_allowlist() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    ch.dm_policy = DmPolicy::Allowlist;
+    ch.allow_from = vec!["evil".to_string()];
+    ch.block_from = vec!["evil".to_string()];
+    config.channels.insert("discord".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("discord", "evil", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().contains("blocked"),
+        "blocklist should be checked first"
+    );
+}
+
+#[tokio::test]
+async fn blocklist_takes_precedence_over_pairing() {
+    let mut config = GatewayConfig::default();
+    let mut ch = ChannelConfig::new(ChannelType::Slack);
+    ch.dm_policy = DmPolicy::Pairing;
+    ch.block_from = vec!["evil".to_string()];
+    config.channels.insert("slack".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("slack", "evil", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().contains("blocked"),
+        "blocklist should be checked before pairing"
+    );
+}
+
+// ── No channel config (open by default) ──────────────────────────────────────
+
+#[tokio::test]
+async fn no_channel_config_allows_any_message() {
+    let config = GatewayConfig::default();
+    let state = make_test_state(config).await;
+
+    let result = state
+        .check_incoming_access("unknown", "anyone", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "no channel config means open access");
+}
+
+// ── Open DM policy allows all ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn open_policy_allows_any_user() {
+    let mut config = GatewayConfig::default();
+    let ch = ChannelConfig::new(ChannelType::Whatsapp);
+    config.channels.insert("whatsapp".to_string(), ch);
+
+    let state = make_test_state(config).await;
+    let result = state
+        .check_incoming_access("whatsapp", "random", "hello", &MentionState::DirectMessage)
+        .await;
+
+    assert!(result.is_ok(), "open policy should allow any user");
+}

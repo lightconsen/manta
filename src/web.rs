@@ -71,6 +71,30 @@ pub async fn start_web_terminal(agent: Arc<Agent>, port: u16) -> crate::Result<(
     Ok(())
 }
 
+/// Start the web terminal server with an existing TCP listener.
+///
+/// This is useful for tests that need to bind to port 0 and discover
+/// the actual assigned port via `listener.local_addr()`.
+pub async fn start_web_terminal_with_listener(
+    agent: Arc<Agent>,
+    listener: tokio::net::TcpListener,
+) -> crate::Result<()> {
+    let _ = init_cron_broadcast().await;
+
+    let state = WebTerminalState { agent };
+
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/ws", get(ws_handler))
+        .route("/api/events", get(sse_events_handler))
+        .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
+        .with_state(state);
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
 /// State for daemon-connected web terminal
 #[derive(Clone)]
 pub struct DaemonWebState {

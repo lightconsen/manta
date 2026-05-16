@@ -1113,4 +1113,258 @@ mod tests {
         assert!(!report.tools.tool_results.is_empty());
         assert!(!report.boundaries.boundaries.is_empty());
     }
+
+    #[test]
+    fn test_calculate_score_perfect_is_100() {
+        let auditor = SecurityAuditor::new();
+        let permissions = PermissionAudit::default();
+        let tools = ToolAudit::default();
+        let data_leaks = DataLeakAudit::default();
+        let mut sandbox = SandboxAudit::default();
+        sandbox.resource_limits.memory_limits = true;
+        sandbox.isolation.network_isolation = true;
+        let boundaries = SecurityBoundaries::default();
+
+        let score = auditor.calculate_score(
+            &permissions, &tools, &data_leaks, &sandbox, &boundaries);
+        assert_eq!(score, 100, "Perfect audit should score 100");
+    }
+
+    #[test]
+    fn test_calculate_score_deducts_for_missing_permissions() {
+        let auditor = SecurityAuditor::new();
+        let mut permissions = PermissionAudit::default();
+        let mut comp = ComponentPermissions::default();
+        comp.missing = vec!["memory_limits".to_string()];
+        permissions.components.insert("test".to_string(), comp);
+
+        let score = auditor.calculate_score(
+            &permissions, &ToolAudit::default(), &DataLeakAudit::default(),
+            &SandboxAudit::default(), &SecurityBoundaries::default());
+        assert!(score < 100, "Missing permissions should reduce score");
+    }
+
+    #[test]
+    fn test_calculate_score_deducts_for_critical_tool() {
+        let auditor = SecurityAuditor::new();
+        let mut tools = ToolAudit::default();
+        let mut result = ToolAuditResult::default();
+        result.risk_level = RiskLevel::Critical;
+        tools.tool_results.insert("dangerous".to_string(), result);
+
+        let score = auditor.calculate_score(
+            &PermissionAudit::default(), &tools, &DataLeakAudit::default(),
+            &SandboxAudit::default(), &SecurityBoundaries::default());
+        assert!(score <= 75, "Critical tool risk should deduct at least 25, got {}", score);
+    }
+
+    #[test]
+    fn test_calculate_score_deducts_for_high_tool() {
+        let auditor = SecurityAuditor::new();
+        let mut tools = ToolAudit::default();
+        let mut result = ToolAuditResult::default();
+        result.risk_level = RiskLevel::High;
+        tools.tool_results.insert("risky".to_string(), result);
+
+        let score = auditor.calculate_score(
+            &PermissionAudit::default(), &tools, &DataLeakAudit::default(),
+            &SandboxAudit::default(), &SecurityBoundaries::default());
+        assert!(score <= 85, "High tool risk should deduct at least 15, got {}", score);
+    }
+
+    #[test]
+    fn test_calculate_score_deducts_for_data_leaks() {
+        let auditor = SecurityAuditor::new();
+        let mut data_leaks = DataLeakAudit::default();
+        data_leaks.leaks_found = 2;
+
+        let score = auditor.calculate_score(
+            &PermissionAudit::default(), &ToolAudit::default(), &data_leaks,
+            &SandboxAudit::default(), &SecurityBoundaries::default());
+        assert!(score <= 80, "2 data leaks should deduct at least 20, got {}", score);
+    }
+
+    #[test]
+    fn test_calculate_score_never_below_0() {
+        let auditor = SecurityAuditor::new();
+        let mut permissions = PermissionAudit::default();
+        let mut comp = ComponentPermissions::default();
+        comp.missing = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        permissions.components.insert("test".to_string(), comp);
+
+        let mut tools = ToolAudit::default();
+        for i in 0..5 {
+            let mut result = ToolAuditResult::default();
+            result.risk_level = RiskLevel::Critical;
+            tools.tool_results.insert(format!("tool{}", i), result);
+        }
+
+        let mut data_leaks = DataLeakAudit::default();
+        data_leaks.leaks_found = 20;
+
+        let mut sandbox = SandboxAudit::default();
+        sandbox.resource_limits.memory_limits = false;
+        sandbox.isolation.network_isolation = false;
+
+        let mut boundaries = SecurityBoundaries::default();
+        boundaries.enforcement.not_enforced = 10;
+
+        let score = auditor.calculate_score(
+            &permissions, &tools, &data_leaks, &sandbox, &boundaries);
+        assert_eq!(score, 0, "Score should saturate at 0, got {}", score);
+    }
+
+    #[test]
+    fn test_collect_permission_issues_generates_warnings() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = PermissionAudit::default();
+        let mut comp = ComponentPermissions::default();
+        comp.missing = vec!["test_perm".to_string()];
+        audit.components.insert("test_comp".to_string(), comp);
+
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_permission_issues(&audit, &mut warnings, &mut recommendations);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].category, "Permissions");
+        assert!(!recommendations.is_empty());
+    }
+
+    #[test]
+    fn test_collect_permission_issues_no_warnings_when_complete() {
+        let auditor = SecurityAuditor::new();
+        let audit = PermissionAudit::default();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_permission_issues(&audit, &mut warnings, &mut recommendations);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_collect_tool_issues_critical_risk() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = ToolAudit::default();
+        let mut result = ToolAuditResult::default();
+        result.risk_level = RiskLevel::Critical;
+        result.issues = vec!["Critical issue".to_string()];
+        audit.tool_results.insert("bad_tool".to_string(), result);
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_tool_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].severity, RiskLevel::Critical);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_collect_tool_issues_high_risk() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = ToolAudit::default();
+        let mut result = ToolAuditResult::default();
+        result.risk_level = RiskLevel::High;
+        result.issues = vec!["High issue".to_string()];
+        audit.tool_results.insert("risky_tool".to_string(), result);
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_tool_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert!(critical.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].severity, RiskLevel::High);
+    }
+
+    #[test]
+    fn test_collect_tool_issues_ignores_low_risk() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = ToolAudit::default();
+        let mut result = ToolAuditResult::default();
+        result.risk_level = RiskLevel::Low;
+        result.issues = vec!["Minor issue".to_string()];
+        audit.tool_results.insert("safe_tool".to_string(), result);
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_tool_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert!(critical.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_collect_leak_issues_critical_goes_to_critical() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = DataLeakAudit::default();
+        audit.leaks.push(PotentialLeak {
+            category: LeakCategory::CredentialExposure,
+            description: "API key found".to_string(),
+            location: "config.rs:10".to_string(),
+            severity: RiskLevel::Critical,
+            recommendation: "Remove key".to_string(),
+        });
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_leak_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].severity, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn test_collect_leak_issues_high_goes_to_warnings() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = DataLeakAudit::default();
+        audit.leaks.push(PotentialLeak {
+            category: LeakCategory::UnencryptedStorage,
+            description: "Unencrypted data".to_string(),
+            location: "db.rs:20".to_string(),
+            severity: RiskLevel::High,
+            recommendation: "Encrypt data".to_string(),
+        });
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut _recommendations = Vec::new();
+        auditor.collect_leak_issues(&audit, &mut critical, &mut warnings, &mut _recommendations);
+
+        assert!(critical.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].severity, RiskLevel::High);
+    }
+
+    #[test]
+    fn test_collect_sandbox_issues_memory_limits() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = SandboxAudit::default();
+        audit.resource_limits.memory_limits = false;
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_sandbox_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert!(warnings.iter().any(|w| w.description.contains("Memory limits")));
+    }
+
+    #[test]
+    fn test_collect_sandbox_issues_network_isolation() {
+        let auditor = SecurityAuditor::new();
+        let mut audit = SandboxAudit::default();
+        audit.isolation.network_isolation = false;
+
+        let mut critical = Vec::new();
+        let mut warnings = Vec::new();
+        let mut recommendations = Vec::new();
+        auditor.collect_sandbox_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
+
+        assert!(warnings.iter().any(|w| w.description.contains("network isolation")));
+    }
 }
