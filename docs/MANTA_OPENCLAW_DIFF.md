@@ -382,7 +382,7 @@ class VoyageBatchProcessor
 | **Architecture** | Trait-based (Channel trait) | Plugin-based with dock.ts |
 | **Telegram** | ✅ teloxide | ✅ grammY |
 | **Discord** | ✅ serenity | ✅ discord.js |
-| **Slack** | Stub (reqwest) | ✅ Bolt |
+| **Slack** | ✅ Web API + Events API webhooks | ✅ Bolt |
 | **WhatsApp** | ✅ Webhooks + HMAC | ✅ Baileys |
 | **Signal** | ❌ Not implemented | ✅ signal-cli |
 | **iMessage** | ❌ Not implemented | ✅ BlueBubbles |
@@ -510,7 +510,7 @@ commandGating: CommandGatingConfig
 | **Multi-Channel (6+)** | 6 | 20+ |
 | **Telegram** | ✅ | ✅ |
 | **Discord** | ✅ | ✅ |
-| **Slack** | Stub | ✅ |
+| **Slack** | ✅ | ✅ |
 | **WhatsApp** | ✅ | ✅ |
 | **Signal** | ❌ | ✅ |
 | **iMessage** | ❌ | ✅ |
@@ -519,7 +519,7 @@ commandGating: CommandGatingConfig
 | **Allowlists** | Basic | Advanced |
 | **Mention Gating** | ✅ `MentionGate` with wildcard patterns | ✅ |
 | **Command Gating** | ✅ `CommandGate` with user levels | ✅ |
-| **Voice/TTS** | ❌ | ✅ |
+| **Voice/TTS** | ✅ `TtsTool` | ✅ |
 | **Media Pipeline** | ✅ Image routing via ModelRouter | ✅ |
 | **Plugin System** | ✅ WASM plugins + dynamic tools/channels | ✅ |
 | **Mobile Apps** | ❌ | ✅ |
@@ -697,7 +697,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 |---|---|---|
 | **Telegram** | ✅ grammY | ✅ teloxide |
 | **Discord** | ✅ discord.js | ✅ serenity |
-| **Slack** | ✅ Bolt | stub (reqwest) |
+| **Slack** | ✅ Bolt | ✅ Web API + Events API |
 | **WhatsApp** | ✅ Baileys | ✅ Webhooks + HMAC |
 | **Signal** | ✅ signal-cli | ❌ |
 | **iMessage** | ✅ BlueBubbles | ❌ |
@@ -711,7 +711,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Command Gating** | ✅ `command-gating.ts` | ✅ `CommandGate` with user levels |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 
-**Gap**: Manta lacks Signal/iMessage, sophisticated allowlist.
+**Gap**: Manta lacks Signal/iMessage channels.
 
 ---
 
@@ -808,7 +808,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Disk Budget** | `disk-budget.ts` | ✅ `DiskBudgetManager` |
 | **Session Buffers** | Basic | ✅ `session_message_buffer` for FollowUp/Collect |
 
-**Gap**: Manta's session management is simpler; lacks group sessions and transcript file system.
+**Gap**: Manta's session management is simpler; group sessions and transcript file system exist but UI integration lags.
 
 ---
 
@@ -821,15 +821,15 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Inbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
 | **Outbound Pipeline** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Skeleton aligned |
 | **Model Router** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta has circuit breaker advantage |
-| **Tool System** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing subagent/plugin tools |
-| **Memory** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing session files, multi-backend |
-| **Channels** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing Signal/iMessage/mention gating |
+| **Tool System** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
+| **Memory** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
+| **Channels** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing Signal/iMessage |
 | **Canvas** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Skeleton aligned, UI richness gap |
 | **SSE** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Fully implemented |
 | **Cron** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta more production-grade |
-| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing mention gating |
+| **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
 | **Plugin** | ⭐⭐⭐⭐⭐ | ⭐ | Far from mature |
-| **Session Mgmt** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Missing transcripts/artifacts |
+| **Session Mgmt** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | UI integration gap; core modules implemented |
 
 ---
 
