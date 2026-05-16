@@ -78,6 +78,8 @@ pub fn create_webhook_router(state: Arc<GatewayState>) -> Router {
         .route("/webhooks/telegram/:token", post(telegram_webhook_handler))
         // Feishu/Lark webhooks
         .route("/webhooks/feishu", post(feishu_webhook_handler))
+        // Slack Events API webhooks
+        .route("/webhooks/slack", post(slack_webhook_handler))
         // Generic webhook for custom integrations
         .route("/webhooks/:channel", post(generic_webhook_handler))
         .with_state(state)
@@ -497,6 +499,173 @@ async fn feishu_webhook_handler(
     .into_response()
 }
 
+/// Handle Slack Events API webhooks
+///
+/// Supports URL verification and event callbacks (message events).
+async fn slack_webhook_handler(
+    headers: HeaderMap,
+    State(state): State<Arc<GatewayState>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    info!("Received Slack webhook");
+
+    // Verify Slack request signature if signing secret is configured
+    let signing_secret = {
+        let config = state.config.read().await;
+        config
+            .channels
+            .get("slack")
+            .and_then(|c| c.credentials.get("signing_secret"))
+            .cloned()
+    };
+
+    if let Some(secret) = signing_secret {
+        let timestamp = headers
+            .get("x-slack-request-timestamp")
+            .and_then(|v| v.to_str().ok());
+        let signature = headers
+            .get("x-slack-signature")
+            .and_then(|v| v.to_str().ok());
+
+        if let (Some(ts), Some(sig)) = (timestamp, signature) {
+            if !verify_slack_signature(&secret, ts, &body, sig) {
+                warn!("Slack webhook: invalid signature");
+                return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
+            }
+            debug!("Slack webhook: signature verified");
+        } else {
+            warn!("Slack webhook: missing signature headers");
+            return (StatusCode::UNAUTHORIZED, "Missing signature").into_response();
+        }
+    }
+
+    // Parse payload
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to parse Slack webhook: {}", e);
+            return (StatusCode::BAD_REQUEST, "Invalid JSON").into_response();
+        }
+    };
+
+    match payload.get("type").and_then(|v| v.as_str()) {
+        Some("url_verification") => {
+            // URL verification challenge — respond with the challenge string
+            if let Some(challenge) = payload.get("challenge").and_then(|v| v.as_str()) {
+                info!("Slack URL verification challenge");
+                return (StatusCode::OK, challenge.to_string()).into_response();
+            }
+            (StatusCode::BAD_REQUEST, "Missing challenge").into_response()
+        }
+        Some("event_callback") => {
+            // Event callback — process the event
+            if let Some(event) = payload.get("event") {
+                handle_slack_event(event, &state).await
+            } else {
+                (StatusCode::BAD_REQUEST, "Missing event").into_response()
+            }
+        }
+        _ => {
+            warn!("Slack webhook: unknown payload type");
+            (StatusCode::BAD_REQUEST, "Unknown payload type").into_response()
+        }
+    }
+}
+
+/// Verify Slack request signature (v0 format)
+fn verify_slack_signature(secret: &str, timestamp: &str, body: &[u8], signature: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let basestring = format!("v0:{}:", timestamp);
+    type HmacSha256 = Hmac<Sha256>;
+
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    mac.update(basestring.as_bytes());
+    mac.update(body);
+
+    let result = mac.finalize();
+    let code_bytes = result.into_bytes();
+    let expected = format!("v0={}", hex::encode(code_bytes));
+
+    // Constant-time comparison
+    use subtle::ConstantTimeEq;
+    expected.as_bytes().ct_eq(signature.as_bytes()).into()
+}
+
+/// Process a Slack event payload
+async fn handle_slack_event(
+    event: &serde_json::Value,
+    state: &Arc<GatewayState>,
+) -> axum::response::Response {
+    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Only handle message events
+    if event_type != "message" {
+        return (StatusCode::OK, "Ignored").into_response();
+    }
+
+    // Ignore bot messages
+    if event.get("bot_id").is_some() {
+        return (StatusCode::OK, "Bot message ignored").into_response();
+    }
+
+    // Ignore message subtypes (edits, deletions, etc.)
+    if event.get("subtype").is_some() {
+        return (StatusCode::OK, "Subtype ignored").into_response();
+    }
+
+    let user_id = event.get("user").and_then(|v| v.as_str()).unwrap_or("");
+    let channel = event.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+    let text = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
+
+    if user_id.is_empty() || text.is_empty() {
+        return (StatusCode::OK, "Empty user or text").into_response();
+    }
+
+    info!(
+        "Slack message from {} in {}: {}",
+        user_id,
+        channel,
+        &text[..text.len().min(50)]
+    );
+
+    // Determine mention state: D-prefixed channels are DMs
+    let mention = if channel.starts_with('D') {
+        crate::channels::MentionState::DirectMessage
+    } else {
+        crate::channels::MentionState::NotMentioned
+    };
+
+    // Access control check
+    if state
+        .check_incoming_access("slack", user_id, text, &mention)
+        .await
+        .is_err()
+    {
+        return (StatusCode::OK, "Access denied").into_response();
+    }
+
+    // Route through inbound pipeline
+    let incoming = IncomingMessage::new(
+        user_id.to_string(),
+        format!("slack:{}", channel),
+        text.to_string(),
+    )
+    .with_provenance(InputProvenance::ExternalUser {
+        channel: "slack".to_string(),
+        is_direct: channel.starts_with('D'),
+    });
+
+    let _ = state.inbound_pipeline.process(incoming).await;
+
+    (StatusCode::OK, "OK").into_response()
+}
+
 /// Generic webhook handler for custom integrations with HMAC verification
 async fn generic_webhook_handler(
     Path(channel): Path<String>,
@@ -750,6 +919,9 @@ mod tests {
         feishu.credentials.insert("webhook_secret".to_string(), "feishu_secret".to_string());
         config.channels.insert("feishu".to_string(), feishu);
 
+        let slack = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Slack);
+        config.channels.insert("slack".to_string(), slack);
+
         let mut disabled = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
         disabled.enabled = false;
         config.channels.insert("disabled".to_string(), disabled);
@@ -903,5 +1075,221 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // ── Slack webhook tests ────────────────────────────────────────────────
+
+    fn make_slack_signature(secret: &str, timestamp: &str, body: &str) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+
+        let basestring = format!("v0:{}:{}", timestamp, body);
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(basestring.as_bytes());
+        format!("v0={}", hex::encode(mac.finalize().into_bytes()))
+    }
+
+    #[tokio::test]
+    async fn slack_url_verification() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "url_verification",
+            "challenge": "slack_challenge_123"
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, "slack_challenge_123");
+    }
+
+    #[tokio::test]
+    async fn slack_event_callback_message() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "text": "Hello bot",
+                "channel": "CABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn slack_event_callback_dm() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "text": "Hello in DM",
+                "channel": "DABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn slack_ignores_bot_messages() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "bot_id": "B123",
+                "text": "I am a bot",
+                "channel": "CABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn slack_ignores_message_subtypes() {
+        let state = std::sync::Arc::new(make_webhook_state().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "subtype": "message_changed",
+                "text": "edited",
+                "channel": "CABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn make_slack_webhook_state_with_secret() -> GatewayState {
+        let mut config = crate::gateway::GatewayConfig::default();
+        let mut slack = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Slack);
+        slack.credentials.insert("signing_secret".to_string(), "slack_secret".to_string());
+        config.channels.insert("slack".to_string(), slack);
+        crate::gateway::state_tests::make_test_state(config).await
+    }
+
+    #[tokio::test]
+    async fn slack_signature_verification_success() {
+        let state = std::sync::Arc::new(make_slack_webhook_state_with_secret().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "text": "Hello",
+                "channel": "CABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+        let timestamp = "1234567890";
+        let signature = make_slack_signature("slack_secret", timestamp, &body_str);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .header("x-slack-request-timestamp", timestamp)
+            .header("x-slack-signature", signature)
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn slack_signature_verification_failure() {
+        let state = std::sync::Arc::new(make_slack_webhook_state_with_secret().await);
+        let app = create_webhook_router(state);
+
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "user": "U123456",
+                "text": "Hello",
+                "channel": "CABCDEF"
+            }
+        });
+        let body_str = payload.to_string();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/webhooks/slack")
+            .header("content-type", "application/json")
+            .header("x-slack-request-timestamp", "1234567890")
+            .header("x-slack-signature", "v0=bad_signature")
+            .body(Body::from(body_str))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
