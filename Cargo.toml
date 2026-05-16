@@ -177,6 +177,20 @@ pretty_assertions = "1.4"
 # Concurrency control for tests
 serial_test = "3.0"
 
+# Snapshot testing (like Vitest snapshots)
+insta = { version = "1.39", features = ["yaml", "json"] }
+
+# Benchmark framework
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "message_routing"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

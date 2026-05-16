@@ -12,13 +12,23 @@ integration-test = "test --test integration_tests --test agent_session_flow --te
 contract-test = "test --test provider_contracts --test memory_contracts --test channel_contracts --test tool_contracts"
 
 # Provider live tests — wiremock-based API simulation, serial execution
-provider-test = "test --test provider_live"
+provider-test = "test --test provider_live --test provider_streaming"
 
-# End-to-end tests — full system tests (when available)
-e2e-test = "test --test e2e"
+# Streaming tests — SSE / event-stream parsing
+streaming-test = "test --test provider_streaming"
 
-# Run all tests (unit + integration + contract)
+# Snapshot tests — insta snapshot regression
+snapshot-test = "test --test snapshot_contracts"
+
+# End-to-end tests — full HTTP roundtrip with Agent + Engine
+e2e-test = "test --test e2e_server_flow"
+
+# Run all tests (unit + integration + contract + e2e)
 test-all = "test"
 
 # Coverage run using tarpaulin
 coverage = "tarpaulin --config .tarpaulin.toml"
+
+# Benchmarks
+bench-serialization = "bench --bench serialization"
+bench-routing = "bench --bench message_routing"
