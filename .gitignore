@@ -28,6 +28,9 @@ data/
 logs/
 *.log
 
+# Test artifacts
+tts_*.aiff
+
 # Config (may contain secrets)
 config.yaml
 config.json
