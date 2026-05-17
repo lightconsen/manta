@@ -61,6 +61,7 @@ pub mod secrets;
 pub mod security;
 pub mod server;
 pub mod skills;
+pub mod taskflow;
 pub mod team;
 pub mod tools;
 pub mod utils;
