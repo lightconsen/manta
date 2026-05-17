@@ -631,4 +631,126 @@ mod tests {
         assert!(formatted.contains("Relevant Context"));
         assert!(formatted.contains("Likes coffee"));
     }
+
+    #[test]
+    fn test_memory_manager_config_default() {
+        let config = MemoryManagerConfig::default();
+        assert_eq!(config.max_context_memories, 5);
+        assert!(config.use_pipeline);
+    }
+
+    #[test]
+    fn test_context_cache_valid() {
+        let cache = ContextCache {
+            user_id: "u1".to_string(),
+            conversation_id: "c1".to_string(),
+            memories: vec![],
+            cached_at: std::time::Instant::now(),
+        };
+        assert!(cache.is_valid("u1", "c1"));
+    }
+
+    #[test]
+    fn test_context_cache_invalid_user() {
+        let cache = ContextCache {
+            user_id: "u1".to_string(),
+            conversation_id: "c1".to_string(),
+            memories: vec![],
+            cached_at: std::time::Instant::now(),
+        };
+        assert!(!cache.is_valid("u2", "c1"));
+    }
+
+    #[test]
+    fn test_context_cache_invalid_conversation() {
+        let cache = ContextCache {
+            user_id: "u1".to_string(),
+            conversation_id: "c1".to_string(),
+            memories: vec![],
+            cached_at: std::time::Instant::now(),
+        };
+        assert!(!cache.is_valid("u1", "c2"));
+    }
+
+    #[test]
+    fn test_session_context_formatting_empty() {
+        let ctx = SessionContext {
+            messages: vec![],
+            memories: vec![],
+        };
+        let formatted = ctx.format_for_injection();
+        assert!(!formatted.contains("Relevant Context"));
+        assert!(!formatted.contains("Recent Messages"));
+    }
+
+    #[test]
+    fn test_session_context_formatting_with_many_messages() {
+        let mut messages = vec![];
+        for i in 0..12 {
+            messages.push(ChatMessage::new("c1", "u1", if i % 2 == 0 { "user" } else { "assistant" }, format!("msg {}", i)));
+        }
+        let ctx = SessionContext {
+            messages,
+            memories: vec![Memory::new("u1", "Likes tea", "preference")],
+        };
+        let formatted = ctx.format_for_injection();
+        assert!(formatted.contains("Relevant Context"));
+        assert!(formatted.contains("Recent Messages"));
+    }
+
+    #[test]
+    fn test_memory_manager_builder_default() {
+        let builder = MemoryManagerBuilder::default();
+        assert!(builder.pipeline.is_none());
+        assert!(builder.vector_service.is_none());
+        assert!(builder.session_search.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_memory_manager_debug() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let debug = format!("{:?}", mm);
+        assert!(debug.contains("MemoryManager"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_manager_remember_message_and_last_conversation() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+
+        mm.remember_message("u1", "conv-a", "user", "Hello").await.unwrap();
+        mm.remember_message("u1", "conv-a", "assistant", "Hi").await.unwrap();
+
+        let last = mm.last_conversation("u1").await.unwrap();
+        assert_eq!(last, Some("conv-a".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_memory_manager_forget() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+
+        let id = mm.observe("u1", "forgettable content", "test", 0.5).await.unwrap();
+        let deleted = mm.forget(&id).await.unwrap();
+        assert!(deleted);
+
+        // Forgetting again should return false
+        let deleted_again = mm.forget(&id).await.unwrap();
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn test_memory_manager_compact_session_short() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+
+        // Only 3 messages, less than threshold of 10
+        for i in 0..3 {
+            mm.remember_message("u1", "short-conv", "user", format!("msg {}", i)).await.unwrap();
+        }
+
+        let ids = mm.compact_session("short-conv", None).await.unwrap();
+        assert!(ids.is_empty());
+    }
 }

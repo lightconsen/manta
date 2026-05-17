@@ -376,4 +376,152 @@ mod tests {
         assert!(!pattern_matches("@alice", "@bob"));
         assert!(!pattern_matches("spam*", "ham"));
     }
+
+    #[tokio::test]
+    async fn test_default_allow() {
+        let gate = MentionGate::default_allow();
+        assert_eq!(gate.policy().await, MentionPolicy::Allow);
+        assert!(gate.check("any", "@mention").await);
+    }
+
+    #[tokio::test]
+    async fn test_set_policy() {
+        let gate = MentionGate::new(MentionPolicy::Allow);
+        gate.set_policy(MentionPolicy::Block).await;
+        assert_eq!(gate.policy().await, MentionPolicy::Block);
+        assert!(!gate.check("telegram", "@alice").await);
+    }
+
+    #[tokio::test]
+    async fn test_remove_allowlist() {
+        let gate = MentionGate::new(MentionPolicy::Allowlist);
+        gate.add_allowlist("telegram", "@alice").await;
+        assert!(gate.check("telegram", "@alice").await);
+
+        let removed = gate.remove_allowlist("telegram", "@alice").await;
+        assert!(removed);
+        assert!(!gate.check("telegram", "@alice").await);
+
+        let not_found = gate.remove_allowlist("telegram", "@bob").await;
+        assert!(!not_found);
+    }
+
+    #[tokio::test]
+    async fn test_remove_blocklist() {
+        let gate = MentionGate::new(MentionPolicy::Blocklist);
+        gate.add_blocklist("telegram", "@spam").await;
+        assert!(!gate.check("telegram", "@spam").await);
+
+        let removed = gate.remove_blocklist("telegram", "@spam").await;
+        assert!(removed);
+        assert!(gate.check("telegram", "@spam").await);
+    }
+
+    #[tokio::test]
+    async fn test_list_allowlist() {
+        let gate = MentionGate::new(MentionPolicy::Allowlist);
+        gate.add_allowlist("telegram", "@alice").await;
+        gate.add_allowlist("telegram", "@bob").await;
+
+        let list = gate.list_allowlist("telegram").await;
+        assert_eq!(list.len(), 2);
+        assert!(list.contains(&"@alice".to_string()));
+        assert!(list.contains(&"@bob".to_string()));
+
+        let empty = gate.list_allowlist("discord").await;
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_blocklist() {
+        let gate = MentionGate::new(MentionPolicy::Blocklist);
+        gate.add_blocklist("telegram", "@spam").await;
+
+        let list = gate.list_blocklist("telegram").await;
+        assert_eq!(list, vec!["@spam"]);
+
+        let empty = gate.list_blocklist("discord").await;
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_channels() {
+        let gate = MentionGate::new(MentionPolicy::Allowlist);
+        gate.add_allowlist("telegram", "@alice").await;
+        gate.add_blocklist("discord", "@spam").await;
+
+        let channels = gate.list_channels().await;
+        assert_eq!(channels.len(), 2);
+        assert!(channels.contains(&"telegram".to_string()));
+        assert!(channels.contains(&"discord".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_clear_channel() {
+        let gate = MentionGate::new(MentionPolicy::Allowlist);
+        gate.add_allowlist("telegram", "@alice").await;
+        assert!(gate.check("telegram", "@alice").await);
+
+        gate.clear_channel("telegram").await;
+        assert!(!gate.check("telegram", "@alice").await);
+        assert!(gate.list_channels().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_export_json() {
+        let gate = MentionGate::new(MentionPolicy::Allowlist);
+        gate.add_allowlist("telegram", "@alice").await;
+        gate.add_blocklist("telegram", "@spam").await;
+
+        let json = gate.export_json().await.unwrap();
+        assert!(json.contains("telegram"));
+        assert!(json.contains("@alice"));
+        assert!(json.contains("@spam"));
+    }
+
+    #[test]
+    fn test_mention_policy_display() {
+        assert_eq!(MentionPolicy::Allow.to_string(), "allow");
+        assert_eq!(MentionPolicy::Block.to_string(), "block");
+        assert_eq!(MentionPolicy::Allowlist.to_string(), "allowlist");
+        assert_eq!(MentionPolicy::Blocklist.to_string(), "blocklist");
+    }
+
+    #[test]
+    fn test_mention_policy_default() {
+        assert_eq!(MentionPolicy::default(), MentionPolicy::Allow);
+    }
+
+    #[test]
+    fn test_mention_gating_config_default() {
+        let config = MentionGatingConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.policy, MentionPolicy::Allow);
+        assert!(config.allowlist.is_empty());
+        assert!(config.blocklist.is_empty());
+    }
+
+    #[test]
+    fn test_mention_gating_config_serde() {
+        let json = r#"{"enabled": false, "policy": "blocklist", "allowlist": ["@alice"]}"#;
+        let config: MentionGatingConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.policy, MentionPolicy::Blocklist);
+        assert_eq!(config.allowlist, vec!["@alice"]);
+    }
+
+    #[test]
+    fn test_channel_mentions_default() {
+        let cm = ChannelMentions::default();
+        assert!(cm.allowlist.is_empty());
+        assert!(cm.blocklist.is_empty());
+    }
+
+    #[test]
+    fn test_mention_gate_default() {
+        let gate: MentionGate = Default::default();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let policy = rt.block_on(gate.policy());
+        assert_eq!(policy, MentionPolicy::Allow);
+    }
 }

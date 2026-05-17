@@ -747,4 +747,88 @@ mod tests {
         assert_eq!(stats.conversation_count, 5);
         assert_eq!(stats.memory_count, 50);
     }
+
+    #[test]
+    fn test_export_options_default() {
+        let opts = ExportOptions::default();
+        assert_eq!(opts.format, ExportFormat::Jsonl);
+        assert!(!opts.include_embeddings);
+        assert_eq!(opts.limit, None);
+        assert_eq!(opts.user_id, None);
+        assert_eq!(opts.conversation_id, None);
+        assert_eq!(opts.memory_type, None);
+        assert!(!opts.pretty);
+    }
+
+    #[test]
+    fn test_export_options_new_is_default() {
+        let opts1 = ExportOptions::new();
+        let opts2 = ExportOptions::default();
+        assert_eq!(opts1.format, opts2.format);
+        assert_eq!(opts1.include_embeddings, opts2.include_embeddings);
+        assert_eq!(opts1.limit, opts2.limit);
+    }
+
+    #[test]
+    fn test_export_options_format() {
+        let opts = ExportOptions::new().format(ExportFormat::Json);
+        assert_eq!(opts.format, ExportFormat::Json);
+    }
+
+    #[test]
+    fn test_export_options_for_conversation() {
+        let opts = ExportOptions::new().for_conversation("conv1");
+        assert_eq!(opts.conversation_id, Some("conv1".to_string()));
+    }
+
+    #[test]
+    fn test_export_options_of_type() {
+        let opts = ExportOptions::new().of_type("fact");
+        assert_eq!(opts.memory_type, Some("fact".to_string()));
+    }
+
+    #[test]
+    fn test_export_options_with_embeddings() {
+        let opts = ExportOptions::new().with_embeddings();
+        assert!(opts.include_embeddings);
+    }
+
+    #[test]
+    fn test_export_options_pretty() {
+        let opts = ExportOptions::new().pretty();
+        assert!(opts.pretty);
+    }
+
+    #[test]
+    fn test_export_options_limit() {
+        let opts = ExportOptions::new().limit(50);
+        assert_eq!(opts.limit, Some(50));
+    }
+
+    #[test]
+    fn test_export_options_for_user() {
+        let opts = ExportOptions::new().for_user("user1");
+        assert_eq!(opts.user_id, Some("user1".to_string()));
+    }
+
+    #[test]
+    fn test_export_stats_default() {
+        let stats: ExportStats = Default::default();
+        assert_eq!(stats.conversation_count, 0);
+        assert_eq!(stats.message_count, 0);
+        assert_eq!(stats.memory_count, 0);
+        assert_eq!(stats.bytes_written, 0);
+    }
+
+    #[test]
+    fn test_export_stats_debug() {
+        let stats = ExportStats {
+            conversation_count: 1,
+            message_count: 10,
+            memory_count: 5,
+            bytes_written: 100,
+        };
+        let debug = format!("{:?}", stats);
+        assert!(debug.contains("ExportStats"));
+    }
 }

@@ -2509,19 +2509,388 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::{CompletionResponse, CompletionStream};
+
+    // ── Mock Provider ─────────────────────────────────────────────────────────
+
+    struct MockProvider;
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for MockProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn default_model(&self) -> &str {
+            "mock-model"
+        }
+        fn supports_tools(&self) -> bool {
+            false
+        }
+        fn max_context(&self) -> usize {
+            4096
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> crate::Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                message: Message::assistant("hello"),
+                usage: None,
+                model: "mock-model".to_string(),
+                finish_reason: None,
+            })
+        }
+        async fn stream(
+            &self,
+            _req: CompletionRequest,
+        ) -> crate::Result<CompletionStream> {
+            Ok(Box::pin(tokio_stream::iter(vec![])))
+        }
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    // ── is_obviously_time_sensitive ───────────────────────────────────────────
+
+    #[test]
+    fn test_is_obviously_time_sensitive_positive() {
+        assert!(is_obviously_time_sensitive("what time is it now"));
+        assert!(is_obviously_time_sensitive("CURRENT TIME please"));
+        assert!(is_obviously_time_sensitive("what's the time in Tokyo"));
+        assert!(is_obviously_time_sensitive("现在几点了"));
+        assert!(is_obviously_time_sensitive("当前时间是多少"));
+        assert!(is_obviously_time_sensitive("现在时间呢"));
+    }
+
+    #[test]
+    fn test_is_obviously_time_sensitive_negative() {
+        assert!(!is_obviously_time_sensitive("hello"));
+        assert!(!is_obviously_time_sensitive("what is the weather"));
+        assert!(!is_obviously_time_sensitive("explain quantum computing"));
+        assert!(!is_obviously_time_sensitive("what time zone is EST"));
+    }
+
+    // ── are_tools_cacheable ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_are_tools_cacheable_all_cacheable() {
+        assert!(are_tools_cacheable(&["search".to_string(), "read_file".to_string()]));
+        assert!(are_tools_cacheable(&[]));
+        assert!(are_tools_cacheable(&["grep".to_string()]));
+    }
+
+    #[test]
+    fn test_are_tools_cacheable_non_cacheable() {
+        assert!(!are_tools_cacheable(&["datetime".to_string()]));
+        assert!(!are_tools_cacheable(&["time".to_string(), "read_file".to_string()]));
+        assert!(!are_tools_cacheable(&["weather_current".to_string()]));
+        assert!(!are_tools_cacheable(&["stock_price".to_string()]));
+        assert!(!are_tools_cacheable(&["crypto_price".to_string()]));
+        assert!(!are_tools_cacheable(&["my_clock_tool".to_string()]));
+        assert!(!are_tools_cacheable(&["get_date_today".to_string()]));
+    }
+
+    // ── AgentConfig ───────────────────────────────────────────────────────────
 
     #[test]
     fn test_agent_config_default() {
         let config = AgentConfig::default();
         assert_eq!(config.max_context_tokens, 4096);
+        assert_eq!(config.max_concurrent_tools, 5);
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_tokens, 2048);
+        assert!(config.skills_prompt.is_none());
+        assert!(config.max_turns.is_none());
+        assert!(config.compaction_model.is_none());
+        assert!(!config.system_prompt.is_empty());
     }
 
     #[test]
-    fn test_agent_builder() {
+    fn test_agent_config_full_system_prompt_without_skills() {
+        let config = AgentConfig {
+            system_prompt: "base".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.full_system_prompt(), "base");
+    }
+
+    #[test]
+    fn test_agent_config_full_system_prompt_with_skills() {
+        let config = AgentConfig {
+            system_prompt: "base".to_string(),
+            skills_prompt: Some("skill1".to_string()),
+            ..Default::default()
+        };
+        let prompt = config.full_system_prompt();
+        assert!(prompt.contains("base"));
+        assert!(prompt.contains("skill1"));
+        assert!(prompt.contains("Skills"));
+    }
+
+    #[test]
+    fn test_agent_config_serde_roundtrip() {
+        let config = AgentConfig {
+            system_prompt: "test prompt".to_string(),
+            max_context_tokens: 8192,
+            max_concurrent_tools: 3,
+            temperature: 0.5,
+            max_tokens: 1024,
+            skills_prompt: Some("skills".to_string()),
+            max_turns: Some(10),
+            compaction_model: Some("claude-haiku".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AgentConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.max_context_tokens, 8192);
+        assert_eq!(restored.temperature, 0.5);
+        assert_eq!(restored.max_tokens, 1024);
+        assert_eq!(restored.max_concurrent_tools, 3);
+        assert_eq!(restored.max_turns, Some(10));
+        assert_eq!(restored.compaction_model, Some("claude-haiku".to_string()));
+    }
+
+    // ── ResponseCache ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_response_cache_empty() {
+        let cache = ResponseCache::new(Duration::from_secs(60));
+        let result = cache.get("user1", "conv1", "hello").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_set_and_get() {
+        let cache = ResponseCache::new(Duration::from_secs(60));
+        cache
+            .set("user1", "conv1", "hello", "world".to_string(), vec![])
+            .await;
+        let result = cache.get("user1", "conv1", "hello").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().response, "world");
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_key_isolation() {
+        let cache = ResponseCache::new(Duration::from_secs(60));
+        cache
+            .set("user1", "conv1", "hello", "world".to_string(), vec![])
+            .await;
+        // Different user
+        assert!(cache.get("user2", "conv1", "hello").await.is_none());
+        // Different conversation
+        assert!(cache.get("user1", "conv2", "hello").await.is_none());
+        // Different message
+        assert!(cache.get("user1", "conv1", "bye").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_ttl_expiration() {
+        let cache = ResponseCache::new(Duration::from_millis(50));
+        cache
+            .set("user1", "conv1", "hello", "world".to_string(), vec![])
+            .await;
+        // Immediately available
+        assert!(cache.get("user1", "conv1", "hello").await.is_some());
+        // Wait for TTL to expire
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(cache.get("user1", "conv1", "hello").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_cleanup() {
+        let cache = ResponseCache::new(Duration::from_millis(50));
+        cache
+            .set("user1", "conv1", "hello", "world".to_string(), vec![])
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cache.cleanup().await;
+        // After cleanup, entry should be gone
+        let cache_guard = cache.cache.read().await;
+        assert!(cache_guard.is_empty());
+    }
+
+    #[test]
+    fn test_response_cache_generate_key_consistency() {
+        let key1 = ResponseCache::generate_key("u1", "c1", "hello");
+        let key2 = ResponseCache::generate_key("u1", "c1", "hello");
+        let key3 = ResponseCache::generate_key("u1", "c1", "hello ");
+        assert_eq!(key1, key2);
+        // Trimmed so trailing space doesn't matter
+        assert_eq!(key1, key3);
+    }
+
+    #[test]
+    fn test_response_cache_generate_key_uniqueness() {
+        let key1 = ResponseCache::generate_key("u1", "c1", "hello");
+        let key2 = ResponseCache::generate_key("u1", "c1", "world");
+        let key3 = ResponseCache::generate_key("u2", "c1", "hello");
+        assert_ne!(key1, key2);
+        assert_ne!(key1, key3);
+    }
+
+    // ── AgentBuilder ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_agent_builder_new() {
         let builder = AgentBuilder::new();
         assert!(builder.config.is_none());
         assert!(builder.provider.is_none());
+        assert!(builder.tools.is_none());
+    }
+
+    #[test]
+    fn test_agent_builder_default() {
+        let builder: AgentBuilder = Default::default();
+        assert!(builder.config.is_none());
+    }
+
+    #[test]
+    fn test_agent_builder_chaining() {
+        let builder = AgentBuilder::new()
+            .config(AgentConfig::default())
+            .skills("skill1".to_string())
+            .provider(Arc::new(MockProvider))
+            .tools(Arc::new(ToolRegistry::new()));
+        assert!(builder.config.is_some());
+        assert!(builder.provider.is_some());
+        assert!(builder.tools.is_some());
+    }
+
+    #[test]
+    fn test_agent_builder_build_without_provider_fails() {
+        let builder = AgentBuilder::new().config(AgentConfig::default());
+        let result = builder.build();
+        match result {
+            Err(e) => assert!(e.to_string().contains("Provider required")),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn test_agent_builder_build_success() {
+        let builder = AgentBuilder::new()
+            .config(AgentConfig::default())
+            .provider(Arc::new(MockProvider))
+            .tools(Arc::new(ToolRegistry::new()));
+        let result = builder.build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_agent_builder_skills_prompt() {
+        let builder = AgentBuilder::new().skills("my skill".to_string());
+        assert_eq!(builder.config.unwrap().skills_prompt, Some("my skill".to_string()));
+    }
+
+    // ── Agent ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_agent_set_and_read_skill_trust() {
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        );
+        assert_eq!(agent.current_skill_trust(), crate::tools::SkillTrust::Trusted);
+
+        agent.set_skill_trust(crate::tools::SkillTrust::Community);
+        assert_eq!(agent.current_skill_trust(), crate::tools::SkillTrust::Community);
+
+        agent.set_skill_trust(crate::tools::SkillTrust::Trusted);
+        assert_eq!(agent.current_skill_trust(), crate::tools::SkillTrust::Trusted);
+    }
+
+    #[test]
+    fn test_agent_update_config() {
+        let mut agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        );
+        let mut new_config = AgentConfig::default();
+        new_config.temperature = 0.3;
+        new_config.max_tokens = 512;
+        agent.update_config(new_config);
+        assert_eq!(agent.config.temperature, 0.3);
+        assert_eq!(agent.config.max_tokens, 512);
+    }
+
+    #[test]
+    fn test_agent_with_model() {
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_model("claude-sonnet-4-6".to_string());
+        assert_eq!(agent.model, Some("claude-sonnet-4-6".to_string()));
+    }
+
+    #[test]
+    fn test_agent_builder_with_all_options() {
+        let builder = AgentBuilder::new()
+            .config(AgentConfig::default())
+            .provider(Arc::new(MockProvider))
+            .tools(Arc::new(ToolRegistry::new()));
+        let result = builder.build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_progress_event_clone() {
+        let event = ProgressEvent::Started;
+        let cloned = event.clone();
+        assert!(matches!(cloned, ProgressEvent::Started));
+
+        let event2 = ProgressEvent::ToolCalling {
+            name: "search".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let cloned2 = event2.clone();
+        assert!(matches!(cloned2, ProgressEvent::ToolCalling { name, .. } if name == "search"));
+    }
+
+    #[test]
+    fn test_progress_event_debug() {
+        let event = ProgressEvent::Completed {
+            response: "hi".to_string(),
+        };
+        let debug = format!("{:?}", event);
+        assert!(debug.contains("Completed"));
+    }
+
+    #[test]
+    fn test_cached_response_clone() {
+        let entry = CachedResponse {
+            response: "hello".to_string(),
+            created_at: SystemTime::now(),
+            tools_used: vec!["tool1".to_string()],
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.response, "hello");
+        assert_eq!(cloned.tools_used, vec!["tool1"]);
+    }
+
+    #[tokio::test]
+    async fn test_agent_get_chat_history_without_store() {
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        );
+        let history = agent.get_chat_history("conv1", 10).await.unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_agent_get_last_conversation_without_store() {
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        );
+        let last = agent.get_last_conversation("user1").await.unwrap();
+        assert!(last.is_none());
     }
 }

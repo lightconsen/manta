@@ -238,3 +238,86 @@ impl Tool for TtsTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tts_args_defaults() {
+        let args: TtsArgs = serde_json::from_value(serde_json::json!({
+            "text": "Hello world"
+        })).unwrap();
+        assert_eq!(args.text, "Hello world");
+        assert_eq!(args.voice, None);
+        assert_eq!(args.speed, None);
+        assert_eq!(args.output, None);
+    }
+
+    #[test]
+    fn test_tts_args_custom() {
+        let args: TtsArgs = serde_json::from_value(serde_json::json!({
+            "text": "Hello",
+            "voice": "nova",
+            "speed": 1.5,
+            "output": "/tmp/out.mp3"
+        })).unwrap();
+        assert_eq!(args.voice, Some("nova".to_string()));
+        assert_eq!(args.speed, Some(1.5));
+        assert_eq!(args.output, Some("/tmp/out.mp3".to_string()));
+    }
+
+    #[test]
+    fn test_tts_tool_name_and_schema() {
+        let tool = TtsTool::new();
+        assert_eq!(tool.name(), "tts");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+        assert!(schema.get("required").unwrap().as_array().unwrap().contains(&serde_json::json!("text")));
+    }
+
+    #[tokio::test]
+    async fn test_tts_tool_execution_result() {
+        let tool = TtsTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({ "text": "Hello" }),
+            &ctx,
+        ).await.unwrap();
+
+        // On macOS, the `say` fallback may succeed even without API key.
+        // On other platforms without espeak, this would fail.
+        // We just verify the result is well-formed.
+        if result.success {
+            assert!(result.output.contains("TTS audio saved") || result.output.contains("TTS audio saved"));
+        } else {
+            assert!(result.error.unwrap().contains("No TTS provider"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tts_tool_invalid_args() {
+        let tool = TtsTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
+    }
+
+    #[test]
+    fn test_speed_clamping() {
+        // Verify clamp behavior: values outside 0.25-4.0 should be clamped
+        let low = 0.1_f32.clamp(0.25, 4.0);
+        assert_eq!(low, 0.25);
+
+        let high = 5.0_f32.clamp(0.25, 4.0);
+        assert_eq!(high, 4.0);
+
+        let mid = 1.5_f32.clamp(0.25, 4.0);
+        assert_eq!(mid, 1.5);
+    }
+}

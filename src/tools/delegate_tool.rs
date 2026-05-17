@@ -693,4 +693,268 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"running\"");
     }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_can_delegate_at_depth_0() {
+        let tracker = DelegationTracker::new(0);
+        assert!(tracker.can_delegate().await);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_can_delegate_at_max_depth() {
+        let tracker = DelegationTracker::new(MAX_DEPTH);
+        assert!(!tracker.can_delegate().await);
+
+        let tracker = DelegationTracker::new(MAX_DEPTH + 1);
+        assert!(!tracker.can_delegate().await);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_can_delegate_at_max_children() {
+        let tracker = DelegationTracker::new(0);
+        for i in 0..MAX_CHILDREN {
+            let child = ChildAgent {
+                id: format!("child-{}", i),
+                parent_id: "parent".to_string(),
+                task: TaskSpec {
+                    prompt: "test".to_string(),
+                    output_format: None,
+                    max_iterations: None,
+                    allowed_tools: vec![],
+                    context: HashMap::new(),
+                },
+                status: ChildStatus::Pending,
+                created_at: chrono::Utc::now(),
+                result: None,
+                error: None,
+                budget: IterationBudget::new(10),
+                iterations: Arc::new(AtomicUsize::new(0)),
+            };
+            tracker.register_child(child).await;
+        }
+        assert_eq!(tracker.child_count().await, MAX_CHILDREN);
+        assert!(!tracker.can_delegate().await);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_register_and_get_child() {
+        let tracker = DelegationTracker::new(0);
+        let child = ChildAgent {
+            id: "c1".to_string(),
+            parent_id: "p1".to_string(),
+            task: TaskSpec {
+                prompt: "hello".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+            },
+            status: ChildStatus::Pending,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        };
+        tracker.register_child(child.clone()).await;
+
+        let fetched = tracker.get_child("c1").await;
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().id, "c1");
+
+        assert!(tracker.get_child("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_update_status() {
+        let tracker = DelegationTracker::new(0);
+        let child = ChildAgent {
+            id: "c1".to_string(),
+            parent_id: "p1".to_string(),
+            task: TaskSpec {
+                prompt: "test".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+            },
+            status: ChildStatus::Pending,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        };
+        tracker.register_child(child).await;
+
+        tracker.update_status("c1", ChildStatus::Running).await;
+        let fetched = tracker.get_child("c1").await.unwrap();
+        assert_eq!(fetched.status, ChildStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_set_result() {
+        let tracker = DelegationTracker::new(0);
+        let child = ChildAgent {
+            id: "c1".to_string(),
+            parent_id: "p1".to_string(),
+            task: TaskSpec {
+                prompt: "test".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+            },
+            status: ChildStatus::Running,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        };
+        tracker.register_child(child).await;
+
+        tracker.set_result("c1", "done".to_string()).await;
+        let fetched = tracker.get_child("c1").await.unwrap();
+        assert_eq!(fetched.status, ChildStatus::Completed);
+        assert_eq!(fetched.result, Some("done".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_set_error() {
+        let tracker = DelegationTracker::new(0);
+        let child = ChildAgent {
+            id: "c1".to_string(),
+            parent_id: "p1".to_string(),
+            task: TaskSpec {
+                prompt: "test".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+            },
+            status: ChildStatus::Running,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        };
+        tracker.register_child(child).await;
+
+        tracker.set_error("c1", "oops".to_string()).await;
+        let fetched = tracker.get_child("c1").await.unwrap();
+        assert_eq!(fetched.status, ChildStatus::Failed);
+        assert_eq!(fetched.error, Some("oops".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_list_children() {
+        let tracker = DelegationTracker::new(0);
+        for i in 0..3 {
+            let child = ChildAgent {
+                id: format!("c{}", i),
+                parent_id: "p".to_string(),
+                task: TaskSpec {
+                    prompt: format!("task {}", i),
+                    output_format: None,
+                    max_iterations: None,
+                    allowed_tools: vec![],
+                    context: HashMap::new(),
+                },
+                status: ChildStatus::Pending,
+                created_at: chrono::Utc::now(),
+                result: None,
+                error: None,
+                budget: IterationBudget::new(10),
+                iterations: Arc::new(AtomicUsize::new(0)),
+            };
+            tracker.register_child(child).await;
+        }
+        let list = tracker.list_children().await;
+        assert_eq!(list.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_tracker_remove_child() {
+        let tracker = DelegationTracker::new(0);
+        let child = ChildAgent {
+            id: "c1".to_string(),
+            parent_id: "p1".to_string(),
+            task: TaskSpec {
+                prompt: "test".to_string(),
+                output_format: None,
+                max_iterations: None,
+                allowed_tools: vec![],
+                context: HashMap::new(),
+            },
+            status: ChildStatus::Pending,
+            created_at: chrono::Utc::now(),
+            result: None,
+            error: None,
+            budget: IterationBudget::new(10),
+            iterations: Arc::new(AtomicUsize::new(0)),
+        };
+        tracker.register_child(child).await;
+
+        let removed = tracker.remove_child("c1").await;
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id, "c1");
+        assert!(tracker.get_child("c1").await.is_none());
+        assert!(tracker.remove_child("c1").await.is_none());
+    }
+
+    #[test]
+    fn test_delegate_tool_new() {
+        let tool = DelegateTool::new(1);
+        let debug = format!("{:?}", tool);
+        assert!(debug.contains("DelegateTool"));
+        assert!(debug.contains("has_agent: false"));
+    }
+
+    #[test]
+    fn test_delegate_tool_root() {
+        let tool = DelegateTool::root();
+        assert_eq!(tool.tracker.depth, 0);
+    }
+
+    #[test]
+    fn test_delegate_tool_registry_access() {
+        let tool = DelegateTool::new(0);
+        let _registry = tool.registry();
+        // Registry is accessible and non-null
+    }
+
+    #[test]
+    fn test_child_status_variants() {
+        assert_eq!(ChildStatus::Pending, ChildStatus::Pending);
+        assert_eq!(ChildStatus::Running, ChildStatus::Running);
+        assert_eq!(ChildStatus::Completed, ChildStatus::Completed);
+        assert_eq!(ChildStatus::Failed, ChildStatus::Failed);
+        assert_eq!(ChildStatus::Cancelled, ChildStatus::Cancelled);
+        assert_ne!(ChildStatus::Pending, ChildStatus::Running);
+    }
+
+    #[test]
+    fn test_blocked_tools_const() {
+        assert!(BLOCKED_TOOLS.contains(&"delegate"));
+        assert!(BLOCKED_TOOLS.contains(&"clarify"));
+        assert!(BLOCKED_TOOLS.contains(&"memory"));
+        assert!(BLOCKED_TOOLS.contains(&"send_message"));
+        assert!(BLOCKED_TOOLS.contains(&"execute_code"));
+    }
+
+    #[test]
+    fn test_max_constants() {
+        assert_eq!(MAX_CHILDREN, 3);
+        assert_eq!(MAX_DEPTH, 2);
+    }
+
+    #[test]
+    fn test_delegation_tracker_clone() {
+        let tracker = DelegationTracker::new(0);
+        let cloned = tracker.clone();
+        assert_eq!(cloned.depth, tracker.depth);
+        assert_eq!(cloned.max_children, tracker.max_children);
+    }
 }

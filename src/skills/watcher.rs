@@ -415,22 +415,70 @@ mod tests {
 
     #[test]
     fn test_change_kind_variants() {
-        // Test that ChangeKind variants exist and can be compared
         assert_eq!(ChangeKind::Created, ChangeKind::Created);
         assert_eq!(ChangeKind::Modified, ChangeKind::Modified);
         assert_eq!(ChangeKind::Removed, ChangeKind::Removed);
         assert_eq!(ChangeKind::Mixed, ChangeKind::Mixed);
         assert_ne!(ChangeKind::Created, ChangeKind::Modified);
+        assert_ne!(ChangeKind::Removed, ChangeKind::Mixed);
     }
 
     #[test]
-    fn test_is_skill_file_change() {
+    fn test_change_kind_from_notify() {
+        use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
+        use notify::EventKind;
+        assert_eq!(
+            ChangeKind::from(&EventKind::Create(CreateKind::File)),
+            ChangeKind::Created
+        );
+        assert_eq!(
+            ChangeKind::from(&EventKind::Modify(ModifyKind::Any)),
+            ChangeKind::Modified
+        );
+        assert_eq!(
+            ChangeKind::from(&EventKind::Remove(RemoveKind::File)),
+            ChangeKind::Removed
+        );
+        assert_eq!(ChangeKind::from(&EventKind::Other), ChangeKind::Mixed);
+        assert_eq!(
+            ChangeKind::from(&EventKind::Access(AccessKind::Read)),
+            ChangeKind::Mixed
+        );
+    }
+
+    #[test]
+    fn test_file_change_debug() {
+        let change = FileChange {
+            path: PathBuf::from("/test.md"),
+            kind: ChangeKind::Modified,
+        };
+        let debug = format!("{:?}", change);
+        assert!(debug.contains("FileChange"));
+        assert!(debug.contains("/test.md"));
+    }
+
+    #[test]
+    fn test_file_change_clone() {
+        let change = FileChange {
+            path: PathBuf::from("/test.md"),
+            kind: ChangeKind::Created,
+        };
+        let cloned = change.clone();
+        assert_eq!(change.path, cloned.path);
+        assert_eq!(change.kind, cloned.kind);
+    }
+
+    #[test]
+    fn test_is_skill_file_change_skill_md() {
         let change = FileChange {
             path: PathBuf::from("/skills/docker/SKILL.md"),
             kind: ChangeKind::Modified,
         };
         assert!(is_skill_file_change(&change));
+    }
 
+    #[test]
+    fn test_is_skill_file_change_other() {
         let change = FileChange {
             path: PathBuf::from("/other/file.txt"),
             kind: ChangeKind::Modified,
@@ -439,17 +487,66 @@ mod tests {
     }
 
     #[test]
-    fn test_skill_name_from_change() {
+    fn test_is_skill_file_change_windows_path() {
+        let change = FileChange {
+            path: PathBuf::from("C:\\skills\\docker\\SKILL.md"),
+            kind: ChangeKind::Modified,
+        };
+        assert!(is_skill_file_change(&change));
+    }
+
+    #[test]
+    fn test_skill_name_from_change_skill_md() {
         let change = FileChange {
             path: PathBuf::from("/skills/docker/SKILL.md"),
             kind: ChangeKind::Modified,
         };
         assert_eq!(skill_name_from_change(&change), Some("docker".to_string()));
+    }
 
+    #[test]
+    fn test_skill_name_from_change_readme() {
         let change = FileChange {
             path: PathBuf::from("/skills/k8s/README.md"),
             kind: ChangeKind::Modified,
         };
         assert_eq!(skill_name_from_change(&change), Some("k8s".to_string()));
+    }
+
+    #[test]
+    fn test_skill_name_from_change_no_skill() {
+        let change = FileChange {
+            path: PathBuf::from("/other/file.txt"),
+            kind: ChangeKind::Modified,
+        };
+        assert_eq!(skill_name_from_change(&change), None);
+    }
+
+    #[test]
+    fn test_skill_name_from_change_no_parent() {
+        let change = FileChange {
+            path: PathBuf::from("SKILL.md"),
+            kind: ChangeKind::Modified,
+        };
+        assert_eq!(skill_name_from_change(&change), None);
+    }
+
+    #[test]
+    fn test_skill_name_from_change_deep_path() {
+        let change = FileChange {
+            path: PathBuf::from("/skills/rust/src/main.rs"),
+            kind: ChangeKind::Modified,
+        };
+        assert_eq!(skill_name_from_change(&change), Some("rust".to_string()));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_skill_name_from_change_windows_path() {
+        let change = FileChange {
+            path: PathBuf::from("C:\\skills\\docker\\SKILL.md"),
+            kind: ChangeKind::Modified,
+        };
+        assert_eq!(skill_name_from_change(&change), Some("docker".to_string()));
     }
 }

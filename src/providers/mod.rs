@@ -406,4 +406,205 @@ mod tests {
         assert!(!registry.has("test"));
         assert!(registry.get("test").is_none());
     }
+
+    #[test]
+    fn test_role_display() {
+        assert_eq!(format!("{}", Role::System), "system");
+        assert_eq!(format!("{}", Role::User), "user");
+        assert_eq!(format!("{}", Role::Assistant), "assistant");
+        assert_eq!(format!("{}", Role::Tool), "tool");
+    }
+
+    #[test]
+    fn test_role_serialization() {
+        let json = serde_json::to_string(&Role::User).unwrap();
+        assert_eq!(json, "\"user\"");
+        let de: Role = serde_json::from_str("\"assistant\"").unwrap();
+        assert_eq!(de, Role::Assistant);
+    }
+
+    #[test]
+    fn test_message_user_named() {
+        let msg = Message::user_named("Alice", "Hello!");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.content, "Hello!");
+        assert_eq!(msg.name, Some("Alice".to_string()));
+    }
+
+    #[test]
+    fn test_message_tool() {
+        let msg = Message::tool("result data", "call_123");
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.content, "result data");
+        assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
+    }
+
+    #[test]
+    fn test_message_with_name() {
+        let msg = Message::system("Instructions").with_name("config");
+        assert_eq!(msg.name, Some("config".to_string()));
+    }
+
+    #[test]
+    fn test_message_with_tool_calls() {
+        let calls = vec![ToolCall {
+            id: "c1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+            },
+        }];
+        let msg = Message::assistant("Using tool").with_tool_calls(calls.clone());
+        assert_eq!(msg.tool_calls.as_ref().unwrap()[0].id, "c1");
+    }
+
+    #[test]
+    fn test_message_with_metadata() {
+        let msg = Message::user("Hi")
+            .with_metadata("source", "telegram")
+            .with_metadata("chat_id", "12345");
+        let meta = msg.metadata.unwrap();
+        assert_eq!(meta.get("source"), Some(&"telegram".to_string()));
+        assert_eq!(meta.get("chat_id"), Some(&"12345".to_string()));
+    }
+
+    #[test]
+    fn test_message_serialization() {
+        let msg = Message::user("Hello");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("Hello"));
+        assert!(json.contains("user"));
+    }
+
+    #[test]
+    fn test_tool_call_creation() {
+        let tc = ToolCall {
+            id: "tc1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "grep".to_string(),
+                arguments: "{\"pattern\": \"foo\"}".to_string(),
+            },
+        };
+        assert_eq!(tc.id, "tc1");
+        assert_eq!(tc.function.name, "grep");
+    }
+
+    #[test]
+    fn test_tool_result_success() {
+        let tr = ToolResult::success("id1", "all good");
+        assert_eq!(tr.tool_call_id, "id1");
+        assert_eq!(tr.content, "all good");
+        assert_eq!(tr.is_error, Some(false));
+        assert_eq!(tr.role, Role::Tool);
+    }
+
+    #[test]
+    fn test_tool_result_error() {
+        let tr = ToolResult::error("id2", "failed");
+        assert_eq!(tr.is_error, Some(true));
+    }
+
+    #[test]
+    fn test_usage_default() {
+        let u = Usage::default();
+        assert_eq!(u.prompt_tokens, 0);
+        assert_eq!(u.completion_tokens, 0);
+        assert_eq!(u.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_completion_request_default() {
+        let req = CompletionRequest::default();
+        assert!(req.messages.is_empty());
+        assert_eq!(req.temperature, Some(0.7));
+        assert_eq!(req.max_tokens, Some(2048));
+        assert!(!req.stream);
+    }
+
+    #[test]
+    fn test_completion_chunk() {
+        let chunk = CompletionChunk {
+            content: Some("hi".to_string()),
+            tool_calls: None,
+            is_done: false,
+            usage: None,
+        };
+        assert_eq!(chunk.content, Some("hi".to_string()));
+        assert!(!chunk.is_done);
+    }
+
+    #[test]
+    fn test_tool_definition() {
+        let td = ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "test".to_string(),
+                description: "A test".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        };
+        assert_eq!(td.tool_type, "function");
+        let json = serde_json::to_string(&td).unwrap();
+        assert!(json.contains("test"));
+    }
+
+    #[test]
+    fn test_provider_registry_default() {
+        let registry: ProviderRegistry = Default::default();
+        assert!(registry.list().is_empty());
+    }
+
+    // Mock provider for registry tests
+    struct MockProvider;
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        fn name(&self) -> &str { "mock" }
+        fn default_model(&self) -> &str { "mock-model" }
+        fn supports_tools(&self) -> bool { true }
+        fn max_context(&self) -> usize { 4096 }
+        async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+            unimplemented!()
+        }
+        async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+            unimplemented!()
+        }
+        async fn health_check(&self) -> crate::Result<bool> { Ok(true) }
+    }
+
+    #[test]
+    fn test_provider_registry_register_and_get() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        assert!(registry.has("mock"));
+        assert_eq!(registry.list(), vec!["mock"]);
+        let p = registry.get("mock").unwrap();
+        assert_eq!(p.name(), "mock");
+        assert_eq!(p.default_model(), "mock-model");
+        assert!(p.supports_tools());
+        assert_eq!(p.max_context(), 4096);
+    }
+
+    #[test]
+    fn test_provider_registry_debug() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let dbg = format!("{:?}", registry);
+        assert!(dbg.contains("ProviderRegistry"));
+        assert!(dbg.contains("mock"));
+    }
+
+    #[test]
+    fn test_provider_count_tokens() {
+        let provider = MockProvider;
+        let msgs = vec![
+            Message::system("You are helpful"),
+            Message::user("Hello there"),
+        ];
+        let tokens = provider.count_tokens(&msgs);
+        // count_tokens sums per-message: 15/4 + 11/4 = 3 + 2 = 5
+        assert_eq!(tokens, 5);
+    }
 }

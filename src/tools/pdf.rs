@@ -74,13 +74,13 @@ fn markdown_to_html(content: &str, title: &str) -> String {
             .to_string();
     }
 
-    // Bold
-    html = html.replace("**", "<strong>");
-    // naive: replace pairs
+    // Bold: handle ** pairs correctly
     let mut result = String::new();
+    let mut chars = html.chars().peekable();
     let mut in_bold = false;
-    for ch in html.chars() {
-        if ch == '*' {
+    while let Some(ch) = chars.next() {
+        if ch == '*' && chars.peek() == Some(&'*') {
+            chars.next(); // consume second *
             if in_bold {
                 result.push_str("</strong>");
                 in_bold = false;
@@ -315,5 +315,72 @@ impl Tool for PdfTool {
             })),
             execution_time: start.elapsed(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_markdown_to_html_bold() {
+        let html = markdown_to_html("**bold text**", "Test");
+        assert!(html.contains("<strong>bold text</strong>"), "bold tags should wrap text: {}", html);
+    }
+
+    #[test]
+    fn test_markdown_to_html_headers() {
+        let html = markdown_to_html("# Title\n## Subtitle", "Doc");
+        assert!(html.contains("<h1>Title</h1>"), "h1 should be generated: {}", html);
+        assert!(html.contains("<h2>Subtitle</h2>"), "h2 should be generated: {}", html);
+    }
+
+    #[test]
+    fn test_markdown_to_html_inline_code() {
+        let html = markdown_to_html("use `cargo test` to run", "Doc");
+        assert!(html.contains("<code>cargo test</code>"), "inline code should be wrapped: {}", html);
+    }
+
+    #[test]
+    fn test_markdown_to_html_escapes_html_entities() {
+        let html = markdown_to_html("5 < 10 && 10 > 5", "Doc");
+        assert!(!html.contains("5 < 10"), "raw < should be escaped");
+        assert!(html.contains("&lt;"), "< should become &lt;: {}", html);
+        assert!(html.contains("&gt;"), "> should become &gt;: {}", html);
+    }
+
+    #[test]
+    fn test_markdown_to_html_contains_doctype_and_title() {
+        let html = markdown_to_html("Hello", "My Title");
+        assert!(html.contains("<!DOCTYPE html>"), "should have doctype");
+        assert!(html.contains("<title>My Title</title>"), "should have title");
+        assert!(html.contains("<h1>My Title</h1>"), "should have h1 title");
+    }
+
+    #[test]
+    fn test_pdf_args_defaults() {
+        let args: PdfArgs = serde_json::from_value(serde_json::json!({
+            "content": "Hello"
+        })).unwrap();
+        assert_eq!(args.content, "Hello");
+        assert_eq!(args.orientation, "portrait");
+        assert_eq!(args.paper, "a4");
+        assert!(args.output.is_none());
+        assert!(args.title.is_none());
+    }
+
+    #[test]
+    fn test_pdf_args_custom() {
+        let args: PdfArgs = serde_json::from_value(serde_json::json!({
+            "content": "Hello",
+            "orientation": "landscape",
+            "paper": "letter",
+            "title": "My Doc",
+            "output": "/tmp/out.pdf"
+        })).unwrap();
+        assert_eq!(args.orientation, "landscape");
+        assert_eq!(args.paper, "letter");
+        assert_eq!(args.title, Some("My Doc".to_string()));
+        assert_eq!(args.output, Some("/tmp/out.pdf".to_string()));
     }
 }

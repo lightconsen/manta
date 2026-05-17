@@ -436,13 +436,19 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn test_is_localhost() {
         assert!(is_localhost(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
         assert!(is_localhost(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 53))));
         assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv6() {
+        assert!(is_localhost(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 2))));
     }
 
     #[test]
@@ -459,11 +465,173 @@ mod tests {
     }
 
     #[test]
+    fn test_is_tailscale_ipv6() {
+        // Tailscale only supports IPv4 CGNAT
+        assert!(!is_tailscale(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
     fn test_is_private_ip() {
         assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
         assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
         assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
         assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
         assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+    }
+
+    #[test]
+    fn test_is_private_ip_ipv6() {
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0, 0, 0, 0, 0, 0x8888))));
+    }
+
+    #[test]
+    fn test_allowed_origin_default() {
+        assert!(matches!(AllowedOrigin::default(), AllowedOrigin::Localhost));
+    }
+
+    #[test]
+    fn test_is_ip_allowed_any() {
+        assert!(is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            &AllowedOrigin::Any
+        ));
+    }
+
+    #[test]
+    fn test_is_ip_allowed_localhost() {
+        assert!(is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &AllowedOrigin::Localhost
+        ));
+        assert!(!is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            &AllowedOrigin::Localhost
+        ));
+    }
+
+    #[test]
+    fn test_is_ip_allowed_tailscale() {
+        assert!(is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(100, 64, 1, 1)),
+            &AllowedOrigin::Tailscale
+        ));
+        assert!(!is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            &AllowedOrigin::Tailscale
+        ));
+    }
+
+    #[test]
+    fn test_is_ip_allowed_private() {
+        assert!(is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            &AllowedOrigin::Private
+        ));
+        assert!(!is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            &AllowedOrigin::Private
+        ));
+    }
+
+    #[test]
+    fn test_is_ip_allowed_ip_list() {
+        let allowed = AllowedOrigin::IpList(vec![
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+        ]);
+        assert!(is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            &allowed
+        ));
+        assert!(!is_ip_allowed(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            &allowed
+        ));
+    }
+
+    #[test]
+    fn test_extract_client_ip_x_forwarded_for() {
+        let mut req = Request::new(Body::empty());
+        req.headers_mut()
+            .insert("x-forwarded-for", "203.0.113.195, 70.41.3.18".parse().unwrap());
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195))));
+    }
+
+    #[test]
+    fn test_extract_client_ip_x_real_ip() {
+        let mut req = Request::new(Body::empty());
+        req.headers_mut()
+            .insert("x-real-ip", "192.168.1.1".parse().unwrap());
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+    }
+
+    #[test]
+    fn test_extract_client_ip_x_forwarded_for_priority() {
+        let mut req = Request::new(Body::empty());
+        req.headers_mut()
+            .insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
+        req.headers_mut()
+            .insert("x-real-ip", "192.168.1.1".parse().unwrap());
+        let ip = extract_client_ip(&req);
+        // X-Forwarded-For takes priority
+        assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_extract_client_ip_no_headers() {
+        let req = Request::new(Body::empty());
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_extract_client_ip_invalid() {
+        let mut req = Request::new(Body::empty());
+        req.headers_mut()
+            .insert("x-forwarded-for", "not-an-ip".parse().unwrap());
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_csp_policy_strict() {
+        let policy = CspPolicy::Strict;
+        let header = policy.to_header_value();
+        assert!(header.contains("default-src 'self'"));
+        assert!(header.contains("script-src 'self'"));
+        assert!(header.contains("frame-ancestors 'none'"));
+    }
+
+    #[test]
+    fn test_csp_policy_api() {
+        let policy = CspPolicy::Api;
+        let header = policy.to_header_value();
+        assert!(header.contains("default-src 'none'"));
+        assert!(header.contains("frame-ancestors 'none'"));
+    }
+
+    #[test]
+    fn test_csp_policy_admin() {
+        let policy = CspPolicy::Admin {
+            nonce: "abc123".to_string(),
+        };
+        let header = policy.to_header_value();
+        assert!(header.contains("script-src 'self' 'nonce-abc123'"));
+        assert!(header.contains("style-src 'self' 'nonce-abc123'"));
+        assert!(header.contains("img-src 'self' data: blob:"));
+    }
+
+    #[test]
+    fn test_generate_nonce() {
+        let nonce1 = generate_nonce();
+        let nonce2 = generate_nonce();
+        assert_eq!(nonce1.len(), 32); // 16 bytes hex = 32 chars
+        assert_eq!(nonce2.len(), 32);
+        assert_ne!(nonce1, nonce2); // Very unlikely to collide
+        // Should be valid hex
+        assert!(hex::decode(&nonce1).is_ok());
     }
 }

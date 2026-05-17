@@ -221,7 +221,15 @@ mod tests {
         assert_eq!(ExportFormat::from_str("md").unwrap(), ExportFormat::Markdown);
         assert_eq!(ExportFormat::from_str("json").unwrap(), ExportFormat::Json);
         assert_eq!(ExportFormat::from_str("jsonl").unwrap(), ExportFormat::Jsonl);
+        assert_eq!(ExportFormat::from_str("jsonlines").unwrap(), ExportFormat::Jsonl);
         assert!(ExportFormat::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn test_export_format_from_str_case_insensitive() {
+        assert_eq!(ExportFormat::from_str("Markdown").unwrap(), ExportFormat::Markdown);
+        assert_eq!(ExportFormat::from_str("JSON").unwrap(), ExportFormat::Json);
+        assert_eq!(ExportFormat::from_str("JSONL").unwrap(), ExportFormat::Jsonl);
     }
 
     #[test]
@@ -232,10 +240,156 @@ mod tests {
     }
 
     #[test]
+    fn test_export_format_display() {
+        assert_eq!(ExportFormat::Markdown.to_string(), "markdown");
+        assert_eq!(ExportFormat::Json.to_string(), "json");
+        assert_eq!(ExportFormat::Jsonl.to_string(), "jsonl");
+    }
+
+    #[test]
     fn test_export_meta() {
         let meta = ExportMeta::new();
         assert_eq!(meta.source, "manta");
         assert_eq!(meta.format_version, 1);
         assert!(!meta.exported_at.is_empty());
+        assert!(!meta.version.is_empty());
+    }
+
+    #[test]
+    fn test_export_meta_default() {
+        let meta: ExportMeta = Default::default();
+        assert_eq!(meta.source, "manta");
+        assert_eq!(meta.format_version, 1);
+    }
+
+    #[test]
+    fn test_export_meta_serde() {
+        let meta = ExportMeta::new();
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("manta"));
+        let restored: ExportMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.source, "manta");
+        assert_eq!(restored.format_version, 1);
+    }
+
+    #[test]
+    fn test_humantime_timestamp() {
+        let now = SystemTime::now();
+        let ts = humantime_timestamp(now);
+        assert!(!ts.is_empty());
+        assert!(ts.contains('T') || ts.contains('+'));
+    }
+
+    #[test]
+    fn test_json_line_message_from_chat_message() {
+        let msg = crate::memory::ChatMessage::new("conv1", "user1", "user", "hello");
+        let json_msg = JsonLineMessage::from_chat_message(&msg);
+        assert_eq!(json_msg.conversation_id, "conv1");
+        assert_eq!(json_msg.user_id, "user1");
+        assert_eq!(json_msg.role, "user");
+        assert_eq!(json_msg.content, "hello");
+        assert_eq!(json_msg.id, msg.id);
+        assert!(json_msg.metadata.is_none());
+    }
+
+    #[test]
+    fn test_json_line_message_serde() {
+        let msg = JsonLineMessage {
+            id: "1".to_string(),
+            conversation_id: "conv1".to_string(),
+            user_id: "user1".to_string(),
+            role: "assistant".to_string(),
+            content: "hi".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metadata: Some(serde_json::json!({"tokens": 10})),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("assistant"));
+        let restored: JsonLineMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.content, "hi");
+    }
+
+    #[test]
+    fn test_json_line_memory_from_memory() {
+        let memory = crate::memory::Memory::new("user1", "hello world", "fact");
+        let json_mem = JsonLineMemory::from_memory(&memory, false);
+        assert_eq!(json_mem.user_id, "user1");
+        assert_eq!(json_mem.content, "hello world");
+        assert_eq!(json_mem.memory_type, "fact");
+        assert_eq!(json_mem.importance_score, 0.5);
+        assert_eq!(json_mem.source, "agent");
+        assert!(json_mem.embedding.is_none());
+    }
+
+    #[test]
+    fn test_json_line_memory_with_embedding() {
+        let memory = crate::memory::Memory::new("user1", "hello", "fact")
+            .with_embedding(vec![0.1, 0.2, 0.3]);
+        let json_mem = JsonLineMemory::from_memory(&memory, true);
+        assert!(json_mem.embedding.is_some());
+        assert_eq!(json_mem.embedding.unwrap(), vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn test_json_line_memory_without_embedding() {
+        let memory = crate::memory::Memory::new("user1", "hello", "fact")
+            .with_embedding(vec![0.1, 0.2, 0.3]);
+        let json_mem = JsonLineMemory::from_memory(&memory, false);
+        assert!(json_mem.embedding.is_none());
+    }
+
+    #[test]
+    fn test_conversation_export_serde() {
+        let export = ConversationExport {
+            meta: ExportMeta::new(),
+            messages: vec![],
+        };
+        let json = serde_json::to_string(&export).unwrap();
+        assert!(json.contains("manta"));
+        let restored: ConversationExport = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.messages.len(), 0);
+    }
+
+    #[test]
+    fn test_memory_export_serde() {
+        let export = MemoryExport {
+            meta: ExportMeta::new(),
+            memories: vec![],
+        };
+        let json = serde_json::to_string(&export).unwrap();
+        assert!(json.contains("manta"));
+    }
+
+    #[test]
+    fn test_full_export_serde() {
+        let export = FullExport {
+            meta: ExportMeta::new(),
+            conversations: std::collections::HashMap::new(),
+            memories: vec![],
+        };
+        let json = serde_json::to_string(&export).unwrap();
+        assert!(json.contains("manta"));
+        let restored: FullExport = serde_json::from_str(&json).unwrap();
+        assert!(restored.conversations.is_empty());
+    }
+
+    #[test]
+    fn test_json_line_memory_serde_skip_embedding() {
+        let mem = JsonLineMemory {
+            id: "1".to_string(),
+            user_id: "u1".to_string(),
+            conversation_id: None,
+            content: "test".to_string(),
+            memory_type: "fact".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            expires_at: None,
+            importance_score: 0.5,
+            source: "agent".to_string(),
+            metadata: None,
+            embedding: Some(vec![1.0, 2.0]),
+        };
+        let json = serde_json::to_string(&mem).unwrap();
+        // Embedding should be skipped in serialization
+        assert!(!json.contains("embedding"));
     }
 }

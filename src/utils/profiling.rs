@@ -377,4 +377,215 @@ mod tests {
         assert!(!report.counters.is_empty());
         assert_eq!(report.counters.get("requests"), Some(&1));
     }
+
+    #[test]
+    fn test_profiler_default() {
+        let profiler = Profiler::default();
+        // Should not panic; internal state is empty
+        assert!(std::ptr::eq(
+            profiler.timers.as_ref() as *const _,
+            profiler.timers.as_ref() as *const _
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_record_duration() {
+        let profiler = Profiler::new();
+        profiler.record_duration("op", Duration::from_millis(10)).await;
+        profiler.record_duration("op", Duration::from_millis(20)).await;
+
+        let stats = profiler.get_timer_stats("op").await.unwrap();
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.total, Duration::from_millis(30));
+        assert_eq!(stats.avg, Duration::from_millis(15));
+        assert_eq!(stats.min, Duration::from_millis(10));
+        assert_eq!(stats.max, Duration::from_millis(20));
+    }
+
+    #[tokio::test]
+    async fn test_add_to_counter() {
+        let profiler = Profiler::new();
+        profiler.add_to_counter("bytes", 100).await;
+        profiler.add_to_counter("bytes", 50).await;
+        assert_eq!(profiler.get_counter("bytes").await, 150);
+    }
+
+    #[tokio::test]
+    async fn test_get_counter_missing() {
+        let profiler = Profiler::new();
+        assert_eq!(profiler.get_counter("nonexistent").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_timer_stats_missing() {
+        let profiler = Profiler::new();
+        assert!(profiler.get_timer_stats("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_all_counters() {
+        let profiler = Profiler::new();
+        profiler.increment_counter("a").await;
+        profiler.increment_counter("b").await;
+        profiler.increment_counter("b").await;
+
+        let counters = profiler.get_all_counters().await;
+        assert_eq!(counters.len(), 2);
+        assert_eq!(counters.get("a"), Some(&1));
+        assert_eq!(counters.get("b"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn test_get_all_timer_stats() {
+        let profiler = Profiler::new();
+        profiler.record_duration("fast", Duration::from_millis(10)).await;
+        profiler.record_duration("slow", Duration::from_millis(100)).await;
+
+        let stats = profiler.get_all_timer_stats().await;
+        assert_eq!(stats.len(), 2);
+        // Sorted by total desc: slow first
+        assert_eq!(stats[0].name, "slow");
+        assert_eq!(stats[1].name, "fast");
+    }
+
+    #[tokio::test]
+    async fn test_timer_guard() {
+        let profiler = Profiler::new();
+        {
+            let _guard = profiler.start_timer("block");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Allow the spawned task to record the duration
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let stats = profiler.get_timer_stats("block").await;
+        assert!(stats.is_some());
+        let stats = stats.unwrap();
+        assert_eq!(stats.count, 1);
+        assert!(stats.total >= Duration::from_millis(10));
+    }
+
+    #[tokio::test]
+    async fn test_memory_peak_tracking() {
+        let profiler = Profiler::new();
+        profiler.record_allocation(1000, "a").await;
+        profiler.record_allocation(500, "b").await;
+        assert_eq!(profiler.get_memory_stats().await.peak_bytes, 1500);
+
+        profiler.record_deallocation(1500).await;
+        profiler.record_allocation(2000, "c").await;
+        assert_eq!(profiler.get_memory_stats().await.peak_bytes, 2000);
+    }
+
+    #[tokio::test]
+    async fn test_memory_deallocation_saturation() {
+        let profiler = Profiler::new();
+        profiler.record_allocation(100, "a").await;
+        profiler.record_deallocation(200).await;
+        assert_eq!(profiler.get_memory_stats().await.current_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_allocation_history_bounded() {
+        let profiler = Profiler::new();
+        for i in 0..1005 {
+            profiler.record_allocation(1, format!("alloc-{}", i)).await;
+        }
+        let stats = profiler.get_memory_stats().await;
+        assert_eq!(stats.allocation_history.len(), 1000);
+    }
+
+    #[tokio::test]
+    async fn test_reset() {
+        let profiler = Profiler::new();
+        profiler.increment_counter("c").await;
+        profiler.record_duration("t", Duration::from_millis(1)).await;
+        profiler.record_allocation(100, "a").await;
+
+        profiler.reset().await;
+
+        assert_eq!(profiler.get_counter("c").await, 0);
+        assert!(profiler.get_timer_stats("t").await.is_none());
+        let mem = profiler.get_memory_stats().await;
+        assert_eq!(mem.current_bytes, 0);
+        assert_eq!(mem.peak_bytes, 0);
+        assert_eq!(mem.total_allocations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_performance_report_format() {
+        let profiler = Profiler::new();
+        profiler.increment_counter("requests").await;
+        profiler.record_duration("handler", Duration::from_millis(5)).await;
+        profiler.record_allocation(1024, "buf").await;
+
+        let report = profiler.generate_report().await;
+        let formatted = report.format();
+
+        assert!(formatted.contains("Performance Report"));
+        assert!(formatted.contains("Timers:"));
+        assert!(formatted.contains("Counters:"));
+        assert!(formatted.contains("Memory:"));
+        assert!(formatted.contains("requests:"));
+        assert!(formatted.contains("handler:"));
+        assert!(formatted.contains("Current:"));
+        assert!(formatted.contains("Peak:"));
+    }
+
+    #[tokio::test]
+    async fn test_performance_report_format_empty() {
+        let profiler = Profiler::new();
+        let report = profiler.generate_report().await;
+        let formatted = report.format();
+
+        assert!(formatted.contains("Performance Report"));
+        // No timers or counters sections when empty
+        assert!(!formatted.contains("Timers:"));
+        assert!(!formatted.contains("Counters:"));
+        // Memory section always present
+        assert!(formatted.contains("Memory:"));
+    }
+
+    #[test]
+    fn test_global_profiler() {
+        let p1 = global_profiler();
+        let p2 = global_profiler();
+        assert!(std::ptr::eq(p1, p2));
+    }
+
+    #[test]
+    fn test_memory_stats_default() {
+        let stats = MemoryStats::default();
+        assert_eq!(stats.peak_bytes, 0);
+        assert_eq!(stats.current_bytes, 0);
+        assert_eq!(stats.total_allocations, 0);
+        assert!(stats.allocation_history.is_empty());
+    }
+
+    #[test]
+    fn test_allocation_record_clone() {
+        let rec = AllocationRecord {
+            size: 100,
+            timestamp: Instant::now(),
+            description: "test".to_string(),
+        };
+        let cloned = rec.clone();
+        assert_eq!(cloned.size, 100);
+        assert_eq!(cloned.description, "test");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_timers_same_name() {
+        let profiler = Profiler::new();
+        profiler.record_duration("api", Duration::from_millis(10)).await;
+        profiler.record_duration("api", Duration::from_millis(20)).await;
+        profiler.record_duration("api", Duration::from_millis(30)).await;
+
+        let stats = profiler.get_timer_stats("api").await.unwrap();
+        assert_eq!(stats.count, 3);
+        assert_eq!(stats.total, Duration::from_millis(60));
+        assert_eq!(stats.avg, Duration::from_millis(20));
+        assert_eq!(stats.min, Duration::from_millis(10));
+        assert_eq!(stats.max, Duration::from_millis(30));
+    }
 }

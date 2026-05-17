@@ -480,6 +480,7 @@ impl std::fmt::Display for CompressionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::{CompletionRequest, CompletionResponse, CompletionStream};
 
     fn create_test_messages(count: usize) -> Vec<Message> {
         (0..count)
@@ -494,12 +495,176 @@ mod tests {
             .collect()
     }
 
+    fn msg(role: Role, content: impl Into<String>) -> Message {
+        Message {
+            role,
+            content: content.into(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            metadata: None,
+        }
+    }
+
+    // ── MessagePriority ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_message_priority_ordering() {
+        assert!(MessagePriority::Critical > MessagePriority::High);
+        assert!(MessagePriority::High > MessagePriority::Normal);
+        assert!(MessagePriority::Normal > MessagePriority::Low);
+    }
+
+    #[test]
+    fn test_message_priority_equality() {
+        assert_eq!(MessagePriority::Critical, MessagePriority::Critical);
+        assert_eq!(MessagePriority::High, MessagePriority::High);
+        assert_eq!(MessagePriority::Normal, MessagePriority::Normal);
+        assert_eq!(MessagePriority::Low, MessagePriority::Low);
+    }
+
+    // ── PrioritizedMessage ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_prioritized_message_system_priority() {
+        let pm = PrioritizedMessage::new(msg(Role::System, "sys"), 0);
+        assert_eq!(pm.priority, MessagePriority::Critical);
+    }
+
+    #[test]
+    fn test_prioritized_message_tool_priority() {
+        let pm = PrioritizedMessage::new(msg(Role::Tool, "tool result"), 0);
+        assert_eq!(pm.priority, MessagePriority::High);
+    }
+
+    #[test]
+    fn test_prioritized_message_assistant_with_task() {
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Task: do something"), 0);
+        assert_eq!(pm.priority, MessagePriority::High);
+    }
+
+    #[test]
+    fn test_prioritized_message_assistant_with_todo() {
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Add a todo item"), 0);
+        assert_eq!(pm.priority, MessagePriority::High);
+    }
+
+    #[test]
+    fn test_prioritized_message_assistant_normal() {
+        let pm = PrioritizedMessage::new(msg(Role::Assistant, "Hello there"), 0);
+        assert_eq!(pm.priority, MessagePriority::Normal);
+    }
+
+    #[test]
+    fn test_prioritized_message_user_old() {
+        let pm = PrioritizedMessage::new(msg(Role::User, "old"), 3);
+        assert_eq!(pm.priority, MessagePriority::Low);
+    }
+
+    #[test]
+    fn test_prioritized_message_user_recent() {
+        let pm = PrioritizedMessage::new(msg(Role::User, "recent"), 4);
+        assert_eq!(pm.priority, MessagePriority::High);
+    }
+
+    #[test]
+    fn test_prioritized_message_high_by_index() {
+        // Any role with index >= 6 gets High priority
+        let pm = PrioritizedMessage::new(msg(Role::User, "msg"), 7);
+        assert_eq!(pm.priority, MessagePriority::High);
+    }
+
+    #[test]
+    fn test_prioritized_message_estimated_tokens() {
+        let pm = PrioritizedMessage::new(msg(Role::User, "a".repeat(100)), 0);
+        // 100 chars * 0.25 = 25, + 4 = 29
+        assert_eq!(pm.estimated_tokens(), 29);
+    }
+
+    #[test]
+    fn test_prioritized_message_estimated_tokens_empty() {
+        let pm = PrioritizedMessage::new(msg(Role::User, ""), 0);
+        // 0 chars * 0.25 = 0, + 4 = 4
+        assert_eq!(pm.estimated_tokens(), 4);
+    }
+
+    #[test]
+    fn test_prioritized_message_fields() {
+        let m = msg(Role::User, "hello");
+        let pm = PrioritizedMessage::new(m.clone(), 5);
+        assert_eq!(pm.index, 5);
+        assert!(!pm.summarized);
+        assert_eq!(pm.message.content, "hello");
+    }
+
+    // ── ContextCompressor builders ────────────────────────────────────────────
+
     #[test]
     fn test_compressor_creation() {
         let compressor = ContextCompressor::new(1000);
-        assert_eq!(compressor.target_tokens, 1000);
-        // Use more messages to ensure we exceed the threshold
+        // Use many messages to ensure we exceed the default 1.2x threshold
         assert!(compressor.needs_compression(&create_test_messages(150)));
+    }
+
+    #[test]
+    fn test_compressor_with_threshold() {
+        let compressor = ContextCompressor::new(100).with_threshold(0.5);
+        // threshold = 100 * 0.5 = 50 tokens
+        // 5 messages * ~7 tokens each = ~35 tokens, under 50
+        assert!(!compressor.needs_compression(&create_test_messages(5)));
+    }
+
+    #[test]
+    fn test_compressor_with_strategy() {
+        let compressor = ContextCompressor::new(100)
+            .with_strategy(CompressionStrategy::SlidingWindow);
+        let messages = create_test_messages(20);
+        let compressed = compressor.compress(&messages);
+        assert!(compressed.len() < messages.len());
+    }
+
+    // ── needs_compression / estimate_tokens ───────────────────────────────────
+
+    #[test]
+    fn test_needs_compression_false() {
+        let compressor = ContextCompressor::new(10000);
+        assert!(!compressor.needs_compression(&create_test_messages(5)));
+    }
+
+    #[test]
+    fn test_needs_compression_true() {
+        let compressor = ContextCompressor::new(10);
+        // Default threshold = 10 * 1.2 = 12 tokens
+        // 5 messages ~ 7 tokens each = ~35 tokens > 12
+        assert!(compressor.needs_compression(&create_test_messages(5)));
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        let compressor = ContextCompressor::new(100);
+        assert_eq!(compressor.estimate_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens() {
+        let compressor = ContextCompressor::new(100);
+        let messages = vec![
+            msg(Role::System, "a".repeat(100)),
+            msg(Role::User, "b".repeat(100)),
+        ];
+        // Each: 100 * 0.25 = 25 + 4 = 29. Total = 58
+        assert_eq!(compressor.estimate_tokens(&messages), 58);
+    }
+
+    // ── compress strategies ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_compress_under_target_returns_original() {
+        let compressor = ContextCompressor::new(10000);
+        let messages = create_test_messages(5);
+        let compressed = compressor.compress(&messages);
+        assert_eq!(compressed.len(), messages.len());
+        assert_eq!(compressed[0].content, messages[0].content);
     }
 
     #[test]
@@ -511,6 +676,26 @@ mod tests {
 
         assert!(compressed.len() < messages.len());
         // System message should be preserved
+        assert!(compressed.iter().any(|m| m.role == Role::System));
+    }
+
+    #[test]
+    fn test_sliding_window_empty() {
+        let compressor =
+            ContextCompressor::new(100).with_strategy(CompressionStrategy::SlidingWindow);
+        let compressed: Vec<Message> = compressor.compress(&[]);
+        assert!(compressed.is_empty());
+    }
+
+    #[test]
+    fn test_sliding_window_keeps_system_only() {
+        let compressor =
+            ContextCompressor::new(10).with_strategy(CompressionStrategy::SlidingWindow);
+        let messages = vec![
+            msg(Role::System, "Important system instruction"),
+            msg(Role::User, "First user message with lots of content"),
+        ];
+        let compressed = compressor.compress(&messages);
         assert!(compressed.iter().any(|m| m.role == Role::System));
     }
 
@@ -527,11 +712,242 @@ mod tests {
     }
 
     #[test]
-    fn test_no_compression_needed() {
-        let compressor = ContextCompressor::new(10000);
-        let messages = create_test_messages(5);
+    fn test_oldest_first_single_message() {
+        let compressor =
+            ContextCompressor::new(10).with_strategy(CompressionStrategy::OldestFirst);
+        let messages = vec![msg(Role::System, "sys")];
+        let compressed = compressor.compress(&messages);
+        // System is Critical so it stays even over target
+        assert_eq!(compressed.len(), 1);
+    }
+
+    #[test]
+    fn test_summarize_strategy() {
+        let compressor =
+            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let messages = create_test_messages(10);
         let compressed = compressor.compress(&messages);
 
-        assert_eq!(compressed.len(), messages.len());
+        // Should keep system + recent 4 + summary = 6
+        assert!(compressed.len() <= 6);
+        assert!(compressed.iter().any(|m| m.role == Role::System));
+    }
+
+    #[test]
+    fn test_summarize_with_user_assistant_pairs() {
+        let compressor =
+            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let messages = vec![
+            msg(Role::System, "system"),
+            msg(Role::User, "What is Rust?"),
+            msg(Role::Assistant, "Rust is a systems programming language."),
+            msg(Role::User, "How do I install it?"),
+            msg(Role::Assistant, "Use rustup."),
+            msg(Role::User, "Thanks"),
+            msg(Role::Assistant, "You're welcome"),
+        ];
+        let compressed = compressor.compress(&messages);
+        assert!(compressed.iter().any(|m| m.role == Role::System));
+        // Should have a summary message inserted
+        assert!(compressed.iter().any(|m| m.name == Some("summary".to_string())));
+    }
+
+    #[test]
+    fn test_summarize_empty_middle() {
+        let compressor =
+            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let messages = vec![
+            msg(Role::System, "system"),
+            msg(Role::User, "hi"),
+            msg(Role::Assistant, "hello"),
+        ];
+        let compressed = compressor.compress(&messages);
+        // No middle to summarize; keep all recent
+        assert_eq!(compressed.len(), 3);
+    }
+
+    // ── CompressionStats ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compression_stats() {
+        let compressor = ContextCompressor::new(100);
+        let before = create_test_messages(10);
+        let after = create_test_messages(5);
+        let stats = compressor.stats(&before, &after);
+
+        assert_eq!(stats.before_messages, 10);
+        assert_eq!(stats.after_messages, 5);
+        assert!(stats.before_tokens > stats.after_tokens);
+        assert!(stats.reduction_percent > 0.0);
+    }
+
+    #[test]
+    fn test_compression_stats_no_reduction() {
+        let compressor = ContextCompressor::new(100);
+        let messages = create_test_messages(5);
+        let stats = compressor.stats(&messages, &messages);
+
+        assert_eq!(stats.before_messages, 5);
+        assert_eq!(stats.after_messages, 5);
+        assert_eq!(stats.reduction_percent, 0.0);
+    }
+
+    #[test]
+    fn test_compression_stats_display() {
+        let compressor = ContextCompressor::new(100);
+        let before = create_test_messages(10);
+        let after = create_test_messages(5);
+        let stats = compressor.stats(&before, &after);
+        let display = format!("{}", stats);
+
+        assert!(display.contains("Compression:"));
+        assert!(display.contains("10 -> 5 messages"));
+        assert!(display.contains("% reduction"));
+    }
+
+    #[test]
+    fn test_compression_stats_empty() {
+        let compressor = ContextCompressor::new(100);
+        let stats = compressor.stats(&[], &[]);
+        assert_eq!(stats.before_tokens, 0);
+        assert_eq!(stats.after_tokens, 0);
+        assert_eq!(stats.reduction_percent, 0.0);
+    }
+
+    // ── compact_with_llm ──────────────────────────────────────────────────────
+
+    struct MockProvider {
+        response: Option<String>,
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for MockProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        fn default_model(&self) -> &str {
+            "mock-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn max_context(&self) -> usize {
+            4096
+        }
+
+        async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+            if self.should_fail {
+                return Err(crate::error::MantaError::Internal("mock error".to_string()));
+            }
+            Ok(CompletionResponse {
+                message: Message {
+                    role: Role::Assistant,
+                    content: self.response.clone().unwrap_or_default(),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    metadata: None,
+                },
+                usage: None,
+                model: "mock-model".to_string(),
+                finish_reason: Some("stop".to_string()),
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> crate::Result<CompletionStream> {
+            let stream = tokio_stream::iter(vec![]);
+            Ok(Box::pin(stream))
+        }
+
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_too_short() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: None,
+            should_fail: false,
+        });
+        let messages = create_test_messages(3);
+        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        assert_eq!(compacted.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_success() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Summary of conversation".to_string()),
+            should_fail: false,
+        });
+        let messages = create_test_messages(10);
+        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+
+        // head=2 + summary + tail=2 = 5
+        assert_eq!(compacted.len(), 5);
+        assert!(compacted.iter().any(|m| m.name == Some("compaction_summary".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_empty_summary() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("".to_string()),
+            should_fail: false,
+        });
+        let messages = create_test_messages(10);
+        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        // Empty summary returns original
+        assert_eq!(compacted.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_error() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: None,
+            should_fail: true,
+        });
+        let messages = create_test_messages(10);
+        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        // Error returns original
+        assert_eq!(compacted.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_with_model() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Model-specific summary".to_string()),
+            should_fail: false,
+        });
+        let messages = create_test_messages(10);
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, Some("gpt-4"), 1, 1)
+            .await;
+        assert_eq!(compacted.len(), 3); // head=1 + summary + tail=1
+    }
+
+    #[tokio::test]
+    async fn test_compact_with_llm_no_mid_section() {
+        let compressor = ContextCompressor::new(100);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Summary".to_string()),
+            should_fail: false,
+        });
+        let messages = create_test_messages(4);
+        // keep_head=2, keep_tail=2 → mid_start=2, mid_end=2 → no mid section
+        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        assert_eq!(compacted.len(), 4);
     }
 }

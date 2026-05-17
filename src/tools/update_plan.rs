@@ -99,7 +99,7 @@ impl Default for UpdatePlanTool {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action")]
+#[serde(tag = "action", rename_all = "snake_case")]
 enum UpdatePlanAction {
     Create {
         title: String,
@@ -399,5 +399,183 @@ impl Tool for UpdatePlanTool {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_plan_store_crud() {
+        let store = PlanStore::new();
+
+        let plan = Plan {
+            id: "p1".to_string(),
+            title: "Test Plan".to_string(),
+            steps: vec![
+                PlanStep { id: "s1".to_string(), description: "Step 1".to_string(), status: StepStatus::Pending, notes: None },
+            ],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        store.create(plan.clone()).await;
+
+        let got = store.get("p1").await;
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().title, "Test Plan");
+
+        let list = store.list().await;
+        assert_eq!(list.len(), 1);
+
+        let mut updated = plan.clone();
+        updated.title = "Updated".to_string();
+        store.update(updated).await;
+        assert_eq!(store.get("p1").await.unwrap().title, "Updated");
+
+        store.delete("p1").await;
+        assert!(store.get("p1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_create() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({
+                "action": "create",
+                "title": "My Plan",
+                "steps": ["Step A", "Step B"]
+            }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("My Plan"));
+        assert!(result.output.contains("2 step"));
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_get_not_found() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "get", "plan_id": "nonexistent" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_set_status() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let create_res = tool.execute(
+            serde_json::json!({
+                "action": "create",
+                "title": "Test",
+                "steps": ["S1", "S2"]
+            }),
+            &ctx,
+        ).await.unwrap();
+        let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
+
+        let result = tool.execute(
+            serde_json::json!({
+                "action": "set_status",
+                "plan_id": plan_id,
+                "step_id": "step_1",
+                "status": "completed"
+            }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("1/2 completed"));
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_set_status_step_not_found() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let create_res = tool.execute(
+            serde_json::json!({
+                "action": "create",
+                "title": "Test",
+                "steps": ["S1"]
+            }),
+            &ctx,
+        ).await.unwrap();
+        let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
+
+        let result = tool.execute(
+            serde_json::json!({
+                "action": "set_status",
+                "plan_id": plan_id,
+                "step_id": "no_such_step",
+                "status": "completed"
+            }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_delete() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let create_res = tool.execute(
+            serde_json::json!({
+                "action": "create",
+                "title": "ToDelete",
+                "steps": []
+            }),
+            &ctx,
+        ).await.unwrap();
+        let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "delete", "plan_id": plan_id }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_update_plan_tool_list_empty() {
+        let tool = UpdatePlanTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "list" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("0 plan"));
+    }
+
+    #[test]
+    fn test_step_status_serialization() {
+        assert_eq!(serde_json::to_string(&StepStatus::Pending).unwrap(), "\"pending\"");
+        assert_eq!(serde_json::to_string(&StepStatus::InProgress).unwrap(), "\"in_progress\"");
+        assert_eq!(serde_json::to_string(&StepStatus::Completed).unwrap(), "\"completed\"");
+        assert_eq!(serde_json::to_string(&StepStatus::Failed).unwrap(), "\"failed\"");
+    }
+
+    #[test]
+    fn test_step_status_equality() {
+        assert_eq!(StepStatus::Pending, StepStatus::Pending);
+        assert_ne!(StepStatus::Pending, StepStatus::Completed);
     }
 }

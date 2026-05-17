@@ -85,9 +85,6 @@ impl Tool for ImageTool {
         };
 
         let path = std::path::PathBuf::from(&args.path);
-        if !path.is_absolute() {
-            let path = context.working_directory.join(&path);
-        }
         let path = if path.is_absolute() { path } else { context.working_directory.join(path) };
 
         if !path.exists() {
@@ -451,5 +448,108 @@ impl Tool for ImageGenerateTool {
                 execution_time: start.elapsed(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_image_args_parsing() {
+        let args: ImageArgs = serde_json::from_value(serde_json::json!({
+            "path": "/tmp/test.png"
+        })).unwrap();
+        assert_eq!(args.path, "/tmp/test.png");
+        assert_eq!(args.action, None);
+
+        let args2: ImageArgs = serde_json::from_value(serde_json::json!({
+            "path": "/tmp/test.jpg",
+            "action": "info"
+        })).unwrap();
+        assert_eq!(args2.action, Some("info".to_string()));
+    }
+
+    #[test]
+    fn test_format_file_size() {
+        assert_eq!(format_file_size(0), "0.0 B");
+        assert_eq!(format_file_size(512), "512.0 B");
+        assert_eq!(format_file_size(1024), "1.0 KB");
+        assert_eq!(format_file_size(1536), "1.5 KB");
+        assert_eq!(format_file_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_file_size(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn test_image_tool_name_and_schema() {
+        let tool = ImageTool::new();
+        assert_eq!(tool.name(), "image");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_image_generate_tool_name_and_schema() {
+        let tool = ImageGenerateTool::new();
+        assert_eq!(tool.name(), "image_generate");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_image_generate_args_parsing() {
+        let args: ImageGenerateArgs = serde_json::from_value(serde_json::json!({
+            "prompt": "a cat"
+        })).unwrap();
+        assert_eq!(args.prompt, "a cat");
+        assert_eq!(args.size, None);
+        assert_eq!(args.style, None);
+
+        let args2: ImageGenerateArgs = serde_json::from_value(serde_json::json!({
+            "prompt": "a dog",
+            "size": "1024x1024",
+            "style": "vivid"
+        })).unwrap();
+        assert_eq!(args2.size, Some("1024x1024".to_string()));
+        assert_eq!(args2.style, Some("vivid".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_image_tool_missing_file() {
+        let tool = ImageTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({ "path": "/nonexistent/path/image.png" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_image_tool_invalid_args() {
+        let tool = ImageTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn test_image_generate_tool_no_api_key() {
+        let tool = ImageGenerateTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({ "prompt": "a cat" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("No image generation API key"));
     }
 }

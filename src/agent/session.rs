@@ -580,4 +580,386 @@ mod tests {
         assert!(agent1.shares_context_with(&agent2));
         assert!(!agent1.shares_context_with(&agent3));
     }
+
+    #[test]
+    fn test_thread_binding_default() {
+        let binding: ThreadBinding = Default::default();
+        assert_eq!(binding, ThreadBinding::Isolated);
+    }
+
+    #[test]
+    fn test_agent_instance_status_equality() {
+        assert_eq!(AgentInstanceStatus::Ready, AgentInstanceStatus::Ready);
+        assert_ne!(AgentInstanceStatus::Ready, AgentInstanceStatus::Busy);
+        assert_ne!(AgentInstanceStatus::Starting, AgentInstanceStatus::Terminated);
+    }
+
+    #[test]
+    fn test_session_agent_new() {
+        let agent = SessionAgent::new(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+            "parent-thread",
+        );
+        assert_eq!(agent.id, "a1");
+        assert_eq!(agent.thread_id, "parent-thread");
+        assert!(agent.is_active);
+        assert_eq!(agent.status, AgentInstanceStatus::Starting);
+    }
+
+    #[test]
+    fn test_session_agent_mark_ready() {
+        let mut agent = SessionAgent::new(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+            "t",
+        );
+        agent.mark_ready();
+        assert_eq!(agent.status, AgentInstanceStatus::Ready);
+    }
+
+    #[test]
+    fn test_session_agent_mark_busy() {
+        let mut agent = SessionAgent::new(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+            "t",
+        );
+        agent.mark_busy();
+        assert_eq!(agent.status, AgentInstanceStatus::Busy);
+    }
+
+    #[test]
+    fn test_session_agent_mark_terminated() {
+        let mut agent = SessionAgent::new(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+            "t",
+        );
+        agent.mark_terminated();
+        assert_eq!(agent.status, AgentInstanceStatus::Terminated);
+        assert!(!agent.is_active);
+    }
+
+    #[test]
+    fn test_session_agent_shares_context_isolated_never() {
+        let parent = "parent-thread";
+        let isolated1 = SessionAgent::new(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Isolated,
+            parent,
+        );
+        let isolated2 = SessionAgent::new(
+            "a2".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Isolated,
+            parent,
+        );
+        let shared = SessionAgent::new(
+            "a3".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+            parent,
+        );
+
+        assert!(!isolated1.shares_context_with(&isolated2));
+        assert!(!isolated1.shares_context_with(&shared));
+        assert!(!shared.shares_context_with(&isolated1));
+    }
+
+    #[test]
+    fn test_multi_agent_session_new() {
+        let (session, _rx) = MultiAgentSession::new("sess1".to_string());
+        assert_eq!(session.id, "sess1");
+        assert_eq!(session.primary_thread_id, "session-sess1");
+        assert!(session.get_agents().is_empty());
+    }
+
+    #[test]
+    fn test_multi_agent_session_sender() {
+        let (session, _rx) = MultiAgentSession::new("sess1".to_string());
+        let _sender = session.sender();
+    }
+
+    #[test]
+    fn test_multi_agent_session_spawn_agent() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        let agent = session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        assert_eq!(agent.id, "a1");
+        assert_eq!(session.get_agents().len(), 1);
+    }
+
+    #[test]
+    fn test_multi_agent_session_terminate_agent() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        session.terminate_agent("a1");
+        let agent = session.get_agent("a1").unwrap();
+        assert!(!agent.is_active);
+        assert_eq!(agent.status, AgentInstanceStatus::Terminated);
+    }
+
+    #[test]
+    fn test_multi_agent_session_get_agent() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        assert!(session.get_agent("a1").is_some());
+        assert!(session.get_agent("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_multi_agent_session_get_agent_mut() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        if let Some(agent) = session.get_agent_mut("a1") {
+            agent.mark_ready();
+        }
+        assert_eq!(session.get_agent("a1").unwrap().status, AgentInstanceStatus::Ready);
+    }
+
+    #[test]
+    fn test_multi_agent_session_get_agents_by_thread() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+        );
+        session.spawn_agent(
+            "a2".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Isolated,
+        );
+        let agents = session.get_agents_by_thread(&session.primary_thread_id);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].id, "a1");
+    }
+
+    #[test]
+    fn test_multi_agent_session_get_active_agents() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        session.spawn_agent(
+            "a2".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        session.terminate_agent("a2");
+        let active = session.get_active_agents();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "a1");
+    }
+
+    #[test]
+    fn test_multi_agent_session_get_status() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Parent,
+        );
+        session.spawn_agent(
+            "a2".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Isolated,
+        );
+        let status = session.get_status();
+        assert_eq!(status.session_id, "sess1");
+        assert_eq!(status.agent_count, 2);
+        assert_eq!(status.active_agents.len(), 2);
+        assert_eq!(status.thread_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_multi_agent_session_is_timed_out() {
+        let (session, _rx) = MultiAgentSession::new("sess1".to_string());
+        assert!(!session.is_timed_out(std::time::Duration::from_secs(3600)));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(session.is_timed_out(std::time::Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_multi_agent_session_cleanup_terminated() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "a1".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        session.spawn_agent(
+            "a2".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        session.terminate_agent("a2");
+        assert_eq!(session.get_agents().len(), 2);
+        session.cleanup_terminated();
+        assert_eq!(session.get_agents().len(), 1);
+        assert!(session.get_agent("a1").is_some());
+    }
+
+    #[test]
+    fn test_multi_agent_session_find_agent_for_intent() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+
+        let mut code_personality = AgentPersonality::default();
+        code_personality.soul = "I am a code and debug expert".to_string();
+
+        session.spawn_agent(
+            "coder".to_string(),
+            code_personality,
+            ThreadBinding::Shared,
+        );
+        {
+            let agent = session.get_agent_mut("coder").unwrap();
+            agent.mark_ready();
+        }
+
+        // Should find the coder for code-related intent
+        let found = session.find_agent_for_intent("please debug this error");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "coder");
+
+        // Should return None if no ready agents
+        {
+            let agent = session.get_agent_mut("coder").unwrap();
+            agent.mark_busy();
+        }
+        let found = session.find_agent_for_intent("please debug this");
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_multi_agent_session_find_agent_fallback() {
+        let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
+        session.spawn_agent(
+            "general".to_string(),
+            AgentPersonality::default(),
+            ThreadBinding::Shared,
+        );
+        let agent = session.get_agent_mut("general").unwrap();
+        agent.mark_ready();
+
+        // No intent keywords match, falls back to first ready agent
+        let found = session.find_agent_for_intent("hello how are you");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "general");
+    }
+
+    #[tokio::test]
+    async fn test_multi_agent_session_shared_context() {
+        let (session, _rx) = MultiAgentSession::new("sess1".to_string());
+        let ctx = session.shared_context();
+        {
+            let mut map = ctx.write().await;
+            map.insert("key".to_string(), "value".to_string());
+        }
+        {
+            let map = ctx.read().await;
+            assert_eq!(map.get("key"), Some(&"value".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_session_status() {
+        let status = SessionStatus {
+            session_id: "s1".to_string(),
+            agent_count: 2,
+            active_agents: vec!["a1".to_string(), "a2".to_string()],
+            thread_count: 1,
+        };
+        assert_eq!(status.session_id, "s1");
+        assert_eq!(status.agent_count, 2);
+    }
+
+    #[test]
+    fn test_session_message_debug() {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let msg = SessionMessage::GetStatus { respond_to: tx };
+        let debug = format!("{:?}", msg);
+        assert!(debug.contains("GetStatus"));
+    }
+
+    #[test]
+    fn test_session_manager_new() {
+        let manager = SessionManager::new();
+        assert!(manager.list_sessions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_manager_create_and_get() {
+        let mut manager = SessionManager::new();
+        let _sender = manager.create_session("sess1".to_string());
+        assert_eq!(manager.list_sessions().len(), 1);
+
+        let session = manager.get_session("sess1");
+        assert!(session.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_session_manager_list_sessions() {
+        let mut manager = SessionManager::new();
+        manager.create_session("sess1".to_string());
+        manager.create_session("sess2".to_string());
+        let sessions = manager.list_sessions();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains(&"sess1".to_string()));
+        assert!(sessions.contains(&"sess2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_session_manager_terminate_session() {
+        let mut manager = SessionManager::new();
+        manager.create_session("sess1".to_string());
+        assert_eq!(manager.list_sessions().len(), 1);
+        manager.terminate_session("sess1");
+        assert!(manager.list_sessions().is_empty());
+        assert!(manager.get_session("sess1").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_manager_cleanup_timed_out() {
+        let mut manager = SessionManager::new();
+        manager.set_timeout(std::time::Duration::from_secs(0));
+        manager.create_session("sess1".to_string());
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert_eq!(manager.list_sessions().len(), 1);
+        manager.cleanup_timed_out();
+        assert!(manager.list_sessions().is_empty());
+    }
+
+    #[test]
+    fn test_session_manager_set_timeout() {
+        let mut manager = SessionManager::new();
+        manager.set_timeout(std::time::Duration::from_secs(60));
+        // Verify by creating a session and checking it doesn't time out quickly
+        // (mostly checking this doesn't panic)
+    }
 }

@@ -246,7 +246,7 @@ impl AcpSessionTool {
 
 /// Arguments for session management
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action")]
+#[serde(tag = "action", rename_all = "snake_case")]
 enum SessionAction {
     /// List active sessions
     List,
@@ -432,5 +432,185 @@ impl Tool for AcpSessionTool {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spawn_subagent_args_defaults() {
+        let args: SpawnSubagentArgs = serde_json::from_value(serde_json::json!({
+            "task": "Do something"
+        }))
+        .unwrap();
+        assert_eq!(args.task, "Do something");
+        assert_eq!(args.mode, "run");
+        assert_eq!(args.thread_binding, "auto");
+        assert_eq!(args.agent_type, "");
+        assert_eq!(args.timeout_seconds, None);
+    }
+
+    #[test]
+    fn test_spawn_subagent_args_custom() {
+        let args: SpawnSubagentArgs = serde_json::from_value(serde_json::json!({
+            "task": "Research topic",
+            "mode": "session",
+            "thread_binding": "new",
+            "agent_type": "researcher",
+            "timeout_seconds": 120
+        }))
+        .unwrap();
+        assert_eq!(args.task, "Research topic");
+        assert_eq!(args.mode, "session");
+        assert_eq!(args.thread_binding, "new");
+        assert_eq!(args.agent_type, "researcher");
+        assert_eq!(args.timeout_seconds, Some(120));
+    }
+
+    #[test]
+    fn test_session_action_parsing() {
+        let action: SessionAction = serde_json::from_value(serde_json::json!({
+            "action": "list"
+        }))
+        .unwrap();
+        assert!(matches!(action, SessionAction::List));
+
+        let action: SessionAction = serde_json::from_value(serde_json::json!({
+            "action": "get",
+            "session_id": "sess-1"
+        }))
+        .unwrap();
+        assert!(matches!(action, SessionAction::Get { session_id } if session_id == "sess-1"));
+
+        let action: SessionAction = serde_json::from_value(serde_json::json!({
+            "action": "terminate",
+            "session_id": "sess-1"
+        }))
+        .unwrap();
+        assert!(matches!(action, SessionAction::Terminate { session_id } if session_id == "sess-1"));
+
+        let action: SessionAction = serde_json::from_value(serde_json::json!({
+            "action": "message",
+            "session_id": "sess-1",
+            "subagent_id": "sub-1",
+            "message": "hello"
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, SessionAction::Message { session_id, subagent_id, message }
+                if session_id == "sess-1" && subagent_id == "sub-1" && message == "hello"
+            )
+        );
+    }
+
+    #[test]
+    fn test_acp_spawn_tool_name_and_schema() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSpawnTool::new(acp);
+        assert_eq!(tool.name(), "spawn_subagent");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+        let req = schema.get("required").unwrap().as_array().unwrap();
+        assert!(req.contains(&serde_json::json!("task")));
+    }
+
+    #[test]
+    fn test_acp_session_tool_name_and_schema() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSessionTool::new(acp);
+        assert_eq!(tool.name(), "manage_acp_session");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_acp_session_tool_list_empty() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSessionTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool
+            .execute(serde_json::json!({ "action": "list" }), &ctx)
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("0 active subagent"));
+        let data = result.data.unwrap();
+        let subagents = data.get("subagents").unwrap().as_array().unwrap();
+        assert_eq!(subagents.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_acp_session_tool_get_not_found() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSessionTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool
+            .execute(
+                serde_json::json!({ "action": "get", "session_id": "nonexistent" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_acp_session_tool_invalid_args() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSessionTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool
+            .execute(serde_json::json!({}), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn test_acp_spawn_tool_no_agent_builder() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSpawnTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "task": "Do something"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("No agent builder configured"));
+    }
+
+    #[tokio::test]
+    async fn test_acp_spawn_tool_invalid_args() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSpawnTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn test_acp_session_tool_terminate_not_found() {
+        let acp = Arc::new(AcpControlPlane::new());
+        let tool = AcpSessionTool::new(acp);
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool
+            .execute(
+                serde_json::json!({ "action": "terminate", "session_id": "no-such-session" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
     }
 }

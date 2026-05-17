@@ -492,11 +492,24 @@ pub async fn get_team_mesh_manager() -> &'static TeamMeshManager {
 mod tests {
     use super::*;
 
+    fn create_test_team(name: &str, pattern: CommunicationPattern) -> Team {
+        let mut team = Team::new(name);
+        team.add_member("alice", "worker");
+        team.add_member("bob", "worker");
+        team.add_member("carol", "lead");
+        team.set_level("carol", 0).unwrap();
+        team.set_level("alice", 1).unwrap();
+        team.set_level("bob", 1).unwrap();
+        team.communication = pattern;
+        team
+    }
+
     #[tokio::test]
     async fn test_team_mesh_manager_creation() {
         let manager = TeamMeshManager::new();
         let teams = manager.list_active_teams().await;
         assert!(teams.is_empty());
+        assert!(!manager.is_team_active("any").await);
     }
 
     #[test]
@@ -514,5 +527,244 @@ mod tests {
 
         assert_eq!(session.team_id, "test-team");
         assert_eq!(session.agents.len(), 2);
+    }
+
+    #[test]
+    fn test_team_mesh_manager_default() {
+        let manager: TeamMeshManager = Default::default();
+        assert_eq!(format!("{:?}", manager), format!("{:?}", TeamMeshManager::new()));
+    }
+
+    #[tokio::test]
+    async fn test_activate_team() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+
+        let session = manager.activate_team(&team).await.unwrap();
+        assert_eq!(session.team_id, "alpha");
+        assert_eq!(session.agents.len(), 3);
+        assert!(manager.is_team_active("alpha").await);
+
+        let teams = manager.list_active_teams().await;
+        assert_eq!(teams.len(), 1);
+        assert_eq!(teams[0], "alpha");
+    }
+
+    #[tokio::test]
+    async fn test_activate_team_duplicate() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+
+        manager.activate_team(&team).await.unwrap();
+        let result = manager.activate_team(&team).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_deactivate_team() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+
+        manager.activate_team(&team).await.unwrap();
+        assert!(manager.is_team_active("alpha").await);
+
+        manager.deactivate_team("alpha").await.unwrap();
+        assert!(!manager.is_team_active("alpha").await);
+        assert!(manager.list_active_teams().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deactivate_nonexistent_team() {
+        let manager = TeamMeshManager::new();
+        // Should not panic
+        manager.deactivate_team("ghost").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_session() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+
+        assert!(manager.get_session("alpha").await.is_none());
+
+        manager.activate_team(&team).await.unwrap();
+        let session = manager.get_session("alpha").await;
+        assert!(session.is_some());
+        assert_eq!(session.unwrap().team_id, "alpha");
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_inactive_team() {
+        let manager = TeamMeshManager::new();
+        let result = manager
+            .send_team_message("ghost", "alice", Some("bob"), "hi")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_invalid_sender() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+        manager.activate_team(&team).await.unwrap();
+
+        let result = manager
+            .send_team_message("alpha", "eve", Some("alice"), "hi")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_mesh_direct() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+        manager.activate_team(&team).await.unwrap();
+
+        let result = manager
+            .send_team_message("alpha", "alice", Some("bob"), "hello bob")
+            .await
+            .unwrap();
+        assert_eq!(result.recipients, vec!["bob"]);
+        assert_eq!(result.pattern, CommunicationPattern::Mesh);
+        assert!(!result.message_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_mesh_broadcast() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+        manager.activate_team(&team).await.unwrap();
+
+        let result = manager
+            .send_team_message("alpha", "alice", None, "hello all")
+            .await
+            .unwrap();
+        // Broadcast excludes sender
+        assert!(result.recipients.contains(&"bob".to_string()));
+        assert!(!result.recipients.contains(&"alice".to_string()));
+        assert_eq!(result.pattern, CommunicationPattern::Broadcast);
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_broadcast_pattern() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Broadcast);
+        manager.activate_team(&team).await.unwrap();
+
+        let result = manager
+            .send_team_message("alpha", "alice", None, "hello all")
+            .await
+            .unwrap();
+        assert!(result.recipients.contains(&"bob".to_string()));
+        assert!(result.recipients.contains(&"carol".to_string()));
+        assert_eq!(result.pattern, CommunicationPattern::Broadcast);
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_star_lead_to_any() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Star);
+        manager.activate_team(&team).await.unwrap();
+
+        // Lead (carol, level 0) can send to anyone
+        let result = manager
+            .send_team_message("alpha", "carol", Some("alice"), "task")
+            .await
+            .unwrap();
+        assert_eq!(result.recipients, vec!["alice"]);
+        assert_eq!(result.pattern, CommunicationPattern::Star);
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_star_non_lead_to_lead() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Star);
+        manager.activate_team(&team).await.unwrap();
+
+        // Non-lead can send to lead
+        let result = manager
+            .send_team_message("alpha", "alice", Some("carol"), "report")
+            .await
+            .unwrap();
+        assert_eq!(result.recipients, vec!["carol"]);
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_star_non_lead_to_non_lead_fails() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Star);
+        manager.activate_team(&team).await.unwrap();
+
+        // Non-lead cannot send to another non-lead
+        let result = manager
+            .send_team_message("alpha", "alice", Some("bob"), "hi")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_chain() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Chain);
+        manager.activate_team(&team).await.unwrap();
+
+        // carol (level 0) -> alice (level 1)
+        let result = manager
+            .send_team_message("alpha", "carol", None, "next")
+            .await
+            .unwrap();
+        assert_eq!(result.recipients, vec!["alice"]);
+        assert_eq!(result.pattern, CommunicationPattern::Chain);
+    }
+
+    #[tokio::test]
+    async fn test_send_team_message_chain_end() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Chain);
+        manager.activate_team(&team).await.unwrap();
+
+        // bob is at the end of the chain
+        let result = manager
+            .send_team_message("alpha", "bob", None, "done")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_team_history() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+        manager.activate_team(&team).await.unwrap();
+
+        // No messages yet
+        let history = manager.get_team_history("alpha").await;
+        assert!(history.is_empty());
+
+        // Send a message
+        manager
+            .send_team_message("alpha", "alice", Some("bob"), "test")
+            .await
+            .unwrap();
+
+        let history = manager.get_team_history("alpha").await;
+        assert_eq!(history.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_team_history_inactive() {
+        let manager = TeamMeshManager::new();
+        let history = manager.get_team_history("ghost").await;
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_receive_messages_for() {
+        let manager = TeamMeshManager::new();
+        let team = create_test_team("alpha", CommunicationPattern::Mesh);
+        manager.activate_team(&team).await.unwrap();
+
+        // No messages initially
+        let msgs = manager.receive_messages_for("alpha", "bob").await;
+        assert!(msgs.is_empty());
     }
 }

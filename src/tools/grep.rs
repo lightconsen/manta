@@ -407,5 +407,209 @@ Line 5: Hello world final"#;
         let tool = GrepTool::new();
         assert!(tool.is_binary(b"Hello\x00World"));
         assert!(!tool.is_binary(b"Hello World"));
+        assert!(!tool.is_binary(b""));
+    }
+
+    #[tokio::test]
+    async fn test_search_file_with_context() {
+        let tool = GrepTool::new();
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_grep_ctx_{}.txt", uuid::Uuid::new_v4()));
+
+        let content = "line1\nline2\nline3\nTARGET\nline5\nline6\nline7";
+        tokio::fs::write(&test_file, content).await.unwrap();
+
+        let pattern = regex::Regex::new("TARGET").unwrap();
+        let matches = tool.search_file(&pattern, &test_file, 2).await.unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].line_number, 4);
+        assert_eq!(matches[0].context_before, vec!["line2", "line3"]);
+        assert_eq!(matches[0].context_after, vec!["line5", "line6"]);
+
+        let _ = tokio::fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_search_file_no_matches() {
+        let tool = GrepTool::new();
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_grep_none_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio::fs::write(&test_file, "nothing here").await.unwrap();
+
+        let pattern = regex::Regex::new("XYZ_NOT_FOUND").unwrap();
+        let matches = tool.search_file(&pattern, &test_file, 1).await.unwrap();
+
+        assert!(matches.is_empty());
+
+        let _ = tokio::fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_search_directory_recursive() {
+        let tool = GrepTool::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let subdir = temp_dir.path().join("sub");
+        tokio::fs::create_dir(&subdir).await.unwrap();
+
+        let file1 = temp_dir.path().join("a.txt");
+        let file2 = subdir.join("b.txt");
+        tokio::fs::write(&file1, "hello world").await.unwrap();
+        tokio::fs::write(&file2, "hello again").await.unwrap();
+
+        let pattern = regex::Regex::new("hello").unwrap();
+        let matches = tool
+            .search_directory(&pattern, temp_dir.path(), None, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(matches.len(), 2);
+        let files: std::collections::HashSet<_> =
+            matches.iter().map(|m| m.file.clone()).collect();
+        assert!(files.contains(&file1.to_string_lossy().to_string()));
+        assert!(files.contains(&file2.to_string_lossy().to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_search_directory_skips_hidden() {
+        let tool = GrepTool::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let hidden = temp_dir.path().join(".secret");
+        tokio::fs::create_dir(&hidden).await.unwrap();
+        tokio::fs::write(hidden.join("file.txt"), "secret content")
+            .await
+            .unwrap();
+
+        let visible = temp_dir.path().join("visible.txt");
+        tokio::fs::write(&visible, "visible content").await.unwrap();
+
+        let pattern = regex::Regex::new("content").unwrap();
+        let matches = tool
+            .search_directory(&pattern, temp_dir.path(), None, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].file.contains("visible"));
+    }
+
+    #[tokio::test]
+    async fn test_search_directory_with_include_pattern() {
+        let tool = GrepTool::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        tokio::fs::write(temp_dir.path().join("a.rs"), "fn main()").await.unwrap();
+        tokio::fs::write(temp_dir.path().join("b.py"), "fn main()").await.unwrap();
+
+        let pattern = regex::Regex::new("fn main").unwrap();
+        let matches = tool
+            .search_directory(&pattern, temp_dir.path(), Some("*.rs"), 0)
+            .await
+            .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].file.ends_with("a.rs"));
+    }
+
+    #[test]
+    fn test_format_results_compact() {
+        let tool = GrepTool::new();
+        let matches = vec![SearchMatch {
+            file: "/test.rs".to_string(),
+            line_number: 5,
+            line_content: "  fn test()  ".to_string(),
+            context_before: vec![],
+            context_after: vec![],
+        }];
+
+        let output = tool.format_results(&matches, "compact");
+        assert_eq!(output, "/test.rs:5:fn test()");
+    }
+
+    #[test]
+    fn test_format_results_json() {
+        let tool = GrepTool::new();
+        let matches = vec![SearchMatch {
+            file: "/test.rs".to_string(),
+            line_number: 1,
+            line_content: "hello".to_string(),
+            context_before: vec![],
+            context_after: vec![],
+        }];
+
+        let output = tool.format_results(&matches, "json");
+        assert!(output.contains("hello"));
+        assert!(output.contains("/test.rs"));
+    }
+
+    #[test]
+    fn test_format_results_pretty() {
+        let tool = GrepTool::new();
+        let matches = vec![SearchMatch {
+            file: "/test.rs".to_string(),
+            line_number: 2,
+            line_content: "match line".to_string(),
+            context_before: vec!["before".to_string()],
+            context_after: vec!["after".to_string()],
+        }];
+
+        let output = tool.format_results(&matches, "pretty");
+        assert!(output.contains("/test.rs:2"));
+        assert!(output.contains("match line"));
+        assert!(output.contains("before"));
+        assert!(output.contains("after"));
+    }
+
+    #[test]
+    fn test_matches_pattern_edge_cases() {
+        let tool = GrepTool::new();
+
+        assert!(tool.matches_pattern(&PathBuf::from("/a/b/test.rs"), "*.rs"));
+        assert!(!tool.matches_pattern(&PathBuf::from("/a/b/test.rs"), "*.py"));
+        assert!(tool.matches_pattern(&PathBuf::from("/a/b/lib.rs"), ".rs"));
+        assert!(!tool.matches_pattern(&PathBuf::from("/a/b"), "*.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_search_directory_skips_binary() {
+        let tool = GrepTool::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let binary_file = temp_dir.path().join("data.bin");
+        let mut binary_content = b"binary".to_vec();
+        binary_content.push(0);
+        tokio::fs::write(&binary_file, binary_content).await.unwrap();
+
+        let text_file = temp_dir.path().join("data.txt");
+        tokio::fs::write(&text_file, "text content").await.unwrap();
+
+        let pattern = regex::Regex::new("content").unwrap();
+        let matches = tool
+            .search_directory(&pattern, temp_dir.path(), None, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].file.ends_with("data.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_search_file_regex_special_chars() {
+        let tool = GrepTool::new();
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_grep_re_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio::fs::write(&test_file, "foo[bar] baz\nhello.world\n").await.unwrap();
+
+        let pattern = regex::Regex::new(r"foo\[bar\]").unwrap();
+        let matches = tool.search_file(&pattern, &test_file, 0).await.unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].line_content, "foo[bar] baz");
+
+        let _ = tokio::fs::remove_file(&test_file).await;
     }
 }

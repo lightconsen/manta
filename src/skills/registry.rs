@@ -455,5 +455,69 @@ mod tests {
     fn test_default_registry() {
         let registry = SkillRegistry::default_registry();
         assert!(registry.is_ok());
+        let reg = registry.unwrap();
+        assert_eq!(reg.url, "https://skills.manta.dev");
+    }
+
+    #[test]
+    fn test_clawhub_registry() {
+        let registry = SkillRegistry::clawhub();
+        assert!(registry.is_ok());
+        let reg = registry.unwrap();
+        assert_eq!(reg.url, "https://clawhub.openclaw.io");
+    }
+
+    #[test]
+    fn test_skill_listing_serde() {
+        let listing = SkillListing {
+            name: "test-skill".to_string(),
+            description: "A test skill".to_string(),
+            author: "tester".to_string(),
+            version: "1.0.0".to_string(),
+            downloads: 42,
+            rating: 4.5,
+            categories: vec!["test".to_string()],
+            tags: vec!["example".to_string()],
+            emoji: "🧪".to_string(),
+        };
+        let json = serde_json::to_string(&listing).unwrap();
+        assert!(json.contains("test-skill"));
+        let restored: SkillListing = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "test-skill");
+        assert_eq!(restored.downloads, 42);
+        assert_eq!(restored.rating, 4.5);
+    }
+
+    #[test]
+    fn test_skill_listing_default_fields() {
+        let json = r#"{"name":"x","description":"y","author":"z","version":"1.0.0"}"#;
+        let listing: SkillListing = serde_json::from_str(json).unwrap();
+        assert_eq!(listing.downloads, 0);
+        assert_eq!(listing.rating, 0.0);
+        assert!(listing.categories.is_empty());
+        assert!(listing.tags.is_empty());
+        assert_eq!(listing.emoji, "");
+    }
+
+    #[test]
+    fn test_skill_update_serde() {
+        let update = SkillUpdate {
+            name: "test-skill".to_string(),
+            current_version: "1.0.0".to_string(),
+            latest_version: "1.1.0".to_string(),
+            release_notes: Some("Fixed bugs".to_string()),
+        };
+        let json = serde_json::to_string(&update).unwrap();
+        let restored: SkillUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.current_version, "1.0.0");
+        assert_eq!(restored.latest_version, "1.1.0");
+        assert_eq!(restored.release_notes, Some("Fixed bugs".to_string()));
+    }
+
+    #[test]
+    fn test_skill_update_without_release_notes() {
+        let json = r#"{"name":"x","current_version":"1.0.0","latest_version":"2.0.0"}"#;
+        let update: SkillUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(update.release_notes, None);
     }
 }

@@ -957,4 +957,174 @@ mod tests {
         assert_eq!(messages[0].0, "assistant"); // Most recent first
         assert_eq!(messages[1].0, "user");
     }
+
+    #[tokio::test]
+    async fn test_session_metadata_new_and_touch() {
+        let meta = SessionMetadata::new("sid", "agent", "chan", "cid");
+        assert_eq!(meta.session_id, "sid");
+        assert_eq!(meta.agent_id, "agent");
+        assert_eq!(meta.channel, "chan");
+        assert_eq!(meta.channel_id, "cid");
+        assert!(meta.is_active);
+        assert_eq!(meta.message_count, 0);
+
+        let before = meta.last_activity;
+        let mut meta2 = meta.clone();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        meta2.touch();
+        assert!(meta2.last_activity >= before);
+    }
+
+    #[tokio::test]
+    async fn test_set_session_active() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("active-test", "main", "cli", "local");
+        store.save_session("active-test", &meta, "{}").await.unwrap();
+
+        store.set_session_active("active-test", false).await.unwrap();
+        let loaded = store.load_session("active-test").await.unwrap().unwrap();
+        assert!(!loaded.metadata.is_active);
+
+        store.set_session_active("active-test", true).await.unwrap();
+        let loaded2 = store.load_session("active-test").await.unwrap().unwrap();
+        assert!(loaded2.metadata.is_active);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("del-test", "main", "cli", "local");
+        store.save_session("del-test", &meta, "{}").await.unwrap();
+
+        store.delete_session("del-test").await.unwrap();
+        let loaded = store.load_session("del-test").await.unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_stats() {
+        let store = create_test_store().await;
+        let stats = store.get_stats().await.unwrap();
+        assert_eq!(stats.total_sessions, 0);
+        assert_eq!(stats.active_sessions, 0);
+        assert_eq!(stats.total_messages, 0);
+
+        let meta = SessionMetadata::new("stats-test", "main", "cli", "local");
+        store.save_session("stats-test", &meta, "{}").await.unwrap();
+        store.append_message("stats-test", "user", "hi", None).await.unwrap();
+
+        let stats2 = store.get_stats().await.unwrap();
+        assert_eq!(stats2.total_sessions, 1);
+        assert_eq!(stats2.active_sessions, 1);
+        assert_eq!(stats2.total_messages, 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_and_load_thread() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("thread-test", "main", "cli", "local");
+        store.save_session("thread-test", &meta, "{}").await.unwrap();
+
+        store.save_thread("thread-test", "t1", "main thread", 12345).await.unwrap();
+
+        let threads = store.load_threads_for_session("thread-test").await.unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].0, "t1");
+        assert_eq!(threads[0].1, "main thread");
+        assert_eq!(threads[0].2, 12345);
+        assert!(threads[0].3.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_append_turn_and_load() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("turn-test", "main", "cli", "local");
+        store.save_session("turn-test", &meta, "{}").await.unwrap();
+        store.save_thread("turn-test", "t1", "", 0).await.unwrap();
+
+        store.append_turn("turn-test", "t1", 0, "user msg", "asst msg", "complete").await.unwrap();
+
+        let threads = store.load_threads_for_session("turn-test").await.unwrap();
+        assert_eq!(threads[0].3.len(), 1);
+        let (idx, user, asst, state) = &threads[0].3[0];
+        assert_eq!(*idx, 0);
+        assert_eq!(user, "user msg");
+        assert_eq!(asst, "asst msg");
+        assert_eq!(state, "complete");
+    }
+
+    #[tokio::test]
+    async fn test_delete_turn() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("del-turn-test", "main", "cli", "local");
+        store.save_session("del-turn-test", &meta, "{}").await.unwrap();
+        store.save_thread("del-turn-test", "t1", "", 0).await.unwrap();
+
+        store.append_turn("del-turn-test", "t1", 0, "u", "a", "complete").await.unwrap();
+        store.delete_turn("del-turn-test", "t1", 0).await.unwrap();
+
+        let threads = store.load_threads_for_session("del-turn-test").await.unwrap();
+        assert!(threads[0].3.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_sessions_active_only() {
+        let store = create_test_store().await;
+        let meta1 = SessionMetadata::new("active-1", "main", "cli", "local");
+        store.save_session("active-1", &meta1, "{}").await.unwrap();
+
+        let mut meta2 = SessionMetadata::new("inactive-1", "main", "cli", "local");
+        meta2.is_active = false;
+        store.save_session("inactive-1", &meta2, "{}").await.unwrap();
+
+        let all = store.find_sessions(None, None, None, false).await.unwrap();
+        assert_eq!(all.len(), 2);
+
+        let active = store.find_sessions(None, None, None, true).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].session_id, "active-1");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_old_sessions() {
+        let store = create_test_store().await;
+        // save_session always sets last_activity to now, so recent sessions won't be cleaned up
+        let mut meta = SessionMetadata::new("old", "main", "cli", "local");
+        meta.is_active = false;
+        store.save_session("old", &meta, "{}").await.unwrap();
+
+        // Cleanup with 30 days should not affect a session that was just saved
+        let deleted = store.cleanup_old_sessions(Duration::from_secs(86400 * 30)).await.unwrap();
+        assert_eq!(deleted, 0);
+
+        // Session should still exist
+        let remaining = store.load_session("old").await.unwrap();
+        assert!(remaining.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_messages_with_limit() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("limit-test", "main", "cli", "local");
+        store.save_session("limit-test", &meta, "{}").await.unwrap();
+
+        for i in 0..5 {
+            store.append_message("limit-test", "user", &format!("msg{}", i), None).await.unwrap();
+        }
+
+        let msgs = store.get_messages("limit-test", 2, None).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_persisted_session_fields() {
+        let store = create_test_store().await;
+        let meta = SessionMetadata::new("persist-test", "main", "cli", "local");
+        store.save_session("persist-test", &meta, r#"{"key":"val"}"#).await.unwrap();
+
+        let loaded = store.load_session("persist-test").await.unwrap().unwrap();
+        assert_eq!(loaded.id, "persist-test");
+        assert_eq!(loaded.state_json, r#"{"key":"val"}"#);
+        assert_eq!(loaded.message_count, 0);
+    }
 }

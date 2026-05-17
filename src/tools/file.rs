@@ -531,4 +531,342 @@ mod tests {
         // Cleanup
         let _ = tokio_fs::remove_file(&test_file).await;
     }
+
+    #[test]
+    fn test_expand_home_tilde() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_home("~/test"), home.join("test"));
+        assert_eq!(expand_home("~"), home);
+    }
+
+    #[test]
+    fn test_expand_home_no_tilde() {
+        assert_eq!(expand_home("/tmp/test"), PathBuf::from("/tmp/test"));
+        assert_eq!(expand_home("relative/path"), PathBuf::from("relative/path"));
+    }
+
+    #[test]
+    fn test_truncate_content_no_truncate() {
+        let content = "short".to_string();
+        let result = FileReadTool::truncate_content(content.clone(), 100);
+        assert_eq!(result, "short");
+    }
+
+    #[tokio::test]
+    async fn test_file_read_missing_path() {
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_read_path_not_allowed() {
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1").allow_path("/tmp/allowed");
+        let args = serde_json::json!({"path": "/etc/passwd"});
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_file_read_not_found() {
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({"path": "/tmp/nonexistent_file_12345.txt"});
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn test_file_read_is_directory() {
+        let temp_dir = std::env::temp_dir();
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({"path": temp_dir.to_string_lossy()});
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("is not a file"));
+    }
+
+    #[tokio::test]
+    async fn test_file_read_binary() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_bin_{}.bin", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, b"Hello\x00World")
+            .await
+            .unwrap();
+
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({"path": test_file.to_string_lossy()});
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("Binary file"));
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_read_with_limit() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_limit_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, "abcdefghij")
+            .await
+            .unwrap();
+
+        let tool = FileReadTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "limit": 5
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("abcde"));
+        assert!(result.output.contains("truncated"));
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_write_missing_path() {
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({"content": "hello"});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_write_missing_content() {
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({"path": "/tmp/test.txt"});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_write_path_not_allowed() {
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1").allow_path("/tmp/allowed");
+        let args = serde_json::json!({
+            "path": "/etc/test_write.txt",
+            "content": "hello"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_file_write_without_backup() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_nobak_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, "original")
+            .await
+            .unwrap();
+
+        let tool = FileWriteTool::new().without_backup();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "content": "updated"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+
+        let backup_file = test_file.with_extension("bak");
+        assert!(!backup_file.exists());
+
+        let content = tokio_fs::read_to_string(&test_file).await.unwrap();
+        assert_eq!(content, "updated");
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_write_creates_parent_dirs() {
+        let temp_dir = std::env::temp_dir();
+        let parent = temp_dir.join(format!("manta_parent_{}", uuid::Uuid::new_v4()));
+        let test_file = parent.join("nested/file.txt");
+
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "content": "nested content"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(test_file.exists());
+
+        let _ = tokio_fs::remove_dir_all(&parent).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_missing_args() {
+        let tool = FileEditTool::new();
+        let context = ToolContext::new("user", "conv1");
+
+        // missing old_string
+        let args = serde_json::json!({"path": "/tmp/test", "new_string": "x"});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+
+        // missing new_string
+        let args = serde_json::json!({"path": "/tmp/test", "old_string": "x"});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_path_not_allowed() {
+        let tool = FileEditTool::new();
+        let context = ToolContext::new("user", "conv1").allow_path("/tmp/allowed");
+        let args = serde_json::json!({
+            "path": "/etc/passwd",
+            "old_string": "root",
+            "new_string": "admin"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_not_found() {
+        let tool = FileEditTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({
+            "path": "/tmp/nonexistent_edit_12345.txt",
+            "old_string": "old",
+            "new_string": "new"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_string_not_found() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_edit_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, "hello world")
+            .await
+            .unwrap();
+
+        let tool = FileEditTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "old_string": "not present",
+            "new_string": "replaced"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("Could not find text"));
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_edit_success() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_edit_ok_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, "foo bar foo")
+            .await
+            .unwrap();
+
+        let tool = FileEditTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "old_string": "foo",
+            "new_string": "baz"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("2 replacement"));
+
+        let content = tokio_fs::read_to_string(&test_file).await.unwrap();
+        assert_eq!(content, "baz bar baz");
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_glob_missing_pattern() {
+        let tool = GlobTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({});
+        let result = tool.execute(args, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_glob_path_not_allowed() {
+        let tool = GlobTool::new();
+        let context = ToolContext::new("user", "conv1").allow_path("/tmp/allowed");
+        let args = serde_json::json!({
+            "pattern": "*.txt",
+            "path": "/etc"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_invalid_pattern() {
+        let tool = GlobTool::new();
+        let context = ToolContext::new("user", "conv1");
+        let args = serde_json::json!({"pattern": "[invalid"});
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("Invalid glob pattern"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_success() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("manta_glob_{}.txt", uuid::Uuid::new_v4()));
+
+        tokio_fs::write(&test_file, "test")
+            .await
+            .unwrap();
+
+        let tool = GlobTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "pattern": "manta_glob_*.txt"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains(test_file.to_string_lossy().as_ref()));
+
+        let _ = tokio_fs::remove_file(&test_file).await;
+    }
+
+    #[tokio::test]
+    async fn test_glob_no_matches() {
+        let temp_dir = std::env::temp_dir();
+        let tool = GlobTool::new();
+        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let args = serde_json::json!({
+            "pattern": "no_such_file_*.xyz"
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("No files found"));
+    }
 }

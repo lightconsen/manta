@@ -1133,4 +1133,270 @@ mod tests {
         assert_eq!(fixed.delay_for_attempt(0).as_secs(), 30);
         assert_eq!(fixed.delay_for_attempt(5).as_secs(), 30);
     }
+
+    #[test]
+    fn test_schedule_cron_expression() {
+        let now = Utc::now();
+        // Every minute expression (6 fields with seconds)
+        let schedule = Schedule::Cron {
+            expression: "0 * * * * *".to_string(),
+            timezone: None,
+            stagger_ms: None,
+        };
+        let next = schedule.next_run(now);
+        assert!(next.is_some());
+        let next = next.unwrap();
+        assert!(next > now);
+        // Should be within ~1 minute
+        assert!((next - now).num_seconds() <= 61);
+    }
+
+    #[test]
+    fn test_schedule_cron_5field_normalization() {
+        let now = Utc::now();
+        // 5-field cron (no seconds) should be normalized to 6-field
+        let schedule = Schedule::Cron {
+            expression: "* * * * *".to_string(),
+            timezone: None,
+            stagger_ms: None,
+        };
+        let next = schedule.next_run(now);
+        assert!(next.is_some());
+        assert!(next.unwrap() > now);
+    }
+
+    #[test]
+    fn test_schedule_is_one_shot() {
+        let future = Utc::now() + ChronoDuration::hours(1);
+        let at = Schedule::At { timestamp: future };
+        assert!(at.is_one_shot());
+
+        let every = Schedule::Every {
+            interval: Duration::from_secs(60),
+            anchor: None,
+        };
+        assert!(!every.is_one_shot());
+
+        let cron = Schedule::Cron {
+            expression: "0 * * * * *".to_string(),
+            timezone: None,
+            stagger_ms: None,
+        };
+        assert!(!cron.is_one_shot());
+    }
+
+    #[test]
+    fn test_execution_target_agent_with_id() {
+        let target = ExecutionTarget::agent_with_id("agent-1", "do something");
+        assert!(matches!(
+            target,
+            ExecutionTarget::Agent {
+                agent_id: Some(id),
+                prompt,
+                context: None,
+            } if id == "agent-1" && prompt == "do something"
+        ));
+    }
+
+    #[test]
+    fn test_session_target_default() {
+        assert_eq!(SessionTarget::default(), SessionTarget::Isolated);
+    }
+
+    #[test]
+    fn test_retry_config_default() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.backoff, BackoffStrategy::Exponential);
+    }
+
+    #[test]
+    fn test_job_state_default() {
+        let state = JobState::default();
+        assert!(state.next_run_at.is_none());
+        assert!(state.last_run_at.is_none());
+        assert!(state.running_at_ms.is_none());
+        assert_eq!(state.run_count, 0);
+        assert!(state.last_error.is_none());
+        assert_eq!(state.consecutive_errors, 0);
+    }
+
+    #[test]
+    fn test_cron_job_new() {
+        let future = Utc::now() + ChronoDuration::hours(1);
+        let schedule = Schedule::At { timestamp: future };
+        let target = ExecutionTarget::shell("echo hello");
+        let job = CronJob::new("job-1", "Test Job", schedule.clone(), target);
+
+        assert_eq!(job.id, "job-1");
+        assert_eq!(job.name, "Test Job");
+        assert_eq!(job.schedule, schedule);
+        assert!(job.enabled);
+        assert_eq!(job.session, SessionTarget::Isolated);
+        assert!(matches!(job.delivery, DeliveryMode::None));
+        assert_eq!(job.retry.max_retries, 3);
+        assert!(job.state.next_run_at.is_some());
+    }
+
+    #[test]
+    fn test_cron_job_builder_methods() {
+        let future = Utc::now() + ChronoDuration::hours(1);
+        let job = CronJob::new(
+            "job-2",
+            "Builder Test",
+            Schedule::At { timestamp: future },
+            ExecutionTarget::agent("test"),
+        )
+        .with_delivery(DeliveryMode::Announce {
+            channel: "discord".to_string(),
+            to: "#general".to_string(),
+        })
+        .with_session(SessionTarget::Main)
+        .with_retry(RetryConfig {
+            max_retries: 5,
+            backoff: BackoffStrategy::Fixed,
+        });
+
+        assert!(matches!(
+            job.delivery,
+            DeliveryMode::Announce { channel, to } if channel == "discord" && to == "#general"
+        ));
+        assert_eq!(job.session, SessionTarget::Main);
+        assert_eq!(job.retry.max_retries, 5);
+        assert_eq!(job.retry.backoff, BackoffStrategy::Fixed);
+    }
+
+    #[test]
+    fn test_cron_job_should_run() {
+        let now = Utc::now();
+        let past = now - ChronoDuration::minutes(5);
+        let schedule = Schedule::At { timestamp: past };
+        let target = ExecutionTarget::shell("echo");
+
+        // Job with past schedule - should run because next_run is past and enabled
+        let mut job = CronJob::new("j1", "Test", schedule, target);
+        job.state.next_run_at = Some(past);
+        assert!(job.should_run(now));
+
+        // Disabled job should not run
+        job.enabled = false;
+        assert!(!job.should_run(now));
+        job.enabled = true;
+
+        // Running job should not run
+        job.state.running_at_ms = Some(now.timestamp_millis());
+        assert!(!job.should_run(now));
+        job.state.running_at_ms = None;
+
+        // Future job should not run yet
+        let future = now + ChronoDuration::hours(1);
+        job.state.next_run_at = Some(future);
+        assert!(!job.should_run(now));
+
+        // No next_run should still return true (legacy behavior)
+        job.state.next_run_at = None;
+        assert!(job.should_run(now));
+    }
+
+    #[test]
+    fn test_cron_job_update_next_run() {
+        let now = Utc::now();
+        let interval = Duration::from_secs(3600);
+        let schedule = Schedule::Every {
+            interval,
+            anchor: Some(now),
+        };
+        let mut job = CronJob::new("j2", "Interval", schedule, ExecutionTarget::shell("echo"));
+
+        job.update_next_run(now);
+        let next = job.state.next_run_at.unwrap();
+        // Next run should be about 1 hour from anchor
+        let diff = next - now;
+        assert!(diff.num_seconds() >= 3600);
+    }
+
+    #[test]
+    fn test_run_status_variants() {
+        assert_eq!(RunStatus::Ok, RunStatus::Ok);
+        assert_eq!(RunStatus::Error, RunStatus::Error);
+        assert_ne!(RunStatus::Ok, RunStatus::Error);
+    }
+
+    #[test]
+    fn test_delivery_status_variants() {
+        assert_eq!(DeliveryStatus::Delivered, DeliveryStatus::Delivered);
+        assert_eq!(
+            DeliveryStatus::Failed("x".to_string()),
+            DeliveryStatus::Failed("x".to_string())
+        );
+        assert_ne!(
+            DeliveryStatus::Delivered,
+            DeliveryStatus::Failed("x".to_string())
+        );
+    }
+
+    #[test]
+    fn test_announce_delivery_creation() {
+        let ann = AnnounceDelivery {
+            channel: "telegram".to_string(),
+            to: "12345".to_string(),
+            message: "hello".to_string(),
+        };
+        assert_eq!(ann.channel, "telegram");
+        assert_eq!(ann.to, "12345");
+        assert_eq!(ann.message, "hello");
+    }
+
+    #[test]
+    fn test_cron_scheduler_new() {
+        let (scheduler, rx) = CronScheduler::new();
+        assert!(scheduler.store_path.is_none());
+        assert!(scheduler.announce_tx.is_none());
+        // rx should be open
+        assert!(!rx.is_closed());
+    }
+
+    #[test]
+    fn test_cron_scheduler_default() {
+        let scheduler: CronScheduler = Default::default();
+        assert!(scheduler.store_path.is_none());
+    }
+
+    #[test]
+    fn test_cron_command_variants() {
+        use std::str::FromStr;
+
+        let job = CronJob::new(
+            "id",
+            "name",
+            Schedule::At {
+                timestamp: Utc::now(),
+            },
+            ExecutionTarget::shell("echo"),
+        );
+
+        let add = CronCommand::Add(job.clone());
+        assert!(matches!(add, CronCommand::Add(_)));
+
+        let remove = CronCommand::Remove("id".to_string());
+        assert!(matches!(remove, CronCommand::Remove(s) if s == "id"));
+
+        let set_enabled = CronCommand::SetEnabled("id".to_string(), false);
+        assert!(matches!(set_enabled, CronCommand::SetEnabled(s, false) if s == "id"));
+
+        let trigger = CronCommand::Trigger("id".to_string());
+        assert!(matches!(trigger, CronCommand::Trigger(s) if s == "id"));
+
+        let (tx, _rx) = oneshot::channel();
+        let get_next = CronCommand::GetNextRun("id".to_string(), tx);
+        assert!(matches!(get_next, CronCommand::GetNextRun(s, _) if s == "id"));
+
+        let (tx, _rx) = oneshot::channel();
+        let list = CronCommand::ListJobs(tx);
+        assert!(matches!(list, CronCommand::ListJobs(_)));
+
+        let (tx, _rx) = oneshot::channel();
+        let get = CronCommand::GetJob("id".to_string(), tx);
+        assert!(matches!(get, CronCommand::GetJob(s, _) if s == "id"));
+    }
 }

@@ -205,4 +205,139 @@ mod tests {
         guard.reset_exceeded();
         assert!(!guard.is_exceeded());
     }
+
+    #[test]
+    fn test_cost_guard_initial_state() {
+        let guard = CostGuard::new(100, 10);
+        assert!(!guard.is_exceeded());
+        assert_eq!(guard.daily_spend_cents(), 0);
+        assert_eq!(guard.hourly_action_count(), 0);
+        assert_eq!(guard.daily_limit_cents, 100);
+        assert_eq!(guard.hourly_action_limit, 10);
+        assert!(!guard.budget_exceeded.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_cost_guard_daily_spend_cents() {
+        let guard = CostGuard::new(0, 0);
+        // sonnet: 300 cpm input, 1500 cpm output
+        // 1M input tokens = 300 cents
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet");
+        assert_eq!(guard.daily_spend_cents(), 300);
+    }
+
+    #[test]
+    fn test_cost_guard_hourly_action_count() {
+        let guard = CostGuard::new(0, 0);
+        guard.record_usage(100, 100, "claude-3-haiku");
+        assert_eq!(guard.hourly_action_count(), 1);
+        guard.record_usage(100, 100, "claude-3-haiku");
+        assert_eq!(guard.hourly_action_count(), 2);
+    }
+
+    #[test]
+    fn test_cost_guard_zero_tokens() {
+        let guard = CostGuard::new(0, 0);
+        guard.record_usage(0, 0, "claude-3-sonnet");
+        // Zero tokens = zero cost, but action is still counted
+        assert_eq!(guard.daily_spend_cents(), 0);
+        assert_eq!(guard.hourly_action_count(), 1);
+    }
+
+    #[test]
+    fn test_pricing_for_model_opus() {
+        assert_eq!(CostGuard::pricing_for_model("claude-3-opus"), (1_500, 7_500));
+        assert_eq!(CostGuard::pricing_for_model("Claude-3-Opus"), (1_500, 7_500));
+    }
+
+    #[test]
+    fn test_pricing_for_model_sonnet() {
+        assert_eq!(CostGuard::pricing_for_model("claude-3-sonnet"), (300, 1_500));
+        assert_eq!(CostGuard::pricing_for_model("claude-sonnet-4-6"), (300, 1_500));
+    }
+
+    #[test]
+    fn test_pricing_for_model_haiku() {
+        assert_eq!(CostGuard::pricing_for_model("claude-3-haiku"), (25, 125));
+    }
+
+    #[test]
+    fn test_pricing_for_model_gpt4o() {
+        assert_eq!(CostGuard::pricing_for_model("gpt-4o"), (250, 1_000));
+        assert_eq!(CostGuard::pricing_for_model("GPT-4O"), (250, 1_000));
+    }
+
+    #[test]
+    fn test_pricing_for_model_gpt4() {
+        assert_eq!(CostGuard::pricing_for_model("gpt-4"), (1_000, 3_000));
+        assert_eq!(CostGuard::pricing_for_model("gpt-4-turbo"), (1_000, 3_000));
+    }
+
+    #[test]
+    fn test_pricing_for_model_gpt35() {
+        assert_eq!(CostGuard::pricing_for_model("gpt-3.5-turbo"), (50, 150));
+    }
+
+    #[test]
+    fn test_pricing_for_model_unknown() {
+        assert_eq!(CostGuard::pricing_for_model("unknown-model"), (300, 1_500));
+        assert_eq!(CostGuard::pricing_for_model(""), (300, 1_500));
+    }
+
+    #[test]
+    fn test_cost_guard_exact_daily_limit() {
+        // sonnet: 300 cpm input. 1M tokens costs exactly 300 cents.
+        let guard = CostGuard::new(300, 0);
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet");
+        assert!(guard.is_exceeded());
+        assert_eq!(guard.daily_spend_cents(), 300);
+    }
+
+    #[test]
+    fn test_cost_guard_both_limits_daily_triggers() {
+        let guard = CostGuard::new(1, 100);
+        // sonnet: 300 cpm → 1M tokens = 300 cents > 1 cent limit
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet");
+        assert!(guard.is_exceeded());
+        assert_eq!(guard.hourly_action_count(), 1);
+    }
+
+    #[test]
+    fn test_cost_guard_both_limits_hourly_triggers() {
+        let guard = CostGuard::new(10_000, 2);
+        guard.record_usage(100, 100, "claude-3-haiku");
+        assert!(!guard.is_exceeded());
+        guard.record_usage(100, 100, "claude-3-haiku");
+        assert!(guard.is_exceeded());
+        // Daily spend should still be tiny (haiku is 25 cpm → 100 tokens = 0 cents due to integer division)
+        assert_eq!(guard.daily_spend_cents(), 0);
+    }
+
+    #[test]
+    fn test_cost_guard_debug() {
+        let guard = CostGuard::new(100, 10);
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet");
+        let debug = format!("{:?}", guard);
+        assert!(debug.contains("CostGuard"));
+        assert!(debug.contains("daily_cents"));
+        assert!(debug.contains("300"));
+    }
+
+    #[test]
+    fn test_cost_guard_arc_clone() {
+        let guard = CostGuard::new(100, 10);
+        let guard2 = Arc::clone(&guard);
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet");
+        assert_eq!(guard2.daily_spend_cents(), 300);
+    }
+
+    #[test]
+    fn test_cost_guard_multiple_models() {
+        let guard = CostGuard::new(0, 0);
+        guard.record_usage(1_000_000, 0, "claude-3-opus");   // 1500 cents
+        guard.record_usage(1_000_000, 0, "claude-3-sonnet"); // +300 cents
+        guard.record_usage(1_000_000, 0, "claude-3-haiku");  // +25 cents
+        assert_eq!(guard.daily_spend_cents(), 1_825);
+        assert_eq!(guard.hourly_action_count(), 3);
+    }
 }

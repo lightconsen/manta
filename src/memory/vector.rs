@@ -902,4 +902,277 @@ mod tests {
         cached.clear_cache().await;
         assert_eq!(cached.cache_size().await, 0);
     }
+
+    #[test]
+    fn test_text_chunker_empty() {
+        let chunker = TextChunker::new(5, 2);
+        let chunks = chunker.chunk("");
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_text_chunker_exact_size() {
+        let chunker = TextChunker::new(3, 1);
+        let text = "one two three";
+        let chunks = chunker.chunk(text);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "one two three");
+    }
+
+    #[test]
+    fn test_text_chunker_overlap_produces_multiple() {
+        let chunker = TextChunker::new(3, 1);
+        let text = "a b c d e f g";
+        let chunks = chunker.chunk(text);
+        assert!(chunks.len() > 1);
+        // First chunk should start with 'a'
+        assert!(chunks[0].starts_with('a'));
+        // Overlap: second chunk should share some words with first
+        assert!(chunks[1].contains('c'));
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty() {
+        assert_eq!(cosine_similarity(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_mismatched_lengths() {
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_zero_vector() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_vector_backend_default() {
+        assert!(matches!(VectorBackend::default(), VectorBackend::Memory));
+    }
+
+    #[test]
+    fn test_embedding_config_default() {
+        let config = EmbeddingConfig::default();
+        assert_eq!(config.model, "BAAI/bge-small-en");
+        assert_eq!(config.chunk_size, 512);
+        assert_eq!(config.chunk_overlap, 50);
+        assert_eq!(config.batch_size, 32);
+    }
+
+    #[test]
+    fn test_api_embedding_provider_new() {
+        let provider = ApiEmbeddingProvider::new("key123".into(), "text-embedding-3-small".into(), 1536);
+        assert_eq!(provider.model_name(), "text-embedding-3-small");
+        assert_eq!(provider.dimension(), 1536);
+    }
+
+    #[test]
+    fn test_api_embedding_provider_with_base_url() {
+        let provider = ApiEmbeddingProvider::new("k".into(), "m".into(), 128)
+            .with_base_url("https://azure.example.com".to_string());
+        // base_url is private, but we can verify the struct was created
+        assert_eq!(provider.model_name(), "m");
+    }
+
+    #[tokio::test]
+    async fn test_memory_vector_store_store_and_search() {
+        let store = MemoryVectorStore::new(3);
+        let chunk = EmbeddedChunk {
+            id: "c1".to_string(),
+            source_id: "doc1".to_string(),
+            text: "hello world".to_string(),
+            embedding: vec![1.0, 0.0, 0.0],
+            position: 0,
+            total_chunks: 1,
+            metadata: None,
+        };
+        store.store_chunk(chunk.clone()).await.unwrap();
+
+        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, "c1");
+        assert!((results[0].1 - 1.0).abs() < 0.001);
+
+        // Orthogonal vector should not match above threshold
+        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_vector_store_delete_by_source() {
+        let store = MemoryVectorStore::new(2);
+        store.store_chunk(EmbeddedChunk {
+            id: "c1".to_string(),
+            source_id: "doc-a".to_string(),
+            text: "a".to_string(),
+            embedding: vec![1.0, 0.0],
+            position: 0,
+            total_chunks: 2,
+            metadata: None,
+        }).await.unwrap();
+        store.store_chunk(EmbeddedChunk {
+            id: "c2".to_string(),
+            source_id: "doc-a".to_string(),
+            text: "b".to_string(),
+            embedding: vec![0.0, 1.0],
+            position: 1,
+            total_chunks: 2,
+            metadata: None,
+        }).await.unwrap();
+        store.store_chunk(EmbeddedChunk {
+            id: "c3".to_string(),
+            source_id: "doc-b".to_string(),
+            text: "c".to_string(),
+            embedding: vec![1.0, 1.0],
+            position: 0,
+            total_chunks: 1,
+            metadata: None,
+        }).await.unwrap();
+
+        let deleted = store.delete_by_source("doc-a").await.unwrap();
+        assert_eq!(deleted, 2);
+
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_vectors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_memory_vector_store_stats() {
+        let store = MemoryVectorStore::new(4);
+        store.store_chunk(EmbeddedChunk {
+            id: "c1".to_string(),
+            source_id: "s1".to_string(),
+            text: "a".to_string(),
+            embedding: vec![0.0; 4],
+            position: 0,
+            total_chunks: 1,
+            metadata: None,
+        }).await.unwrap();
+        store.store_chunk(EmbeddedChunk {
+            id: "c2".to_string(),
+            source_id: "s2".to_string(),
+            text: "b".to_string(),
+            embedding: vec![0.0; 4],
+            position: 0,
+            total_chunks: 1,
+            metadata: None,
+        }).await.unwrap();
+
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_vectors, 2);
+        assert_eq!(stats.total_sources, 2);
+        assert_eq!(stats.dimension, 4);
+    }
+
+    #[tokio::test]
+    async fn test_memory_vector_store_clear() {
+        let store = MemoryVectorStore::new(2);
+        store.store_chunk(EmbeddedChunk {
+            id: "c1".to_string(),
+            source_id: "s1".to_string(),
+            text: "a".to_string(),
+            embedding: vec![1.0, 0.0],
+            position: 0,
+            total_chunks: 1,
+            metadata: None,
+        }).await.unwrap();
+
+        store.clear().await.unwrap();
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_vectors, 0);
+    }
+
+    #[test]
+    fn test_vector_store_stats_default() {
+        let stats = VectorStoreStats::default();
+        assert_eq!(stats.total_vectors, 0);
+        assert_eq!(stats.total_sources, 0);
+        assert_eq!(stats.dimension, 0);
+    }
+
+    #[test]
+    fn test_embedded_chunk_creation() {
+        let chunk = EmbeddedChunk {
+            id: "id1".to_string(),
+            source_id: "src1".to_string(),
+            text: "hello".to_string(),
+            embedding: vec![0.1, 0.2],
+            position: 3,
+            total_chunks: 5,
+            metadata: Some(serde_json::json!({"key": "val"})),
+        };
+        assert_eq!(chunk.id, "id1");
+        assert_eq!(chunk.position, 3);
+        assert_eq!(chunk.total_chunks, 5);
+    }
+
+    #[test]
+    fn test_search_result_creation() {
+        let result = SearchResult {
+            id: "r1".to_string(),
+            content: "content".to_string(),
+            score: 0.95,
+            metadata: None,
+        };
+        assert_eq!(result.id, "r1");
+        assert!((result.score - 0.95).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_batch_embedding_processor() {
+        struct FixedEmbeddingProvider;
+        #[async_trait]
+        impl EmbeddingProvider for FixedEmbeddingProvider {
+            fn model_name(&self) -> &str { "fixed" }
+            fn dimension(&self) -> usize { 2 }
+            async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
+            }
+        }
+
+        let provider = Arc::new(FixedEmbeddingProvider) as Arc<dyn EmbeddingProvider>;
+        let chunker = TextChunker::new(10, 2);
+        let processor = BatchEmbeddingProcessor::new(provider, chunker, 5);
+        let store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
+
+        let docs = vec![
+            ("doc1".to_string(), "hello world test document".to_string()),
+        ];
+
+        let chunks = processor.process_documents(docs, &*store).await.unwrap();
+        assert!(!chunks.is_empty());
+        // All chunks should be stored
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_vectors, chunks.len());
+    }
+
+    #[tokio::test]
+    async fn test_vector_memory_service_search_collection() {
+        struct FixedEmbeddingProvider;
+        #[async_trait]
+        impl EmbeddingProvider for FixedEmbeddingProvider {
+            fn model_name(&self) -> &str { "fixed" }
+            fn dimension(&self) -> usize { 2 }
+            async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
+            }
+        }
+
+        let provider = Arc::new(FixedEmbeddingProvider) as Arc<dyn EmbeddingProvider>;
+        let store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
+        let config = EmbeddingConfig::default();
+        let service = VectorMemoryService::new(provider, store, &config);
+
+        let doc_id = service.add_to_collection("hello world", None, "test-col").await.unwrap();
+        assert!(!doc_id.is_empty());
+
+        let collections = service.list_collections();
+        assert!(collections.contains(&"test-col".to_string()));
+        assert!(collections.contains(&"default".to_string()));
+    }
 }

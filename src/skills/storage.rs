@@ -196,12 +196,12 @@ impl SkillStorage {
         let mut skills = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        // Discover in order of priority (bundled first, then override)
+        // Discover in order of priority (highest first so overrides work)
         for level in [
-            StorageLevel::Bundled,
-            StorageLevel::User,
-            StorageLevel::Workspace,
             StorageLevel::Project,
+            StorageLevel::Workspace,
+            StorageLevel::User,
+            StorageLevel::Bundled,
         ] {
             let discovered = self.discover_at_level(level).await;
 
@@ -475,6 +475,28 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    /// RAII guard to restore the original working directory on drop.
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn new() -> Self {
+            Self {
+                original: std::env::current_dir().unwrap(),
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
 
     #[test]
     fn test_storage_level_priority() {
@@ -493,11 +515,577 @@ mod tests {
     }
 
     #[test]
+    fn test_storage_level_default() {
+        assert_eq!(StorageLevel::default(), StorageLevel::User);
+    }
+
+    #[test]
+    fn test_storage_level_display() {
+        assert_eq!(format!("{}", StorageLevel::Bundled), "bundled");
+        assert_eq!(format!("{}", StorageLevel::User), "user");
+        assert_eq!(format!("{}", StorageLevel::Workspace), "workspace");
+        assert_eq!(format!("{}", StorageLevel::Project), "project");
+    }
+
+    #[test]
     fn test_user_skills_dir() {
         let dir = SkillStorage::user_skills_dir();
         assert!(dir.is_ok());
         let dir = dir.unwrap();
         assert!(dir.to_string_lossy().contains("manta"));
         assert!(dir.to_string_lossy().contains("skills"));
+    }
+
+    #[test]
+    fn test_skill_location_debug() {
+        let loc = SkillLocation {
+            level: StorageLevel::User,
+            path: PathBuf::from("/skills/docker"),
+            name: "docker".to_string(),
+            skill_file: PathBuf::from("/skills/docker/SKILL.md"),
+        };
+        let debug = format!("{:?}", loc);
+        assert!(debug.contains("docker"));
+        assert!(debug.contains("User"));
+    }
+
+    #[test]
+    fn test_skill_location_clone() {
+        let loc = SkillLocation {
+            level: StorageLevel::User,
+            path: PathBuf::from("/skills/docker"),
+            name: "docker".to_string(),
+            skill_file: PathBuf::from("/skills/docker/SKILL.md"),
+        };
+        let cloned = loc.clone();
+        assert_eq!(cloned.name, "docker");
+        assert_eq!(cloned.level, StorageLevel::User);
+        assert_eq!(cloned.path, PathBuf::from("/skills/docker"));
+        assert_eq!(cloned.skill_file, PathBuf::from("/skills/docker/SKILL.md"));
+    }
+
+    #[test]
+    fn test_skill_storage_new() {
+        let storage = SkillStorage::new();
+        assert!(storage.is_ok());
+    }
+
+    #[test]
+    fn test_skill_storage_default() {
+        let storage = SkillStorage::default();
+        assert!(!storage.user_dir().as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_skill_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: Some(temp.path().join("bundled")),
+            user_dir: temp.path().join("user"),
+            project_dir: Some(temp.path().join("project")),
+            workspace_dir: Some(temp.path().join("workspace")),
+        };
+
+        assert_eq!(
+            storage.skill_path("docker", StorageLevel::Bundled),
+            Some(temp.path().join("bundled").join("docker"))
+        );
+        assert_eq!(
+            storage.skill_path("docker", StorageLevel::User),
+            Some(temp.path().join("user").join("docker"))
+        );
+        assert_eq!(
+            storage.skill_path("docker", StorageLevel::Project),
+            Some(temp.path().join("project").join("docker"))
+        );
+        assert_eq!(
+            storage.skill_path("docker", StorageLevel::Workspace),
+            Some(temp.path().join("workspace").join("docker"))
+        );
+    }
+
+    #[test]
+    fn test_skill_path_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        assert_eq!(storage.skill_path("docker", StorageLevel::Bundled), None);
+        assert_eq!(
+            storage.skill_path("docker", StorageLevel::User),
+            Some(temp.path().join("user").join("docker"))
+        );
+        assert_eq!(storage.skill_path("docker", StorageLevel::Project), None);
+        assert_eq!(storage.skill_path("docker", StorageLevel::Workspace), None);
+    }
+
+    #[test]
+    fn test_skill_file_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: Some(temp.path().join("bundled")),
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        assert_eq!(
+            storage.skill_file_path("docker", StorageLevel::Bundled),
+            Some(temp.path().join("bundled").join("docker").join("SKILL.md"))
+        );
+        assert_eq!(
+            storage.skill_file_path("docker", StorageLevel::User),
+            Some(temp.path().join("user").join("docker").join("SKILL.md"))
+        );
+        assert_eq!(
+            storage.skill_file_path("docker", StorageLevel::Project),
+            None
+        );
+    }
+
+    #[test]
+    fn test_get_all_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: Some(temp.path().join("bundled")),
+            user_dir: temp.path().join("user"),
+            project_dir: Some(temp.path().join("project")),
+            workspace_dir: Some(temp.path().join("workspace")),
+        };
+
+        let paths = storage.get_all_paths();
+        assert_eq!(paths.len(), 4);
+        assert!(paths.iter().any(|(l, _)| *l == StorageLevel::Bundled));
+        assert!(paths.iter().any(|(l, _)| *l == StorageLevel::User));
+        assert!(paths.iter().any(|(l, _)| *l == StorageLevel::Workspace));
+        assert!(paths.iter().any(|(l, _)| *l == StorageLevel::Project));
+    }
+
+    #[test]
+    fn test_all_dirs() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let dirs = storage.all_dirs();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, StorageLevel::User);
+    }
+
+    #[test]
+    fn test_user_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        assert_eq!(storage.user_dir(), temp.path().join("user"));
+    }
+
+    #[test]
+    fn test_refresh_updates_project_dir() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        let manta_skills = temp_path.join(".manta").join("skills");
+        std::fs::create_dir_all(&manta_skills).unwrap();
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let mut storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp_path.join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        storage.refresh();
+        assert_eq!(storage.project_dir, Some(manta_skills));
+    }
+
+    #[tokio::test]
+    async fn test_copy_dir_recursive() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src");
+        let dst = temp.path().join("dst");
+
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("file.txt"), "hello").unwrap();
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("subdir").join("nested.txt"), "world").unwrap();
+
+        copy_dir_recursive(&src, &dst).await.unwrap();
+
+        assert!(dst.exists());
+        assert!(dst.join("file.txt").exists());
+        assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "hello");
+        assert!(dst.join("subdir").exists());
+        assert!(dst.join("subdir").join("nested.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(dst.join("subdir").join("nested.txt")).unwrap(),
+            "world"
+        );
+    }
+
+    #[test]
+    fn test_find_project_root() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        let manta_dir = temp_path.join(".manta");
+        std::fs::create_dir_all(&manta_dir).unwrap();
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let root = find_project_root();
+        assert_eq!(root, Some(temp_path.clone()));
+
+        // Test nested directory
+        let nested = temp_path.join("src").join("components");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::env::set_current_dir(&nested).unwrap();
+
+        let root = find_project_root();
+        assert_eq!(root, Some(temp_path));
+    }
+
+    #[test]
+    fn test_find_workspace_root_git_marker() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        std::fs::create_dir_all(temp_path.join(".git")).unwrap();
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let root = find_workspace_root();
+        assert_eq!(root, Some(temp_path));
+    }
+
+    #[test]
+    fn test_find_workspace_root_toml_marker() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        std::fs::write(temp_path.join("manta.workspace.toml"), "").unwrap();
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let root = find_workspace_root();
+        assert_eq!(root, Some(temp_path));
+    }
+
+    #[test]
+    fn test_find_project_root_no_match() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let root = find_project_root();
+        assert_eq!(root, None);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user").join("skills"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        storage.ensure_user_dir().await.unwrap();
+        assert!(temp.path().join("user").join("skills").exists());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_project_dir() {
+        let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CwdGuard::new();
+        let temp = tempfile::tempdir().unwrap();
+        let temp_path = temp.path().canonicalize().unwrap();
+
+        std::env::set_current_dir(&temp_path).unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let dir = storage.ensure_project_dir().await.unwrap();
+        assert!(dir.exists());
+        assert!(dir.to_string_lossy().contains(".manta"));
+        assert!(dir.to_string_lossy().contains("skills"));
+    }
+
+    #[tokio::test]
+    async fn test_install_to_user() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source_skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# Test Skill").unwrap();
+
+        let user_dir = temp.path().join("user");
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let dest = storage.install_to_user(&source, "test_skill").await.unwrap();
+        assert_eq!(dest, user_dir.join("test_skill"));
+        assert!(dest.exists());
+        assert!(dest.join("SKILL.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            "# Test Skill"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_install_to_user_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source_skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# New Version").unwrap();
+
+        let user_dir = temp.path().join("user");
+        let existing = user_dir.join("test_skill");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(existing.join("SKILL.md"), "# Old Version").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let dest = storage.install_to_user(&source, "test_skill").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            "# New Version"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_from_user() {
+        let temp = tempfile::tempdir().unwrap();
+        let user_dir = temp.path().join("user");
+        let skill_dir = user_dir.join("test_skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# Test").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        storage.uninstall_from_user("test_skill").await.unwrap();
+        assert!(!skill_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_not_found() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let result = storage.uninstall_from_user("nonexistent").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_at_level() {
+        let temp = tempfile::tempdir().unwrap();
+        let user_dir = temp.path().join("user");
+
+        // Create valid skill
+        let docker_dir = user_dir.join("docker");
+        std::fs::create_dir_all(&docker_dir).unwrap();
+        std::fs::write(docker_dir.join("SKILL.md"), "# Docker").unwrap();
+
+        // Create dir without SKILL.md
+        let empty_dir = user_dir.join("empty");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+
+        // Create file (not dir)
+        std::fs::write(user_dir.join("not_a_skill"), "").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let skills = storage.discover_at_level(StorageLevel::User).await;
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "docker");
+        assert_eq!(skills[0].level, StorageLevel::User);
+        assert_eq!(skills[0].skill_file, docker_dir.join("SKILL.md"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_at_level_missing_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("nonexistent"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let skills = storage.discover_at_level(StorageLevel::User).await;
+        assert!(skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_discover_at_level_none() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: temp.path().join("user"),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        // Project dir is None
+        let skills = storage.discover_at_level(StorageLevel::Project).await;
+        assert!(skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_discover_all_override() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let user_dir = temp.path().join("user");
+        let docker_user = user_dir.join("docker");
+        std::fs::create_dir_all(&docker_user).unwrap();
+        std::fs::write(docker_user.join("SKILL.md"), "# User Docker").unwrap();
+
+        let project_dir = temp.path().join("project");
+        let docker_project = project_dir.join("docker");
+        std::fs::create_dir_all(&docker_project).unwrap();
+        std::fs::write(docker_project.join("SKILL.md"), "# Project Docker")
+            .unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: Some(project_dir.clone()),
+            workspace_dir: None,
+        };
+
+        let skills = storage.discover_all().await;
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "docker");
+        // Project overrides user, so path should be project path
+        assert_eq!(skills[0].path, docker_project);
+        assert_eq!(skills[0].level, StorageLevel::Project);
+    }
+
+    #[tokio::test]
+    async fn test_discover_all_multiple_skills() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let user_dir = temp.path().join("user");
+        let docker_dir = user_dir.join("docker");
+        std::fs::create_dir_all(&docker_dir).unwrap();
+        std::fs::write(docker_dir.join("SKILL.md"), "# Docker").unwrap();
+
+        let k8s_dir = user_dir.join("k8s");
+        std::fs::create_dir_all(&k8s_dir).unwrap();
+        std::fs::write(k8s_dir.join("SKILL.md"), "# K8s").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let skills = storage.discover_all().await;
+        assert_eq!(skills.len(), 2);
+        let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"docker"));
+        assert!(names.contains(&"k8s"));
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_level() {
+        let temp = tempfile::tempdir().unwrap();
+        let user_dir = temp.path().join("user");
+        let docker_dir = user_dir.join("docker");
+        std::fs::create_dir_all(&docker_dir).unwrap();
+        std::fs::write(docker_dir.join("SKILL.md"), "# Docker").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let level = storage.get_skill_level("docker").await;
+        assert_eq!(level, Some(StorageLevel::User));
+
+        let level = storage.get_skill_level("nonexistent").await;
+        assert_eq!(level, None);
+    }
+
+    #[tokio::test]
+    async fn test_list_with_levels() {
+        let temp = tempfile::tempdir().unwrap();
+        let user_dir = temp.path().join("user");
+        let docker_dir = user_dir.join("docker");
+        std::fs::create_dir_all(&docker_dir).unwrap();
+        std::fs::write(docker_dir.join("SKILL.md"), "# Docker").unwrap();
+
+        let k8s_dir = user_dir.join("k8s");
+        std::fs::create_dir_all(&k8s_dir).unwrap();
+        std::fs::write(k8s_dir.join("SKILL.md"), "# K8s").unwrap();
+
+        let storage = SkillStorage {
+            bundled_dir: None,
+            user_dir: user_dir.clone(),
+            project_dir: None,
+            workspace_dir: None,
+        };
+
+        let map = storage.list_with_levels().await;
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("docker"), Some(&StorageLevel::User));
+        assert_eq!(map.get("k8s"), Some(&StorageLevel::User));
     }
 }

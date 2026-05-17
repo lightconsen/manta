@@ -26,7 +26,7 @@ impl CanvasTool {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action")]
+#[serde(tag = "action", rename_all = "snake_case")]
 enum CanvasAction {
     Present {
         session_id: String,
@@ -442,5 +442,117 @@ impl Tool for CanvasTool {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_canvas_component_arg_into_component() {
+        let arg = CanvasComponentArg::Text {
+            id: "t1".to_string(),
+            content: "Hello".to_string(),
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Text { id, content, .. } if id == "t1" && content == "Hello"));
+    }
+
+    #[test]
+    fn test_canvas_component_arg_container() {
+        let arg = CanvasComponentArg::Container {
+            id: "root".to_string(),
+            children: vec![
+                CanvasComponentArg::Text { id: "c1".to_string(), content: "A".to_string() },
+            ],
+            layout: Some("vertical".to_string()),
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Container { id, .. } if id == "root"));
+    }
+
+    #[test]
+    fn test_canvas_component_arg_progress() {
+        let arg = CanvasComponentArg::Progress {
+            id: "p1".to_string(),
+            value: 50.0,
+            max: Some(100.0),
+            label: Some("Progress".to_string()),
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Progress { id, value, max, .. } if id == "p1" && value == 50.0 && max == Some(100.0)));
+    }
+
+    #[test]
+    fn test_canvas_component_arg_table() {
+        let arg = CanvasComponentArg::Table {
+            id: "tbl1".to_string(),
+            headers: vec!["A".to_string(), "B".to_string()],
+            rows: vec![vec!["1".to_string(), "2".to_string()]],
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Table { id, headers, rows } if id == "tbl1" && headers.len() == 2 && rows.len() == 1));
+    }
+
+    #[test]
+    fn test_canvas_component_arg_alert() {
+        let arg = CanvasComponentArg::Alert {
+            id: "a1".to_string(),
+            level: "error".to_string(),
+            message: "Oops".to_string(),
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Alert { id, level, message } if id == "a1" && level == "error" && message == "Oops"));
+    }
+
+    #[test]
+    fn test_canvas_tool_name_and_schema() {
+        let manager = Arc::new(CanvasManager::new());
+        let tool = CanvasTool::new(manager);
+        assert_eq!(tool.name(), "canvas");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_canvas_action_parsing() {
+        let action: CanvasAction = serde_json::from_value(serde_json::json!({
+            "action": "present",
+            "session_id": "sess-1",
+            "title": "My UI"
+        })).unwrap();
+        assert!(matches!(action, CanvasAction::Present { session_id, .. } if session_id == "sess-1"));
+
+        let action: CanvasAction = serde_json::from_value(serde_json::json!({
+            "action": "hide",
+            "session_id": "sess-1"
+        })).unwrap();
+        assert!(matches!(action, CanvasAction::Hide { session_id } if session_id == "sess-1"));
+
+        let action: CanvasAction = serde_json::from_value(serde_json::json!({
+            "action": "snapshot",
+            "session_id": "sess-1"
+        })).unwrap();
+        assert!(matches!(action, CanvasAction::Snapshot { session_id } if session_id == "sess-1"));
+
+        let action: CanvasAction = serde_json::from_value(serde_json::json!({
+            "action": "notify",
+            "session_id": "sess-1",
+            "level": "info",
+            "message": "Hello"
+        })).unwrap();
+        assert!(matches!(action, CanvasAction::Notify { session_id, level, message } if session_id == "sess-1" && level == "info" && message == "Hello"));
+    }
+
+    #[test]
+    fn test_canvas_component_arg_code() {
+        let arg = CanvasComponentArg::Code {
+            id: "code1".to_string(),
+            content: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        };
+        let comp = arg.into_component();
+        assert!(matches!(comp, CanvasComponent::Code { id, content, language: Some(lang) } if id == "code1" && content == "fn main() {}" && lang == "rust"));
     }
 }

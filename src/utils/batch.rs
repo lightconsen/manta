@@ -474,4 +474,119 @@ mod tests {
         let result = wait_handle.await.unwrap();
         assert_eq!(result.unwrap(), 42);
     }
+
+    #[test]
+    fn test_batch_config_default() {
+        let config = BatchConfig::default();
+        assert_eq!(config.max_batch_size, 100);
+        assert_eq!(config.max_wait, Duration::from_millis(10));
+        assert_eq!(config.min_batch_size, 1);
+    }
+
+    #[test]
+    fn test_batch_config_builder() {
+        let config = BatchConfig::new()
+            .with_max_size(50)
+            .with_max_wait(Duration::from_secs(1))
+            .with_min_size(5);
+        assert_eq!(config.max_batch_size, 50);
+        assert_eq!(config.max_wait, Duration::from_secs(1));
+        assert_eq!(config.min_batch_size, 5);
+    }
+
+    #[test]
+    fn test_batch_error_display() {
+        assert_eq!(BatchError::BatcherClosed.to_string(), "Batcher has been closed");
+        assert_eq!(BatchError::ResponseClosed.to_string(), "Response channel closed");
+        assert_eq!(
+            BatchError::Processing("boom".to_string()).to_string(),
+            "Processing error: boom"
+        );
+    }
+
+    #[test]
+    fn test_deduplicate_error_display() {
+        assert_eq!(DeduplicateError::NotPending.to_string(), "Key not pending");
+        assert_eq!(DeduplicateError::SenderDropped.to_string(), "Sender dropped");
+    }
+
+    #[tokio::test]
+    async fn test_deduplicator_wait_for_not_pending() {
+        let dedup: Deduplicator<String, i32> = Deduplicator::new();
+        let result = dedup.wait_for("key1".to_string()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DeduplicateError::NotPending));
+    }
+
+    #[tokio::test]
+    async fn test_deduplicator_drop_removes_pending() {
+        let dedup: Deduplicator<String, i32> = Deduplicator::new();
+        {
+            let request = dedup.try_start("key1".to_string()).await;
+            assert!(request.is_some());
+            // Drop without completing
+        }
+
+        // Give tokio spawn time to run
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Should be able to start again
+        let request2 = dedup.try_start("key1".to_string()).await;
+        assert!(request2.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_deduplicator_multiple_waiters() {
+        let dedup: Deduplicator<String, i32> = Deduplicator::new();
+
+        let req = dedup.try_start("key1".to_string()).await.unwrap();
+
+        let dedup2 = dedup.clone();
+        let dedup3 = dedup.clone();
+
+        let h1 = tokio::spawn(async move { dedup2.wait_for("key1".to_string()).await });
+        let h2 = tokio::spawn(async move { dedup3.wait_for("key1".to_string()).await });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        req.complete(99).await;
+
+        assert_eq!(h1.await.unwrap().unwrap(), 99);
+        assert_eq!(h2.await.unwrap().unwrap(), 99);
+    }
+
+    #[test]
+    fn test_batch_stats_default() {
+        let stats: BatchStats = Default::default();
+        assert_eq!(stats.total_batches, 0);
+        assert_eq!(stats.total_items, 0);
+        assert_eq!(stats.avg_batch_size, 0.0);
+        assert_eq!(stats.avg_processing_time_ms, 0.0);
+    }
+
+    #[test]
+    fn test_function_batch_processor() {
+        let processor = FunctionBatchProcessor::new(|inputs: Vec<i32>| {
+            inputs.iter().map(|x| x * 3).collect::<Vec<_>>()
+        });
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result: Vec<i32> = rt
+            .block_on(processor.process_batch(vec![1, 2, 3]))
+            .unwrap();
+        assert_eq!(result, vec![3, 6, 9]);
+    }
+
+    #[tokio::test]
+    async fn test_batcher_config() {
+        let processor = FunctionBatchProcessor::new(|inputs: Vec<i32>| inputs);
+        let config = BatchConfig::new().with_max_size(3);
+        let batcher = Batcher::new(config.clone(), processor);
+        assert_eq!(batcher.config().max_batch_size, 3);
+    }
+
+    #[tokio::test]
+    async fn test_deduplicator_default() {
+        let dedup: Deduplicator<String, i32> = Default::default();
+        let result = dedup.try_start("key".to_string()).await;
+        assert!(result.is_some());
+    }
 }

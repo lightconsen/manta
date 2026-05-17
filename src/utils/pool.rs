@@ -383,4 +383,71 @@ mod tests {
         let all_stats = manager.all_stats().await;
         assert!(all_stats.databases.contains(&"main".to_string()));
     }
+
+    #[test]
+    fn test_pool_config_default() {
+        let config = PoolConfig::default();
+        assert_eq!(config.max_size, 10);
+        assert_eq!(config.min_idle, 2);
+        assert_eq!(config.timeout, Duration::from_secs(30));
+        assert_eq!(config.max_lifetime, Duration::from_secs(3600));
+        assert_eq!(config.idle_timeout, Duration::from_secs(600));
+        assert!(config.validate);
+    }
+
+    #[test]
+    fn test_pool_stats_zero_max() {
+        let stats = PoolStats {
+            total_connections: 5,
+            max_connections: 0,
+            by_service: vec![],
+        };
+        assert_eq!(stats.utilization(), 0.0);
+        assert!(!stats.is_near_capacity(1.0));
+    }
+
+    #[test]
+    fn test_pool_stats_full_capacity() {
+        let stats = PoolStats {
+            total_connections: 10,
+            max_connections: 10,
+            by_service: vec!["a".to_string()],
+        };
+        assert_eq!(stats.utilization(), 100.0);
+        assert!(stats.is_near_capacity(100.0));
+    }
+
+    #[tokio::test]
+    async fn test_http_client_pool_remove_client() {
+        let pool = HttpClientPool::default_pool();
+        let _client = pool.get_client("svc").await.unwrap();
+
+        let stats_before = pool.stats().await;
+        assert_eq!(stats_before.total_connections, 1);
+
+        pool.remove_client("svc").await;
+
+        let stats_after = pool.stats().await;
+        assert_eq!(stats_after.total_connections, 0);
+    }
+
+    #[test]
+    fn test_database_pool_name() {
+        let db = DatabasePool::new("test_db", PoolConfig::default());
+        assert_eq!(db.name(), "test_db");
+    }
+
+    #[test]
+    fn test_database_pool_sqlite_options() {
+        let db = DatabasePool::new("test", PoolConfig::new().with_max_size(5).with_min_idle(1));
+        let opts = db.sqlite_options();
+        // sqlx options don't expose internal state, just verify it doesn't panic
+        let _ = opts;
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_manager_default() {
+        let manager: ConnectionPoolManager = Default::default();
+        assert_eq!(manager.http().stats().await.total_connections, 0);
+    }
 }

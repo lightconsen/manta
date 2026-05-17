@@ -316,3 +316,210 @@ impl HookHandlerBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hook_type_display() {
+        assert_eq!(
+            HookType::BeforeMessageProcess.to_string(),
+            "before_message_process"
+        );
+        assert_eq!(
+            HookType::AfterMessageProcess.to_string(),
+            "after_message_process"
+        );
+        assert_eq!(
+            HookType::BeforeToolExecute.to_string(),
+            "before_tool_execute"
+        );
+        assert_eq!(HookType::SessionStart.to_string(), "session_start");
+        assert_eq!(HookType::ConfigLoad.to_string(), "config_load");
+    }
+
+    #[test]
+    fn test_hook_type_serde_roundtrip() {
+        let types = vec![
+            HookType::BeforeMessageProcess,
+            HookType::AfterMessageProcess,
+            HookType::BeforeToolExecute,
+            HookType::AfterToolExecute,
+            HookType::SessionStart,
+            HookType::SessionEnd,
+            HookType::ConfigLoad,
+            HookType::BeforeProviderCall,
+            HookType::AfterProviderCall,
+        ];
+        for ht in types {
+            let json = serde_json::to_value(&ht).unwrap();
+            let decoded: HookType = serde_json::from_value(json).unwrap();
+            assert_eq!(decoded, ht);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_empty_execute() {
+        let registry = HookRegistry::new();
+        let payload = HookPayload::Session {
+            session_id: "s1".to_string(),
+            user_id: "u1".to_string(),
+            agent_id: None,
+        };
+        let result = registry.execute(HookType::SessionStart, payload.clone()).await;
+        assert!(result.should_continue());
+        assert!(matches!(result.payload(), Some(HookPayload::Session { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_register_and_execute() {
+        let registry = HookRegistry::new();
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
+            .priority(10)
+            .handler(|_payload| HookResult::Continue);
+        registry.register(handler).await;
+
+        assert!(registry.has_handlers(HookType::BeforeToolExecute).await);
+        assert!(!registry.has_handlers(HookType::AfterToolExecute).await);
+
+        let payload = HookPayload::ToolExecute {
+            tool_name: "echo".to_string(),
+            parameters: serde_json::json!({}),
+            result: None,
+        };
+        let result = registry.execute(HookType::BeforeToolExecute, payload).await;
+        assert!(result.should_continue());
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_modify_payload() {
+        let registry = HookRegistry::new();
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
+            .handler(|_payload| HookResult::Modify(HookPayload::ToolExecute {
+                tool_name: "modified".to_string(),
+                parameters: serde_json::json!({}),
+                result: None,
+            }));
+        registry.register(handler).await;
+
+        let payload = HookPayload::ToolExecute {
+            tool_name: "original".to_string(),
+            parameters: serde_json::json!({}),
+            result: None,
+        };
+        let result = registry.execute(HookType::BeforeToolExecute, payload).await;
+        assert!(result.should_continue());
+        if let Some(HookPayload::ToolExecute { tool_name, .. }) = result.payload() {
+            assert_eq!(tool_name, "modified");
+        } else {
+            panic!("Expected ToolExecute payload");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_cancel() {
+        let registry = HookRegistry::new();
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
+            .handler(|_payload| HookResult::Cancel {
+                reason: "blocked".to_string(),
+            });
+        registry.register(handler).await;
+
+        let payload = HookPayload::ToolExecute {
+            tool_name: "rm".to_string(),
+            parameters: serde_json::json!({}),
+            result: None,
+        };
+        let result = registry.execute(HookType::BeforeToolExecute, payload).await;
+        assert!(!result.should_continue());
+        assert!(matches!(result, HookExecutionResult::Cancelled { reason } if reason == "blocked"));
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_error() {
+        let registry = HookRegistry::new();
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
+            .handler(|_payload| HookResult::Error {
+                message: "something went wrong".to_string(),
+            });
+        registry.register(handler).await;
+
+        let payload = HookPayload::ToolExecute {
+            tool_name: "echo".to_string(),
+            parameters: serde_json::json!({}),
+            result: None,
+        };
+        let result = registry.execute(HookType::BeforeToolExecute, payload).await;
+        assert!(!result.should_continue());
+        assert!(matches!(result, HookExecutionResult::Error { message } if message == "something went wrong"));
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_priority_ordering() {
+        let registry = HookRegistry::new();
+        let handler1 = HookHandlerBuilder::new("plugin-1", HookType::ConfigLoad)
+            .priority(20)
+            .handler(|_payload| HookResult::Continue);
+        let handler2 = HookHandlerBuilder::new("plugin-2", HookType::ConfigLoad)
+            .priority(10)
+            .handler(|_payload| HookResult::Continue);
+        registry.register(handler1).await;
+        registry.register(handler2).await;
+
+        let hooks = registry.list_hooks().await;
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].1, vec!["plugin-2", "plugin-1"]);
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_unregister_plugin() {
+        let registry = HookRegistry::new();
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::SessionStart)
+            .handler(|_payload| HookResult::Continue);
+        registry.register(handler).await;
+        assert!(registry.has_handlers(HookType::SessionStart).await);
+
+        registry.unregister_plugin("plugin-1").await;
+        assert!(!registry.has_handlers(HookType::SessionStart).await);
+    }
+
+    #[tokio::test]
+    async fn test_hook_registry_list_hooks() {
+        let registry = HookRegistry::new();
+        let handler1 = HookHandlerBuilder::new("plugin-1", HookType::BeforeMessageProcess)
+            .handler(|_payload| HookResult::Continue);
+        let handler2 = HookHandlerBuilder::new("plugin-2", HookType::BeforeMessageProcess)
+            .handler(|_payload| HookResult::Continue);
+        registry.register(handler1).await;
+        registry.register(handler2).await;
+
+        let hooks = registry.list_hooks().await;
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].0, HookType::BeforeMessageProcess);
+        assert_eq!(hooks[0].1.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_hook_handler_builder_async() {
+        let handler = HookHandlerBuilder::new("plugin-1", HookType::AfterProviderCall)
+            .priority(5)
+            .async_handler(|_payload| async move { HookResult::Continue });
+        assert_eq!(handler.plugin_id, "plugin-1");
+        assert_eq!(handler.hook_type, HookType::AfterProviderCall);
+        assert_eq!(handler.priority, 5);
+    }
+
+    #[tokio::test]
+    async fn test_hook_payload_serde_roundtrip() {
+        let payload = HookPayload::MessageProcess {
+            session_id: "s1".to_string(),
+            user_id: "u1".to_string(),
+            content: "hello".to_string(),
+            channel: "telegram".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let decoded: HookPayload = serde_json::from_value(json).unwrap();
+        assert!(matches!(decoded, HookPayload::MessageProcess { session_id, .. } if session_id == "s1"));
+    }
+}

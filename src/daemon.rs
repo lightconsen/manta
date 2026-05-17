@@ -474,3 +474,143 @@ impl DaemonManager {
         crate::memory::SqliteMemoryStore::new(&db_url).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_config_creation() {
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file: PathBuf::from("/tmp/manta.pid"),
+        };
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.web_port, 8081);
+        assert_eq!(config.pid_file, PathBuf::from("/tmp/manta.pid"));
+    }
+
+    #[test]
+    fn test_daemon_manager_new() {
+        let config = DaemonConfig {
+            host: "0.0.0.0".to_string(),
+            port: 3000,
+            web_port: 3001,
+            pid_file: PathBuf::from("/tmp/manta-test.pid"),
+        };
+        let manager = DaemonManager::new(config.clone());
+        assert!(manager.is_ok());
+        let manager = manager.unwrap();
+        assert_eq!(manager.config.host, "0.0.0.0");
+        assert_eq!(manager.config.port, 3000);
+    }
+
+    #[tokio::test]
+    async fn test_write_and_read_pid() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pid_file = temp_dir.path().join("test.pid");
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file: pid_file.clone(),
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        // Write a PID
+        manager.write_pid(12345).await.unwrap();
+        assert!(pid_file.exists());
+
+        // Read it back
+        let pid = manager.read_pid().await;
+        assert_eq!(pid, Some(12345));
+    }
+
+    #[tokio::test]
+    async fn test_read_pid_missing_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pid_file = temp_dir.path().join("nonexistent.pid");
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file,
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        let pid = manager.read_pid().await;
+        assert_eq!(pid, None);
+    }
+
+    #[tokio::test]
+    async fn test_read_pid_invalid_content() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pid_file = temp_dir.path().join("invalid.pid");
+
+        tokio::fs::write(&pid_file, "not-a-number").await.unwrap();
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file,
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        let pid = manager.read_pid().await;
+        assert_eq!(pid, None);
+    }
+
+    #[tokio::test]
+    async fn test_write_pid_creates_parent_dirs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pid_file = temp_dir.path().join("nested").join("dirs").join("test.pid");
+
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file: pid_file.clone(),
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        manager.write_pid(99999).await.unwrap();
+        assert!(pid_file.exists());
+
+        let content = tokio::fs::read_to_string(&pid_file).await.unwrap();
+        assert_eq!(content, "99999");
+    }
+
+    #[tokio::test]
+    async fn test_is_process_running_self() {
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file: PathBuf::from("/tmp/manta.pid"),
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        let current_pid = std::process::id();
+        assert!(manager.is_process_running(current_pid).await);
+    }
+
+    #[tokio::test]
+    async fn test_is_process_running_fake_pid() {
+        let config = DaemonConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            web_port: 8081,
+            pid_file: PathBuf::from("/tmp/manta.pid"),
+        };
+        let manager = DaemonManager::new(config).unwrap();
+
+        // PID 999999 is extremely unlikely to exist
+        assert!(!manager.is_process_running(999999).await);
+    }
+}

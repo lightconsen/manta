@@ -170,3 +170,98 @@ impl SkillConfig {
         self.allow_bundled.contains(&skill_name.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_skill_config_default() {
+        let config = SkillConfig::default();
+        assert!(config.entries.is_empty());
+        assert!(config.allow_bundled.is_empty());
+        assert!(config.is_bundled_allowed("any_skill"));
+    }
+
+    #[test]
+    fn test_skill_entry_config_default() {
+        let entry = SkillEntryConfig::default();
+        assert!(entry.enabled);
+        assert!(entry.api_key.is_none());
+        assert!(entry.env.is_empty());
+        assert!(entry.config.is_empty());
+    }
+
+    #[test]
+    fn test_install_config_default() {
+        let install = InstallConfig::default();
+        assert!(install.prefer_brew);
+        assert_eq!(install.node_manager, "npm");
+    }
+
+    #[test]
+    fn test_skill_limits_default() {
+        let limits = SkillLimits::default();
+        assert_eq!(limits.max_skills_in_prompt, 150);
+        assert_eq!(limits.max_skills_prompt_chars, 30_000);
+        assert_eq!(limits.max_skill_file_bytes, 256_000);
+    }
+
+    #[test]
+    fn test_is_bundled_allowed_with_allowlist() {
+        let config = SkillConfig {
+            allow_bundled: vec!["git".to_string(), "docker".to_string()],
+            ..Default::default()
+        };
+        assert!(config.is_bundled_allowed("git"));
+        assert!(config.is_bundled_allowed("docker"));
+        assert!(!config.is_bundled_allowed("unknown"));
+    }
+
+    #[test]
+    fn test_skill_config_serde_roundtrip() {
+        let config = SkillConfig {
+            entries: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "git".to_string(),
+                    SkillEntryConfig {
+                        enabled: true,
+                        api_key: Some(ApiKeyConfig {
+                            source: "env".to_string(),
+                            provider: "openai".to_string(),
+                            id: "OPENAI_API_KEY".to_string(),
+                        }),
+                        env: HashMap::new(),
+                        config: HashMap::new(),
+                    },
+                );
+                m
+            },
+            allow_bundled: vec!["git".to_string()],
+            install: InstallConfig::default(),
+            limits: SkillLimits::default(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: SkillConfig = serde_json::from_str(&json).unwrap();
+        assert!(decoded.entries.contains_key("git"));
+        assert_eq!(decoded.allow_bundled, vec!["git"]);
+    }
+
+    #[test]
+    fn test_skill_config_serde_defaults() {
+        let json = r#"{}"#;
+        let config: SkillConfig = serde_json::from_str(json).unwrap();
+        assert!(config.entries.is_empty());
+        assert!(config.allow_bundled.is_empty());
+        assert!(config.is_bundled_allowed("anything"));
+    }
+
+    #[test]
+    fn test_skill_entry_config_serde_disabled() {
+        let json = r#"{"enabled": false}"#;
+        let entry: SkillEntryConfig = serde_json::from_str(json).unwrap();
+        assert!(!entry.enabled);
+    }
+
+}

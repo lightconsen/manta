@@ -610,4 +610,64 @@ mod tests {
         let schema = tool.parameters_schema();
         assert!(schema.get("properties").is_some());
     }
+
+    #[test]
+    fn test_browser_tool_default() {
+        let tool = BrowserTool::default();
+        assert_eq!(tool.viewport_width, 1280);
+        assert_eq!(tool.viewport_height, 720);
+        assert!(tool.headless);
+        assert_eq!(tool.default_timeout, Duration::from_secs(30));
+        assert!(tool.chrome_path.is_none());
+    }
+
+    #[test]
+    fn test_browser_tool_with_chrome_path() {
+        let tool = BrowserTool::new().with_chrome_path("/usr/bin/chrome");
+        assert_eq!(tool.chrome_path, Some("/usr/bin/chrome".to_string()));
+    }
+
+    #[test]
+    fn test_browser_tool_with_viewport() {
+        let tool = BrowserTool::new().with_viewport(1920, 1080);
+        assert_eq!(tool.viewport_width, 1920);
+        assert_eq!(tool.viewport_height, 1080);
+    }
+
+    #[test]
+    fn test_browser_tool_with_headless() {
+        let tool = BrowserTool::new().with_headless(false);
+        assert!(!tool.headless);
+    }
+
+    #[test]
+    fn test_browser_tool_timeout() {
+        let tool = BrowserTool::new();
+        let ctx = ToolContext::default();
+        assert_eq!(tool.timeout(&ctx), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_browser_action_serialization() {
+        let nav = BrowserAction::Navigate { url: "https://example.com".to_string() };
+        let json = serde_json::to_string(&nav).unwrap();
+        assert!(json.contains("navigate"));
+        assert!(json.contains("example.com"));
+
+        let click = BrowserAction::Click { selector: "#btn".to_string() };
+        let json = serde_json::to_string(&click).unwrap();
+        assert!(json.contains("click"));
+
+        let back = BrowserAction::Back;
+        let json = serde_json::to_string(&back).unwrap();
+        assert!(json.contains("back"));
+    }
+
+    #[tokio::test]
+    async fn test_browser_tool_execute_empty_actions() {
+        let tool = BrowserTool::new();
+        let ctx = ToolContext::default();
+        let result = tool.execute(json!({"actions": []}), &ctx).await.unwrap();
+        assert!(!result.success);
+    }
 }

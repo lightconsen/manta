@@ -157,4 +157,45 @@ mod tests {
         budget.reset();
         assert_eq!(budget.remaining(), 5);
     }
+
+    #[test]
+    fn test_budget_summary() {
+        let budget = IterationBudget::new(10);
+        budget.consume();
+        budget.consume();
+        let summary = budget.summary();
+        assert!(summary.contains("2/10 used"));
+        assert!(summary.contains("8 remaining"));
+    }
+
+    #[test]
+    fn test_budget_default() {
+        let budget: IterationBudget = Default::default();
+        assert_eq!(budget.max(), 50);
+        assert_eq!(budget.remaining(), 50);
+    }
+
+    #[test]
+    fn test_budget_config_default() {
+        let config = BudgetConfig::default();
+        assert_eq!(config.max_iterations, 50);
+        assert!(matches!(config.exhaustion_action, BudgetExhaustionAction::ReturnPartial));
+        assert_eq!(config.warning_threshold, 0.8);
+    }
+
+    #[test]
+    fn test_budget_exhaustion_action_equality() {
+        assert_eq!(BudgetExhaustionAction::Error, BudgetExhaustionAction::Error);
+        assert_ne!(BudgetExhaustionAction::Error, BudgetExhaustionAction::AskUser);
+    }
+
+    #[test]
+    fn test_budget_consume_until_exhausted() {
+        let budget = IterationBudget::new(2);
+        assert!(budget.consume());
+        assert!(budget.consume());
+        assert!(!budget.consume());
+        assert!(!budget.consume());
+        assert_eq!(budget.remaining(), 0);
+    }
 }

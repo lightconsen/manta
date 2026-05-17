@@ -622,3 +622,249 @@ impl Clone for PluginInstance {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_manifest(id: &str) -> PluginManifest {
+        PluginManifest {
+            id: id.to_string(),
+            name: format!("Test Plugin {}", id),
+            version: "1.0.0".to_string(),
+            description: "A test plugin".to_string(),
+            author: None,
+            main: None,
+            capabilities: None,
+            permissions: None,
+            config: None,
+        }
+    }
+
+    fn test_instance(id: &str) -> PluginInstance {
+        PluginInstance {
+            manifest: test_manifest(id),
+            path: std::path::PathBuf::from("/tmp/test-plugin"),
+            enabled: true,
+            config: serde_json::json!({}),
+            #[cfg(feature = "plugins")]
+            wasm_store: None,
+            #[cfg(feature = "plugins")]
+            instance: None,
+        }
+    }
+
+    #[test]
+    fn test_plugin_runtime_new() {
+        let runtime = PluginRuntime::new();
+        assert!(runtime.is_ok());
+    }
+
+    #[test]
+    fn test_plugin_instance_getters() {
+        let instance = test_instance("com.test.plugin");
+        assert_eq!(instance.id(), "com.test.plugin");
+        assert_eq!(instance.name(), "Test Plugin com.test.plugin");
+    }
+
+    #[test]
+    fn test_plugin_instance_clone_drops_wasm() {
+        let instance = test_instance("com.test.plugin");
+        let cloned = instance.clone();
+        assert_eq!(cloned.id(), "com.test.plugin");
+        assert_eq!(cloned.enabled, true);
+        #[cfg(feature = "plugins")]
+        {
+            assert!(cloned.wasm_store.is_none());
+            assert!(cloned.instance.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_plugin_from_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "id": "com.test.loader",
+            "name": "Loader Test",
+            "version": "0.1.0",
+            "description": "Testing load_plugin"
+        });
+        tokio::fs::write(
+            temp_dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let runtime = PluginRuntime::new().unwrap();
+        let plugin_id = runtime.load_plugin(temp_dir.path()).await.unwrap();
+        assert_eq!(plugin_id, "com.test.loader");
+
+        let plugin = runtime.get_plugin("com.test.loader").await.unwrap();
+        assert_eq!(plugin.name(), "Loader Test");
+    }
+
+    #[tokio::test]
+    async fn test_load_plugin_missing_manifest() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let runtime = PluginRuntime::new().unwrap();
+
+        let result = runtime.load_plugin(temp_dir.path()).await;
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(err_str.contains("Plugin manifest not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_plugin_not_found() {
+        let runtime = PluginRuntime::new().unwrap();
+        let plugin = runtime.get_plugin("nonexistent").await;
+        assert!(plugin.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_plugins_empty() {
+        let runtime = PluginRuntime::new().unwrap();
+        let plugins = runtime.list_plugins().await;
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_plugins_after_load() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "id": "com.test.list",
+            "name": "List Test",
+            "version": "0.1.0",
+            "description": "Testing list_plugins"
+        });
+        tokio::fs::write(
+            temp_dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let runtime = PluginRuntime::new().unwrap();
+        runtime.load_plugin(temp_dir.path()).await.unwrap();
+
+        let plugins = runtime.list_plugins().await;
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id(), "com.test.list");
+    }
+
+    #[tokio::test]
+    async fn test_set_enabled() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "id": "com.test.toggle",
+            "name": "Toggle Test",
+            "version": "0.1.0",
+            "description": "Testing set_enabled"
+        });
+        tokio::fs::write(
+            temp_dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let runtime = PluginRuntime::new().unwrap();
+        runtime.load_plugin(temp_dir.path()).await.unwrap();
+
+        // Disable
+        runtime.set_enabled("com.test.toggle", false).await.unwrap();
+        let plugin = runtime.get_plugin("com.test.toggle").await.unwrap();
+        assert!(!plugin.enabled);
+
+        // Enable
+        runtime.set_enabled("com.test.toggle", true).await.unwrap();
+        let plugin = runtime.get_plugin("com.test.toggle").await.unwrap();
+        assert!(plugin.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_set_enabled_not_found() {
+        let runtime = PluginRuntime::new().unwrap();
+        let result = runtime.set_enabled("nonexistent", false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unload_plugin() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "id": "com.test.unload",
+            "name": "Unload Test",
+            "version": "0.1.0",
+            "description": "Testing unload_plugin"
+        });
+        tokio::fs::write(
+            temp_dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let runtime = PluginRuntime::new().unwrap();
+        runtime.load_plugin(temp_dir.path()).await.unwrap();
+        assert!(runtime.get_plugin("com.test.unload").await.is_some());
+
+        let removed = runtime.unload_plugin("com.test.unload").await.unwrap();
+        assert!(removed);
+        assert!(runtime.get_plugin("com.test.unload").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_unload_plugin_not_found() {
+        let runtime = PluginRuntime::new().unwrap();
+        let removed = runtime.unload_plugin("nonexistent").await.unwrap();
+        assert!(!removed);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "id": "com.test.shutdown",
+            "name": "Shutdown Test",
+            "version": "0.1.0",
+            "description": "Testing shutdown"
+        });
+        tokio::fs::write(
+            temp_dir.path().join("plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let runtime = PluginRuntime::new().unwrap();
+        runtime.load_plugin(temp_dir.path()).await.unwrap();
+
+        let result = runtime.shutdown().await;
+        assert!(result.is_ok());
+
+        // After shutdown, plugin list should be empty
+        let plugins = runtime.list_plugins().await;
+        assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_state_new() {
+        let state = PluginState::new(serde_json::json!({"key": "value"}));
+        assert_eq!(state.config["key"], "value");
+    }
+
+    #[test]
+    fn test_plugin_state_new_with_memory() {
+        let mut memory = HashMap::new();
+        memory.insert("data".to_string(), vec![1, 2, 3]);
+        let state = PluginState::new_with_memory(serde_json::json!({}), memory);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let stored = rt.block_on(async {
+            let m = state.memory.read().await;
+            m.get("data").cloned()
+        });
+        assert_eq!(stored, Some(vec![1, 2, 3]));
+    }
+}

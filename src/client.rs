@@ -518,6 +518,158 @@ impl DaemonClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_client_new() {
+        let client = DaemonClient::new("127.0.0.1", 18080);
+        assert_eq!(client.base_url, "http://127.0.0.1:18080");
+        assert_eq!(client.ws_url, "ws://127.0.0.1:18080/chat/stream");
+    }
+
+    #[test]
+    fn test_daemon_client_with_web_port() {
+        let client = DaemonClient::with_web_port("127.0.0.1", 18080, 18081);
+        assert_eq!(client.base_url, "http://127.0.0.1:18080");
+        assert_eq!(client.ws_url, "ws://127.0.0.1:18081/ws");
+    }
+
+    #[test]
+    fn test_daemon_client_default_client() {
+        let client = DaemonClient::default_client();
+        assert_eq!(client.base_url, "http://127.0.0.1:18080");
+        assert_eq!(client.ws_url, "ws://127.0.0.1:18081/ws");
+    }
+
+    #[test]
+    fn test_chat_request_serialize() {
+        let req = ChatRequest {
+            message: "hello".to_string(),
+            conversation_id: Some("conv-1".to_string()),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["message"], "hello");
+        assert_eq!(json["conversation_id"], "conv-1");
+    }
+
+    #[test]
+    fn test_chat_response_deserialize() {
+        let json = r#"{"response":"Hi there","conversation_id":"conv-1"}"#;
+        let resp: ChatResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.response, "Hi there");
+        assert_eq!(resp.conversation_id, "conv-1");
+    }
+
+    #[test]
+    fn test_health_response_deserialize() {
+        let json = r#"{"status":"ok","agent":"ready"}"#;
+        let health: HealthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(health.status, "ok");
+        assert_eq!(health.agent, "ready");
+    }
+
+    #[test]
+    fn test_gateway_status_deserialize() {
+        let json = r#"{"agents":{"total":5,"busy":2},"channels":3,"version":"1.0.0"}"#;
+        let status: GatewayStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.agents.total, 5);
+        assert_eq!(status.agents.busy, 2);
+        assert_eq!(status.channels, 3);
+        assert_eq!(status.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_provider_info_deserialize() {
+        let json = r#"{"name":"openai","provider_type":"openai","enabled":true,"health":{"state":"healthy","failures":0,"successes":100}}"#;
+        let info: ProviderInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.name, "openai");
+        assert!(info.enabled);
+        assert_eq!(info.health.state, "healthy");
+    }
+
+    #[test]
+    fn test_models_response_deserialize() {
+        let json = r#"{"aliases":["gpt-4","gpt-3.5"]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.aliases, vec!["gpt-4", "gpt-3.5"]);
+    }
+
+    #[test]
+    fn test_default_model_response_deserialize() {
+        let json = r#"{"default_model":"gpt-4"}"#;
+        let resp: DefaultModelResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.default_model, "gpt-4");
+    }
+
+    #[test]
+    fn test_operation_result_deserialize() {
+        let json = r#"{"success":true,"message":"Done","error":null}"#;
+        let result: OperationResult = serde_json::from_str(json).unwrap();
+        assert!(result.success);
+        assert_eq!(result.message, "Done");
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_health_check_response_deserialize() {
+        let json = r#"{"provider":"openai","healthy":true,"checked_at":"2024-01-01T00:00:00Z"}"#;
+        let resp: HealthCheckResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.provider, "openai");
+        assert!(resp.healthy);
+    }
+
+    #[test]
+    fn test_chat_message_serde_roundtrip() {
+        let msg = ChatMessage {
+            id: "msg-1".to_string(),
+            conversation_id: "conv-1".to_string(),
+            user_id: "user-1".to_string(),
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            created_at: "2024-01-01".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, msg.id);
+        assert_eq!(decoded.content, msg.content);
+    }
+
+    #[test]
+    fn test_chat_history_response_deserialize() {
+        let json = r#"{"messages":[],"conversation_id":"conv-1"}"#;
+        let resp: ChatHistoryResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.messages.is_empty());
+        assert_eq!(resp.conversation_id, "conv-1");
+    }
+
+    #[test]
+    fn test_last_conversation_response_deserialize() {
+        let json = r#"{"conversation_id":"conv-1"}"#;
+        let resp: LastConversationResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.conversation_id, Some("conv-1".to_string()));
+    }
+
+    #[test]
+    fn test_fallback_chain_response_deserialize() {
+        let json = r#"{"alias":"default","fallback_chain":["primary","secondary"]}"#;
+        let resp: FallbackChainResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.alias, "default");
+        assert_eq!(resp.fallback_chain, vec!["primary", "secondary"]);
+    }
+
+    #[test]
+    fn test_send_message_response_deserialize() {
+        let json = r#"{"message_id":"msg-1","session_id":"sess-1","response":null,"queued":false,"status":"sent"}"#;
+        let resp: SendMessageResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.message_id, "msg-1");
+        assert_eq!(resp.session_id, "sess-1");
+        assert!(resp.response.is_none());
+        assert!(!resp.queued);
+    }
+}
+
 /// Check if daemon is running, returning helpful error if not
 pub async fn check_daemon() -> crate::Result<DaemonClient> {
     let client = DaemonClient::default_client();

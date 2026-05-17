@@ -1274,4 +1274,172 @@ mod tests {
         // Third entity should fail
         assert!(storage.create(&Entity::new("Entity 3")).await.is_err());
     }
+
+    #[tokio::test]
+    async fn test_in_memory_storage_list() {
+        let storage = InMemoryStorage::new();
+        let e1 = Entity::new("Entity 1");
+        let e2 = Entity::new("Entity 2");
+        storage.create(&e1).await.unwrap();
+        storage.create(&e2).await.unwrap();
+
+        let list = storage.list().await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_storage_health_check() {
+        let storage = InMemoryStorage::new();
+        assert!(storage.health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_storage_get_not_found() {
+        let storage = InMemoryStorage::new();
+        let id = Id::new();
+        let err = storage.get(id).await.unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_storage_update_not_found() {
+        let storage = InMemoryStorage::new();
+        let entity = Entity::new("Test");
+        let err = storage.update(&entity).await.unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_storage_delete_not_found() {
+        let storage = InMemoryStorage::new();
+        let id = Id::new();
+        let err = storage.delete(id).await.unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_in_memory_storage_default() {
+        let storage: InMemoryStorage = Default::default();
+        assert_eq!(storage.max_size, 10_000);
+    }
+
+    #[tokio::test]
+    async fn test_file_storage_crud() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(tmp.path()).unwrap();
+
+        let entity = Entity::new("File Entity");
+        storage.create(&entity).await.unwrap();
+
+        let retrieved = storage.get(entity.id).await.unwrap();
+        assert_eq!(retrieved.id, entity.id);
+        assert_eq!(retrieved.name, "File Entity");
+
+        let mut updated = entity.clone();
+        updated.set_name("Updated");
+        storage.update(&updated).await.unwrap();
+
+        let retrieved = storage.get(entity.id).await.unwrap();
+        assert_eq!(retrieved.name, "Updated");
+
+        let list = storage.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+
+        storage.delete(entity.id).await.unwrap();
+        assert!(storage.get(entity.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_storage_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(tmp.path()).unwrap();
+
+        assert_eq!(storage.count().await.unwrap(), 0);
+        storage.create(&Entity::new("E1")).await.unwrap();
+        assert_eq!(storage.count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_file_storage_health_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(tmp.path()).unwrap();
+        assert!(storage.health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_file_storage_create_duplicate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(tmp.path()).unwrap();
+
+        let entity = Entity::new("Test");
+        storage.create(&entity).await.unwrap();
+        let err = storage.create(&entity).await.unwrap_err();
+        assert!(matches!(err, StorageError::Backend(_)));
+    }
+
+    #[test]
+    fn test_storage_error_display() {
+        let id = Id::new();
+        assert_eq!(
+            StorageError::NotFound(id).to_string(),
+            format!("Entity not found: {}", id)
+        );
+        assert_eq!(StorageError::Full.to_string(), "Storage is full");
+        assert_eq!(
+            StorageError::Serialization("bad json".to_string()).to_string(),
+            "Serialization error: bad json"
+        );
+        assert_eq!(
+            StorageError::Backend("db down".to_string()).to_string(),
+            "Storage backend error: db down"
+        );
+    }
+
+    #[test]
+    fn test_storage_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let storage_err: StorageError = io_err.into();
+        assert!(storage_err.to_string().contains("file missing"));
+    }
+
+    #[test]
+    fn test_serialize_deserialize_embedding() {
+        let original = vec![1.0f32, 2.5, -3.14, 0.0];
+        let bytes = serialize_embedding(&original);
+        let restored = deserialize_embedding(&bytes);
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn test_system_time_to_rfc3339_roundtrip() {
+        let now = std::time::SystemTime::now();
+        let rfc = system_time_to_rfc3339(now);
+        let restored = rfc3339_to_system_time(&rfc);
+        assert!(restored.is_some());
+        // Allow small rounding difference
+        let diff = now.duration_since(restored.unwrap()).unwrap_or_default();
+        assert!(diff.as_secs() < 2);
+    }
+
+    #[test]
+    fn test_system_time_to_secs_roundtrip() {
+        let now = std::time::SystemTime::now();
+        let secs = system_time_to_secs(now);
+        let restored = secs_to_system_time(secs);
+        assert!(restored.is_some());
+        let diff = now.duration_since(restored.unwrap()).unwrap_or_default();
+        assert!(diff.as_secs() < 2);
+    }
+
+    #[test]
+    fn test_secs_to_system_time_zero_returns_none() {
+        assert!(secs_to_system_time(0).is_none());
+        assert!(secs_to_system_time(-1).is_none());
+    }
+
+    #[test]
+    fn test_secs_to_system_time_positive() {
+        let st = secs_to_system_time(1_000_000);
+        assert!(st.is_some());
+    }
 }

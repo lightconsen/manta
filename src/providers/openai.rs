@@ -638,4 +638,426 @@ mod tests {
         let provider = OpenAiProvider::new("test-key").unwrap();
         assert_eq!(provider.url("/chat/completions"), "https://api.openai.com/v1/chat/completions");
     }
+
+    #[test]
+    fn test_openai_provider_with_model() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4o");
+        assert_eq!(provider.default_model(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_openai_provider_base_url() {
+        let provider = OpenAiProvider::with_base_url("test-key", "https://proxy.example.com/v1")
+            .unwrap();
+        assert_eq!(provider.base_url(), "https://proxy.example.com/v1");
+    }
+
+    #[test]
+    fn test_openai_provider_max_context_gpt4o() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4o");
+        assert_eq!(provider.max_context(), 128_000);
+    }
+
+    #[test]
+    fn test_openai_provider_max_context_gpt4_turbo() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4-turbo");
+        assert_eq!(provider.max_context(), 128_000);
+    }
+
+    #[test]
+    fn test_openai_provider_max_context_gpt4() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4");
+        assert_eq!(provider.max_context(), 8_192);
+    }
+
+    #[test]
+    fn test_openai_provider_max_context_gpt35() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-3.5-turbo");
+        assert_eq!(provider.max_context(), 16_385);
+    }
+
+    #[test]
+    fn test_openai_provider_max_context_unknown() {
+        let provider = OpenAiProvider::new("test-key").unwrap().with_model("custom-model");
+        assert_eq!(provider.max_context(), 4_096);
+    }
+
+    #[test]
+    fn test_openai_provider_name() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_openai_provider_supports_tools() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        assert!(provider.supports_tools());
+    }
+
+    #[test]
+    fn test_openai_provider_url_with_custom_path() {
+        unsafe { std::env::set_var("MANTA_API_PATH", "custom/path") };
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let url = provider.url("/chat/completions");
+        assert_eq!(url, "https://api.openai.com/v1/custom/path");
+        unsafe { std::env::remove_var("MANTA_API_PATH") };
+    }
+
+    #[test]
+    fn test_to_openai_message_system_role() {
+        let msg = Message {
+            role: Role::System,
+            content: "You are helpful".to_string(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            metadata: None,
+        };
+        let openai = OpenAiProvider::to_openai_message(&msg);
+        assert_eq!(openai.role, "system");
+        assert_eq!(openai.content, Some("You are helpful".to_string()));
+    }
+
+    #[test]
+    fn test_to_openai_message_tool_role() {
+        let msg = Message {
+            role: Role::Tool,
+            content: "result".to_string(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: Some("call_123".to_string()),
+            metadata: None,
+        };
+        let openai = OpenAiProvider::to_openai_message(&msg);
+        assert_eq!(openai.role, "tool");
+        assert_eq!(openai.content, Some("result".to_string()));
+        assert_eq!(openai.tool_call_id, Some("call_123".to_string()));
+    }
+
+    #[test]
+    fn test_to_openai_message_with_name() {
+        let msg = Message {
+            role: Role::User,
+            content: "Hello".to_string(),
+            name: Some("alice".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            metadata: None,
+        };
+        let openai = OpenAiProvider::to_openai_message(&msg);
+        assert_eq!(openai.name, Some("alice".to_string()));
+    }
+
+    #[test]
+    fn test_to_openai_message_with_tool_calls() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: "".to_string(),
+            name: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: crate::providers::FunctionCall {
+                    name: "test_tool".to_string(),
+                    arguments: "{\"x\": 1}".to_string(),
+                },
+            }]),
+            tool_call_id: None,
+            metadata: None,
+        };
+        let openai = OpenAiProvider::to_openai_message(&msg);
+        assert_eq!(openai.role, "assistant");
+        let calls = openai.tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].call_type, "function");
+        assert_eq!(calls[0].function.name, "test_tool");
+        assert_eq!(calls[0].function.arguments, "{\"x\": 1}");
+    }
+
+    #[test]
+    fn test_from_openai_response_user_role() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "gpt-4".to_string(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiMessage {
+                    role: "user".to_string(),
+                    content: Some("Hello".to_string()),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        };
+        let result = provider.from_openai_response(resp).unwrap();
+        assert_eq!(result.message.role, Role::User);
+        assert_eq!(result.message.content, "Hello");
+        assert_eq!(result.model, "gpt-4");
+        assert!(result.usage.is_none());
+    }
+
+    #[test]
+    fn test_from_openai_response_tool_role() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-4".to_string(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiMessage {
+                    role: "tool".to_string(),
+                    content: Some("result".to_string()),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: Some("call_1".to_string()),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+        let result = provider.from_openai_response(resp).unwrap();
+        assert_eq!(result.message.role, Role::Tool);
+        assert_eq!(result.message.content, "result");
+        assert_eq!(result.message.tool_call_id, Some("call_1".to_string()));
+        assert_eq!(result.finish_reason, Some("stop".to_string()));
+    }
+
+    #[test]
+    fn test_from_openai_response_with_tool_calls() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-4".to_string(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiMessage {
+                    role: "assistant".to_string(),
+                    content: Some("".to_string()),
+                    name: None,
+                    tool_calls: Some(vec![OpenAiToolCall {
+                        id: "call_1".to_string(),
+                        call_type: "function".to_string(),
+                        function: OpenAiFunctionCall {
+                            name: "test".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        };
+        let result = provider.from_openai_response(resp).unwrap();
+        assert!(result.message.tool_calls.is_some());
+        let calls = result.message.tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "test");
+    }
+
+    #[test]
+    fn test_from_openai_response_with_usage() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-4".to_string(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiMessage {
+                    role: "assistant".to_string(),
+                    content: Some("Hi".to_string()),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: None,
+            }],
+            usage: Some(OpenAiUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+        };
+        let result = provider.from_openai_response(resp).unwrap();
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_from_openai_response_no_choices() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-4".to_string(),
+            choices: vec![],
+            usage: None,
+        };
+        let result = provider.from_openai_response(resp);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_openai_response_empty_content() {
+        let provider = OpenAiProvider::new("test-key").unwrap();
+        let resp = OpenAiResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-4".to_string(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        };
+        let result = provider.from_openai_response(resp).unwrap();
+        assert_eq!(result.message.content, "");
+    }
+
+    // Dummy stream for constructing OpenAiStream in tests
+    struct EmptyStream;
+    impl Stream for EmptyStream {
+        type Item = Result<bytes::Bytes, reqwest::Error>;
+        fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(None)
+        }
+    }
+
+    #[test]
+    fn test_openai_stream_parse_done() {
+        let stream = OpenAiStream::new(EmptyStream);
+        let chunk = stream.parse_sse_line("data: [DONE]");
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert!(chunk.is_done);
+        assert!(chunk.content.is_none());
+        assert!(chunk.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_openai_stream_parse_empty_line() {
+        let stream = OpenAiStream::new(EmptyStream);
+        assert!(stream.parse_sse_line("").is_none());
+        assert!(stream.parse_sse_line("   ").is_none());
+    }
+
+    #[test]
+    fn test_openai_stream_parse_comment() {
+        let stream = OpenAiStream::new(EmptyStream);
+        assert!(stream.parse_sse_line(": comment").is_none());
+        assert!(stream.parse_sse_line(":ok").is_none());
+    }
+
+    #[test]
+    fn test_openai_stream_parse_invalid_json() {
+        let stream = OpenAiStream::new(EmptyStream);
+        assert!(stream.parse_sse_line("data: not-json").is_none());
+        assert!(stream.parse_sse_line("data: {}").is_none());
+    }
+
+    #[test]
+    fn test_openai_stream_parse_valid_json() {
+        let stream = OpenAiStream::new(EmptyStream);
+        let json = r#"{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#;
+        let chunk = stream.parse_sse_line(&format!("data: {}", json));
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert_eq!(chunk.content, Some("Hello".to_string()));
+        assert!(!chunk.is_done);
+        assert!(chunk.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_openai_stream_parse_with_tool_calls() {
+        let stream = OpenAiStream::new(EmptyStream);
+        let json = r#"{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"test","arguments":"{}"}}]},"finish_reason":null}]}"#;
+        let chunk = stream.parse_sse_line(&format!("data: {}", json));
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert!(chunk.tool_calls.is_some());
+        let calls = chunk.tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].call_type, "function");
+        assert_eq!(calls[0].function.name, "test");
+        assert_eq!(calls[0].function.arguments, "{}");
+    }
+
+    #[test]
+    fn test_openai_stream_parse_finish_reason() {
+        let stream = OpenAiStream::new(EmptyStream);
+        let json = r#"{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        let chunk = stream.parse_sse_line(&format!("data: {}", json));
+        assert!(chunk.is_some());
+        let chunk = chunk.unwrap();
+        assert!(chunk.is_done);
+    }
+
+    #[test]
+    fn test_openai_request_serialization() {
+        let req = OpenAiRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![OpenAiMessage {
+                role: "user".to_string(),
+                content: Some("Hello".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            temperature: 0.7,
+            max_tokens: Some(100),
+            stream: Some(false),
+            stop: Some(vec!["STOP".to_string()]),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"model\":\"gpt-4\""));
+        assert!(json.contains("\"temperature\":0.7"));
+        assert!(json.contains("\"max_tokens\":100"));
+        assert!(json.contains("\"stream\":false"));
+        assert!(json.contains("\"stop\""));
+    }
+
+    #[test]
+    fn test_openai_request_skips_none() {
+        let req = OpenAiRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![],
+            tools: None,
+            temperature: 0.5,
+            max_tokens: None,
+            stream: None,
+            stop: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("max_tokens"));
+        assert!(!json.contains("stream"));
+        assert!(!json.contains("stop"));
+        assert!(!json.contains("tools"));
+    }
 }

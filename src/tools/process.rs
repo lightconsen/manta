@@ -107,7 +107,7 @@ impl Default for ProcessTool {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action")]
+#[serde(tag = "action", rename_all = "snake_case")]
 enum ProcessAction {
     Start {
         command: String,
@@ -426,5 +426,153 @@ impl Clone for ProcessRegistry {
         Self {
             processes: Arc::clone(&self.processes),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_process_registry_register_and_get() {
+        let registry = ProcessRegistry::new();
+        registry.register("p1".to_string(), "echo hello".to_string(), Some(1234)).await;
+
+        let proc = registry.get("p1").await;
+        assert!(proc.is_some());
+        let proc = proc.unwrap();
+        assert_eq!(proc.id, "p1");
+        assert_eq!(proc.command, "echo hello");
+        assert_eq!(proc.pid, Some(1234));
+        assert!(matches!(proc.status, ProcessStatus::Running));
+    }
+
+    #[tokio::test]
+    async fn test_process_registry_update_status() {
+        let registry = ProcessRegistry::new();
+        registry.register("p1".to_string(), "cmd".to_string(), None).await;
+
+        registry.update_status("p1", ProcessStatus::Exited { code: Some(0) }).await;
+
+        let proc = registry.get("p1").await.unwrap();
+        assert!(matches!(proc.status, ProcessStatus::Exited { code: Some(0) }));
+    }
+
+    #[tokio::test]
+    async fn test_process_registry_list_and_remove() {
+        let registry = ProcessRegistry::new();
+        registry.register("p1".to_string(), "cmd1".to_string(), None).await;
+        registry.register("p2".to_string(), "cmd2".to_string(), None).await;
+
+        let list = registry.list().await;
+        assert_eq!(list.len(), 2);
+
+        registry.remove("p1").await;
+        assert!(registry.get("p1").await.is_none());
+        assert_eq!(registry.list().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_process_registry_get_missing() {
+        let registry = ProcessRegistry::new();
+        assert!(registry.get("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_process_tool_list_empty() {
+        let tool = ProcessTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "list" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("0 process"));
+    }
+
+    #[tokio::test]
+    async fn test_process_tool_status_not_found() {
+        let tool = ProcessTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "status", "process_id": "noexist" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_process_tool_stop_not_found() {
+        let tool = ProcessTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({ "action": "stop", "process_id": "noexist" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_process_tool_invalid_args() {
+        let tool = ProcessTool::new();
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool.execute(
+            serde_json::json!({}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn test_process_tool_start_command_not_allowed() {
+        let tool = ProcessTool::new();
+        // Only allow "echo", not "rm"
+        let ctx = ToolContext::new("user", "conv").allow_command("echo");
+
+        let result = tool.execute(
+            serde_json::json!({
+                "action": "start",
+                "command": "rm",
+                "args": ["-rf", "/"]
+            }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not allowed"));
+    }
+
+    #[test]
+    fn test_process_status_serialization() {
+        let running = ProcessStatus::Running;
+        let json = serde_json::to_string(&running).unwrap();
+        assert!(json.contains("running"));
+
+        let exited = ProcessStatus::Exited { code: Some(0) };
+        let json = serde_json::to_string(&exited).unwrap();
+        assert!(json.contains("exited"));
+    }
+
+    #[test]
+    fn test_process_registry_clone_shares_state() {
+        let registry = ProcessRegistry::new();
+        let cloned = registry.clone();
+
+        // Clone should share the same underlying data
+        // (This is a smoke test to verify Clone works)
+        assert_eq!(std::sync::Arc::strong_count(&registry.processes), 2);
+        drop(cloned);
+        assert_eq!(std::sync::Arc::strong_count(&registry.processes), 1);
     }
 }

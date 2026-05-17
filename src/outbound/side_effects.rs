@@ -225,24 +225,49 @@ pub enum SideEffectError {
 mod tests {
     use super::*;
 
+    struct TestHandler {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl SideEffectHandler for TestHandler {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        async fn execute(&self, _effect: &SideEffect) -> Result<(), SideEffectError> {
+            Ok(())
+        }
+    }
+
+    struct FailingHandler;
+
+    #[async_trait::async_trait]
+    impl SideEffectHandler for FailingHandler {
+        fn name(&self) -> &str {
+            "failing"
+        }
+        async fn execute(&self, _effect: &SideEffect) -> Result<(), SideEffectError> {
+            Err(SideEffectError::ExecutionFailed("boom".to_string()))
+        }
+    }
+
     #[tokio::test]
     async fn test_registry_register_and_get() {
         let registry = Arc::new(SideEffectRegistry::new());
 
-        struct TestHandler;
-        #[async_trait::async_trait]
-        impl SideEffectHandler for TestHandler {
-            fn name(&self) -> &str {
-                "test"
-            }
-            async fn execute(&self, _effect: &SideEffect) -> Result<(), SideEffectError> {
-                Ok(())
-            }
-        }
-
-        registry.register(Arc::new(TestHandler)).await;
+        registry
+            .register(Arc::new(TestHandler {
+                name: "test".to_string(),
+            }))
+            .await;
         assert!(registry.get("test").await.is_some());
         assert!(registry.get("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_registry_default() {
+        let registry: SideEffectRegistry = Default::default();
+        assert!(registry.get("anything").await.is_none());
     }
 
     #[tokio::test]
@@ -257,5 +282,157 @@ mod tests {
         }];
 
         executor.execute_batch(&effects).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_analytics_no_panic() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::Analytics {
+            event: "test".to_string(),
+            properties: {
+                let mut map = HashMap::new();
+                map.insert("key".to_string(), serde_json::json!("value"));
+                map
+            },
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_cron_without_scheduler() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::CronSchedule {
+            expression: "0 * * * *".to_string(),
+            payload: "echo hello".to_string(),
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_webhook_without_client() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::Webhook {
+            url: "http://localhost:9999".to_string(),
+            payload: serde_json::json!({"test": true}),
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_custom_with_handler() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        registry
+            .register(Arc::new(TestHandler {
+                name: "custom".to_string(),
+            }))
+            .await;
+
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::Custom {
+            name: "custom".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_custom_without_handler() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::Custom {
+            name: "missing".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_custom_with_failing_handler() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        registry.register(Arc::new(FailingHandler)).await;
+
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::Custom {
+            name: "failing".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        executor.execute_one(&effect).await;
+    }
+
+    #[tokio::test]
+    async fn test_executor_set_context() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let ctx = SideEffectContext {
+            memory_manager: None,
+            cron_scheduler: None,
+            webhook_client: None,
+        };
+        executor.set_context(ctx).await;
+    }
+
+    #[test]
+    fn test_side_effect_debug() {
+        let effect = SideEffect::MemoryStore {
+            session_id: "s1".to_string(),
+            content: "hello".to_string(),
+            tags: vec!["tag".to_string()],
+        };
+        let debug = format!("{:?}", effect);
+        assert!(debug.contains("MemoryStore"));
+    }
+
+    #[test]
+    fn test_side_effect_error_display() {
+        let err = SideEffectError::HandlerNotFound("foo".to_string());
+        assert_eq!(err.to_string(), "Handler not found: foo");
+
+        let err = SideEffectError::ExecutionFailed("bar".to_string());
+        assert_eq!(err.to_string(), "Execution failed: bar");
+    }
+
+    #[test]
+    fn test_side_effect_context_default() {
+        let ctx = SideEffectContext::default();
+        assert!(ctx.memory_manager.is_none());
+        assert!(ctx.cron_scheduler.is_none());
+        assert!(ctx.webhook_client.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_execute_batch_empty() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+        executor.execute_batch(&[]).await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_memory_without_manager() {
+        let registry = Arc::new(SideEffectRegistry::new());
+        let executor = SideEffectExecutor::new(registry);
+
+        let effect = SideEffect::MemoryStore {
+            session_id: "s1".to_string(),
+            content: "hello".to_string(),
+            tags: vec![],
+        };
+
+        executor.execute_one(&effect).await;
     }
 }

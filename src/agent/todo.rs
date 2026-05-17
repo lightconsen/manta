@@ -383,4 +383,141 @@ mod tests {
         assert_eq!(cleared, 1);
         assert_eq!(store.count(), 1);
     }
+
+    #[test]
+    fn test_task_cancel() {
+        let mut task = Task::new("t1", "Test");
+        task.cancel();
+        assert_eq!(task.status, TaskStatus::Cancelled);
+        assert!(!task.is_active());
+    }
+
+    #[test]
+    fn test_task_subtask_and_parent() {
+        let mut task = Task::new("t1", "Parent");
+        task.add_subtask("s1");
+        task.add_subtask("s2");
+        assert_eq!(task.subtasks.len(), 2);
+
+        task.set_parent("p1");
+        assert_eq!(task.parent_id, Some("p1".to_string()));
+    }
+
+    #[test]
+    fn test_task_with_metadata() {
+        let task = Task::new("t1", "Test").with_metadata("key", "value");
+        assert_eq!(task.metadata.get("key"), Some(&serde_json::json!("value")));
+    }
+
+    #[test]
+    fn test_task_summary() {
+        let task = Task::new("t1", "Do something");
+        let summary = task.summary();
+        assert!(summary.contains("t1"));
+        assert!(summary.contains("Do something"));
+    }
+
+    #[test]
+    fn test_task_status_display() {
+        assert_eq!(format!("{}", TaskStatus::Pending), "pending");
+        assert_eq!(format!("{}", TaskStatus::InProgress), "in_progress");
+        assert_eq!(format!("{}", TaskStatus::Completed), "completed");
+        assert_eq!(format!("{}", TaskStatus::Cancelled), "cancelled");
+    }
+
+    #[test]
+    fn test_todo_store_create_with_id() {
+        let mut store = TodoStore::new();
+        let task = store.create_task_with_id("custom_id", "Custom task");
+        assert_eq!(task.id, "custom_id");
+        assert_eq!(store.count(), 1);
+    }
+
+    #[test]
+    fn test_todo_store_update_and_remove() {
+        let mut store = TodoStore::new();
+        let mut task = store.create_task("Task 1");
+        task.content = "Updated".to_string();
+
+        let old = store.update(task.clone());
+        assert!(old.is_some());
+        assert_eq!(store.get("task_1").unwrap().content, "Updated");
+
+        let removed = store.remove("task_1");
+        assert!(removed.is_some());
+        assert_eq!(store.count(), 0);
+    }
+
+    #[test]
+    fn test_todo_store_list_by_status() {
+        let mut store = TodoStore::new();
+        let mut t1 = store.create_task("Task 1");
+        let t2 = store.create_task("Task 2");
+        if let Some(t) = store.get_mut(&t1.id) {
+            t.complete();
+        }
+
+        let completed = store.list_by_status(TaskStatus::Completed);
+        assert_eq!(completed.len(), 1);
+
+        let pending = store.list_by_status(TaskStatus::Pending);
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn test_todo_store_format_for_prompt() {
+        let store = TodoStore::new();
+        assert_eq!(store.format_for_prompt(), "No active tasks.");
+
+        let mut store = TodoStore::new();
+        store.create_task("Task 1");
+        let prompt = store.format_for_prompt();
+        assert!(prompt.contains("Current Tasks:"));
+        assert!(prompt.contains("Task 1"));
+    }
+
+    #[test]
+    fn test_todo_store_json_roundtrip() {
+        let mut store = TodoStore::new();
+        store.create_task("Task 1");
+        let json = store.to_json().unwrap();
+
+        let restored = TodoStore::from_json(&json).unwrap();
+        assert_eq!(restored.count(), 1);
+        assert_eq!(restored.list()[0].content, "Task 1");
+    }
+
+    #[test]
+    fn test_todo_context() {
+        let ctx = TodoContext::new("conv1");
+        assert_eq!(ctx.conversation_id, "conv1");
+        assert_eq!(ctx.store.count(), 0);
+
+        let json = ctx.to_json().unwrap();
+        let restored = TodoContext::from_json("conv1", &json).unwrap();
+        assert_eq!(restored.conversation_id, "conv1");
+    }
+
+    #[test]
+    fn test_task_priority_clamping() {
+        let mut task = Task::new("t1", "Test");
+        task.set_priority(0);
+        assert_eq!(task.priority, 1);
+        task.set_priority(10);
+        assert_eq!(task.priority, 5);
+        task.set_priority(3);
+        assert_eq!(task.priority, 3);
+    }
+
+    #[test]
+    fn test_todo_store_count_by_status() {
+        let mut store = TodoStore::new();
+        let mut t1 = store.create_task("Task 1");
+        store.create_task("Task 2");
+        if let Some(t) = store.get_mut(&t1.id) {
+            t.complete();
+        }
+        assert_eq!(store.count_by_status(TaskStatus::Completed), 1);
+        assert_eq!(store.count_by_status(TaskStatus::Pending), 1);
+    }
 }

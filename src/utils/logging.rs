@@ -244,4 +244,50 @@ mod tests {
         assert_eq!(parse_log_level("error"), Level::ERROR);
         assert_eq!(parse_log_level("unknown"), Level::INFO);
     }
+
+    #[test]
+    fn test_parse_log_level_case_insensitive() {
+        assert_eq!(parse_log_level("TRACE"), Level::TRACE);
+        assert_eq!(parse_log_level("Debug"), Level::DEBUG);
+        assert_eq!(parse_log_level("INFO"), Level::INFO);
+        assert_eq!(parse_log_level("WaRn"), Level::WARN);
+    }
+
+    #[test]
+    fn test_create_log_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("test.log");
+        let file = create_log_file(&log_path).unwrap();
+        drop(file);
+        assert!(log_path.exists());
+    }
+
+    #[test]
+    fn test_create_log_file_creates_parent_dirs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nested = temp_dir.path().join("a/b/c/test.log");
+        let file = create_log_file(&nested).unwrap();
+        drop(file);
+        assert!(nested.exists());
+    }
+
+    #[test]
+    fn test_create_log_file_appends() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("append.log");
+        std::fs::write(&log_path, "existing").unwrap();
+        let mut file = create_log_file(&log_path).unwrap();
+        use std::io::Write;
+        file.write_all(b"more").unwrap();
+        drop(file);
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(content, "existingmore");
+    }
+
+    #[test]
+    fn test_init_test_logging_does_not_panic() {
+        // Should not panic even if called multiple times
+        init_test_logging();
+        init_test_logging();
+    }
 }

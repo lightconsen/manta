@@ -1048,4 +1048,152 @@ mod tests {
         println!("Eligible: {}", skill.is_eligible);
         println!("Errors: {:?}", skill.eligibility_errors);
     }
+
+    #[test]
+    fn test_trigger_type_variants() {
+        assert_eq!(TriggerType::Regex, TriggerType::Regex);
+        assert_eq!(TriggerType::Keyword, TriggerType::Keyword);
+        assert_eq!(TriggerType::Intent, TriggerType::Intent);
+        assert_eq!(TriggerType::Command, TriggerType::Command);
+        assert_ne!(TriggerType::Regex, TriggerType::Keyword);
+    }
+
+    #[test]
+    fn test_skill_requires_default() {
+        let req = SkillRequires::default();
+        assert!(req.bins.is_empty());
+        assert!(req.env.is_empty());
+        assert!(req.config.is_empty());
+        assert!(req.os.is_empty());
+    }
+
+    #[test]
+    fn test_openclaw_metadata_default() {
+        let meta = OpenClawMetadata::default();
+        assert_eq!(meta.emoji, "");
+        assert!(!meta.always);
+        assert_eq!(meta.max_size, 256_000);
+        assert!(meta.skill_key.is_none());
+        assert!(meta.primary_env.is_none());
+    }
+
+    #[test]
+    fn test_default_max_size() {
+        assert_eq!(default_max_size(), 256_000);
+    }
+
+    #[test]
+    fn test_default_version() {
+        assert_eq!(default_version(), "1.0.0");
+    }
+
+    #[test]
+    fn test_skill_new_defaults() {
+        let skill = Skill::new("name", "desc", "prompt");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(skill.author, "manta");
+        assert!(skill.triggers.is_empty());
+        assert!(skill.is_eligible);
+        assert!(skill.enabled);
+        assert_eq!(skill.source_level, StorageLevel::User);
+        assert!(skill.eligibility_errors.is_empty());
+    }
+
+    #[test]
+    fn test_skill_by() {
+        let skill = Skill::new("s", "d", "p").by("alice");
+        assert_eq!(skill.author, "alice");
+    }
+
+    #[test]
+    fn test_skill_is_command_some() {
+        let skill = Skill::new("s", "d", "p").with_trigger(TriggerType::Command, "weather");
+        assert_eq!(skill.is_command(), Some("weather"));
+    }
+
+    #[test]
+    fn test_skill_is_command_none() {
+        let skill = Skill::new("s", "d", "p").with_trigger(TriggerType::Keyword, "weather");
+        assert_eq!(skill.is_command(), None);
+    }
+
+    #[test]
+    fn test_skill_to_prompt_section() {
+        let skill = Skill::new("weather", "Get weather", "When asked about weather...")
+            .with_emoji("🌤️")
+            .with_trigger(TriggerType::Command, "weather");
+        let section = skill.to_prompt_section();
+        assert!(section.contains("🌤️"));
+        assert!(section.contains("weather"));
+        assert!(section.contains("Use with: /weather"));
+    }
+
+    #[test]
+    fn test_skill_verify_requirements_empty() {
+        let skill = Skill::new("s", "d", "p");
+        assert!(skill.verify_requirements().is_ok());
+    }
+
+    #[test]
+    fn test_skill_matches_regex() {
+        let skill = Skill::new("s", "d", "p").with_trigger(TriggerType::Regex, r"\bhello\b");
+        assert!(skill.matches("say hello world"));
+        assert!(!skill.matches("say helloworld"));
+    }
+
+    #[test]
+    fn test_skill_matches_intent() {
+        let skill = Skill::new("s", "d", "p").with_trigger(TriggerType::Intent, "book flight");
+        assert!(skill.matches("I want to book flight"));
+        assert!(!skill.matches("I want to book hotel"));
+    }
+
+    #[test]
+    fn test_guard_validate_skill_empty_name() {
+        let skill = Skill::new("", "d", "p").with_trigger(TriggerType::Keyword, "k");
+        assert!(guard::validate_skill(&skill).is_err());
+    }
+
+    #[test]
+    fn test_guard_validate_skill_no_triggers() {
+        let skill = Skill::new("s", "d", "p");
+        assert!(guard::validate_skill(&skill).is_err());
+    }
+
+    #[test]
+    fn test_guard_severity_variants() {
+        assert_eq!(guard::Severity::Low, guard::Severity::Low);
+        assert_eq!(guard::Severity::Critical, guard::Severity::Critical);
+        assert_ne!(guard::Severity::Low, guard::Severity::High);
+    }
+
+    #[test]
+    fn test_security_issue_creation() {
+        let issue = guard::SecurityIssue {
+            issue_type: "test".to_string(),
+            description: "desc".to_string(),
+            severity: guard::Severity::Medium,
+        };
+        assert_eq!(issue.issue_type, "test");
+        assert_eq!(issue.severity, guard::Severity::Medium);
+    }
+
+    #[test]
+    fn test_min_trust_empty() {
+        let skills: &[Skill] = &[];
+        assert_eq!(SkillManager::min_trust(skills), crate::tools::SkillTrust::Trusted);
+    }
+
+    #[test]
+    fn test_skill_trigger_defaults() {
+        let trigger = SkillTrigger {
+            trigger_type: TriggerType::Keyword,
+            pattern: "test".to_string(),
+            priority: 0,
+            user_invocable: true,
+            model_invocable: true,
+        };
+        assert!(trigger.user_invocable);
+        assert!(trigger.model_invocable);
+    }
 }

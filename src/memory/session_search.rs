@@ -663,6 +663,7 @@ from all indexed conversations."#
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
 
     #[test]
     fn test_search_query_builder() {
@@ -675,5 +676,122 @@ mod tests {
         assert_eq!(query.user_id, Some("user1".to_string()));
         assert_eq!(query.conversation_id, Some("conv1".to_string()));
         assert_eq!(query.limit, 5);
+    }
+
+    #[test]
+    fn test_search_query_default() {
+        let query = SessionSearchQuery::default();
+        assert!(query.query.is_empty());
+        assert_eq!(query.limit, 10);
+        assert_eq!(query.context_lines, 2);
+        assert_eq!(query.min_score, 0.0);
+        assert!(query.user_id.is_none());
+        assert!(query.conversation_id.is_none());
+    }
+
+    #[test]
+    fn test_search_query_with_context() {
+        let query = SessionSearchQuery::new("hello").with_context(5);
+        assert_eq!(query.context_lines, 5);
+    }
+
+    #[test]
+    fn test_search_result_serialization() {
+        let result = SearchResult {
+            conversation_id: "conv1".to_string(),
+            message_id: "msg1".to_string(),
+            user_id: "user1".to_string(),
+            content: "Hello world".to_string(),
+            timestamp: chrono::Utc::now(),
+            score: 1.5,
+            context: vec!["prev".to_string()],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("conv1"));
+        assert!(json.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_session_stats() {
+        let stats = SessionStats {
+            total_messages: 10,
+            conversations: 2,
+            indexed_messages: 8,
+        };
+        assert_eq!(stats.total_messages, 10);
+        assert_eq!(stats.conversations, 2);
+    }
+
+    #[tokio::test]
+    async fn test_session_search_empty_query() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let search = SessionSearch::new(pool);
+        search.initialize().await.unwrap();
+
+        let query = SessionSearchQuery::default();
+        let results = search.search(query).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_search_index_and_stats() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let search = SessionSearch::new(pool);
+        search.initialize().await.unwrap();
+
+        search
+            .index_message("m1", "c1", "u1", "hello world", "user")
+            .await
+            .unwrap();
+
+        let stats = search.stats().await.unwrap();
+        assert_eq!(stats.total_messages, 1);
+        assert_eq!(stats.conversations, 1);
+    }
+
+    #[tokio::test]
+    async fn test_session_search_cleanup() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let search = SessionSearch::new(pool);
+        search.initialize().await.unwrap();
+
+        search
+            .index_message("m1", "c1", "u1", "old msg", "user")
+            .await
+            .unwrap();
+
+        let before = chrono::Utc::now() + chrono::Duration::days(1);
+        let deleted = search.cleanup_before(before).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        let stats = search.stats().await.unwrap();
+        assert_eq!(stats.total_messages, 0);
+    }
+
+    #[tokio::test]
+    async fn test_session_search_search_no_match() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let search = SessionSearch::new(pool);
+        search.initialize().await.unwrap();
+
+        search
+            .index_message("m1", "c1", "u1", "hello world", "user")
+            .await
+            .unwrap();
+
+        let query = SessionSearchQuery::new("xyznonexistent");
+        let results = search.search(query).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_search_tool_metadata() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let search = SessionSearch::new(pool);
+        let tool = tool::SessionSearchTool::new(search);
+        assert_eq!(tool.name(), "session_search");
+        assert!(!tool.description().is_empty());
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
     }
 }

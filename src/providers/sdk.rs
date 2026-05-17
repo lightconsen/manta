@@ -141,4 +141,86 @@ mod tests {
         });
         assert_eq!(sdk.list_packs().len(), 1);
     }
+
+    #[test]
+    fn test_provider_capabilities_default() {
+        let caps = ProviderCapabilities::default();
+        assert!(caps.streaming);
+        assert!(!caps.vision);
+        assert!(caps.function_calling);
+        assert!(!caps.structured_output);
+        assert!(!caps.embeddings);
+        assert!(caps.max_context_length.is_none());
+        assert!(caps.model_families.is_empty());
+    }
+
+    #[test]
+    fn test_provider_capabilities_serialization() {
+        let caps = ProviderCapabilities {
+            streaming: false,
+            vision: true,
+            function_calling: false,
+            structured_output: true,
+            embeddings: true,
+            max_context_length: Some(128000),
+            model_families: vec!["gpt-4".to_string()],
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(json.contains("streaming"));
+        assert!(json.contains("vision"));
+    }
+
+    #[test]
+    fn test_provider_health_variants() {
+        assert!(matches!(ProviderHealth::default(), ProviderHealth::Unknown));
+        let h = ProviderHealth::Degraded { reason: "slow".to_string() };
+        let json = serde_json::to_string(&h).unwrap();
+        assert!(json.contains("degraded"));
+    }
+
+    #[test]
+    fn test_provider_sdk_default() {
+        let sdk: ProviderSdk = Default::default();
+        assert!(sdk.list_packs().is_empty());
+    }
+
+    #[test]
+    fn test_provider_sdk_register_multiple() {
+        let mut sdk = ProviderSdk::new();
+        sdk.register_pack(ProviderPack {
+            name: "pack-a".to_string(),
+            version: "1.0".to_string(),
+            providers: vec!["p1".to_string()],
+        });
+        sdk.register_pack(ProviderPack {
+            name: "pack-b".to_string(),
+            version: "2.0".to_string(),
+            providers: vec!["p2".to_string(), "p3".to_string()],
+        });
+        assert_eq!(sdk.list_packs().len(), 2);
+    }
+
+    #[test]
+    fn test_provider_pack_fields() {
+        let pack = ProviderPack {
+            name: "test".to_string(),
+            version: "0.5".to_string(),
+            providers: vec!["a".to_string()],
+        };
+        assert_eq!(pack.name, "test");
+        assert_eq!(pack.version, "0.5");
+        assert_eq!(pack.providers.len(), 1);
+    }
+
+    #[test]
+    fn test_provider_metadata_creation() {
+        let meta = ProviderMetadata {
+            name: "openai".to_string(),
+            capabilities: ProviderCapabilities::default(),
+            config_schema: serde_json::json!({"type": "object"}),
+            health_status: ProviderHealth::Healthy,
+        };
+        assert_eq!(meta.name, "openai");
+        assert!(matches!(meta.health_status, ProviderHealth::Healthy));
+    }
 }

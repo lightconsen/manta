@@ -502,4 +502,265 @@ mod tests {
         assert!(group.has_role("user2", GroupRole::Member));
         assert!(!group.has_role("user3", GroupRole::Admin));
     }
+
+    #[test]
+    fn test_group_role_all_permissions() {
+        assert!(GroupRole::Owner.can_terminate_session());
+        assert!(GroupRole::Admin.can_terminate_session());
+        assert!(!GroupRole::Member.can_terminate_session());
+        assert!(!GroupRole::Observer.can_terminate_session());
+
+        assert!(GroupRole::Owner.can_spawn_agents());
+        assert!(GroupRole::Admin.can_spawn_agents());
+        assert!(GroupRole::Member.can_spawn_agents());
+        assert!(!GroupRole::Observer.can_spawn_agents());
+
+        assert!(GroupRole::Owner.can_participate());
+        assert!(GroupRole::Admin.can_participate());
+        assert!(GroupRole::Member.can_participate());
+        assert!(!GroupRole::Observer.can_participate());
+    }
+
+    #[test]
+    fn test_group_role_display() {
+        assert_eq!(GroupRole::Owner.to_string(), "owner");
+        assert_eq!(GroupRole::Admin.to_string(), "admin");
+        assert_eq!(GroupRole::Member.to_string(), "member");
+        assert_eq!(GroupRole::Observer.to_string(), "observer");
+    }
+
+    #[test]
+    fn test_group_member_lifecycle() {
+        let mut member = GroupMember::new("u1", "Alice", GroupRole::Member);
+        assert_eq!(member.user_id, "u1");
+        assert_eq!(member.display_name, "Alice");
+        assert_eq!(member.role, GroupRole::Member);
+        assert!(member.is_active);
+
+        member.mark_inactive();
+        assert!(!member.is_active);
+
+        member.mark_active();
+        assert!(member.is_active);
+    }
+
+    #[test]
+    fn test_group_session_new_has_owner() {
+        let group = GroupSession::new("g1", "Test", "user1", "Alice");
+        assert_eq!(group.member_count(), 1);
+        assert_eq!(group.owner_id, "user1");
+        assert!(group.is_member("user1"));
+        let owner = group.get_member("user1").unwrap();
+        assert_eq!(owner.role, GroupRole::Owner);
+    }
+
+    #[test]
+    fn test_group_session_add_duplicate_member() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        group.add_member("user2", "Bob", GroupRole::Member).unwrap();
+        let result = group.add_member("user2", "Bob2", GroupRole::Admin);
+        assert!(matches!(result, Err(GroupSessionError::MemberAlreadyExists(_))));
+    }
+
+    #[test]
+    fn test_group_session_remove_not_found() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        let result = group.remove_member("nonexistent");
+        assert!(matches!(result, Err(GroupSessionError::MemberNotFound(_))));
+    }
+
+    #[test]
+    fn test_group_session_cannot_demote_owner() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        let result = group.update_member_role("user1", GroupRole::Admin);
+        assert!(matches!(result, Err(GroupSessionError::CannotDemoteOwner)));
+    }
+
+    #[test]
+    fn test_group_session_update_role_not_found() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        let result = group.update_member_role("nonexistent", GroupRole::Admin);
+        assert!(matches!(result, Err(GroupSessionError::MemberNotFound(_))));
+    }
+
+    #[test]
+    fn test_group_session_get_members() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        group.add_member("user2", "Bob", GroupRole::Member).unwrap();
+        group.add_member("user3", "Charlie", GroupRole::Observer).unwrap();
+
+        let members = group.get_members();
+        assert_eq!(members.len(), 3);
+
+        let active = group.get_active_members();
+        assert_eq!(active.len(), 3);
+    }
+
+    #[test]
+    fn test_group_session_get_members_by_role() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        group.add_member("user2", "Bob", GroupRole::Admin).unwrap();
+        group.add_member("user3", "Charlie", GroupRole::Member).unwrap();
+
+        let admins = group.get_members_by_role(GroupRole::Admin);
+        assert_eq!(admins.len(), 1);
+        assert_eq!(admins[0].user_id, "user2");
+
+        let members = group.get_members_by_role(GroupRole::Member);
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].user_id, "user3");
+    }
+
+    #[test]
+    fn test_group_session_is_member() {
+        let group = GroupSession::new("g1", "Test", "user1", "Alice");
+        assert!(group.is_member("user1"));
+        assert!(!group.is_member("user2"));
+    }
+
+    #[test]
+    fn test_group_session_has_role_non_member() {
+        let group = GroupSession::new("g1", "Test", "user1", "Alice");
+        assert!(!group.has_role("nonexistent", GroupRole::Observer));
+    }
+
+    #[test]
+    fn test_group_session_archive() {
+        let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
+        assert!(!group.is_archived);
+        group.archive();
+        assert!(group.is_archived);
+    }
+
+    #[tokio::test]
+    async fn test_group_session_is_timed_out() {
+        let group = GroupSession::new("g1", "Test", "user1", "Alice");
+        assert!(!group.is_timed_out(std::time::Duration::from_secs(3600)));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(group.is_timed_out(std::time::Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_group_session_error_display() {
+        assert_eq!(
+            GroupSessionError::MemberAlreadyExists("u1".to_string()).to_string(),
+            "Member already exists: u1"
+        );
+        assert_eq!(
+            GroupSessionError::MemberNotFound("u1".to_string()).to_string(),
+            "Member not found: u1"
+        );
+        assert_eq!(
+            GroupSessionError::CannotRemoveOwner.to_string(),
+            "Cannot remove the owner from the group"
+        );
+        assert_eq!(
+            GroupSessionError::CannotDemoteOwner.to_string(),
+            "Cannot demote the owner"
+        );
+        assert_eq!(
+            GroupSessionError::InsufficientPermissions.to_string(),
+            "Insufficient permissions"
+        );
+    }
+
+    #[test]
+    fn test_group_manager_new() {
+        let manager = GroupSessionManager::new();
+        assert!(manager.list_groups().is_empty());
+        assert!(manager.get_user_groups("any").is_empty());
+    }
+
+    #[test]
+    fn test_group_manager_create_and_get() {
+        let mut manager = GroupSessionManager::new();
+        let group = manager.create_group("g1", "Test", "user1", "Alice");
+        assert_eq!(manager.list_groups(), vec!["g1"]);
+
+        let retrieved = manager.get_group("g1");
+        assert!(retrieved.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_group_manager_user_groups() {
+        let mut manager = GroupSessionManager::new();
+        manager.create_group("g1", "Test1", "user1", "Alice");
+        manager.create_group("g2", "Test2", "user1", "Alice");
+        manager.create_group("g3", "Test3", "user2", "Bob");
+
+        let user1_groups = manager.get_user_groups("user1");
+        assert_eq!(user1_groups.len(), 2);
+        assert!(user1_groups.contains(&"g1".to_string()));
+        assert!(user1_groups.contains(&"g2".to_string()));
+
+        let user2_groups = manager.get_user_groups("user2");
+        assert_eq!(user2_groups.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_group_manager_remove_group() {
+        let mut manager = GroupSessionManager::new();
+        manager.create_group("g1", "Test", "user1", "Alice");
+        manager.add_member("g1", "user2", "Bob", GroupRole::Member).await.unwrap();
+
+        assert_eq!(manager.get_user_groups("user2").len(), 1);
+        manager.remove_group("g1").await;
+        assert!(manager.get_group("g1").is_none());
+        assert!(manager.get_user_groups("user2").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_group_manager_add_remove_member() {
+        let mut manager = GroupSessionManager::new();
+        manager.create_group("g1", "Test", "user1", "Alice");
+
+        manager.add_member("g1", "user2", "Bob", GroupRole::Member).await.unwrap();
+        assert_eq!(manager.get_user_groups("user2").len(), 1);
+
+        manager.remove_member("g1", "user2").await.unwrap();
+        assert!(manager.get_user_groups("user2").is_empty());
+    }
+
+    #[test]
+    fn test_group_manager_stats() {
+        let mut manager = GroupSessionManager::new();
+        manager.create_group("g1", "Test1", "user1", "Alice");
+        manager.create_group("g2", "Test2", "user2", "Bob");
+
+        let stats = manager.stats();
+        assert_eq!(stats.group_count, 2);
+        assert_eq!(stats.total_members, 2);
+    }
+
+    #[test]
+    fn test_group_manager_set_timeout() {
+        let mut manager = GroupSessionManager::new();
+        manager.set_timeout(std::time::Duration::from_secs(60));
+        // Just verify it doesn't panic
+    }
+
+    #[tokio::test]
+    async fn test_group_manager_cleanup_timed_out() {
+        let mut manager = GroupSessionManager::new();
+        manager.set_timeout(std::time::Duration::from_secs(0));
+        manager.create_group("g1", "Test", "user1", "Alice");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        manager.cleanup_timed_out().await;
+        assert!(manager.get_group("g1").is_none());
+    }
+
+    #[test]
+    fn test_role_level() {
+        assert_eq!(role_level(GroupRole::Owner), 4);
+        assert_eq!(role_level(GroupRole::Admin), 3);
+        assert_eq!(role_level(GroupRole::Member), 2);
+        assert_eq!(role_level(GroupRole::Observer), 1);
+    }
+
+    #[test]
+    fn test_group_manager_default() {
+        let manager: GroupSessionManager = Default::default();
+        assert!(manager.list_groups().is_empty());
+    }
 }

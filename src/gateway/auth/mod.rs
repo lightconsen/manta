@@ -256,6 +256,7 @@ pub fn generate_csp_nonce() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
 
     #[test]
     fn test_build_set_cookie() {
@@ -280,5 +281,163 @@ mod tests {
         let nonce2 = generate_csp_nonce();
         assert!(!nonce1.is_empty());
         assert_ne!(nonce1, nonce2);
+    }
+
+    #[test]
+    fn test_session_cookie_config_default() {
+        let config = SessionCookieConfig::default();
+        assert_eq!(config.name, "manta_session");
+        assert_eq!(config.path, "/");
+        assert!(config.secure);
+        assert!(config.http_only);
+        assert_eq!(config.same_site, "lax");
+        assert_eq!(config.max_age_secs, 86400 * 7);
+        assert!(config.domain.is_none());
+    }
+
+    #[test]
+    fn test_session_cookie_config_serde() {
+        let config = SessionCookieConfig {
+            name: "custom".to_string(),
+            domain: Some("example.com".to_string()),
+            path: "/app".to_string(),
+            secure: false,
+            http_only: false,
+            same_site: "strict".to_string(),
+            max_age_secs: 3600,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: SessionCookieConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "custom");
+        assert_eq!(restored.domain, Some("example.com".to_string()));
+        assert_eq!(restored.path, "/app");
+        assert!(!restored.secure);
+        assert_eq!(restored.same_site, "strict");
+    }
+
+    #[test]
+    fn test_build_set_cookie_with_domain() {
+        let config = SessionCookieConfig {
+            domain: Some("example.com".to_string()),
+            ..Default::default()
+        };
+        let cookie = build_set_cookie(&config, "token");
+        assert!(cookie.contains("Domain=example.com"));
+    }
+
+    #[test]
+    fn test_build_set_cookie_without_secure() {
+        let config = SessionCookieConfig {
+            secure: false,
+            ..Default::default()
+        };
+        let cookie = build_set_cookie(&config, "token");
+        assert!(!cookie.contains("Secure"));
+    }
+
+    #[test]
+    fn test_extract_session_cookie_single() {
+        let req = Request::builder()
+            .header(header::COOKIE, "manta_session=abc123")
+            .body(Body::empty())
+            .unwrap();
+        let token = extract_session_cookie(&req, "manta_session");
+        assert_eq!(token, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_cookie_multiple() {
+        let req = Request::builder()
+            .header(header::COOKIE, "other=value; manta_session=xyz; foo=bar")
+            .body(Body::empty())
+            .unwrap();
+        let token = extract_session_cookie(&req, "manta_session");
+        assert_eq!(token, Some("xyz".to_string()));
+    }
+
+    #[test]
+    fn test_extract_session_cookie_missing() {
+        let req = Request::builder()
+            .header(header::COOKIE, "other=value")
+            .body(Body::empty())
+            .unwrap();
+        let token = extract_session_cookie(&req, "manta_session");
+        assert_eq!(token, None);
+    }
+
+    #[test]
+    fn test_extract_session_cookie_no_header() {
+        let req = Request::builder().body(Body::empty()).unwrap();
+        let token = extract_session_cookie(&req, "manta_session");
+        assert_eq!(token, None);
+    }
+
+    #[test]
+    fn test_oauth_config_default() {
+        let config = OAuthConfig::default();
+        assert!(!config.enabled);
+        assert!(config.github.is_none());
+        assert!(config.google.is_none());
+    }
+
+    #[test]
+    fn test_oauth_config_serde() {
+        let config = OAuthConfig {
+            enabled: true,
+            github: Some(OAuthProviderConfig {
+                client_id: "id".to_string(),
+                client_secret: "secret".to_string(),
+                auth_url: None,
+                token_url: None,
+                redirect_uri: "http://localhost/callback".to_string(),
+                scopes: vec!["read:user".to_string()],
+            }),
+            google: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("enabled"));
+        let restored: OAuthConfig = serde_json::from_str(&json).unwrap();
+        assert!(restored.enabled);
+        assert!(restored.github.is_some());
+    }
+
+    #[test]
+    fn test_oauth_user_profile_serde() {
+        let profile = OAuthUserProfile {
+            provider_user_id: "123".to_string(),
+            provider: "github".to_string(),
+            email: Some("test@example.com".to_string()),
+            name: Some("Test".to_string()),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let restored: OAuthUserProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.provider_user_id, "123");
+        assert_eq!(restored.email, Some("test@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_cors_config_default() {
+        let config = CorsConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.allowed_origins, vec!["*"]);
+        assert!(config.allow_credentials);
+        assert_eq!(config.max_age_secs, 3600);
+    }
+
+    #[test]
+    fn test_csp_config_default() {
+        let config = CspConfig::default();
+        assert!(config.enabled);
+        assert!(!config.policy.is_empty());
+        assert!(config.use_nonce);
+    }
+
+    #[test]
+    fn test_csp_nonce_url_safe() {
+        let nonce = generate_csp_nonce();
+        assert!(!nonce.contains('+'));
+        assert!(!nonce.contains('/'));
+        assert!(!nonce.contains('='));
     }
 }

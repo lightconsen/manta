@@ -299,7 +299,7 @@ fn calculate_backoff(attempt: u32, config: &crate::config::RetryConfig) -> Durat
 mod tests {
     use super::*;
     use crate::config::RetryConfig;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -388,5 +388,349 @@ mod tests {
         let result: Result<serde_json::Value> = client.get("/not-found").await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_api_client_with_client() {
+        let mock_server = MockServer::start().await;
+        let client = Client::new();
+        let api_client = ApiClient::with_client(client, mock_server.uri(), Some("key".to_string()));
+
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let result: serde_json::Value = api_client.get("/health").await.unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_put() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/update"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "updated": true
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let body = serde_json::json!({ "name": "Updated" });
+        let result: serde_json::Value = client.put("/update", &body).await.unwrap();
+
+        assert_eq!(result["updated"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_delete() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/delete"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result = client.delete("/delete").await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_api_client_health_check_ok() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        assert!(client.health_check().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_api_client_health_check_fail() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        assert!(!client.health_check().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_api_client_new_with_env_var_key() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        std::env::set_var("TEST_API_KEY", "secret123");
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: Some(SecretRef::String("$TEST_API_KEY".to_string())),
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: serde_json::Value = client.get("/test").await.unwrap();
+        assert_eq!(result["ok"], true);
+
+        std::env::remove_var("TEST_API_KEY");
+    }
+
+    #[tokio::test]
+    async fn test_api_client_new_async_with_string_key() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: Some(SecretRef::String("mykey".to_string())),
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new_async(&config).await.unwrap();
+        let result: serde_json::Value = client.get("/test").await.unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_retry_server_error_then_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/retry"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/retry"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 2,
+                base_delay_ms: 10,
+                max_delay_ms: 100,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: serde_json::Value = client.get("/retry").await.unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_no_retry_on_4xx() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/bad-request"))
+            .respond_with(ResponseTemplate::new(400))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 2,
+                base_delay_ms: 10,
+                max_delay_ms: 100,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: Result<serde_json::Value> = client.get("/bad-request").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_calculate_backoff_bounds() {
+        let config = RetryConfig {
+            max_retries: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 1000,
+        };
+
+        // First retry attempt: 100 * 2^1 = 200ms base
+        let delay1 = calculate_backoff(1, &config);
+        assert!(delay1 >= Duration::from_millis(150));
+        assert!(delay1 <= Duration::from_millis(250));
+
+        // Second retry attempt: 100 * 2^2 = 400ms base
+        let delay2 = calculate_backoff(2, &config);
+        assert!(delay2 >= Duration::from_millis(300));
+        assert!(delay2 <= Duration::from_millis(500));
+
+        // High attempt should be capped at max_delay_ms then jittered
+        let delay_large = calculate_backoff(10, &config);
+        assert!(delay_large <= Duration::from_millis(1300));
+        assert!(delay_large > Duration::from_millis(0));
+    }
+
+    #[tokio::test]
+    async fn test_api_client_auth_header() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/auth"))
+            .and(header("Authorization", "Bearer secret-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: Some(SecretRef::String("secret-key".to_string())),
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: serde_json::Value = client.get("/auth").await.unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_user_agent_header() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/ua"))
+            .and(header_exists("User-Agent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: serde_json::Value = client.get("/ua").await.unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_api_client_base_url_trailing_slash() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let mut config = ServiceConfig {
+            endpoint: mock_server.uri(),
+            api_key: None,
+            timeout_seconds: 5,
+            retry: RetryConfig {
+                max_retries: 0,
+                base_delay_ms: 0,
+                max_delay_ms: 0,
+            },
+        };
+        config.endpoint.push('/');
+
+        let client = ApiClient::new(&config).unwrap();
+        let result: serde_json::Value = client.get("/test").await.unwrap();
+        assert_eq!(result["ok"], true);
     }
 }

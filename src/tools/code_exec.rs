@@ -150,7 +150,7 @@ result = {{}}
 try:
     exec_globals = {{}}
     exec_locals = {{}}
-""#,
+"#,
             max_size, max_size
         );
 
@@ -436,5 +436,170 @@ mod tests {
         assert_eq!(config.max_output_size, 50_000);
         assert!(!config.allow_network);
         assert_eq!(config.max_memory_mb, 256);
+    }
+
+    #[test]
+    fn test_validate_code_forbidden_imports() {
+        let tool = CodeExecutionTool::new();
+
+        assert!(tool.validate_code("import subprocess").is_err());
+        assert!(tool.validate_code("import os.system").is_err());
+        assert!(tool.validate_code("import socket").is_err());
+        assert!(tool.validate_code("import ctypes").is_err());
+        assert!(tool.validate_code("from subprocess import call").is_err());
+    }
+
+    #[test]
+    fn test_validate_code_dangerous_patterns() {
+        let tool = CodeExecutionTool::new();
+
+        assert!(tool.validate_code("exec('print(1)')").is_err());
+        assert!(tool.validate_code("eval('1+1')").is_err());
+        assert!(tool.validate_code("__import__('os')").is_err());
+        assert!(tool.validate_code("compile('x=1', '<string>', 'exec')").is_err());
+    }
+
+    #[test]
+    fn test_validate_code_case_insensitive() {
+        let tool = CodeExecutionTool::new();
+        assert!(tool.validate_code("EVAL('1+1')").is_err());
+        assert!(tool.validate_code("Eval('1+1')").is_err());
+        assert!(tool.validate_code("IMPORT subprocess").is_err());
+    }
+
+    #[test]
+    fn test_validate_code_valid_patterns() {
+        let tool = CodeExecutionTool::new();
+        assert!(tool.validate_code("x = 1 + 2").is_ok());
+        assert!(tool.validate_code("import json\nimport math").is_ok());
+        assert!(tool.validate_code("def hello():\n    pass").is_ok());
+    }
+
+    #[test]
+    fn test_sandbox_config_serde() {
+        let config = SandboxConfig {
+            timeout_secs: 60,
+            max_output_size: 1000,
+            allowed_imports: vec!["json".to_string()],
+            forbidden_imports: vec!["os".to_string()],
+            allow_network: true,
+            max_memory_mb: 512,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: SandboxConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.timeout_secs, 60);
+        assert_eq!(restored.max_output_size, 1000);
+        assert_eq!(restored.allowed_imports, vec!["json"]);
+        assert_eq!(restored.forbidden_imports, vec!["os"]);
+        assert!(restored.allow_network);
+        assert_eq!(restored.max_memory_mb, 512);
+    }
+
+    #[test]
+    fn test_code_execution_tool_new() {
+        let tool = CodeExecutionTool::new();
+        assert_eq!(tool.config.timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_code_execution_tool_default() {
+        let tool: CodeExecutionTool = Default::default();
+        assert_eq!(tool.config.max_memory_mb, 256);
+    }
+
+    #[test]
+    fn test_code_execution_tool_with_config() {
+        let config = SandboxConfig {
+            timeout_secs: 10,
+            ..Default::default()
+        };
+        let tool = CodeExecutionTool::with_config(config);
+        assert_eq!(tool.config.timeout_secs, 10);
+    }
+
+    #[test]
+    fn test_code_result_creation() {
+        let result = CodeResult {
+            stdout: "hello".to_string(),
+            stderr: "".to_string(),
+            exit_code: 0,
+            result: serde_json::json!({"success": true}),
+        };
+        assert_eq!(result.stdout, "hello");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[test]
+    fn test_tool_name() {
+        let tool = CodeExecutionTool::new();
+        assert_eq!(tool.name(), "execute_code");
+    }
+
+    #[test]
+    fn test_tool_description_not_empty() {
+        let tool = CodeExecutionTool::new();
+        assert!(!tool.description().is_empty());
+        assert!(tool.description().contains("Python"));
+    }
+
+    #[test]
+    fn test_tool_parameters_schema() {
+        let tool = CodeExecutionTool::new();
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+        assert!(schema.get("required").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_execute_missing_code() {
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({"language": "python"});
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("code parameter is required"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_unsupported_language() {
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({"code": "print(1)", "language": "ruby"});
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unsupported language"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_validation_failure() {
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({"code": "import subprocess"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("Code validation failed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_python_simple() {
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({"code": "print('hello world')"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("hello world"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_python_error() {
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({"code": "raise ValueError('boom')"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+        assert!(!result.success);
+        let err_text = result.error.as_ref().unwrap();
+        assert!(err_text.contains("boom") || err_text.contains("ValueError"));
     }
 }

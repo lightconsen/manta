@@ -258,4 +258,191 @@ mod tests {
         // Clean up temp dir
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
+
+    #[test]
+    fn test_session_file_manager_new() {
+        let manager = SessionFileManager::new("/tmp/test_sessions");
+        assert_eq!(manager.default_quota, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_session_file_manager_with_quota() {
+        let manager = SessionFileManager::new("/tmp/test_sessions").with_quota(50 * 1024 * 1024);
+        assert_eq!(manager.default_quota, 50 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn test_init_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.init().await.unwrap(); // Should not fail
+        assert!(tmp.path().exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_session_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+
+        let dir1 = manager.create_session("s1").await.unwrap();
+        let dir2 = manager.create_session("s1").await.unwrap();
+        assert_eq!(dir1.path, dir2.path);
+        assert!(dir1.path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_get_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+
+        assert!(manager.get_session("nonexistent").await.is_none());
+
+        manager.create_session("s1").await.unwrap();
+        let session = manager.get_session("s1").await;
+        assert!(session.is_some());
+        assert_eq!(session.unwrap().session_id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_path_for_new_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.create_session("s1").await.unwrap();
+
+        // New file in existing parent (session root)
+        let path = manager.resolve_path("s1", "file.txt").await;
+        assert!(path.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_path_for_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.create_session("s1").await.unwrap();
+
+        let path = manager.resolve_path("s1", "test.txt").await.unwrap();
+        tokio::fs::write(&path, "hello").await.unwrap();
+
+        let resolved = manager.resolve_path("s1", "test.txt").await;
+        assert!(resolved.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_path_traversal_nested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.create_session("s1").await.unwrap();
+
+        // Nested traversal
+        let bad = manager.resolve_path("s1", "foo/../../secret.txt").await;
+        assert!(bad.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_path_missing_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+
+        let path = manager.resolve_path("nonexistent", "file.txt").await;
+        assert!(path.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.create_session("s1").await.unwrap();
+
+        let path = manager.resolve_path("s1", "a.txt").await.unwrap();
+        tokio::fs::write(&path, "hello").await.unwrap();
+
+        let path = manager.resolve_path("s1", "b.txt").await.unwrap();
+        tokio::fs::write(&path, "world").await.unwrap();
+
+        let files = manager.list_files("s1").await;
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|f| f.contains("a.txt")));
+        assert!(files.iter().any(|f| f.contains("b.txt")));
+    }
+
+    #[tokio::test]
+    async fn test_list_files_missing_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        let files = manager.list_files("nonexistent").await;
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_session_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        // Should not panic
+        manager.cleanup_session("nonexistent").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_total_usage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+        manager.create_session("s1").await.unwrap();
+
+        let path = manager.resolve_path("s1", "file.txt").await.unwrap();
+        tokio::fs::write(&path, "hello world").await.unwrap();
+
+        let usage = manager.total_usage().await;
+        assert_eq!(usage, 11); // "hello world" is 11 bytes
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionFileManager::new(tmp.path());
+        manager.init().await.unwrap();
+
+        assert!(manager.list_sessions().await.is_empty());
+
+        manager.create_session("s1").await.unwrap();
+        manager.create_session("s2").await.unwrap();
+
+        let sessions = manager.list_sessions().await;
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains(&"s1".to_string()));
+        assert!(sessions.contains(&"s2".to_string()));
+    }
+
+    #[test]
+    fn test_session_file_dir_clone() {
+        let dir = SessionFileDir {
+            session_id: "s1".to_string(),
+            path: PathBuf::from("/tmp/s1"),
+            quota: 100,
+            usage: 10,
+        };
+        let cloned = dir.clone();
+        assert_eq!(cloned.session_id, "s1");
+        assert_eq!(cloned.quota, 100);
+        assert_eq!(cloned.usage, 10);
+    }
+
+    #[tokio::test]
+    async fn test_dir_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        tokio::fs::write(tmp.path().join("a.txt"), "hello").await.unwrap();
+        tokio::fs::create_dir(tmp.path().join("sub")).await.unwrap();
+        tokio::fs::write(tmp.path().join("sub/b.txt"), "world").await.unwrap();
+
+        let size = SessionFileManager::dir_size(tmp.path()).await.unwrap();
+        assert_eq!(size, 10); // "hello" + "world" = 10 bytes
+    }
 }

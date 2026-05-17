@@ -505,4 +505,177 @@ mod tests {
         assert_eq!(cancelled, 1);
         assert_eq!(queue.len().await, 1);
     }
+
+    #[test]
+    fn test_risk_level_description() {
+        assert_eq!(RiskLevel::Low.description(), "Low risk");
+        assert_eq!(RiskLevel::Medium.description(), "Medium risk");
+        assert_eq!(RiskLevel::High.description(), "High risk");
+        assert_eq!(RiskLevel::Critical.description(), "Critical risk");
+    }
+
+    #[test]
+    fn test_risk_level_ordering() {
+        assert!(RiskLevel::Low < RiskLevel::Medium);
+        assert!(RiskLevel::Medium < RiskLevel::High);
+        assert!(RiskLevel::High < RiskLevel::Critical);
+    }
+
+    #[test]
+    fn test_risk_level_serialization() {
+        let json = serde_json::to_string(&RiskLevel::High).unwrap();
+        assert!(json.contains("high"));
+    }
+
+    #[test]
+    fn test_approval_decision_equality() {
+        assert_eq!(ApprovalDecision::Approve, ApprovalDecision::Approve);
+        assert_ne!(
+            ApprovalDecision::Approve,
+            ApprovalDecision::Deny {
+                reason: "no".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_get() {
+        let queue = ApprovalQueue::new();
+        let (tx, _rx) = oneshot::channel();
+
+        queue
+            .submit(PendingApproval::new(
+                "g1",
+                "tool",
+                serde_json::json!({}),
+                "user",
+                RiskLevel::Low,
+                "msg",
+                tx,
+            ))
+            .await;
+
+        let summary = queue.get("g1").await;
+        assert!(summary.is_some());
+        assert_eq!(summary.unwrap().tool_name, "tool");
+
+        let missing = queue.get("missing").await;
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_list_ids() {
+        let queue = ApprovalQueue::new();
+        let (tx, _rx) = oneshot::channel();
+
+        queue
+            .submit(PendingApproval::new(
+                "id1",
+                "t1",
+                serde_json::json!({}),
+                "u",
+                RiskLevel::Low,
+                "m",
+                tx,
+            ))
+            .await;
+
+        let ids = queue.list_ids().await;
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], "id1");
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_is_empty() {
+        let queue = ApprovalQueue::new();
+        assert!(queue.is_empty().await);
+
+        let (tx, _rx) = oneshot::channel();
+        queue
+            .submit(PendingApproval::new(
+                "e1",
+                "t",
+                serde_json::json!({}),
+                "u",
+                RiskLevel::Low,
+                "m",
+                tx,
+            ))
+            .await;
+
+        assert!(!queue.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_default() {
+        let queue: ApprovalQueue = Default::default();
+        assert!(queue.is_empty().await);
+        assert_eq!(queue.default_timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_approval_filter_default() {
+        let filter = ApprovalFilter::default();
+        assert!(filter.min_risk_level.is_none());
+        assert!(filter.tool_name.is_none());
+        assert!(filter.requested_by.is_none());
+        assert!(filter.max_age.is_none());
+    }
+
+    #[test]
+    fn test_pending_approval_age() {
+        let (tx, _rx) = oneshot::channel();
+        let pa = PendingApproval::new(
+            "a1",
+            "tool",
+            serde_json::json!({}),
+            "user",
+            RiskLevel::Low,
+            "test",
+            tx,
+        );
+        // Age should be very small since just created
+        assert!(pa.age() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_approval_required_event_serialization() {
+        let event = ApprovalRequiredEvent {
+            approval_id: "aid".to_string(),
+            tool_name: "shell".to_string(),
+            requested_by: "user".to_string(),
+            risk_level: RiskLevel::High,
+            message: "Approve?".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("aid"));
+        assert!(json.contains("shell"));
+    }
+
+    #[tokio::test]
+    async fn test_approval_queue_double_resolve() {
+        let queue = ApprovalQueue::new();
+        let (tx, rx) = oneshot::channel();
+
+        queue
+            .submit(PendingApproval::new(
+                "d1",
+                "tool",
+                serde_json::json!({}),
+                "user",
+                RiskLevel::Low,
+                "test",
+                tx,
+            ))
+            .await;
+
+        let first = queue.resolve("d1", ApprovalDecision::Approve).await;
+        assert!(first);
+
+        let second = queue.resolve("d1", ApprovalDecision::Approve).await;
+        assert!(!second);
+
+        let decision = rx.await.unwrap();
+        assert_eq!(decision, ApprovalDecision::Approve);
+    }
 }

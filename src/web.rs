@@ -653,4 +653,42 @@ mod tests {
         assert!(html.contains("version"), "HTML should contain version class");
         assert!(html.contains("header-center"), "HTML should contain header-center div");
     }
+
+    #[test]
+    fn test_ws_query_deserialization() {
+        let json = r#"{"new": true, "conversation": "abc123"}"#;
+        let query: WsQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.new, Some(true));
+        assert_eq!(query.conversation, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_ws_query_default() {
+        let query: WsQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(query.new, None);
+        assert_eq!(query.conversation, None);
+    }
+
+    #[test]
+    fn test_web_terminal_chat_request_deserialization() {
+        let json = r#"{"message": "hello", "conversation_id": "conv1", "user_id": "user1"}"#;
+        let req: WebTerminalChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.message, "hello");
+        assert_eq!(req.conversation_id, Some("conv1".to_string()));
+        assert_eq!(req.user_id, Some("user1".to_string()));
+    }
+
+    #[test]
+    fn test_terminal_html_version_replacement() {
+        let html = terminal_html();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            !html.contains("{VERSION}"),
+            "HTML should not contain unreplaced {{VERSION}} placeholder"
+        );
+        assert!(
+            html.contains(version),
+            "HTML should contain the actual version {version}"
+        );
+    }
 }

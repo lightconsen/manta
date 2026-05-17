@@ -124,4 +124,85 @@ mod tests {
         assert_eq!(sdk.list_packs().len(), 1);
         assert!(sdk.get_pack("filesystem").is_some());
     }
+
+    #[test]
+    fn test_tool_sdk_default() {
+        let sdk: ToolSdk = Default::default();
+        assert!(sdk.list_packs().is_empty());
+    }
+
+    #[test]
+    fn test_tool_sdk_new() {
+        let sdk = ToolSdk::new();
+        assert!(sdk.list_packs().is_empty());
+        assert!(sdk.get_pack("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_tool_sdk_register_multiple() {
+        let mut sdk = ToolSdk::new();
+        sdk.register_pack(ToolPack {
+            name: "pack-a".to_string(),
+            version: "1.0".to_string(),
+            description: "A".to_string(),
+            tools: vec!["t1".to_string()],
+        });
+        sdk.register_pack(ToolPack {
+            name: "pack-b".to_string(),
+            version: "2.0".to_string(),
+            description: "B".to_string(),
+            tools: vec!["t2".to_string(), "t3".to_string()],
+        });
+        assert_eq!(sdk.list_packs().len(), 2);
+        assert!(sdk.get_pack("pack-a").is_some());
+        assert!(sdk.get_pack("pack-b").is_some());
+    }
+
+    #[test]
+    fn test_tool_pack_fields() {
+        let pack = ToolPack {
+            name: "web".to_string(),
+            version: "0.5".to_string(),
+            description: "Web tools".to_string(),
+            tools: vec!["fetch".to_string()],
+        };
+        assert_eq!(pack.name, "web");
+        assert_eq!(pack.version, "0.5");
+        assert_eq!(pack.tools.len(), 1);
+    }
+
+    #[test]
+    fn test_tool_capabilities_serialization() {
+        let caps = ToolCapabilities {
+            requires_approval: true,
+            sandboxed: true,
+            streaming: false,
+            risk_level: crate::tools::approval::RiskLevel::High,
+            categories: vec!["file".to_string(), "system".to_string()],
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(json.contains("requires_approval"));
+        // RiskLevel serializes as integer (2 for High)
+    }
+
+    #[test]
+    fn test_tool_capabilities_fields() {
+        let caps = ToolCapabilities::default();
+        assert!(!caps.requires_approval);
+        assert!(!caps.sandboxed);
+        assert!(!caps.streaming);
+        assert!(caps.categories.is_empty());
+    }
+
+    #[test]
+    fn test_tool_metadata_creation() {
+        let meta = ToolMetadata {
+            name: "grep".to_string(),
+            description: "Search files".to_string(),
+            capabilities: ToolCapabilities::default(),
+            parameter_schema: serde_json::json!({"type": "object"}),
+        };
+        assert_eq!(meta.name, "grep");
+        assert_eq!(meta.description, "Search files");
+    }
 }

@@ -485,3 +485,99 @@ pub async fn logout_handler(
 }
 
 use axum::Json;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::auth::OAuthProviderConfig;
+
+    #[test]
+    fn test_oauth_callback_query_deserialize() {
+        let json = r#"{"code": "abc123", "state": "csrf_token"}"#;
+        let query: OAuthCallbackQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.code, "abc123");
+        assert_eq!(query.state, Some("csrf_token".to_string()));
+    }
+
+    #[test]
+    fn test_oauth_callback_query_without_state() {
+        let json = r#"{"code": "abc123"}"#;
+        let query: OAuthCallbackQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.code, "abc123");
+        assert_eq!(query.state, None);
+    }
+
+    #[test]
+    fn test_oauth_error_response_serialize() {
+        let resp = OAuthErrorResponse {
+            error: "token_exchange_failed".to_string(),
+            message: "Something went wrong".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("token_exchange_failed"));
+        assert!(json.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn test_build_oauth_client_valid() {
+        let config = OAuthProviderConfig {
+            client_id: "test_id".to_string(),
+            client_secret: "test_secret".to_string(),
+            auth_url: None,
+            token_url: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec!["read:user".to_string()],
+        };
+        let result = build_oauth_client(
+            &config,
+            "https://github.com/login/oauth/authorize",
+            "https://github.com/login/oauth/access_token",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_oauth_client_invalid_auth_url() {
+        let config = OAuthProviderConfig {
+            client_id: "test_id".to_string(),
+            client_secret: "test_secret".to_string(),
+            auth_url: None,
+            token_url: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec![],
+        };
+        let result = build_oauth_client(&config, "not-a-url", "https://example.com/token");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid auth URL"));
+    }
+
+    #[test]
+    fn test_build_oauth_client_invalid_token_url() {
+        let config = OAuthProviderConfig {
+            client_id: "test_id".to_string(),
+            client_secret: "test_secret".to_string(),
+            auth_url: None,
+            token_url: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec![],
+        };
+        let result = build_oauth_client(&config, "https://example.com/auth", "not-a-url");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid token URL"));
+    }
+
+    #[test]
+    fn test_build_oauth_client_invalid_redirect_uri() {
+        let config = OAuthProviderConfig {
+            client_id: "test_id".to_string(),
+            client_secret: "test_secret".to_string(),
+            auth_url: None,
+            token_url: None,
+            redirect_uri: "not-a-valid-uri".to_string(),
+            scopes: vec![],
+        };
+        let result = build_oauth_client(&config, "https://example.com/auth", "https://example.com/token");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid redirect URI"));
+    }
+}

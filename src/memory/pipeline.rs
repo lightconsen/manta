@@ -259,6 +259,35 @@ mod tests {
         }
     }
 
+    struct FailingMockProvider;
+
+    #[async_trait::async_trait]
+    impl PipelineEmbeddingProvider for FailingMockProvider {
+        async fn embed_batch(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>, String> {
+            Err("embedding failed".to_string())
+        }
+    }
+
+    #[test]
+    fn test_pipeline_config_default() {
+        let config = EmbeddingPipelineConfig::default();
+        assert_eq!(config.max_batch_size, 32);
+        assert_eq!(config.max_wait_ms, 100);
+        assert_eq!(config.channel_capacity, 256);
+    }
+
+    #[test]
+    fn test_embedding_job_debug() {
+        let (tx, _rx) = oneshot::channel();
+        let job = EmbeddingJob {
+            text: "hello".to_string(),
+            source: "query".to_string(),
+            response_tx: tx,
+        };
+        let debug = format!("{:?}", job);
+        assert!(debug.contains("EmbeddingJob"));
+    }
+
     #[tokio::test]
     async fn test_pipeline_batches_requests() {
         let provider = Arc::new(MockProvider {
@@ -331,5 +360,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.len(), 128);
+    }
+
+    #[tokio::test]
+    async fn test_embed_basic() {
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        let config = EmbeddingPipelineConfig {
+            max_batch_size: 10,
+            max_wait_ms: 1000,
+            channel_capacity: 100,
+        };
+
+        let (_pipeline, _worker, handle) = EmbeddingPipeline::new(provider.clone(), config);
+        let result = handle.embed("hello world").await.unwrap();
+        assert_eq!(result.len(), 128);
+        // "hello world" has len 11, so all values should be 11.0
+        assert!(result.iter().all(|&v| v == 11.0));
+    }
+
+    #[tokio::test]
+    async fn test_embed_provider_error() {
+        let provider = Arc::new(FailingMockProvider);
+        let config = EmbeddingPipelineConfig {
+            max_batch_size: 10,
+            max_wait_ms: 50,
+            channel_capacity: 100,
+        };
+
+        let (_pipeline, _worker, handle) = EmbeddingPipeline::new(provider, config);
+        let result = handle.embed("test").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("embedding failed"));
+    }
+
+    #[tokio::test]
+    async fn test_submit_fire_and_forget() {
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        let config = EmbeddingPipelineConfig {
+            max_batch_size: 10,
+            max_wait_ms: 50,
+            channel_capacity: 100,
+        };
+
+        let (_pipeline, _worker, handle) = EmbeddingPipeline::new(provider.clone(), config);
+        handle.submit("index this", "background").await;
+
+        // Wait for timeout flush
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert_eq!(provider.batch_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_handle_clone() {
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        let config = EmbeddingPipelineConfig::default();
+
+        let (pipeline, _worker, handle) = EmbeddingPipeline::new(provider, config);
+        let handle2 = pipeline.handle();
+        let handle3 = handle.clone();
+
+        // All handles should work
+        let _ = handle2.embed("via pipeline").await.unwrap();
+        let _ = handle3.embed("via clone").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_multiple_embeds_same_batch() {
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        let config = EmbeddingPipelineConfig {
+            max_batch_size: 10,
+            max_wait_ms: 1000,
+            channel_capacity: 100,
+        };
+
+        let (_pipeline, _worker, handle) = EmbeddingPipeline::new(provider.clone(), config);
+
+        // Send 3 requests concurrently
+        let r1 = handle.embed("a");
+        let r2 = handle.embed("bb");
+        let r3 = handle.embed("ccc");
+
+        let (res1, res2, res3) = tokio::join!(r1, r2, r3);
+
+        assert_eq!(res1.unwrap().len(), 128);
+        assert_eq!(res2.unwrap().len(), 128);
+        assert_eq!(res3.unwrap().len(), 128);
+        // All 3 should fit in a single batch
+        assert_eq!(provider.batch_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_embed_returns_correct_dimensions() {
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        let config = EmbeddingPipelineConfig {
+            max_batch_size: 10,
+            max_wait_ms: 50,
+            channel_capacity: 100,
+        };
+
+        let (_pipeline, _worker, handle) = EmbeddingPipeline::new(provider, config);
+        let result = handle.embed("x").await.unwrap();
+        assert_eq!(result.len(), 128);
+        // "x" has len 1, so all values should be 1.0
+        assert!(result.iter().all(|&v| v == 1.0));
+    }
+
+    #[tokio::test]
+    async fn test_empty_batch_no_panic() {
+        // process_batch with empty should be a no-op
+        let provider = Arc::new(MockProvider {
+            batch_count: AtomicUsize::new(0),
+        });
+        process_batch(&provider, vec![]).await;
+        assert_eq!(provider.batch_count.load(Ordering::SeqCst), 0);
     }
 }

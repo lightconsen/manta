@@ -160,4 +160,87 @@ mod tests {
         let err = ConfigError::Missing("api_key".to_string());
         assert_eq!(err.to_string(), "Missing required configuration: api_key");
     }
+
+    #[test]
+    fn test_error_variants_display() {
+        let err = MantaError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing"));
+        assert!(err.to_string().contains("I/O error"));
+
+        let err = MantaError::Internal("something broke".to_string());
+        assert!(err.to_string().contains("Internal error: something broke"));
+
+        let err = MantaError::NotFound { resource: "user".to_string() };
+        assert!(err.to_string().contains("Resource not found: user"));
+
+        let err = MantaError::Storage {
+            context: "db".to_string(),
+            details: "connection failed".to_string(),
+        };
+        assert!(err.to_string().contains("Storage error: db - connection failed"));
+
+        let err = MantaError::Plugin("wasm error".to_string());
+        assert!(err.to_string().contains("Plugin error: wasm error"));
+
+        let err = MantaError::MaxSpawnDepth(5);
+        assert!(err.to_string().contains("Maximum subagent spawn depth (5) exceeded"));
+
+        let err = MantaError::MaxConcurrentSubagents(10);
+        assert!(err.to_string().contains("Maximum concurrent subagents (10) already active"));
+
+        let err = MantaError::SubagentTimeout;
+        assert!(err.to_string().contains("Subagent timed out waiting for completion"));
+
+        let err = MantaError::SubagentNotFound;
+        assert!(err.to_string().contains("Subagent run not found"));
+
+        let err = MantaError::SubagentFailed("crash".to_string());
+        assert!(err.to_string().contains("Subagent failed: crash"));
+
+        let err = MantaError::SubagentKilled;
+        assert!(err.to_string().contains("Subagent was killed"));
+
+        let err = MantaError::SandboxViolation("no network".to_string());
+        assert!(err.to_string().contains("Sandbox violation: no network"));
+    }
+
+    #[test]
+    fn test_config_error_variants() {
+        let err = ConfigError::Parse("bad toml".to_string());
+        assert!(err.to_string().contains("Failed to parse config file: bad toml"));
+
+        let err = ConfigError::InvalidValue {
+            key: "port".to_string(),
+            message: "not a number".to_string(),
+        };
+        assert!(err.to_string().contains("Invalid configuration value for 'port': not a number"));
+
+        let err = ConfigError::FileRead {
+            path: PathBuf::from("/tmp/config.toml"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+        };
+        assert!(err.to_string().contains("Failed to read config file"));
+    }
+
+    #[test]
+    fn test_external_service_error_display() {
+        let err = MantaError::ExternalService {
+            source: "openai".to_string(),
+            cause: Some(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "timeout",
+            ))),
+        };
+        assert!(err.to_string().contains("External service error: openai"));
+    }
+
+    #[test]
+    fn test_result_ext_io() {
+        let result: std::result::Result<i32, std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        ));
+        let manta_result: Result<i32> = result.with_context(|| "file op");
+        assert!(manta_result.is_err());
+    }
+
 }

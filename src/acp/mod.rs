@@ -636,3 +636,163 @@ impl AcpAgentExt for AgentHandle {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_acp_session_id_new() {
+        let id1 = AcpSessionId::new();
+        let id2 = AcpSessionId::new();
+        assert_ne!(id1.0, id2.0);
+        assert!(!id1.0.is_empty());
+    }
+
+    #[test]
+    fn test_acp_session_id_default() {
+        let id = AcpSessionId::default();
+        assert!(!id.0.is_empty());
+    }
+
+    #[test]
+    fn test_acp_session_id_display() {
+        let id = AcpSessionId("sess-123".to_string());
+        assert_eq!(format!("{}", id), "sess-123");
+    }
+
+    #[test]
+    fn test_spawn_mode_default() {
+        assert_eq!(SpawnMode::default(), SpawnMode::Run);
+    }
+
+    #[test]
+    fn test_spawn_mode_serde() {
+        let run = serde_json::to_value(SpawnMode::Run).unwrap();
+        assert_eq!(run, "run");
+        let session = serde_json::to_value(SpawnMode::Session).unwrap();
+        assert_eq!(session, "session");
+
+        let decoded: SpawnMode = serde_json::from_str("\"session\"").unwrap();
+        assert_eq!(decoded, SpawnMode::Session);
+    }
+
+    #[test]
+    fn test_thread_binding_default() {
+        assert!(matches!(ThreadBinding::default(), ThreadBinding::Auto));
+    }
+
+    #[test]
+    fn test_thread_binding_serde() {
+        let new = serde_json::to_value(ThreadBinding::New).unwrap();
+        assert_eq!(new, "new");
+        let parent = serde_json::to_value(ThreadBinding::Parent).unwrap();
+        assert_eq!(parent, "parent");
+        let auto = serde_json::to_value(ThreadBinding::Auto).unwrap();
+        assert_eq!(auto, "auto");
+
+        let decoded: ThreadBinding = serde_json::from_str("\"auto\"").unwrap();
+        assert!(matches!(decoded, ThreadBinding::Auto));
+    }
+
+    #[test]
+    fn test_subagent_config_default() {
+        let config = SubagentConfig::default();
+        assert_eq!(config.agent_type, "default");
+        assert_eq!(config.mode, SpawnMode::Run);
+        assert!(matches!(config.thread_binding, ThreadBinding::Auto));
+        assert!(config.system_prompt.is_none());
+        assert!(config.max_tokens.is_none());
+        assert!(config.temperature.is_none());
+        assert!(config.tools.is_empty());
+        assert!(config.context.is_none());
+        assert_eq!(config.timeout_seconds, Some(300));
+    }
+
+    #[test]
+    fn test_subagent_status_serde() {
+        let status = serde_json::to_value(SubagentStatus::Ready).unwrap();
+        assert_eq!(status, "ready");
+        let status = serde_json::to_value(SubagentStatus::Crashed).unwrap();
+        assert_eq!(status, "crashed");
+    }
+
+    #[tokio::test]
+    async fn test_acp_control_plane_new() {
+        let acp = AcpControlPlane::new();
+        let subagents = acp.list_subagents().await;
+        assert!(subagents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_session() {
+        let acp = AcpControlPlane::new();
+        let session_id = acp.create_session("parent-1".to_string()).await;
+        assert!(!session_id.0.is_empty());
+
+        let info = acp.get_session_info(&session_id).await;
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.parent_agent_id, "parent-1");
+        assert_eq!(info.subagent_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_info_not_found() {
+        let acp = AcpControlPlane::new();
+        let info = acp.get_session_info(&AcpSessionId("nonexistent".to_string())).await;
+        assert!(info.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_terminate_session_not_found() {
+        let acp = AcpControlPlane::new();
+        let result = acp.terminate_session(&AcpSessionId("nonexistent".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_session_subagents_empty() {
+        let acp = AcpControlPlane::new();
+        let session_id = acp.create_session("parent".to_string()).await;
+        let subagents = acp.list_session_subagents(&session_id).await;
+        assert!(subagents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_subagent_status_not_found() {
+        let acp = AcpControlPlane::new();
+        let status = acp.get_subagent_status("nonexistent").await;
+        assert!(status.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_thread_id_new() {
+        let acp = AcpControlPlane::new();
+        let id = acp.resolve_thread_id(&ThreadBinding::New, "parent").await;
+        assert!(id.starts_with("thread-"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_thread_id_parent() {
+        let acp = AcpControlPlane::new();
+        let id = acp.resolve_thread_id(&ThreadBinding::Parent, "parent-1").await;
+        assert!(id.contains("parent-1"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_thread_id_specific() {
+        let acp = AcpControlPlane::new();
+        let id = acp
+            .resolve_thread_id(&ThreadBinding::Thread("my-thread".to_string()), "parent")
+            .await;
+        assert_eq!(id, "my-thread");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_thread_id_auto() {
+        let acp = AcpControlPlane::new();
+        let id = acp.resolve_thread_id(&ThreadBinding::Auto, "parent-1").await;
+        assert!(id.contains("parent-1"));
+    }
+}

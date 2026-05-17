@@ -446,3 +446,226 @@ impl AuthProfileManager {
             || err_str.contains("authentication")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_key_entry_new() {
+        let entry = KeyEntry::new("secret-key".to_string(), "primary");
+        assert_eq!(entry.key, "secret-key");
+        assert_eq!(entry.label, "primary");
+        assert_eq!(entry.status, KeyStatus::Active);
+        assert_eq!(entry.failure_count, 0);
+        assert_eq!(entry.success_count, 0);
+        assert!(entry.last_failure.is_none());
+        assert!(entry.cooldown_until.is_none());
+    }
+
+    #[test]
+    fn test_key_entry_is_available() {
+        let mut entry = KeyEntry::new("k".to_string(), "test");
+        assert!(entry.is_available());
+
+        entry.status = KeyStatus::Disabled;
+        assert!(!entry.is_available());
+
+        entry.status = KeyStatus::Active;
+        entry.cooldown_until = Some(Utc::now() + chrono::Duration::seconds(3600));
+        assert!(!entry.is_available());
+
+        entry.cooldown_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        assert!(entry.is_available());
+    }
+
+    #[test]
+    fn test_key_entry_record_success() {
+        let mut entry = KeyEntry::new("k".to_string(), "test");
+        entry.failure_count = 5;
+        entry.status = KeyStatus::Cooldown;
+        entry.cooldown_until = Some(Utc::now());
+
+        entry.record_success();
+        assert_eq!(entry.success_count, 1);
+        assert_eq!(entry.failure_count, 0);
+        assert_eq!(entry.status, KeyStatus::Active);
+        assert!(entry.cooldown_until.is_none());
+    }
+
+    #[test]
+    fn test_key_entry_record_failure() {
+        let mut entry = KeyEntry::new("k".to_string(), "test");
+        entry.record_failure(30);
+        assert_eq!(entry.failure_count, 1);
+        assert!(entry.last_failure.is_some());
+        assert_eq!(entry.status, KeyStatus::Cooldown);
+        assert!(entry.cooldown_until.is_some());
+    }
+
+    #[test]
+    fn test_key_entry_masked_key() {
+        let entry = KeyEntry::new("very-long-secret-key".to_string(), "test");
+        assert_eq!(entry.masked_key(), "very****");
+
+        let entry_short = KeyEntry::new("short".to_string(), "test");
+        assert_eq!(entry_short.masked_key(), "****");
+    }
+
+    #[test]
+    fn test_auth_profile_single_key() {
+        let profile = AuthProfile::single_key("openai", "sk-test".to_string());
+        assert_eq!(profile.provider_name, "openai");
+        assert_eq!(profile.key_count(), 1);
+        assert_eq!(profile.available_count(), 1);
+        assert_eq!(profile.current_key(), Some("sk-test"));
+    }
+
+    #[test]
+    fn test_auth_profile_with_keys() {
+        let profile = AuthProfile::with_keys(
+            "openai",
+            vec![
+                ("key1".to_string(), "primary"),
+                ("key2".to_string(), "secondary"),
+            ],
+            60,
+            3,
+        );
+        assert_eq!(profile.key_count(), 2);
+        assert_eq!(profile.available_count(), 2);
+        assert_eq!(profile.current_key(), Some("key1"));
+    }
+
+    #[test]
+    fn test_auth_profile_rotate() {
+        let mut profile = AuthProfile::with_keys(
+            "openai",
+            vec![
+                ("key1".to_string(), "primary"),
+                ("key2".to_string(), "secondary"),
+            ],
+            60,
+            3,
+        );
+
+        let new_key = profile.rotate();
+        assert_eq!(new_key, Some("key2".to_string()));
+        assert_eq!(profile.current_key(), Some("key2"));
+
+        // Rotate again — key1 is on cooldown, no available keys
+        let next = profile.rotate();
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn test_auth_profile_rotate_disables_after_max_failures() {
+        let mut profile = AuthProfile::with_keys(
+            "openai",
+            vec![("key1".to_string(), "primary")],
+            0,
+            1,
+        );
+
+        profile.rotate();
+        let statuses = profile.key_statuses();
+        assert_eq!(statuses[0].status, KeyStatus::Disabled);
+    }
+
+    #[test]
+    fn test_auth_profile_record_success() {
+        let mut profile = AuthProfile::single_key("openai", "sk-test".to_string());
+        profile.record_success();
+
+        let statuses = profile.key_statuses();
+        assert_eq!(statuses[0].success_count, 1);
+        assert_eq!(statuses[0].failure_count, 0);
+    }
+
+    #[test]
+    fn test_auth_profile_key_statuses() {
+        let profile = AuthProfile::with_keys(
+            "openai",
+            vec![
+                ("key1".to_string(), "primary"),
+                ("key2".to_string(), ""),
+            ],
+            60,
+            3,
+        );
+
+        let statuses = profile.key_statuses();
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(statuses[0].label, "primary");
+        assert_eq!(statuses[1].label, "key-1");
+    }
+
+    #[tokio::test]
+    async fn test_auth_profile_manager_basic() {
+        let manager = AuthProfileManager::new();
+        manager
+            .register_single_key("openai", "sk-test".to_string())
+            .await;
+
+        let key = manager.current_key("openai").await;
+        assert_eq!(key, Some("sk-test".to_string()));
+
+        let status = manager.get_status("openai").await.unwrap();
+        assert_eq!(status.provider_name, "openai");
+        assert_eq!(status.total_keys, 1);
+
+        manager.record_success("openai").await;
+        let status = manager.get_status("openai").await.unwrap();
+        assert_eq!(status.keys[0].success_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_auth_profile_manager_rotate() {
+        let manager = AuthProfileManager::new();
+        let profile = AuthProfile::with_keys(
+            "openai",
+            vec![
+                ("key1".to_string(), "primary"),
+                ("key2".to_string(), "secondary"),
+            ],
+            60,
+            3,
+        );
+        manager.register_profile("openai", profile).await;
+
+        let new_key = manager.rotate("openai").await;
+        assert_eq!(new_key, Some("key2".to_string()));
+    }
+
+    #[test]
+    fn test_should_rotate_429() {
+        let err = crate::error::MantaError::Internal("429 rate limit".to_string());
+        assert!(AuthProfileManager::should_rotate(&err));
+    }
+
+    #[test]
+    fn test_should_rotate_401() {
+        let err = crate::error::MantaError::Internal("401 unauthorized".to_string());
+        assert!(AuthProfileManager::should_rotate(&err));
+    }
+
+    #[test]
+    fn test_should_rotate_403() {
+        let err = crate::error::MantaError::Internal("403 forbidden".to_string());
+        assert!(AuthProfileManager::should_rotate(&err));
+    }
+
+    #[test]
+    fn test_should_not_rotate_other_error() {
+        let err = crate::error::MantaError::Internal("connection timeout".to_string());
+        assert!(!AuthProfileManager::should_rotate(&err));
+    }
+
+    #[test]
+    fn test_auth_profile_config_defaults() {
+        let config = AuthProfileConfig::default();
+        assert_eq!(config.cooldown_secs, 60);
+        assert_eq!(config.max_failures, 3);
+        assert!(config.keys.is_empty());
+    }
+}

@@ -27,7 +27,7 @@ impl Default for NodesTool {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "action")]
+#[serde(tag = "action", rename_all = "snake_case")]
 enum NodesAction {
     Status,
     Describe { node_id: String },
@@ -428,5 +428,89 @@ impl Tool for NodesTool {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nodes_action_parsing() {
+        let action: NodesAction = serde_json::from_value(serde_json::json!({
+            "action": "status"
+        })).unwrap();
+        assert!(matches!(action, NodesAction::Status));
+
+        let action: NodesAction = serde_json::from_value(serde_json::json!({
+            "action": "describe",
+            "node_id": "node1"
+        })).unwrap();
+        assert!(matches!(action, NodesAction::Describe { node_id } if node_id == "node1"));
+
+        let action: NodesAction = serde_json::from_value(serde_json::json!({
+            "action": "camera_snap",
+            "node_id": "node1"
+        })).unwrap();
+        assert!(matches!(action, NodesAction::CameraSnap { node_id } if node_id == "node1"));
+
+        let action: NodesAction = serde_json::from_value(serde_json::json!({
+            "action": "screen_record",
+            "node_id": "node1",
+            "duration": 10
+        })).unwrap();
+        assert!(matches!(action, NodesAction::ScreenRecord { node_id, duration } if node_id == "node1" && duration == Some(10)));
+    }
+
+    #[test]
+    fn test_tailscale_node_serialization() {
+        let node = TailscaleNode {
+            id: "n1".to_string(),
+            name: "my-node".to_string(),
+            ipv4: "100.64.1.1".to_string(),
+            ipv6: "fd7a::1".to_string(),
+            os: "linux".to_string(),
+            online: true,
+            last_seen: "2024-01-01".to_string(),
+            tags: vec!["tag1".to_string()],
+        };
+        let json = serde_json::to_value(node).unwrap();
+        assert_eq!(json["id"], "n1");
+        assert_eq!(json["name"], "my-node");
+        assert_eq!(json["online"], true);
+    }
+
+    #[test]
+    fn test_nodes_tool_name_and_schema() {
+        let tool = NodesTool::new();
+        assert_eq!(tool.name(), "nodes");
+        let schema = tool.parameters_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_nodes_tool_no_tailscale() {
+        let tool = NodesTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({ "action": "status" }),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Tailscale"));
+    }
+
+    #[tokio::test]
+    async fn test_nodes_tool_invalid_args() {
+        let tool = NodesTool::new();
+        let ctx = ToolContext::new("user", "conv");
+        let result = tool.execute(
+            serde_json::json!({}),
+            &ctx,
+        ).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid arguments"));
     }
 }

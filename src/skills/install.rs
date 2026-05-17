@@ -589,4 +589,67 @@ mod tests {
         };
         assert!(matches!(result, InstallResult::Failed { .. }));
     }
+
+    #[test]
+    fn test_install_result_already_present() {
+        use crate::skills::frontmatter::InstallSpec;
+        let spec = InstallSpec::Brew {
+            package: "test".to_string(),
+            tap: None,
+            binary: None,
+        };
+        let result = InstallResult::AlreadyPresent { spec };
+        assert!(matches!(result, InstallResult::AlreadyPresent { .. }));
+    }
+
+    #[test]
+    fn test_install_result_skipped() {
+        use crate::skills::frontmatter::InstallSpec;
+        let spec = InstallSpec::Go {
+            package: "test".to_string(),
+            binary: None,
+        };
+        let result = InstallResult::Skipped {
+            spec,
+            reason: "not supported".to_string(),
+        };
+        assert!(matches!(result, InstallResult::Skipped { .. }));
+        if let InstallResult::Skipped { reason, .. } = result {
+            assert_eq!(reason, "not supported");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_install_all_empty() {
+        let results = install_all(&[]).await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_install_all_with_specs() {
+        use crate::skills::frontmatter::InstallSpec;
+        let specs = vec![
+            InstallSpec::Shell {
+                command: "echo hello".to_string(),
+                binary: Some("this_binary_definitely_does_not_exist_12345".to_string()),
+            },
+        ];
+        let results = install_all(&specs).await;
+        assert_eq!(results.len(), 1);
+        let (spec, result) = &results[0];
+        assert!(matches!(spec, InstallSpec::Shell { .. }));
+        assert!(
+            matches!(result, InstallResult::Installed { .. }),
+            "Expected Installed but got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_archive_unsupported() {
+        let temp_file = std::env::temp_dir().join("manta_test_archive.xyz");
+        let temp_dir = std::env::temp_dir().join("manta_test_extract");
+        let result = extract_archive(&temp_file, &temp_dir, "rar").await;
+        assert!(result.is_err());
+    }
 }

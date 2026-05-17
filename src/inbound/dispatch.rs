@@ -184,4 +184,145 @@ mod tests {
         let result = dispatch.process(&msg, None).await;
         assert!(result.suppress);
     }
+
+    #[test]
+    fn test_dispatch_result_allow() {
+        let result = DispatchResult::allow();
+        assert!(!result.suppress);
+        assert!(result.workspace_hint.is_none());
+        assert!(result.plugin_binding.is_none());
+        assert!(result.suppress_reason.is_none());
+    }
+
+    #[test]
+    fn test_dispatch_result_suppress() {
+        let result = DispatchResult::suppress("blocked");
+        assert!(result.suppress);
+        assert_eq!(result.suppress_reason, Some("blocked".to_string()));
+        assert!(result.workspace_hint.is_none());
+    }
+
+    #[test]
+    fn test_auto_reply_dispatch_config_default() {
+        let config = AutoReplyDispatchConfig::default();
+        assert!(config.send_policy.is_none());
+        assert!(!config.suppress_unless_mentioned_in_groups);
+    }
+
+    #[tokio::test]
+    async fn test_send_policy_deny() {
+        let policy = crate::gateway::send_policy::SendPolicy::new(
+            crate::gateway::send_policy::DefaultPolicy::Allow,
+        );
+        policy.add_rule(
+            crate::gateway::send_policy::PolicyRule::deny("block-spam")
+                .condition(crate::gateway::send_policy::RuleCondition::ContentContains(
+                    "spam".to_string(),
+                )),
+        );
+
+        let mut config = AutoReplyDispatchConfig::default();
+        config.send_policy = Some(policy);
+        let dispatch = AutoReplyDispatch::new(config);
+
+        let msg = IncomingMessage::new("u1", "s1", "this is spam");
+        let result = dispatch.process(&msg, None).await;
+        assert!(result.suppress);
+        assert!(result
+            .suppress_reason
+            .as_ref()
+            .unwrap()
+            .contains("send policy denied"));
+    }
+
+    #[tokio::test]
+    async fn test_send_policy_silenced() {
+        let policy = crate::gateway::send_policy::SendPolicy::new(
+            crate::gateway::send_policy::DefaultPolicy::Allow,
+        );
+        policy.add_rule(
+            crate::gateway::send_policy::PolicyRule::silence("silent-rule")
+                .condition(crate::gateway::send_policy::RuleCondition::Any),
+        );
+
+        let mut config = AutoReplyDispatchConfig::default();
+        config.send_policy = Some(policy);
+        let dispatch = AutoReplyDispatch::new(config);
+
+        let msg = IncomingMessage::new("u1", "s1", "hello");
+        let result = dispatch.process(&msg, None).await;
+        assert!(result.suppress);
+        assert_eq!(result.suppress_reason, Some("send policy: silenced".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_suppress_group_with_mention() {
+        let mut config = AutoReplyDispatchConfig::default();
+        config.suppress_unless_mentioned_in_groups = true;
+        let dispatch = AutoReplyDispatch::new(config);
+
+        let mut msg = IncomingMessage::new("u1", "s1", "hello");
+        msg.provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: false,
+        };
+        msg.mention = crate::channels::MentionState::Mentioned;
+
+        let result = dispatch.process(&msg, None).await;
+        assert!(!result.suppress);
+    }
+
+    #[tokio::test]
+    async fn test_direct_message_not_suppressed() {
+        let mut config = AutoReplyDispatchConfig::default();
+        config.suppress_unless_mentioned_in_groups = true;
+        let dispatch = AutoReplyDispatch::new(config);
+
+        let mut msg = IncomingMessage::new("u1", "s1", "hello");
+        msg.provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: true,
+        };
+        msg.mention = crate::channels::MentionState::NotMentioned;
+
+        let result = dispatch.process(&msg, None).await;
+        assert!(!result.suppress);
+    }
+
+    #[test]
+    fn test_extract_workspace_mention_none() {
+        assert_eq!(
+            AutoReplyDispatch::extract_workspace_mention("hello world"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_workspace_mention_multiple() {
+        // Should return the first mention
+        assert_eq!(
+            AutoReplyDispatch::extract_workspace_mention("check #dev and #prod"),
+            Some("dev".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_workspace_mention_punctuation() {
+        assert_eq!(
+            AutoReplyDispatch::extract_workspace_mention("see #dev!"),
+            Some("dev".to_string())
+        );
+        assert_eq!(
+            AutoReplyDispatch::extract_workspace_mention("go to #my-workspace."),
+            Some("my-workspace".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_workspace_mention_empty() {
+        assert_eq!(
+            AutoReplyDispatch::extract_workspace_mention("just #"),
+            None
+        );
+    }
 }

@@ -283,4 +283,156 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].actor, "user1");
     }
+
+    #[test]
+    fn test_default_creates_in_memory_log() {
+        let log: PersistentAuditLog = Default::default();
+        assert!(log.pool.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_new_is_empty() {
+        let log = PersistentAuditLog::new();
+        assert_eq!(log.len().await, 0);
+        assert!(log.recent(10).await.is_empty());
+        assert!(log.all().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_log_and_recent_ordering() {
+        let log = PersistentAuditLog::new();
+        log.log(AuditEventType::AccessCheck, "a", "t1", true, "first", None).await;
+        log.log(AuditEventType::ToolInvocation, "b", "t2", true, "second", None).await;
+        log.log(AuditEventType::Security, "c", "t3", false, "third", None).await;
+
+        let entries = log.recent(10).await;
+        assert_eq!(entries.len(), 3);
+        // recent() returns newest first
+        assert_eq!(entries[0].actor, "c");
+        assert_eq!(entries[1].actor, "b");
+        assert_eq!(entries[2].actor, "a");
+    }
+
+    #[tokio::test]
+    async fn test_recent_limit() {
+        let log = PersistentAuditLog::new();
+        for i in 0..5 {
+            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None).await;
+        }
+        let entries = log.recent(2).await;
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].actor, "u4");
+        assert_eq!(entries[1].actor, "u3");
+    }
+
+    #[tokio::test]
+    async fn test_all_returns_oldest_first() {
+        let log = PersistentAuditLog::new();
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "first", None).await;
+        log.log(AuditEventType::AccessCheck, "b", "t", true, "second", None).await;
+
+        let entries = log.all().await;
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].actor, "a");
+        assert_eq!(entries[1].actor, "b");
+    }
+
+    #[tokio::test]
+    async fn test_filter_by_event_type() {
+        let log = PersistentAuditLog::new();
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "ac", None).await;
+        log.log(AuditEventType::ToolInvocation, "b", "t", true, "ti", None).await;
+        log.log(AuditEventType::AccessCheck, "c", "t", false, "ac2", None).await;
+
+        let filtered = log.filter(AuditEventType::AccessCheck).await;
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|e| e.event_type == AuditEventType::AccessCheck));
+
+        let filtered = log.filter(AuditEventType::ToolInvocation).await;
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].actor, "b");
+    }
+
+    #[tokio::test]
+    async fn test_len_and_clear() {
+        let log = PersistentAuditLog::new();
+        assert_eq!(log.len().await, 0);
+
+        log.log(AuditEventType::Security, "x", "t", true, "msg", None).await;
+        assert_eq!(log.len().await, 1);
+
+        log.clear().await;
+        assert_eq!(log.len().await, 0);
+        assert!(log.recent(10).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_export_json() {
+        let log = PersistentAuditLog::new();
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "ok", Some(serde_json::json!({"key": "val"}))).await;
+
+        let json_str = log.export_json().await.unwrap();
+        assert!(json_str.contains("a"));
+        assert!(json_str.contains("ok"));
+        // Should be valid JSON
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_log_with_details() {
+        let log = PersistentAuditLog::new();
+        let details = Some(serde_json::json!({"ip": "1.2.3.4", "reason": "test"}));
+        log.log(AuditEventType::ConfigChange, "admin", "system", true, "updated", details.clone()).await;
+
+        let entries = log.recent(1).await;
+        assert_eq!(entries[0].details, details);
+        assert_eq!(entries[0].description, "updated");
+        assert!(entries[0].allowed);
+    }
+
+    #[tokio::test]
+    async fn test_query_range_no_pool_returns_empty() {
+        let log = PersistentAuditLog::new();
+        let start = chrono::Utc::now() - chrono::Duration::hours(1);
+        let end = chrono::Utc::now();
+        let results = log.query_range(start, end, 100).await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_capacity_eviction() {
+        let mut log = PersistentAuditLog::new();
+        log.memory_capacity = 3; // Small capacity for testing
+
+        for i in 0..5 {
+            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None).await;
+        }
+
+        assert_eq!(log.len().await, 3);
+        let all = log.all().await;
+        assert_eq!(all[0].actor, "u2"); // oldest remaining
+        assert_eq!(all[2].actor, "u4"); // newest
+    }
+
+    #[tokio::test]
+    async fn test_multiple_event_type_variants() {
+        let log = PersistentAuditLog::new();
+        let types = vec![
+            AuditEventType::AccessCheck,
+            AuditEventType::PairingRequest,
+            AuditEventType::PairingApprove,
+            AuditEventType::PairingReject,
+            AuditEventType::PairingRevoke,
+            AuditEventType::CommandGate,
+            AuditEventType::ConfigChange,
+            AuditEventType::ToolInvocation,
+            AuditEventType::ToolDeny,
+            AuditEventType::Security,
+        ];
+        for (i, t) in types.iter().enumerate() {
+            log.log(t.clone(), format!("user{}", i), "target", i % 2 == 0, "desc", None).await;
+        }
+        assert_eq!(log.len().await, 10);
+    }
 }
