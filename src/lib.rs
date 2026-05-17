@@ -31,6 +31,7 @@
 // rust_2018_idioms disabled to avoid elided_lifetime_in_paths noise
 // Documentation warnings allowed - public APIs are documented as needed
 #![allow(missing_docs)]
+#![recursion_limit = "256"]
 // Unsafe code is allowed only for platform-specific resource limits
 // All unsafe blocks are documented and justified
 

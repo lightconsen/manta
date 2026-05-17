@@ -47,6 +47,46 @@ pub enum BrowserAction {
     Forward,
     /// Reload the page
     Reload,
+    /// Get all cookies for the current page
+    GetCookies,
+    /// Set a cookie
+    SetCookie {
+        name: String,
+        value: String,
+        domain: Option<String>,
+        path: Option<String>,
+    },
+    /// Clear all cookies
+    ClearCookies,
+    /// Print page to PDF
+    PrintToPdf {
+        landscape: Option<bool>,
+        display_header_footer: Option<bool>,
+        print_background: Option<bool>,
+        scale: Option<f64>,
+        paper_width: Option<f64>,
+        paper_height: Option<f64>,
+        margin_top: Option<f64>,
+        margin_bottom: Option<f64>,
+        margin_left: Option<f64>,
+        margin_right: Option<f64>,
+        page_ranges: Option<String>,
+    },
+    /// Get performance metrics
+    GetPerformanceMetrics,
+    /// Get network request log via Performance API
+    GetNetworkLog,
+    /// Set mobile device emulation
+    EmulateMobile {
+        device_name: String,
+    },
+    /// Set viewport size dynamically
+    SetViewport {
+        width: u32,
+        height: u32,
+        device_scale_factor: Option<f64>,
+        mobile: Option<bool>,
+    },
 }
 
 /// Browser tool for web automation
@@ -372,6 +412,205 @@ impl BrowserTool {
                     Ok(_) => Ok(json!({ "success": true, "action": "reload" })),
                     Err(e) => Err(format!("Failed to reload: {}", e)),
                 },
+
+                BrowserAction::GetCookies => {
+                    let script = r#"() => {
+                        return document.cookie.split(';').map(c => {
+                            const [name, ...rest] = c.trim().split('=');
+                            return { name: name.trim(), value: rest.join('=') };
+                        }).filter(c => c.name);
+                    }"#;
+                    match page.evaluate(script).await {
+                        Ok(result) => {
+                            let cookies = result.into_value::<Vec<Value>>().unwrap_or_default();
+                            Ok(json!({
+                                "success": true,
+                                "cookies": cookies,
+                                "count": cookies.len()
+                            }))
+                        }
+                        Err(e) => Err(format!("Failed to get cookies: {}", e)),
+                    }
+                }
+
+                BrowserAction::SetCookie { name, value, domain, path } => {
+                    let domain_part = domain.as_ref().map(|d| format!("domain={};", d)).unwrap_or_default();
+                    let path_part = path.as_ref().map(|p| format!("path={};", p)).unwrap_or_default();
+                    let cookie_str = format!("{}={};{}{}", name, value, domain_part, path_part);
+                    let script = format!(r#"() => {{ document.cookie = "{}"; return true; }}"#, cookie_str);
+                    match page.evaluate(&script).await {
+                        Ok(_) => Ok(json!({
+                            "success": true,
+                            "name": name,
+                            "value": value
+                        })),
+                        Err(e) => Err(format!("Failed to set cookie: {}", e)),
+                    }
+                }
+
+                BrowserAction::ClearCookies => {
+                    let script = r#"() => {
+                        document.cookie.split(';').forEach(c => {
+                            const [name] = c.split('=');
+                            document.cookie = name.trim() + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+                        });
+                        return document.cookie === '';
+                    }"#;
+                    match page.evaluate(script).await {
+                        Ok(result) => {
+                            let cleared = result.into_value::<bool>().unwrap_or(false);
+                            Ok(json!({ "success": true, "cleared": cleared }))
+                        }
+                        Err(e) => Err(format!("Failed to clear cookies: {}", e)),
+                    }
+                }
+
+                BrowserAction::PrintToPdf {
+                    landscape,
+                    display_header_footer,
+                    print_background,
+                    scale,
+                    paper_width,
+                    paper_height,
+                    margin_top,
+                    margin_bottom,
+                    margin_left,
+                    margin_right,
+                    page_ranges,
+                } => {
+                    use chromiumoxide::cdp::browser_protocol::page::PrintToPdfParams;
+
+                    let mut params = PrintToPdfParams::default();
+                    if let Some(v) = landscape { params.landscape = Some(v); }
+                    if let Some(v) = display_header_footer { params.display_header_footer = Some(v); }
+                    if let Some(v) = print_background { params.print_background = Some(v); }
+                    if let Some(v) = scale { params.scale = Some(v); }
+                    if let Some(v) = paper_width { params.paper_width = Some(v); }
+                    if let Some(v) = paper_height { params.paper_height = Some(v); }
+                    if let Some(v) = margin_top { params.margin_top = Some(v); }
+                    if let Some(v) = margin_bottom { params.margin_bottom = Some(v); }
+                    if let Some(v) = margin_left { params.margin_left = Some(v); }
+                    if let Some(v) = margin_right { params.margin_right = Some(v); }
+                    if let Some(ref v) = page_ranges { params.page_ranges = Some(v.clone()); }
+
+                    match page.pdf(Some(params)).await {
+                        Ok(data) => {
+                            let base64 = base64::encode(&data);
+                            Ok(json!({
+                                "success": true,
+                                "format": "pdf",
+                                "base64_length": base64.len(),
+                                "data": format!("data:application/pdf;base64,{}", base64)
+                            }))
+                        }
+                        Err(e) => Err(format!("Failed to print PDF: {}", e)),
+                    }
+                }
+
+                BrowserAction::GetPerformanceMetrics => {
+                    let script = r#"() => {
+                        const nav = performance.getEntriesByType('navigation')[0] || {};
+                        return {
+                            navigation: {
+                                dns_lookup: nav.domainLookupEnd - nav.domainLookupStart,
+                                connection_time: nav.connectEnd - nav.connectStart,
+                                response_time: nav.responseEnd - nav.responseStart,
+                                dom_interactive: nav.domInteractive,
+                                dom_complete: nav.domComplete,
+                                load_event: nav.loadEventEnd - nav.loadEventStart,
+                                transfer_size: nav.transferSize,
+                                decoded_body_size: nav.decodedBodySize
+                            },
+                            memory: performance.memory ? {
+                                used_js_heap_size: performance.memory.usedJSHeapSize,
+                                total_js_heap_size: performance.memory.totalJSHeapSize,
+                                js_heap_size_limit: performance.memory.jsHeapSizeLimit
+                            } : null
+                        };
+                    }"#;
+                    match page.evaluate(script).await {
+                        Ok(result) => {
+                            let metrics = result.value().cloned().unwrap_or(json!(null));
+                            Ok(json!({ "success": true, "metrics": metrics }))
+                        }
+                        Err(e) => Err(format!("Failed to get performance metrics: {}", e)),
+                    }
+                }
+
+                BrowserAction::GetNetworkLog => {
+                    let script = r#"() => {
+                        return performance.getEntriesByType('resource').map(r => ({
+                            name: r.name,
+                            initiator_type: r.initiatorType,
+                            duration: r.duration,
+                            transfer_size: r.transferSize,
+                            encoded_body_size: r.encodedBodySize,
+                            decoded_body_size: r.decodedBodySize,
+                            start_time: r.startTime
+                        }));
+                    }"#;
+                    match page.evaluate(script).await {
+                        Ok(result) => {
+                            let entries = result.into_value::<Vec<Value>>().unwrap_or_default();
+                            Ok(json!({
+                                "success": true,
+                                "entries": entries,
+                                "count": entries.len()
+                            }))
+                        }
+                        Err(e) => Err(format!("Failed to get network log: {}", e)),
+                    }
+                }
+
+                BrowserAction::EmulateMobile { device_name } => {
+                    let (width, height, dpr, mobile, ua) = match device_name.to_lowercase().as_str() {
+                        "iphone_x" | "iphonex" => (375, 812, 3.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
+                        "iphone_12" | "iphone12" => (390, 844, 3.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
+                        "pixel_5" | "pixel5" => (393, 851, 2.75, true, "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"),
+                        "ipad" => (810, 1080, 2.0, true, "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
+                        _ => (375, 667, 2.0, true, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"),
+                    };
+
+                    let viewport = chromiumoxide::handler::viewport::Viewport {
+                        width,
+                        height,
+                        device_scale_factor: Some(dpr),
+                        emulating_mobile: mobile,
+                        is_landscape: false,
+                        has_touch: mobile,
+                    };
+
+                    match page.set_viewport(viewport).await {
+                        Ok(_) => {
+                            let ua_script = format!(r#"() => {{ Object.defineProperty(navigator, 'userAgent', {{ value: '{}', configurable: true }}); return true; }}"#, ua);
+                            page.evaluate(&ua_script).await.ok();
+                            Ok(json!({
+                                "success": true,
+                                "device": device_name,
+                                "viewport": { "width": width, "height": height, "device_scale_factor": dpr, "mobile": mobile }
+                            }))
+                        }
+                        Err(e) => Err(format!("Failed to emulate mobile device: {}", e)),
+                    }
+                }
+
+                BrowserAction::SetViewport { width, height, device_scale_factor, mobile } => {
+                    let viewport = chromiumoxide::handler::viewport::Viewport {
+                        width,
+                        height,
+                        device_scale_factor,
+                        emulating_mobile: mobile.unwrap_or(false),
+                        is_landscape: width > height,
+                        has_touch: mobile.unwrap_or(false),
+                    };
+                    match page.set_viewport(viewport).await {
+                        Ok(_) => Ok(json!({
+                            "success": true,
+                            "viewport": { "width": width, "height": height }
+                        })),
+                        Err(e) => Err(format!("Failed to set viewport: {}", e)),
+                    }
+                }
             };
 
             results.push(result);
@@ -564,6 +803,93 @@ impl Tool for BrowserTool {
                                 "properties": {
                                     "Reload": { "type": "object", "properties": {} }
                                 }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "GetCookies": { "type": "object", "properties": {} }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "SetCookie": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": { "type": "string", "description": "Cookie name" },
+                                            "value": { "type": "string", "description": "Cookie value" },
+                                            "domain": { "type": "string", "description": "Optional cookie domain" },
+                                            "path": { "type": "string", "description": "Optional cookie path" }
+                                        },
+                                        "required": ["name", "value"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "ClearCookies": { "type": "object", "properties": {} }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "PrintToPdf": {
+                                        "type": "object",
+                                        "properties": {
+                                            "landscape": { "type": "boolean", "description": "Landscape orientation" },
+                                            "display_header_footer": { "type": "boolean", "description": "Show header/footer" },
+                                            "print_background": { "type": "boolean", "description": "Print background graphics" },
+                                            "scale": { "type": "number", "description": "Scale factor (0.1-2.0)" },
+                                            "paper_width": { "type": "number", "description": "Paper width in inches" },
+                                            "paper_height": { "type": "number", "description": "Paper height in inches" },
+                                            "margin_top": { "type": "number", "description": "Top margin in inches" },
+                                            "margin_bottom": { "type": "number", "description": "Bottom margin in inches" },
+                                            "margin_left": { "type": "number", "description": "Left margin in inches" },
+                                            "margin_right": { "type": "number", "description": "Right margin in inches" },
+                                            "page_ranges": { "type": "string", "description": "Page ranges to print (e.g., '1-5, 8, 11-13')" }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "GetPerformanceMetrics": { "type": "object", "properties": {} }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "GetNetworkLog": { "type": "object", "properties": {} }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "EmulateMobile": {
+                                        "type": "object",
+                                        "properties": {
+                                            "device_name": { "type": "string", "enum": ["iphone_x", "iphone_12", "pixel_5", "ipad"], "description": "Device to emulate" }
+                                        },
+                                        "required": ["device_name"]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "SetViewport": {
+                                        "type": "object",
+                                        "properties": {
+                                            "width": { "type": "integer", "description": "Viewport width in pixels" },
+                                            "height": { "type": "integer", "description": "Viewport height in pixels" },
+                                            "device_scale_factor": { "type": "number", "description": "Device scale factor (DPR)" },
+                                            "mobile": { "type": "boolean", "description": "Enable mobile emulation" }
+                                        },
+                                        "required": ["width", "height"]
+                                    }
+                                }
                             }
                         ]
                     }
@@ -672,5 +998,96 @@ mod tests {
         let ctx = ToolContext::default();
         let result = tool.execute(json!({"actions": []}), &ctx).await.unwrap();
         assert!(!result.success);
+    }
+
+    #[test]
+    fn test_browser_action_new_variants_serialization() {
+        let get_cookies = BrowserAction::GetCookies;
+        let json = serde_json::to_string(&get_cookies).unwrap();
+        assert!(json.contains("get_cookies"));
+
+        let set_cookie = BrowserAction::SetCookie {
+            name: "session".to_string(),
+            value: "abc123".to_string(),
+            domain: Some(".example.com".to_string()),
+            path: Some("/".to_string()),
+        };
+        let json = serde_json::to_string(&set_cookie).unwrap();
+        assert!(json.contains("set_cookie"));
+        assert!(json.contains("session"));
+        assert!(json.contains("abc123"));
+
+        let clear_cookies = BrowserAction::ClearCookies;
+        let json = serde_json::to_string(&clear_cookies).unwrap();
+        assert!(json.contains("clear_cookies"));
+
+        let pdf = BrowserAction::PrintToPdf {
+            landscape: Some(true),
+            display_header_footer: Some(false),
+            print_background: Some(true),
+            scale: Some(1.5),
+            paper_width: Some(8.5),
+            paper_height: Some(11.0),
+            margin_top: Some(0.5),
+            margin_bottom: Some(0.5),
+            margin_left: Some(0.5),
+            margin_right: Some(0.5),
+            page_ranges: Some("1-3".to_string()),
+        };
+        let json = serde_json::to_string(&pdf).unwrap();
+        assert!(json.contains("print_to_pdf"));
+        assert!(json.contains("1.5"));
+
+        let perf = BrowserAction::GetPerformanceMetrics;
+        let json = serde_json::to_string(&perf).unwrap();
+        assert!(json.contains("get_performance_metrics"));
+
+        let net = BrowserAction::GetNetworkLog;
+        let json = serde_json::to_string(&net).unwrap();
+        assert!(json.contains("get_network_log"));
+
+        let mobile = BrowserAction::EmulateMobile {
+            device_name: "iphone_x".to_string(),
+        };
+        let json = serde_json::to_string(&mobile).unwrap();
+        assert!(json.contains("emulate_mobile"));
+        assert!(json.contains("iphone_x"));
+
+        let viewport = BrowserAction::SetViewport {
+            width: 1920,
+            height: 1080,
+            device_scale_factor: Some(2.0),
+            mobile: Some(false),
+        };
+        let json = serde_json::to_string(&viewport).unwrap();
+        assert!(json.contains("set_viewport"));
+        assert!(json.contains("1920"));
+    }
+
+    #[test]
+    fn test_browser_action_deserialization_new_variants() {
+        // Unit variants serialize as {"variant": null}
+        let get_cookies: BrowserAction = serde_json::from_value(json!({"get_cookies": null})).unwrap();
+        assert!(matches!(get_cookies, BrowserAction::GetCookies));
+
+        let set_cookie: BrowserAction = serde_json::from_value(json!({
+            "set_cookie": { "name": "foo", "value": "bar", "domain": "example.com" }
+        })).unwrap();
+        assert!(matches!(set_cookie, BrowserAction::SetCookie { ref name, ref value, .. } if name == "foo" && value == "bar"));
+
+        let pdf: BrowserAction = serde_json::from_value(json!({
+            "print_to_pdf": { "landscape": true, "scale": 1.2 }
+        })).unwrap();
+        assert!(matches!(pdf, BrowserAction::PrintToPdf { landscape: Some(true), scale: Some(1.2), .. }));
+
+        let mobile: BrowserAction = serde_json::from_value(json!({
+            "emulate_mobile": { "device_name": "pixel_5" }
+        })).unwrap();
+        assert!(matches!(mobile, BrowserAction::EmulateMobile { ref device_name } if device_name == "pixel_5"));
+
+        let viewport: BrowserAction = serde_json::from_value(json!({
+            "set_viewport": { "width": 800, "height": 600, "mobile": true }
+        })).unwrap();
+        assert!(matches!(viewport, BrowserAction::SetViewport { width: 800, height: 600, mobile: Some(true), .. }));
     }
 }
