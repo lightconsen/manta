@@ -1392,4 +1392,118 @@ mod tests {
         let state = CircuitState::default();
         assert_eq!(state, CircuitState::Closed);
     }
+
+    #[tokio::test]
+    async fn get_provider_health_returns_info() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let config = ProviderConfig {
+            provider_type: ProviderType::Anthropic,
+            api_key: "test-key".to_string(),
+            api_keys: vec![],
+            auth_profile: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        router.add_provider("p1", config).await.unwrap();
+
+        let health = router.get_provider_health("p1").await;
+        assert!(health.is_some());
+        let info = health.unwrap();
+        assert_eq!(info.state, "Closed");
+        assert_eq!(info.failures, 0);
+        assert_eq!(info.successes, 0);
+        assert_eq!(info.avg_latency_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn get_provider_health_unknown_returns_none() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let health = router.get_provider_health("nonexistent").await;
+        assert!(health.is_none());
+    }
+
+    #[tokio::test]
+    async fn check_provider_health_unknown_fails() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router.check_provider_health("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn provider_list_includes_circuit_state() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            api_key: "key".to_string(),
+            api_keys: vec![],
+            auth_profile: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        router.add_provider("p1", config).await.unwrap();
+        let providers = router.list_providers().await;
+        assert_eq!(providers[0].circuit_state, CircuitState::Closed);
+
+        router.disable_provider("p1").await.unwrap();
+        let providers = router.list_providers().await;
+        assert_eq!(providers[0].circuit_state, CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_set_and_clear() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+
+        // Set chain
+        router
+            .set_fallback_chain("default", vec!["a".to_string(), "b".to_string()])
+            .await
+            .unwrap();
+        let chain = router.get_fallback_chain("default").await;
+        assert_eq!(chain, vec!["a", "b"]);
+
+        // Clear by setting empty
+        router
+            .set_fallback_chain("default", vec![])
+            .await
+            .unwrap();
+        let chain = router.get_fallback_chain("default").await;
+        assert!(chain.is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_fallback_chain_unknown_alias_fails() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router
+            .set_fallback_chain("nonexistent", vec!["a".to_string()])
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn switch_default_model_persists() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+
+        router.switch_default_model("fast").await.unwrap();
+        assert_eq!(router.get_default_model().await, "fast");
+
+        router.switch_default_model("smart").await.unwrap();
+        assert_eq!(router.get_default_model().await, "smart");
+
+        // Switch back
+        router.switch_default_model("default").await.unwrap();
+        assert_eq!(router.get_default_model().await, "default");
+    }
+
+    #[tokio::test]
+    async fn default_model_is_default_alias() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let default = router.get_default_model().await;
+        assert_eq!(default, "default");
+    }
 }

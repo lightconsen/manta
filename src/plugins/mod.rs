@@ -276,6 +276,178 @@ Edit `config.json` to customize settings.
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn new_creates_empty_manager() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+        let plugins = manager.list_plugins().await;
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_template_creates_manifest() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("test-plugin", "A test plugin").await.unwrap();
+        assert!(path.join("plugin.json").exists());
+        assert!(path.join("config.json").exists());
+        assert!(path.join("README.md").exists());
+    }
+
+    #[tokio::test]
+    async fn initialize_loads_plugins_from_disk() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        // Create two plugin templates
+        manager.create_template("plugin-a", "Plugin A").await.unwrap();
+        manager.create_template("plugin-b", "Plugin B").await.unwrap();
+
+        let count = manager.initialize().await.unwrap();
+        assert_eq!(count, 2);
+
+        let plugins = manager.list_plugins().await;
+        assert_eq!(plugins.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn load_and_unload_plugin() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("load-test", "Load test").await.unwrap();
+        let id = manager.load_plugin(&path).await.unwrap();
+        assert_eq!(id, "com.example.load-test");
+
+        let plugins = manager.list_plugins().await;
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].name(), "load-test");
+
+        let unloaded = manager.unload_plugin(&id).await.unwrap();
+        assert!(unloaded);
+
+        let plugins = manager.list_plugins().await;
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_plugin_returns_some_when_exists() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("get-test", "Get test").await.unwrap();
+        let id = manager.load_plugin(&path).await.unwrap();
+
+        let plugin = manager.get_plugin(&id).await;
+        assert!(plugin.is_some());
+        assert_eq!(plugin.unwrap().name(), "get-test");
+
+        let missing = manager.get_plugin("nonexistent").await;
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_enabled_toggles_plugin() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("toggle-test", "Toggle test").await.unwrap();
+        let id = manager.load_plugin(&path).await.unwrap();
+
+        let plugin = manager.get_plugin(&id).await.unwrap();
+        assert!(plugin.enabled);
+
+        manager.set_enabled(&id, false).await.unwrap();
+        let plugin = manager.get_plugin(&id).await.unwrap();
+        assert!(!plugin.enabled);
+
+        manager.set_enabled(&id, true).await.unwrap();
+        let plugin = manager.get_plugin(&id).await.unwrap();
+        assert!(plugin.enabled);
+    }
+
+    #[tokio::test]
+    async fn set_enabled_unknown_plugin_fails() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let result = manager.set_enabled("nonexistent", false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn reload_plugin_updates_manifest() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("reload-test", "Reload test").await.unwrap();
+        let id = manager.load_plugin(&path).await.unwrap();
+
+        // Modify manifest on disk
+        let manifest_path = path.join("plugin.json");
+        let mut manifest: PluginManifest = {
+            let content = tokio::fs::read_to_string(&manifest_path).await.unwrap();
+            serde_json::from_str(&content).unwrap()
+        };
+        manifest.description = "Updated description".to_string();
+        tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap())
+            .await
+            .unwrap();
+
+        let reloaded_id = manager.reload_plugin(&id).await.unwrap();
+        assert_eq!(reloaded_id, id);
+
+        let plugin = manager.get_plugin(&id).await.unwrap();
+        assert_eq!(plugin.manifest.description, "Updated description");
+    }
+
+    #[tokio::test]
+    async fn reload_unknown_plugin_fails() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let result = manager.reload_plugin("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn hook_registry_is_empty_by_default() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let hooks = manager.hook_registry().list_hooks().await;
+        assert!(hooks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_clears_plugins() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let path = manager.create_template("shutdown-test", "Shutdown test").await.unwrap();
+        manager.load_plugin(&path).await.unwrap();
+
+        manager.shutdown().await.unwrap();
+        let plugins = manager.list_plugins().await;
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unload_unknown_plugin_returns_false() {
+        let tmp = tempdir().unwrap();
+        let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
+
+        let result = manager.unload_plugin("nonexistent").await.unwrap();
+        assert!(!result);
+    }
+}
+
 /// Plugin tool wrapper - adapts plugin tools to Manta's Tool trait
 use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
