@@ -226,4 +226,64 @@ mod tests {
         assert!(text.contains("attachments"));
         assert!(text.contains("cat"));
     }
+
+    #[tokio::test]
+    async fn test_classify_audio() {
+        let pipeline = MediaUnderstandingPipeline::new();
+        let attachment = Attachment::new("song.mp3", "audio/mpeg");
+        let result = pipeline
+            .process_attachment(&attachment, MediaCapability::Audio)
+            .await;
+        assert!(result.description.contains("Audio"));
+    }
+
+    #[tokio::test]
+    async fn test_classify_video() {
+        let pipeline = MediaUnderstandingPipeline::new();
+        let attachment = Attachment::new("clip.mp4", "video/mp4");
+        let result = pipeline
+            .process_attachment(&attachment, MediaCapability::Video)
+            .await;
+        assert!(result.description.contains("Video"));
+    }
+
+    #[tokio::test]
+    async fn test_classify_file() {
+        let pipeline = MediaUnderstandingPipeline::new();
+        let attachment = Attachment::new("doc.pdf", "application/pdf");
+        let result = pipeline
+            .process_attachment(&attachment, MediaCapability::File)
+            .await;
+        assert!(result.description.contains("File"));
+    }
+
+    #[test]
+    fn test_format_combined_empty() {
+        let text = MediaUnderstandingPipeline::format_combined_text(&[]);
+        assert!(text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_message_no_attachments() {
+        let pipeline = MediaUnderstandingPipeline::new();
+        let msg = IncomingMessage::new("u1", "s1", "hello");
+        let result = pipeline.process(&msg).await;
+        assert!(result.attachment_results.is_empty());
+        assert!(result.combined_text.is_empty());
+    }
+
+    #[test]
+    fn test_classify_attachment_types() {
+        let img = Attachment::new("pic.jpg", "image/jpeg");
+        assert_eq!(MediaUnderstandingPipeline::classify_attachment(&img), MediaCapability::Image);
+
+        let aud = Attachment::new("sound.wav", "audio/wav");
+        assert_eq!(MediaUnderstandingPipeline::classify_attachment(&aud), MediaCapability::Audio);
+
+        let vid = Attachment::new("movie.mkv", "video/x-matroska");
+        assert_eq!(MediaUnderstandingPipeline::classify_attachment(&vid), MediaCapability::Video);
+
+        let file = Attachment::new("data.zip", "application/zip");
+        assert_eq!(MediaUnderstandingPipeline::classify_attachment(&file), MediaCapability::File);
+    }
 }

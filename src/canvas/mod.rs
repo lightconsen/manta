@@ -570,4 +570,335 @@ mod tests {
             _ => panic!("Expected container"),
         }
     }
+
+    #[test]
+    fn test_button_serialization() {
+        let btn = CanvasComponent::Button {
+            id: "btn1".to_string(),
+            label: "Click me".to_string(),
+            variant: Some("primary".to_string()),
+            disabled: Some(false),
+        };
+        let json = serde_json::to_string(&btn).unwrap();
+        assert!(json.contains("button"));
+        assert!(json.contains("Click me"));
+        assert!(json.contains("primary"));
+    }
+
+    #[test]
+    fn test_input_serialization() {
+        let input = CanvasComponent::Input {
+            id: "input1".to_string(),
+            label: Some("Username".to_string()),
+            placeholder: Some("Enter username".to_string()),
+            value: None,
+            input_type: Some("text".to_string()),
+            required: Some(true),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("input"));
+        assert!(json.contains("Username"));
+    }
+
+    #[test]
+    fn test_progress_serialization() {
+        let progress = CanvasComponent::Progress {
+            id: "prog1".to_string(),
+            value: 42.0,
+            max: Some(100.0),
+            label: Some("Loading".to_string()),
+        };
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("progress"));
+        assert!(json.contains("42"));
+    }
+
+    #[test]
+    fn test_table_serialization() {
+        let table = CanvasComponent::Table {
+            id: "tbl1".to_string(),
+            headers: vec!["Name".to_string(), "Value".to_string()],
+            rows: vec![vec!["A".to_string(), "1".to_string()]],
+        };
+        let json = serde_json::to_string(&table).unwrap();
+        assert!(json.contains("table"));
+        assert!(json.contains("Name"));
+        assert!(json.contains("Value"));
+    }
+
+    #[test]
+    fn test_alert_serialization() {
+        let alert = CanvasComponent::Alert {
+            id: "alert1".to_string(),
+            level: "error".to_string(),
+            message: "Something went wrong".to_string(),
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        assert!(json.contains("alert"));
+        assert!(json.contains("error"));
+    }
+
+    #[test]
+    fn test_select_option_serialization() {
+        let opt = SelectOption {
+            value: "opt1".to_string(),
+            label: "Option 1".to_string(),
+        };
+        let json = serde_json::to_string(&opt).unwrap();
+        assert!(json.contains("opt1"));
+        assert!(json.contains("Option 1"));
+    }
+
+    #[test]
+    fn test_canvas_event_serialization() {
+        let event = CanvasEvent::ButtonClick {
+            component_id: "btn1".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("button_click"));
+        assert!(json.contains("btn1"));
+    }
+
+    #[test]
+    fn test_canvas_event_form_submit() {
+        let mut values = HashMap::new();
+        values.insert("name".to_string(), serde_json::json!("test"));
+        let event = CanvasEvent::FormSubmit {
+            component_id: "form1".to_string(),
+            values,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("form_submit"));
+        assert!(json.contains("form1"));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_create_and_get_session() {
+        let manager = CanvasManager::new();
+        let (tx, _rx) = mpsc::channel(10);
+
+        let session = manager.create_session(tx).await;
+        assert!(!session.id.0.is_empty());
+
+        let retrieved = manager.get_session(&session.id).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id.0, session.id.0);
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_list_sessions() {
+        let manager = CanvasManager::new();
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+
+        let s1 = manager.create_session(tx1).await;
+        let s2 = manager.create_session(tx2).await;
+
+        let list = manager.list_sessions().await;
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|id| id.0 == s1.id.0));
+        assert!(list.iter().any(|id| id.0 == s2.id.0));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_remove_session() {
+        let manager = CanvasManager::new();
+        let (tx, _rx) = mpsc::channel(10);
+
+        let session = manager.create_session(tx).await;
+        manager.remove_session(&session.id).await;
+
+        let retrieved = manager.get_session(&session.id).await;
+        assert!(retrieved.is_none());
+
+        let list = manager.list_sessions().await;
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_get_or_create_for_session() {
+        let manager = CanvasManager::new();
+
+        let session1 = manager.get_or_create_for_session("conv-123").await;
+        let session2 = manager.get_or_create_for_session("conv-123").await;
+
+        assert_eq!(session1.id.0, session2.id.0);
+
+        let session3 = manager.get_or_create_for_session("conv-456").await;
+        assert_ne!(session1.id.0, session3.id.0);
+    }
+
+    #[tokio::test]
+    async fn test_canvas_session_init_sends_update() {
+        let (tx, _rx) = mpsc::channel(10);
+        let session = CanvasSession::new(tx);
+
+        // Subscribe before sending
+        let mut rx = session.update_tx.subscribe();
+
+        let root = CanvasComponent::Text {
+            id: "root".to_string(),
+            content: "Hello".to_string(),
+            style: None,
+        };
+
+        session.init(root).await;
+
+        let update = rx.try_recv();
+        assert!(update.is_ok());
+        match update.unwrap() {
+            CanvasUpdate::Init { canvas_id, .. } => {
+                assert_eq!(canvas_id, session.id.0);
+            }
+            _ => panic!("Expected Init update"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_canvas_session_notify_sends_update() {
+        let (tx, _rx) = mpsc::channel(10);
+        let session = CanvasSession::new(tx);
+
+        // Subscribe before sending
+        let mut rx = session.update_tx.subscribe();
+
+        session.notify("info".to_string(), "Test message".to_string()).await;
+
+        let update = rx.try_recv();
+        assert!(update.is_ok());
+        match update.unwrap() {
+            CanvasUpdate::Notify { level, message } => {
+                assert_eq!(level, "info");
+                assert_eq!(message, "Test message");
+            }
+            _ => panic!("Expected Notify update"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_canvas_session_close_sends_update() {
+        let (tx, _rx) = mpsc::channel(10);
+        let session = CanvasSession::new(tx);
+
+        // Subscribe before sending
+        let mut rx = session.update_tx.subscribe();
+
+        session.close().await;
+
+        let update = rx.try_recv();
+        assert!(update.is_ok());
+        assert!(matches!(update.unwrap(), CanvasUpdate::Close));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_websocket_handle_message() {
+        let (event_tx, mut event_rx) = mpsc::channel(10);
+        let (update_tx, update_rx) = broadcast::channel(10);
+        let canvas_id = CanvasId::new();
+
+        let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
+
+        let msg = Message::Text(r#"{"event":"button_click","component_id":"btn1"}"#.to_string());
+        let result = handler.handle_message(msg).await;
+
+        assert!(result.is_some());
+        assert!(matches!(result.unwrap(), CanvasEvent::ButtonClick { .. }));
+
+        // Verify event was forwarded
+        let forwarded = event_rx.try_recv();
+        assert!(forwarded.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_websocket_handle_binary_returns_none() {
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let (update_tx, update_rx) = broadcast::channel(10);
+        let canvas_id = CanvasId::new();
+
+        let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
+
+        let msg = Message::Binary(vec![1, 2, 3]);
+        let result = handler.handle_message(msg).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_websocket_next_update() {
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let (update_tx, update_rx) = broadcast::channel(10);
+        let canvas_id = CanvasId::new();
+
+        let mut handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
+
+        let _ = update_tx.send(CanvasUpdate::Close);
+
+        let update = handler.next_update().await;
+        assert!(update.is_some());
+        assert!(matches!(update.unwrap(), CanvasUpdate::Close));
+    }
+
+    #[test]
+    fn test_helper_create_progress() {
+        let progress = helpers::create_progress("prog1", 75.0, Some("Loading...".to_string()));
+        match progress {
+            CanvasComponent::Progress { id, value, max, label } => {
+                assert_eq!(id, "prog1");
+                assert_eq!(value, 75.0);
+                assert_eq!(max, Some(100.0));
+                assert_eq!(label, Some("Loading...".to_string()));
+            }
+            _ => panic!("Expected progress"),
+        }
+    }
+
+    #[test]
+    fn test_helper_create_alert() {
+        let alert = helpers::create_alert("alert1", "warning", "Be careful");
+        match alert {
+            CanvasComponent::Alert { id, level, message } => {
+                assert_eq!(id, "alert1");
+                assert_eq!(level, "warning");
+                assert_eq!(message, "Be careful");
+            }
+            _ => panic!("Expected alert"),
+        }
+    }
+
+    #[test]
+    fn test_helper_create_button_group() {
+        let group = helpers::create_button_group("bg1", vec!["A".to_string(), "B".to_string()]);
+        match group {
+            CanvasComponent::Container { children, layout, .. } => {
+                assert_eq!(children.len(), 2);
+                assert!(matches!(layout, Some(ContainerLayout::Horizontal)));
+            }
+            _ => panic!("Expected container"),
+        }
+    }
+
+    #[test]
+    fn test_helper_create_code_block() {
+        let block = helpers::create_code_block("code1", "fn main() {}", Some("rust".to_string()));
+        match block {
+            CanvasComponent::Container { children, .. } => {
+                assert_eq!(children.len(), 2); // code + copy button
+            }
+            _ => panic!("Expected container"),
+        }
+    }
+
+    #[test]
+    fn test_container_layout_serialization() {
+        let layout = ContainerLayout::Grid { columns: 3 };
+        let json = serde_json::to_string(&layout).unwrap();
+        assert!(json.contains("grid"));
+    }
+
+    #[test]
+    fn test_text_style_default() {
+        let style = TextStyle { size: None, weight: None, color: None };
+        assert!(style.size.is_none());
+        assert!(style.weight.is_none());
+        assert!(style.color.is_none());
+    }
 }

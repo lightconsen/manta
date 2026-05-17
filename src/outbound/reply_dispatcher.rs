@@ -149,4 +149,28 @@ mod tests {
         let result = dispatcher.dispatch("missing", msg).await;
         assert!(matches!(result, Err(ReplyDispatchError::ChannelNotFound(_))));
     }
+
+    #[tokio::test]
+    async fn test_list_channels() {
+        let dispatcher = ReplyDispatcher::new(ReplyDispatchConfig::default());
+        assert!(dispatcher.list_channels().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_config_default() {
+        let config = ReplyDispatchConfig::default();
+        assert!(config.chunk_long_messages);
+        assert_eq!(config.max_chunk_length, 4000);
+        assert!(config.suppress_empty);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_empty_not_suppressed() {
+        let mut config = ReplyDispatchConfig::default();
+        config.suppress_empty = false;
+        let dispatcher = ReplyDispatcher::new(config);
+        let msg = dummy_msg("   ");
+        let result = dispatcher.dispatch("test", msg).await;
+        assert!(matches!(result, Err(ReplyDispatchError::ChannelNotFound(_))));
+    }
 }

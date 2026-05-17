@@ -584,4 +584,96 @@ mod tests {
         let plain = formatter.format(md);
         assert_eq!(plain, "bold and link (http://example.com)");
     }
+
+    #[test]
+    fn test_telegram_code_block() {
+        let formatter = TelegramHtmlFormatter::new();
+        let html = formatter.format_code_block("fn main() {}", Some("rust"));
+        assert!(html.contains("<pre>"));
+        assert!(html.contains("fn main()"));
+    }
+
+    #[test]
+    fn test_telegram_link() {
+        let formatter = TelegramHtmlFormatter::new();
+        let html = formatter.format_link("Click", "https://example.com");
+        assert!(html.contains("<a href=\"https://example.com\">"));
+        assert!(html.contains("Click"));
+    }
+
+    #[test]
+    fn test_telegram_mention() {
+        let formatter = TelegramHtmlFormatter::new();
+        let html = formatter.format_mention("12345");
+        assert!(html.contains("tg://user?id=12345"));
+    }
+
+    #[test]
+    fn test_discord_code_block() {
+        let formatter = DiscordFormatter::new();
+        let result = formatter.format_code_block("code", Some("rs"));
+        assert!(result.contains("```rs"));
+        assert!(result.contains("code"));
+    }
+
+    #[test]
+    fn test_discord_mention() {
+        let formatter = DiscordFormatter::new();
+        assert_eq!(formatter.format_mention("123"), "<@123>");
+    }
+
+    #[test]
+    fn test_discord_escape() {
+        let escaped = DiscordFormatter::escape_discord("*hello*");
+        assert_eq!(escaped, "\\*hello\\*");
+    }
+
+    #[test]
+    fn test_slack_link() {
+        let formatter = SlackFormatter::new();
+        let result = formatter.format_link("Text", "https://example.com");
+        assert_eq!(result, "<https://example.com|Text>");
+    }
+
+    #[test]
+    fn test_slack_mention() {
+        let formatter = SlackFormatter::new();
+        assert_eq!(formatter.format_mention("U123"), "<@U123>");
+    }
+
+    #[test]
+    fn test_slack_escape() {
+        let escaped = SlackFormatter::escape_slack("a < b");
+        assert_eq!(escaped, "a &lt; b");
+    }
+
+    #[test]
+    fn test_plain_text_strips_code_block() {
+        let formatter = PlainTextFormatter::new();
+        let md = "```rust\nfn main() {}\n```";
+        let plain = formatter.format(md);
+        assert!(plain.contains("fn main()"));
+        assert!(!plain.contains("```"));
+    }
+
+    #[test]
+    fn test_plain_text_strips_strikethrough() {
+        let formatter = PlainTextFormatter::new();
+        let md = "~~removed~~";
+        let plain = formatter.format(md);
+        assert_eq!(plain, "removed");
+    }
+
+    #[test]
+    fn test_plain_text_mention() {
+        let formatter = PlainTextFormatter::new();
+        assert_eq!(formatter.format_mention("user1"), "@user1");
+    }
+
+    #[test]
+    fn test_plain_text_link() {
+        let formatter = PlainTextFormatter::new();
+        let result = formatter.format_link("Site", "https://x.com");
+        assert_eq!(result, "Site (https://x.com)");
+    }
 }

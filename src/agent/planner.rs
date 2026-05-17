@@ -544,4 +544,136 @@ More text"#;
         let result2 = TaskPlanner::extract_json(text2).unwrap();
         assert!(result2.contains("\"direct\": \"json\""));
     }
+
+    #[test]
+    fn test_task_plan_current_task() {
+        let mut plan = TaskPlan::new("req", "goal");
+        assert!(plan.current_task().is_none());
+
+        plan.tasks.push(PlannedTask {
+            id: "t1".to_string(),
+            description: "First".to_string(),
+            complexity: 1,
+            dependencies: vec![],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+        assert_eq!(plan.current_task().unwrap().id, "t1");
+
+        plan.advance();
+        assert!(plan.is_complete);
+        // advance() keeps index at last position, so current_task still returns the last task
+        assert!(plan.current_task().is_some());
+    }
+
+    #[test]
+    fn test_task_plan_dependencies_met() {
+        let plan = TaskPlan::new("req", "goal");
+        let task = PlannedTask {
+            id: "t2".to_string(),
+            description: "Second".to_string(),
+            complexity: 2,
+            dependencies: vec!["t1".to_string(), "t3".to_string()],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        };
+
+        assert!(!plan.dependencies_met(&task, &["t1".to_string()]));
+        assert!(plan.dependencies_met(&task, &["t1".to_string(), "t3".to_string()]));
+        assert!(plan.dependencies_met(&task, &["t1".to_string(), "t3".to_string(), "t4".to_string()]));
+    }
+
+    #[test]
+    fn test_task_plan_format_summary() {
+        let mut plan = TaskPlan::new("req", "Build app");
+        plan.tasks.push(PlannedTask {
+            id: "t1".to_string(),
+            description: "Setup".to_string(),
+            complexity: 1,
+            dependencies: vec![],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+
+        let summary = plan.format_summary();
+        assert!(summary.contains("Build app"));
+        assert!(summary.contains("Setup"));
+        assert!(summary.contains("1/1"));
+    }
+
+    #[test]
+    fn test_extract_json_generic_code_block() {
+        let text = r#"```
+{"plain": "block"}
+```"#;
+        let result = TaskPlanner::extract_json(text).unwrap();
+        assert!(result.contains("\"plain\": \"block\""));
+    }
+
+    #[test]
+    fn test_extract_json_nested_braces() {
+        let text = r#"prefix {"outer": {"inner": 1}} suffix"#;
+        let result = TaskPlanner::extract_json(text).unwrap();
+        assert!(result.contains("\"outer\":"));
+    }
+
+    #[test]
+    fn test_active_plan_complete_and_advance() {
+        let mut plan = TaskPlan::new("req", "goal");
+        plan.tasks.push(PlannedTask {
+            id: "t1".to_string(),
+            description: "Task 1".to_string(),
+            complexity: 1,
+            dependencies: vec![],
+            suggested_tools: vec!["shell".to_string()],
+            expected_outcome: "Done".to_string(),
+        });
+        plan.tasks.push(PlannedTask {
+            id: "t2".to_string(),
+            description: "Task 2".to_string(),
+            complexity: 2,
+            dependencies: vec![],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+
+        let todos = TodoStore::new();
+        let mut active = ActivePlan { plan, todos, completed_tasks: vec![] };
+
+        assert!(active.current_task_prompt().is_some());
+        active.complete_current_task();
+        assert_eq!(active.completed_tasks, vec!["t1"]);
+        assert!(!active.plan.is_complete);
+
+        active.complete_current_task();
+        assert!(active.plan.is_complete);
+        assert_eq!(active.completed_tasks, vec!["t1", "t2"]);
+    }
+
+    #[test]
+    fn test_active_plan_prompt_content() {
+        let mut plan = TaskPlan::new("req", "goal");
+        plan.tasks.push(PlannedTask {
+            id: "t1".to_string(),
+            description: "Write code".to_string(),
+            complexity: 3,
+            dependencies: vec![],
+            suggested_tools: vec!["shell".to_string(), "file".to_string()],
+            expected_outcome: "Code written".to_string(),
+        });
+
+        let todos = TodoStore::new();
+        let active = ActivePlan { plan, todos, completed_tasks: vec![] };
+
+        let prompt = active.current_task_prompt().unwrap();
+        assert!(prompt.contains("Write code"));
+        assert!(prompt.contains("shell"));
+        assert!(prompt.contains("Code written"));
+    }
+
+    #[test]
+    fn test_empty_plan_progress_is_100() {
+        let plan = TaskPlan::new("req", "goal");
+        assert_eq!(plan.progress_percent(), 100);
+    }
 }

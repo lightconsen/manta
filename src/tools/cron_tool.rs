@@ -341,4 +341,44 @@ mod tests {
         let tool = CronTool::new();
         assert_eq!(tool.name(), "cron");
     }
+
+    #[test]
+    fn test_cron_tool_default() {
+        let tool = CronTool::default();
+        assert_eq!(tool.name(), "cron");
+    }
+
+    #[test]
+    fn test_cron_tool_is_ready_false_by_default() {
+        assert!(!CronTool::is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_cron_tool_description() {
+        let tool = CronTool::new();
+        assert!(tool.description().contains("cron"));
+    }
+
+    #[tokio::test]
+    async fn test_cron_tool_execute_without_scheduler() {
+        let tool = CronTool::new();
+        let result = tool
+            .execute(serde_json::json!({"action": "list"}), &ToolContext::default())
+            .await;
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(!r.success);
+        assert!(r.error.as_ref().unwrap().contains("not yet initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_cron_tool_no_scheduler_returns_error() {
+        let tool = CronTool::new();
+        // Without scheduler set, any execution returns an Ok-wrapped error
+        let result = tool.execute(serde_json::json!({"action": "list"}), &ToolContext::default()).await;
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(!r.success);
+        assert!(r.error.as_ref().unwrap().contains("not yet initialized"));
+    }
 }

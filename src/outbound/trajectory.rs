@@ -133,4 +133,63 @@ mod tests {
         });
         assert_eq!(log.tool_calls().len(), 1);
     }
+
+    #[test]
+    fn test_llm_calls_filter() {
+        let mut log = TrajectoryLog::new();
+        log.push(TrajectoryEntry::LlmCall {
+            timestamp: SystemTime::now(),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            duration_ms: 500,
+        });
+        log.push(TrajectoryEntry::ToolCall {
+            timestamp: SystemTime::now(),
+            name: "search".to_string(),
+            arguments: serde_json::json!({}),
+        });
+        assert_eq!(log.llm_calls().len(), 1);
+    }
+
+    #[test]
+    fn test_total_duration_ms() {
+        let start = SystemTime::now();
+        let end = start + std::time::Duration::from_millis(250);
+
+        let mut log = TrajectoryLog::new();
+        log.push(TrajectoryEntry::Start {
+            timestamp: start,
+            session_id: "s1".to_string(),
+            agent_id: "a1".to_string(),
+        });
+        log.push(TrajectoryEntry::Finish {
+            timestamp: end,
+            output: "done".to_string(),
+        });
+
+        assert_eq!(log.total_duration_ms(), 250);
+    }
+
+    #[test]
+    fn test_total_duration_no_start() {
+        let mut log = TrajectoryLog::new();
+        log.push(TrajectoryEntry::Finish {
+            timestamp: SystemTime::now(),
+            output: "done".to_string(),
+        });
+        assert_eq!(log.total_duration_ms(), 0);
+    }
+
+    #[test]
+    fn test_trajectory_entry_serialization() {
+        let entry = TrajectoryEntry::Error {
+            timestamp: SystemTime::now(),
+            message: "oops".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("error"));
+        assert!(json.contains("oops"));
+    }
 }

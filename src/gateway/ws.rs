@@ -304,4 +304,53 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("pong"));
     }
+
+    #[test]
+    fn test_ws_client_message_unsubscribe() {
+        let json = r#"{"type":"unsubscribe","session_ids":["s1"]}"#;
+        let msg: WsClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            WsClientMessage::Unsubscribe { session_ids } => {
+                assert_eq!(session_ids, vec!["s1"]);
+            }
+            _ => panic!("Expected Unsubscribe"),
+        }
+    }
+
+    #[test]
+    fn test_ws_client_message_ping() {
+        let json = r#"{"type":"ping"}"#;
+        let msg: WsClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, WsClientMessage::Ping));
+    }
+
+    #[test]
+    fn test_ws_client_message_subscribe_all() {
+        let json = r#"{"type":"subscribe_all"}"#;
+        let msg: WsClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, WsClientMessage::SubscribeAll));
+    }
+
+    #[test]
+    fn test_ws_server_message_connected() {
+        let msg = WsServerMessage::Connected { session_count: 3 };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("connected"));
+        assert!(json.contains("3"));
+    }
+
+    #[test]
+    fn test_ws_server_message_error() {
+        let msg = WsServerMessage::Error { message: "oops".to_string() };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("error"));
+        assert!(json.contains("oops"));
+    }
+
+    #[test]
+    fn test_ws_connect_query_deserialize() {
+        let query: WsConnectQuery = serde_json::from_str(r#"{"token":"abc","session_id":"s1"}"#).unwrap();
+        assert_eq!(query.token, Some("abc".to_string()));
+        assert_eq!(query.session_id, Some("s1".to_string()));
+    }
 }

@@ -311,4 +311,81 @@ mod tests {
             .to_string_lossy()
             .contains("daemon.pid"));
     }
+
+    #[test]
+    fn test_path_for_workspace_files() {
+        assert!(path_for(FileType::Soul).to_string_lossy().contains("SOUL.md"));
+        assert!(path_for(FileType::Identity).to_string_lossy().contains("IDENTITY.md"));
+        assert!(path_for(FileType::Bootstrap).to_string_lossy().contains("BOOTSTRAP.md"));
+        assert!(path_for(FileType::User).to_string_lossy().contains("USER.md"));
+        assert!(path_for(FileType::Agents).to_string_lossy().contains("AGENTS.md"));
+        assert!(path_for(FileType::Tools).to_string_lossy().contains("TOOLS.md"));
+        assert!(path_for(FileType::Heartbeat).to_string_lossy().contains("HEARTBEAT.md"));
+        assert!(path_for(FileType::Memory).to_string_lossy().contains("MEMORY.md"));
+    }
+
+    #[test]
+    fn test_default_memory_db() {
+        let db = default_memory_db();
+        assert!(db.to_string_lossy().contains("data/manta.db"));
+    }
+
+    #[test]
+    fn test_pid_file() {
+        let pid = pid_file();
+        assert!(pid.to_string_lossy().contains("daemon.pid"));
+    }
+
+    #[test]
+    fn test_default_log_file() {
+        let log = default_log_file();
+        assert!(log.to_string_lossy().contains("daemon.log"));
+    }
+
+    #[test]
+    fn test_workspace_state_file() {
+        let state = workspace_state_file();
+        assert!(state.to_string_lossy().contains("workspace-state.json"));
+    }
+
+    #[test]
+    fn test_transcripts_dir() {
+        assert!(transcripts_dir().to_string_lossy().contains("transcripts"));
+    }
+
+    #[test]
+    fn test_artifacts_dir() {
+        assert!(artifacts_dir().to_string_lossy().contains("artifacts"));
+    }
+
+    #[test]
+    fn test_budget_dir() {
+        assert!(budget_dir().to_string_lossy().contains("budget"));
+    }
+
+    #[test]
+    fn test_session_files_dir() {
+        assert!(session_files_dir().to_string_lossy().contains("session_files"));
+    }
+
+    #[test]
+    fn test_groups_dir() {
+        assert!(groups_dir().to_string_lossy().contains("groups"));
+    }
+
+    #[test]
+    fn test_teams_dir() {
+        assert!(teams_dir().to_string_lossy().contains("teams"));
+    }
+
+    #[test]
+    fn test_extensions_dir() {
+        assert!(extensions_dir().to_string_lossy().contains("extensions"));
+    }
+
+    #[test]
+    fn test_is_initialized() {
+        // Just verify it doesn't panic
+        let _ = is_initialized();
+    }
 }

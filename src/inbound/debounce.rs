@@ -252,4 +252,44 @@ mod tests {
         let flushed = debouncer.flush_key("s1").await;
         assert_eq!(flushed.len(), 1);
     }
+
+    #[tokio::test]
+    async fn test_flush_all() {
+        let (tx, _rx) = mpsc::channel(10);
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
+
+        assert!(debouncer.enqueue(IncomingMessage::new("u1", "s1", "a")).await.is_none());
+        assert!(debouncer.enqueue(IncomingMessage::new("u2", "s2", "b")).await.is_none());
+
+        let all = debouncer.flush_all().await;
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_bypass_exclamation() {
+        let (tx, _rx) = mpsc::channel(10);
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
+
+        let msg = IncomingMessage::new("u1", "s1", "!command");
+        let result = debouncer.enqueue(msg.clone()).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_flush_empty_key() {
+        let (tx, _rx) = mpsc::channel(10);
+        let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
+
+        let flushed = debouncer.flush_key("nonexistent").await;
+        assert!(flushed.is_empty());
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = InboundDebouncerConfig::default();
+        assert_eq!(config.debounce_ms, 500);
+        assert_eq!(config.max_tracked_keys, 2048);
+        assert!(config.bypass_prefixes.iter().any(|p| p == "/"));
+        assert!(config.bypass_prefixes.iter().any(|p| p == "!"));
+    }
 }

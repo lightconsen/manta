@@ -320,4 +320,92 @@ mod tests {
         let result = registry.run_before(event.clone()).await;
         assert!(result.is_some());
     }
+
+    #[tokio::test]
+    async fn test_unregister_hook() {
+        let registry = EventHookRegistry::new();
+
+        registry
+            .register_before(
+                "temp",
+                0,
+                None,
+                Arc::new(|event| Box::pin(async move { HookResult::Continue(event) })),
+            )
+            .await;
+
+        assert_eq!(registry.list_hooks().await.len(), 1);
+        assert!(registry.unregister("temp").await);
+        assert!(registry.list_hooks().await.is_empty());
+        assert!(!registry.unregister("missing").await);
+    }
+
+    #[tokio::test]
+    async fn test_hook_result_into_event() {
+        let event = GatewayEvent::ChannelStatus {
+            channel: "c".to_string(),
+            connected: true,
+        };
+
+        assert!(HookResult::Continue(event.clone()).into_event().is_some());
+        assert!(HookResult::Replace(event.clone()).into_event().is_some());
+        assert!(HookResult::Drop.into_event().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_after_hook_filter_mismatch() {
+        let registry = EventHookRegistry::new();
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        registry
+            .register_after(
+                "filter_test",
+                0,
+                Some("NonExistent".to_string()),
+                Arc::new(move |_| {
+                    let called = called_clone.clone();
+                    Box::pin(async move {
+                        called.store(true, std::sync::atomic::Ordering::SeqCst);
+                    })
+                }),
+            )
+            .await;
+
+        let event = GatewayEvent::ChannelStatus {
+            channel: "test".to_string(),
+            connected: true,
+        };
+
+        registry.run_after(event).await;
+        // Give spawned task a moment
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_priority_sorting() {
+        let registry = EventHookRegistry::new();
+
+        registry
+            .register_before(
+                "second",
+                10,
+                None,
+                Arc::new(|event| Box::pin(async move { HookResult::Continue(event) })),
+            )
+            .await;
+        registry
+            .register_before(
+                "first",
+                5,
+                None,
+                Arc::new(|event| Box::pin(async move { HookResult::Continue(event) })),
+            )
+            .await;
+
+        let hooks = registry.list_hooks().await;
+        assert_eq!(hooks[0].priority, 5);
+        assert_eq!(hooks[1].priority, 10);
+    }
 }

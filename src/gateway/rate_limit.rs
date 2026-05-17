@@ -436,4 +436,58 @@ mod tests {
         let stats = limiter.stats();
         assert_eq!(stats.global_windows, 0);
     }
+
+    #[test]
+    fn test_multi_tier_result_is_allowed() {
+        let allowed = MultiTierResult::Allowed { remaining: 5 };
+        assert!(allowed.is_allowed());
+        assert_eq!(allowed.retry_after(), None);
+
+        let denied = MultiTierResult::Denied { tier: "global", retry_after_secs: 30 };
+        assert!(!denied.is_allowed());
+        assert_eq!(denied.retry_after(), Some(30));
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = MultiTierRateLimitConfig::default();
+        assert!(config.global.enabled);
+        assert_eq!(config.global.capacity, 1000);
+        assert!(config.per_user.enabled);
+        assert!(config.per_ip.enabled);
+        assert!(!config.per_endpoint.enabled);
+    }
+
+    #[test]
+    fn test_multi_tier_ip_limit() {
+        let config = MultiTierRateLimitConfig {
+            per_ip: TierConfig { enabled: true, capacity: 2, window_secs: 60 },
+            ..Default::default()
+        };
+        let limiter = MultiTierRateLimiter::new(config);
+        let user = UserId::new("ip:192.168.1.1");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        for _ in 0..2 {
+            let result = rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
+            assert!(result.is_allowed());
+        }
+        let result = rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
+        assert!(!result.is_allowed());
+    }
+
+    #[test]
+    fn test_multi_tier_cleanup() {
+        let limiter = MultiTierRateLimiter::default();
+        let user = UserId::new("user1");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let _ = limiter.check(&user, None, "/api").await;
+        });
+
+        assert!(limiter.stats().global_windows > 0);
+        limiter.cleanup();
+        // After cleanup, windows may be empty depending on timing
+    }
 }
