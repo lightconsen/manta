@@ -276,11 +276,7 @@ impl ChannelLifecycle {
 
         let delay = Duration::from_millis(delay_ms.min(self.policy.max_delay.as_millis() as u64));
 
-        // Add jitter (±10%)
-        let jitter = delay.as_millis() as f32 * 0.1;
-        let jitter_ms = rand::random::<f32>() * jitter * 2.0 - jitter;
-
-        delay + Duration::from_millis(jitter_ms.max(0.0) as u64)
+        apply_jitter(delay, 0.1)
     }
 
     /// Update the status
@@ -307,6 +303,18 @@ impl ChannelLifecycle {
             }
         }
     }
+}
+
+/// Apply random jitter to a delay.
+///
+/// `jitter_pct` is the maximum fraction of `delay` to add or subtract.
+/// For example, `0.1` means ±10%.
+fn apply_jitter(delay: Duration, jitter_pct: f32) -> Duration {
+    let jitter = delay.as_millis() as f32 * jitter_pct;
+    let jitter_ms = rand::random::<f32>() * jitter * 2.0 - jitter;
+
+    let final_ms = (delay.as_millis() as i64 + jitter_ms as i64).max(0) as u64;
+    Duration::from_millis(final_ms)
 }
 
 /// Collection of managed channels
@@ -511,5 +519,48 @@ mod tests {
         assert_eq!(ChannelStatus::Running.to_string(), "running");
         assert_eq!(ChannelStatus::Crashed.to_string(), "crashed");
         assert_eq!(ChannelStatus::Restarting.to_string(), "restarting");
+    }
+
+    #[test]
+    fn test_apply_jitter_can_reduce_delay() {
+        // The old bug: jitter was clamped to >=0, so delay could only increase.
+        // This test runs many iterations and verifies that jitter sometimes
+        // produces a delay smaller than the base delay.
+        let base = Duration::from_millis(1000);
+        let mut saw_smaller = false;
+        let mut saw_larger = false;
+
+        for _ in 0..200 {
+            let jittered = apply_jitter(base, 0.1);
+            if jittered < base {
+                saw_smaller = true;
+            }
+            if jittered > base {
+                saw_larger = true;
+            }
+        }
+
+        // With ±10% jitter over 200 iterations, we should see both directions.
+        // The probability of always getting the same direction is ~(0.5)^200 ≈ 0.
+        assert!(saw_smaller, "jitter should sometimes reduce the delay");
+        assert!(saw_larger, "jitter should sometimes increase the delay");
+    }
+
+    #[test]
+    fn test_apply_jitter_never_negative() {
+        for _ in 0..1000 {
+            let result = apply_jitter(Duration::from_millis(10), 0.5);
+            assert!(
+                result.as_millis() >= 10 / 2, // can go down to ~50%
+                "delay should not go below zero-ish"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_jitter_zero_is_noop() {
+        let base = Duration::from_millis(500);
+        let jittered = apply_jitter(base, 0.0);
+        assert_eq!(jittered, base);
     }
 }

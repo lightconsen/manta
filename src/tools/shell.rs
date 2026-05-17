@@ -49,7 +49,11 @@ impl ShellTool {
     /// Truncate output if it exceeds the limit
     fn truncate_output(&self, output: String) -> String {
         if output.len() > self.max_output_size {
-            let truncated = &output[..self.max_output_size];
+            let mut end = self.max_output_size;
+            while end > 0 && !output.is_char_boundary(end) {
+                end -= 1;
+            }
+            let truncated = &output[..end];
             format!("{}\n[Output truncated: {} bytes total]", truncated, output.len())
         } else {
             output
@@ -307,5 +311,36 @@ mod tests {
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
         assert!(result.output.to_lowercase().contains("timed out"));
+    }
+
+    #[test]
+    fn test_truncate_output_utf8_safe() {
+        // Test that truncation does not panic on multi-byte UTF-8 characters.
+        // The smiley emoji is 4 bytes. If max_output_size = 10 and the string
+        // contains multi-byte chars near the boundary, the old code would panic.
+        let tool = ShellTool::new().with_max_output_size(10);
+        let output = "Hello 😀 world".to_string(); // 😀 is 4 bytes
+        let truncated = tool.truncate_output(output.clone());
+        assert!(truncated.contains("truncated"));
+        // The prefix must be valid UTF-8 (no split multi-byte char)
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_output_exact_boundary() {
+        let tool = ShellTool::new().with_max_output_size(4);
+        let output = "😀😀😀".to_string(); // 12 bytes, each 😀 is 4 bytes
+        let truncated = tool.truncate_output(output.clone());
+        // With max 4 bytes, should keep exactly one emoji
+        assert!(truncated.starts_with("😀"));
+        assert!(truncated.contains("truncated"));
+    }
+
+    #[test]
+    fn test_truncate_output_no_truncation_needed() {
+        let tool = ShellTool::new().with_max_output_size(1000);
+        let output = "Short".to_string();
+        let truncated = tool.truncate_output(output.clone());
+        assert_eq!(truncated, output);
     }
 }

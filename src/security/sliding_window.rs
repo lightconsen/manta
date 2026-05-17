@@ -270,7 +270,7 @@ impl SlidingWindowRateLimiter {
 
 impl Default for SlidingWindowRateLimiter {
     fn default() -> Self {
-        Self::default()
+        Self::new(Duration::from_secs(60), 100)
     }
 }
 
@@ -532,5 +532,42 @@ mod tests {
         // Cleanup should remove old windows
         limiter.cleanup();
         assert_eq!(limiter.window_count(), 0);
+    }
+
+    #[test]
+    fn test_default_trait_does_not_stack_overflow() {
+        // Before the fix, `impl Default` called `Self::default()` recursively,
+        // causing a stack overflow. This test verifies the fix works.
+        let limiter: SlidingWindowRateLimiter = Default::default();
+        assert_eq!(limiter.max_requests(), 100);
+        assert_eq!(limiter.window_size(), Duration::from_secs(60));
+
+        // Verify it actually limits
+        let key = RateLimitKey::new("user_default", "/api/test");
+        for _ in 0..100 {
+            assert!(limiter.check_and_record(&key).is_allowed());
+        }
+        assert!(!limiter.check_and_record(&key).is_allowed());
+    }
+
+    #[test]
+    fn test_remaining_and_retry_after_helpers() {
+        let limiter = SlidingWindowRateLimiter::new(Duration::from_secs(60), 3);
+        let key = RateLimitKey::new("user2", "/api/test");
+
+        let r1 = limiter.check_and_record(&key);
+        assert!(r1.is_allowed());
+        assert_eq!(r1.remaining(), Some(2));
+
+        let r2 = limiter.check_and_record(&key);
+        assert_eq!(r2.remaining(), Some(1));
+
+        let r3 = limiter.check_and_record(&key);
+        assert_eq!(r3.remaining(), Some(0));
+
+        let denied = limiter.check_and_record(&key);
+        assert!(!denied.is_allowed());
+        assert_eq!(denied.remaining(), None);
+        assert!(denied.retry_after().is_some());
     }
 }
