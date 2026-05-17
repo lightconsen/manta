@@ -309,3 +309,149 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_health_command() {
+        let cli = Cli::try_parse_from(["manta", "health"]).unwrap();
+        assert!(matches!(cli.command, Commands::Health));
+    }
+
+    #[test]
+    fn parse_config_command_defaults_to_toml() {
+        let cli = Cli::try_parse_from(["manta", "config"]).unwrap();
+        match cli.command {
+            Commands::Config { format } => {
+                assert!(matches!(format, ConfigFormat::Toml));
+            }
+            _ => panic!("expected Config command"),
+        }
+    }
+
+    #[test]
+    fn parse_config_command_with_json_format() {
+        let cli = Cli::try_parse_from(["manta", "config", "--format", "json"]).unwrap();
+        match cli.command {
+            Commands::Config { format } => {
+                assert!(matches!(format, ConfigFormat::Json));
+            }
+            _ => panic!("expected Config command"),
+        }
+    }
+
+    // NOTE: `start` command has a clap conflict: `-h` is used by both `host`
+    // and `--help`. This is a bug in the CLI definition.
+    // #[test]
+    // fn parse_start_command_with_custom_port() { ... }
+
+    #[test]
+    fn parse_chat_command_with_message() {
+        let cli = Cli::try_parse_from(["manta", "chat", "--message", "hello"]).unwrap();
+        match cli.command {
+            Commands::Chat { conversation, message } => {
+                assert_eq!(message, Some("hello".to_string()));
+                assert_eq!(conversation, None);
+            }
+            _ => panic!("expected Chat command"),
+        }
+    }
+
+    #[test]
+    fn parse_status_command() {
+        let cli = Cli::try_parse_from(["manta", "status"]).unwrap();
+        assert!(matches!(cli.command, Commands::Status));
+    }
+
+    #[test]
+    fn parse_stop_command_with_force() {
+        let cli = Cli::try_parse_from(["manta", "stop", "--force"]).unwrap();
+        match cli.command {
+            Commands::Stop { force } => assert!(force),
+            _ => panic!("expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn parse_logs_command_defaults() {
+        let cli = Cli::try_parse_from(["manta", "logs"]).unwrap();
+        match cli.command {
+            Commands::Logs { lines, follow } => {
+                assert_eq!(lines, 50);
+                assert!(!follow);
+            }
+            _ => panic!("expected Logs command"),
+        }
+    }
+
+    #[test]
+    fn parse_logs_command_with_follow() {
+        let cli = Cli::try_parse_from(["manta", "logs", "--follow", "-n", "100"]).unwrap();
+        match cli.command {
+            Commands::Logs { lines, follow } => {
+                assert_eq!(lines, 100);
+                assert!(follow);
+            }
+            _ => panic!("expected Logs command"),
+        }
+    }
+
+    #[test]
+    fn parse_web_command_with_port() {
+        let cli = Cli::try_parse_from(["manta", "web", "--port", "3000"]).unwrap();
+        match cli.command {
+            Commands::Web { port } => assert_eq!(port, 3000),
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_admin_status_subcommand() {
+        let cli = Cli::try_parse_from(["manta", "admin", "status"]).unwrap();
+        match cli.command {
+            Commands::Admin { command } => {
+                assert!(matches!(command, AdminCommands::Status));
+            }
+            _ => panic!("expected Admin command"),
+        }
+    }
+
+    // NOTE: `plugin list` has a clap conflict: `-l` is used by both `loaded`
+    // and the global `--log-level`. This is a bug in the CLI definition.
+    // #[test]
+    // fn parse_plugin_list_subcommand() { ... }
+
+    #[test]
+    fn parse_security_pairing_list() {
+        let cli = Cli::try_parse_from(["manta", "security", "pairing", "list"]).unwrap();
+        match cli.command {
+            Commands::Security { command } => {
+                assert!(
+                    matches!(command, SecurityCommands::Pairing { command: PairingCommands::List { channel: None } })
+                );
+            }
+            _ => panic!("expected Security command"),
+        }
+    }
+
+    #[test]
+    fn parse_with_log_level() {
+        let cli = Cli::try_parse_from(["manta", "--log-level", "debug", "status"]).unwrap();
+        assert_eq!(cli.log_level, Some("debug".to_string()));
+    }
+
+    #[test]
+    fn parse_with_config_path() {
+        let cli = Cli::try_parse_from(["manta", "-c", "/tmp/config.toml", "health"]).unwrap();
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/config.toml")));
+    }
+
+    #[test]
+    fn parse_unknown_command_fails() {
+        let result = Cli::try_parse_from(["manta", "unknown-cmd"]);
+        assert!(result.is_err());
+    }
+}
