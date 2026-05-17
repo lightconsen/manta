@@ -59,7 +59,7 @@ impl Default for SpawnMode {
 }
 
 /// Thread binding mode for subagents
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadBinding {
     /// New isolated thread
@@ -221,8 +221,8 @@ pub struct AcpControlPlane {
     threads: Arc<RwLock<HashMap<String, ThreadContext>>>,
     /// ACP sessions
     sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
-    /// Default agent builder
-    default_agent_builder: Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>,
+    /// Default agent builder (set after initialization when provider/tools are ready)
+    default_agent_builder: Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
 }
 
 /// ACP Session - groups related subagents
@@ -241,17 +241,29 @@ impl AcpControlPlane {
             subagents: Arc::new(RwLock::new(HashMap::new())),
             threads: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            default_agent_builder: None,
+            default_agent_builder: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Set the default agent builder
-    pub fn with_agent_builder<F>(mut self, builder: F) -> Self
+    /// Set the default agent builder (consuming self).
+    pub fn with_agent_builder<F>(self, builder: F) -> Self
     where
         F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
     {
-        self.default_agent_builder = Some(Arc::new(builder));
+        *self.default_agent_builder.blocking_write() = Some(Arc::new(builder));
         self
+    }
+
+    /// Set the default agent builder on an existing instance.
+    ///
+    /// Use this when the builder depends on resources created after the ACP.
+    pub async fn set_agent_builder<F>(&self, builder: F)
+    where
+        F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
+    {
+        let mut guard = self.default_agent_builder.write().await;
+        *guard = Some(Arc::new(builder));
+        info!("ACP default agent builder configured");
     }
 
     /// Create a new ACP session
@@ -304,12 +316,15 @@ impl AcpControlPlane {
         };
 
         // Create the agent
-        let agent = if let Some(ref builder) = self.default_agent_builder {
-            builder()?
-        } else {
-            return Err(crate::error::MantaError::Internal(
-                "No agent builder configured".to_string(),
-            ));
+        let agent = {
+            let builder_guard = self.default_agent_builder.read().await;
+            if let Some(ref builder) = *builder_guard {
+                builder()?
+            } else {
+                return Err(crate::error::MantaError::Internal(
+                    "No agent builder configured".to_string(),
+                ));
+            }
         };
 
         // Spawn subagent task
@@ -596,6 +611,64 @@ impl AcpControlPlane {
             created_at: s.created_at,
         })
     }
+
+    /// Get subagent tree for a session (recursive parent-child hierarchy)
+    pub async fn get_subagent_tree(&self, session_id: &AcpSessionId) -> Vec<SubagentTreeNode> {
+        let sessions = self.sessions.read().await;
+        let subagents = self.subagents.read().await;
+
+        let session = match sessions.get(session_id) {
+            Some(s) => s,
+            None => return vec![],
+        };
+
+        let root_parent_id = session.parent_agent_id.clone();
+        let session_subagent_ids = session.subagents.clone();
+        drop(sessions);
+
+        let mut by_parent: HashMap<String, Vec<SubagentHandle>> = HashMap::new();
+        let mut all_ids = std::collections::HashSet::new();
+
+        for id in session_subagent_ids {
+            if let Some(subagent) = subagents.get(&id) {
+                all_ids.insert(subagent.id.clone());
+                by_parent
+                    .entry(subagent.parent_id.clone())
+                    .or_default()
+                    .push(subagent.clone());
+            }
+        }
+        drop(subagents);
+
+        fn build_tree(
+            parent_id: &str,
+            by_parent: &HashMap<String, Vec<SubagentHandle>>,
+            all_ids: &std::collections::HashSet<String>,
+        ) -> Vec<SubagentTreeNode> {
+            by_parent
+                .get(parent_id)
+                .map(|children| {
+                    children
+                        .iter()
+                        .map(|s| SubagentTreeNode {
+                            id: s.id.clone(),
+                            parent_id: s.parent_id.clone(),
+                            status: s.status,
+                            mode: s.mode,
+                            thread_id: s.thread_id.clone(),
+                            children: if all_ids.contains(&s.id) {
+                                build_tree(&s.id, by_parent, all_ids)
+                            } else {
+                                vec![]
+                            },
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        build_tree(&root_parent_id, &by_parent, &all_ids)
+    }
 }
 
 impl Default for AcpControlPlane {
@@ -611,6 +684,17 @@ pub struct AcpSessionInfo {
     pub parent_agent_id: String,
     pub subagent_count: usize,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Subagent tree node for hierarchical display
+#[derive(Debug, Clone, Serialize)]
+pub struct SubagentTreeNode {
+    pub id: String,
+    pub parent_id: String,
+    pub status: SubagentStatus,
+    pub mode: SpawnMode,
+    pub thread_id: String,
+    pub children: Vec<SubagentTreeNode>,
 }
 
 /// Extension trait for Agent to support ACP

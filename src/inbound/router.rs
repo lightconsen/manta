@@ -4,9 +4,12 @@
 //! multi-agent routing system.
 
 use crate::channels::IncomingMessage;
+use async_trait::async_trait;
+use sqlx::Row;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Result of routing a message to an agent.
 #[derive(Debug, Clone)]
@@ -40,6 +43,166 @@ impl Default for AgentRouterConfig {
     }
 }
 
+/// Persistent storage for session-to-agent bindings.
+#[async_trait]
+pub trait BindingStore: Send + Sync {
+    /// Load all stored bindings into memory.
+    async fn load_bindings(&self) -> crate::Result<HashMap<String, (String, Option<String>)>>;
+    /// Persist a single binding.
+    async fn save_binding(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        workspace_id: Option<&str>,
+    ) -> crate::Result<()>;
+    /// Remove a persisted binding.
+    async fn remove_binding(&self, session_id: &str) -> crate::Result<()>;
+}
+
+/// In-memory binding store (default, non-persistent).
+pub struct InMemoryBindingStore {
+    data: Arc<RwLock<HashMap<String, (String, Option<String>)>>>,
+}
+
+impl InMemoryBindingStore {
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+impl Default for InMemoryBindingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl BindingStore for InMemoryBindingStore {
+    async fn load_bindings(&self) -> crate::Result<HashMap<String, (String, Option<String>)>> {
+        let data = self.data.read().await;
+        Ok(data.clone())
+    }
+
+    async fn save_binding(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        workspace_id: Option<&str>,
+    ) -> crate::Result<()> {
+        let mut data = self.data.write().await;
+        data.insert(
+            session_id.to_string(),
+            (agent_id.to_string(), workspace_id.map(String::from)),
+        );
+        Ok(())
+    }
+
+    async fn remove_binding(&self, session_id: &str) -> crate::Result<()> {
+        let mut data = self.data.write().await;
+        data.remove(session_id);
+        Ok(())
+    }
+}
+
+/// SQLite-backed binding store for persistence across restarts.
+pub struct SqliteBindingStore {
+    pool: sqlx::Pool<sqlx::Sqlite>,
+}
+
+impl SqliteBindingStore {
+    pub async fn new(pool: sqlx::Pool<sqlx::Sqlite>) -> crate::Result<Self> {
+        let store = Self { pool };
+        store.ensure_schema().await?;
+        Ok(store)
+    }
+
+    async fn ensure_schema(&self) -> crate::Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS session_bindings (
+                session_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                workspace_id TEXT,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch())
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to create session_bindings table".to_string(),
+            details: e.to_string(),
+        })?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl BindingStore for SqliteBindingStore {
+    async fn load_bindings(&self) -> crate::Result<HashMap<String, (String, Option<String>)>> {
+        let rows = sqlx::query(
+            "SELECT session_id, agent_id, workspace_id FROM session_bindings",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to load session bindings".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut bindings = HashMap::new();
+        for row in rows {
+            let session_id: String = row.try_get("session_id").unwrap_or_default();
+            let agent_id: String = row.try_get("agent_id").unwrap_or_default();
+            let workspace_id: Option<String> = row.try_get("workspace_id").ok();
+            bindings.insert(session_id, (agent_id, workspace_id));
+        }
+        Ok(bindings)
+    }
+
+    async fn save_binding(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        workspace_id: Option<&str>,
+    ) -> crate::Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO session_bindings (session_id, agent_id, workspace_id, created_at)
+            VALUES (?1, ?2, ?3, unixepoch())
+            ON CONFLICT(session_id) DO UPDATE SET
+                agent_id = excluded.agent_id,
+                workspace_id = excluded.workspace_id,
+                created_at = excluded.created_at
+            "#,
+        )
+        .bind(session_id)
+        .bind(agent_id)
+        .bind(workspace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to save session binding".to_string(),
+            details: e.to_string(),
+        })?;
+        Ok(())
+    }
+
+    async fn remove_binding(&self, session_id: &str) -> crate::Result<()> {
+        sqlx::query("DELETE FROM session_bindings WHERE session_id = ?1")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to remove session binding".to_string(),
+                details: e.to_string(),
+            })?;
+        Ok(())
+    }
+}
+
 /// Workspace-aware multi-agent router.
 ///
 /// Routes incoming messages to the appropriate agent based on:
@@ -57,6 +220,8 @@ pub struct AgentRouter {
     channel_defaults: RwLock<HashMap<String, (String, Option<String>)>>,
     /// workspace_id -> default_agent_id
     workspace_defaults: RwLock<HashMap<String, String>>,
+    /// Optional persistent binding store
+    binding_store: Option<Arc<dyn BindingStore>>,
 }
 
 impl Clone for AgentRouter {
@@ -74,7 +239,31 @@ impl AgentRouter {
             session_bindings: RwLock::new(HashMap::new()),
             channel_defaults: RwLock::new(HashMap::new()),
             workspace_defaults: RwLock::new(HashMap::new()),
+            binding_store: None,
         }
+    }
+
+    /// Attach a persistent binding store.
+    pub fn with_binding_store(mut self, store: Arc<dyn BindingStore>) -> Self {
+        self.binding_store = Some(store);
+        self
+    }
+
+    /// Load persisted bindings into memory.
+    pub async fn load_bindings(&self) -> crate::Result<()> {
+        if let Some(store) = &self.binding_store {
+            match store.load_bindings().await {
+                Ok(bindings) => {
+                    let mut session_bindings = self.session_bindings.write().await;
+                    *session_bindings = bindings;
+                    info!("Loaded {} persisted session bindings", session_bindings.len());
+                }
+                Err(e) => {
+                    warn!("Failed to load persisted bindings: {}", e);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Route an incoming message to an agent.
@@ -173,6 +362,17 @@ impl AgentRouter {
         let mut bindings = self.session_bindings.write().await;
         bindings
             .insert(session_id.to_string(), (route.agent_id.clone(), route.workspace_id.clone()));
+        drop(bindings);
+
+        if let Some(store) = &self.binding_store {
+            if let Err(e) = store
+                .save_binding(session_id, &route.agent_id, route.workspace_id.as_deref())
+                .await
+            {
+                warn!("Failed to persist binding for session {}: {}", session_id, e);
+            }
+        }
+
         info!(
             "Bound session {} to agent {} (workspace: {:?})",
             session_id, route.agent_id, route.workspace_id
@@ -182,7 +382,15 @@ impl AgentRouter {
     /// Unbind a session (e.g., on `/new` command).
     pub async fn unbind_session(&self, session_id: &str) {
         let mut bindings = self.session_bindings.write().await;
-        if bindings.remove(session_id).is_some() {
+        let removed = bindings.remove(session_id).is_some();
+        drop(bindings);
+
+        if removed {
+            if let Some(store) = &self.binding_store {
+                if let Err(e) = store.remove_binding(session_id).await {
+                    warn!("Failed to remove persisted binding for session {}: {}", session_id, e);
+                }
+            }
             info!("Unbound session {}", session_id);
         }
     }

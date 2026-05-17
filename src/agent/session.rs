@@ -16,34 +16,15 @@ use uuid::Uuid;
 use crate::agent::personality::AgentPersonality;
 use crate::channels::IncomingMessage;
 
-/// Thread binding mode for agents in a session
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ThreadBinding {
-    /// New isolated thread - no shared context
-    Isolated,
-    /// Bind to parent's thread - inherits parent's context
-    Parent,
-    /// Bind to a specific existing thread
-    Existing(String),
-    /// Create new thread with shared memory
-    Shared,
-}
+pub use crate::acp::ThreadBinding;
 
-impl Default for ThreadBinding {
-    fn default() -> Self {
-        ThreadBinding::Isolated
-    }
-}
-
-impl ThreadBinding {
-    /// Get thread ID for this binding mode
-    pub fn get_thread_id(&self, parent_thread: &str) -> String {
-        match self {
-            ThreadBinding::Isolated => format!("thread-{}", Uuid::new_v4()),
-            ThreadBinding::Parent => parent_thread.to_string(),
-            ThreadBinding::Existing(id) => id.clone(),
-            ThreadBinding::Shared => format!("shared-{}", parent_thread),
-        }
+/// Compute the thread ID for a given binding mode within a session.
+pub fn get_thread_id(binding: &ThreadBinding, parent_thread: &str) -> String {
+    match binding {
+        ThreadBinding::New => format!("thread-{}", Uuid::new_v4()),
+        ThreadBinding::Parent => parent_thread.to_string(),
+        ThreadBinding::Thread(id) => id.clone(),
+        ThreadBinding::Auto => format!("shared-{}", parent_thread),
     }
 }
 
@@ -91,7 +72,7 @@ impl SessionAgent {
         binding: ThreadBinding,
         parent_thread: &str,
     ) -> Self {
-        let thread_id = binding.get_thread_id(parent_thread);
+        let thread_id = get_thread_id(&binding, parent_thread);
 
         Self {
             id,
@@ -126,8 +107,8 @@ impl SessionAgent {
     /// Check if agent shares context with another agent
     pub fn shares_context_with(&self, other: &SessionAgent) -> bool {
         match (&self.binding, &other.binding) {
-            // Both isolated - never share
-            (ThreadBinding::Isolated, _) | (_, ThreadBinding::Isolated) => false,
+            // New isolated threads never share
+            (ThreadBinding::New, _) | (_, ThreadBinding::New) => false,
             // Same thread ID - share context
             _ => self.thread_id == other.thread_id,
         }
@@ -538,17 +519,17 @@ mod tests {
     fn test_thread_binding_get_thread_id() {
         let parent = "parent-thread";
 
-        let isolated = ThreadBinding::Isolated.get_thread_id(parent);
+        let isolated = get_thread_id(&ThreadBinding::New, parent);
         assert!(isolated.starts_with("thread-"));
         assert_ne!(isolated, parent);
 
-        let parent_binding = ThreadBinding::Parent.get_thread_id(parent);
+        let parent_binding = get_thread_id(&ThreadBinding::Parent, parent);
         assert_eq!(parent_binding, parent);
 
-        let existing = ThreadBinding::Existing("custom".to_string()).get_thread_id(parent);
+        let existing = get_thread_id(&ThreadBinding::Thread("custom".to_string()), parent);
         assert_eq!(existing, "custom");
 
-        let shared = ThreadBinding::Shared.get_thread_id(parent);
+        let shared = get_thread_id(&ThreadBinding::Auto, parent);
         assert_eq!(shared, format!("shared-{}", parent));
     }
 
@@ -559,21 +540,21 @@ mod tests {
         let agent1 = SessionAgent::new(
             "agent1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
             parent,
         );
 
         let agent2 = SessionAgent::new(
             "agent2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
             parent,
         );
 
         let agent3 = SessionAgent::new(
             "agent3".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Isolated,
+            ThreadBinding::New,
             parent,
         );
 
@@ -584,7 +565,7 @@ mod tests {
     #[test]
     fn test_thread_binding_default() {
         let binding: ThreadBinding = Default::default();
-        assert_eq!(binding, ThreadBinding::Isolated);
+        assert_eq!(binding, ThreadBinding::Auto);
     }
 
     #[test]
@@ -651,19 +632,19 @@ mod tests {
         let isolated1 = SessionAgent::new(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Isolated,
+            ThreadBinding::New,
             parent,
         );
         let isolated2 = SessionAgent::new(
             "a2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Isolated,
+            ThreadBinding::New,
             parent,
         );
         let shared = SessionAgent::new(
             "a3".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
             parent,
         );
 
@@ -692,7 +673,7 @@ mod tests {
         let agent = session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         assert_eq!(agent.id, "a1");
         assert_eq!(session.get_agents().len(), 1);
@@ -704,7 +685,7 @@ mod tests {
         session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         session.terminate_agent("a1");
         let agent = session.get_agent("a1").unwrap();
@@ -718,7 +699,7 @@ mod tests {
         session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         assert!(session.get_agent("a1").is_some());
         assert!(session.get_agent("nonexistent").is_none());
@@ -730,7 +711,7 @@ mod tests {
         session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         if let Some(agent) = session.get_agent_mut("a1") {
             agent.mark_ready();
@@ -749,7 +730,7 @@ mod tests {
         session.spawn_agent(
             "a2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Isolated,
+            ThreadBinding::New,
         );
         let agents = session.get_agents_by_thread(&session.primary_thread_id);
         assert_eq!(agents.len(), 1);
@@ -762,12 +743,12 @@ mod tests {
         session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         session.spawn_agent(
             "a2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         session.terminate_agent("a2");
         let active = session.get_active_agents();
@@ -786,7 +767,7 @@ mod tests {
         session.spawn_agent(
             "a2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Isolated,
+            ThreadBinding::New,
         );
         let status = session.get_status();
         assert_eq!(status.session_id, "sess1");
@@ -809,12 +790,12 @@ mod tests {
         session.spawn_agent(
             "a1".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         session.spawn_agent(
             "a2".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         session.terminate_agent("a2");
         assert_eq!(session.get_agents().len(), 2);
@@ -833,7 +814,7 @@ mod tests {
         session.spawn_agent(
             "coder".to_string(),
             code_personality,
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         {
             let agent = session.get_agent_mut("coder").unwrap();
@@ -860,7 +841,7 @@ mod tests {
         session.spawn_agent(
             "general".to_string(),
             AgentPersonality::default(),
-            ThreadBinding::Shared,
+            ThreadBinding::Auto,
         );
         let agent = session.get_agent_mut("general").unwrap();
         agent.mark_ready();

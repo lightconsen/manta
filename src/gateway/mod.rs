@@ -1116,6 +1116,23 @@ impl Gateway {
             }
         }
 
+        // Configure ACP default agent builder (needs provider + tools, which are now ready)
+        if let Ok(default_provider) = model_router.create_default_provider().await {
+            let default_agent_config = config.default_agent.clone();
+            let default_tools = tool_registry.clone();
+            let provider_clone = default_provider.clone();
+            acp.set_agent_builder(move || {
+                crate::agent::AgentBuilder::new()
+                    .config(default_agent_config.clone())
+                    .provider(provider_clone.clone())
+                    .tools(default_tools.clone())
+                    .build()
+            })
+            .await;
+        } else {
+            warn!("No default LLM provider available — ACP subagent spawning will fail until a provider is configured");
+        }
+
         // Initialize security components
         let auth_manager = Arc::new(
             crate::security::AuthManager::new()
@@ -1212,7 +1229,24 @@ impl Gateway {
         };
 
         // Create inbound / outbound pipelines (skeleton alignment)
-        let agent_router = Arc::new(AgentRouter::new(crate::inbound::AgentRouterConfig::default()));
+        let agent_router = if let Some(pool) = sqlite_pool.clone() {
+            let binding_store = Arc::new(
+                crate::inbound::SqliteBindingStore::new(pool)
+                    .await
+                    .map_err(|e| {
+                        crate::error::MantaError::Storage {
+                            context: "Failed to create binding store".to_string(),
+                            details: e.to_string(),
+                        }
+                    })?,
+            );
+            let router = AgentRouter::new(crate::inbound::AgentRouterConfig::default())
+                .with_binding_store(binding_store);
+            router.load_bindings().await.ok();
+            Arc::new(router)
+        } else {
+            Arc::new(AgentRouter::new(crate::inbound::AgentRouterConfig::default()))
+        };
         let reply_dispatcher = Arc::new(crate::outbound::ReplyDispatcher::new(
             crate::outbound::ReplyDispatchConfig::default(),
         ));
@@ -1917,6 +1951,7 @@ impl Gateway {
             .route("/api/v1/acp/sessions/:id/resume", post(acp_session_resume_handler))
             .route("/api/v1/acp/sessions/:id/step", post(acp_session_step_handler))
             .route("/api/v1/acp/sessions/:id/cancel", post(acp_session_cancel_handler))
+            .route("/api/v1/acp/sessions/:id/tree", get(acp_session_tree_handler))
             .route("/api/v1/acp/execute/session", post(acp_execute_session_handler))
             .route("/api/v1/acp/execute/run", post(acp_execute_run_handler))
             // MCP API (9.5)
@@ -3134,7 +3169,11 @@ impl Gateway {
             .await;
     }
 
-    /// Send a single message to an agent.
+    /// Send a single message to an agent via the ACP controller.
+    ///
+    /// This routes execution through the centralized ACP actor queue,
+    /// enabling per-session serial processing and runtime controls
+    /// (pause / resume / step / cancel).
     async fn send_to_agent(
         state: &Arc<GatewayState>,
         agent_id: &str,
@@ -3144,20 +3183,131 @@ impl Gateway {
         channel: &str,
     ) {
         let agents = state.agents.read().await;
-        if let Some(agent) = agents.get(agent_id) {
-            let cmd = AgentCommand::ProcessMessage {
-                session_id: session_id.to_string(),
-                message: message.to_string(),
-                user_id: user_id.to_string(),
-                channel: channel.to_string(),
-            };
-
-            if let Err(e) = agent.tx.send(cmd).await {
-                error!("Failed to send command to agent {}: {}", agent_id, e);
+        let agent_handle = match agents.get(agent_id) {
+            Some(h) => h.clone(),
+            None => {
+                error!("Agent {} not found for session {}", agent_id, session_id);
+                return;
             }
-        } else {
-            error!("Agent {} not found for session {}", agent_id, session_id);
+        };
+        drop(agents);
+
+        let incoming_msg = crate::channels::IncomingMessage::new(
+            user_id.to_string(),
+            session_id.to_string(),
+            message.to_string(),
+        )
+        .with_provenance(crate::channels::InputProvenance::ExternalUser {
+            channel: channel.to_string(),
+            is_direct: true,
+        });
+
+        // Broadcast processing status
+        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+            agent_id: agent_id.to_string(),
+            status: AgentStatus::Processing {
+                session_id: session_id.to_string(),
+            },
+        });
+
+        // Build progress callback that forwards events to gateway subscribers
+        let event_tx = state.event_tx.clone();
+        let progress_session = session_id.to_string();
+        let progress_agent = agent_id.to_string();
+        let progress_channel = channel.to_string();
+        let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
+            let tx = event_tx.clone();
+            let sid = progress_session.clone();
+            let aid = progress_agent.clone();
+            let ch = progress_channel.clone();
+            Box::pin(async move {
+                match event {
+                    crate::agent::ProgressEvent::Started => {
+                        let _ = tx.send(GatewayEvent::AgentStatus {
+                            agent_id: aid.clone(),
+                            status: AgentStatus::Processing {
+                                session_id: sid.clone(),
+                            },
+                        });
+                    }
+                    crate::agent::ProgressEvent::Generating => {
+                        let _ = tx.send(GatewayEvent::Thinking {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            content: None,
+                        });
+                    }
+                    crate::agent::ProgressEvent::ToolCalling {
+                        name,
+                        arguments,
+                    } => {
+                        let _ = tx.send(GatewayEvent::ToolCalling {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            tool_name: name.clone(),
+                            arguments: arguments.clone(),
+                        });
+                    }
+                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                        let _ = tx.send(GatewayEvent::ToolResult {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            tool_name: name.clone(),
+                            result: result.clone(),
+                        });
+                    }
+                    crate::agent::ProgressEvent::Completed { response } => {
+                        let _ = tx.send(GatewayEvent::Completed {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            response,
+                        });
+                    }
+                    crate::agent::ProgressEvent::Error { message } => {
+                        let _ = tx.send(GatewayEvent::ProcessingError {
+                            session_id: sid.clone(),
+                            agent_id: aid.clone(),
+                            message,
+                        });
+                    }
+                }
+            })
+        });
+
+        // Route through ACP controller for serialized execution
+        match state
+            .acp_controller
+            .execute_session_with_progress(
+                agent_handle.agent.clone(),
+                incoming_msg,
+                progress_cb,
+            )
+            .await
+        {
+            Ok(outgoing) => {
+                let _ = state.event_tx.send(GatewayEvent::AgentResponse {
+                    session_id: session_id.to_string(),
+                    agent_id: agent_id.to_string(),
+                    content: outgoing.content,
+                    channel: channel.to_string(),
+                    conversation_id: session_id.to_string(),
+                    usage: outgoing.usage,
+                });
+            }
+            Err(e) => {
+                error!("ACP execution failed for agent {} session {}: {}", agent_id, session_id, e);
+                let _ = state.event_tx.send(GatewayEvent::ProcessingError {
+                    session_id: session_id.to_string(),
+                    agent_id: agent_id.to_string(),
+                    message: format!("Execution failed: {}", e),
+                });
+            }
         }
+
+        let _ = state.event_tx.send(GatewayEvent::AgentStatus {
+            agent_id: agent_id.to_string(),
+            status: AgentStatus::Idle,
+        });
     }
 
     /// Start Tailscale for remote access
@@ -6168,6 +6318,21 @@ async fn acp_session_cancel_handler(
         "session_id": id,
         "action": "cancel",
         "status": "requested",
+    });
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// Get subagent tree for an ACP session
+async fn acp_session_tree_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let session_id = crate::acp::AcpSessionId(id.clone());
+    let tree = state.acp.get_subagent_tree(&session_id).await;
+
+    let resp = serde_json::json!({
+        "session_id": id,
+        "tree": tree,
     });
     (StatusCode::OK, Json(resp)).into_response()
 }

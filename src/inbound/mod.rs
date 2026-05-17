@@ -23,7 +23,10 @@ pub use debounce::{InboundDebouncer, InboundDebouncerConfig};
 pub use dispatch::{AutoReplyDispatch, AutoReplyDispatchConfig, DispatchResult};
 pub use media::{MediaAttachmentCache, MediaUnderstandingPipeline, MediaUnderstandingResult};
 pub use queue::{QueueMode, QueueModeResolver};
-pub use router::{AgentRouter, AgentRouterConfig, RouteResult};
+pub use router::{
+    AgentRouter, AgentRouterConfig, BindingStore, InMemoryBindingStore, RouteResult,
+    SqliteBindingStore,
+};
 
 /// A message that has been processed by the inbound pipeline and is ready
 /// for routing to an agent.
