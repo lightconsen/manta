@@ -1184,3 +1184,212 @@ pub trait LlmProvider: Send + Sync {
     /// Health check
     async fn health_check(&self) -> crate::Result<bool>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_config_has_three_aliases() {
+        let config = ModelRouterConfig::default();
+        assert_eq!(config.aliases.len(), 3);
+        assert!(config.aliases.contains_key("default"));
+        assert!(config.aliases.contains_key("fast"));
+        assert!(config.aliases.contains_key("smart"));
+        assert_eq!(config.default_model, "default");
+    }
+
+    #[tokio::test]
+    async fn list_aliases_returns_default_aliases() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let aliases = router.list_aliases().await;
+        assert_eq!(aliases.len(), 3);
+        assert!(aliases.contains(&"default".to_string()));
+        assert!(aliases.contains(&"fast".to_string()));
+        assert!(aliases.contains(&"smart".to_string()));
+    }
+
+    #[tokio::test]
+    async fn set_alias_adds_new_alias() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let alias = ModelAlias {
+            name: "coding".to_string(),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            temperature: Some(0.2),
+            max_tokens: Some(4096),
+        };
+        router.set_alias(alias.clone()).await;
+
+        let aliases = router.list_aliases().await;
+        assert_eq!(aliases.len(), 4);
+        assert!(aliases.contains(&"coding".to_string()));
+
+        let default_model = router.get_default_model().await;
+        assert_eq!(default_model, "default");
+    }
+
+    #[tokio::test]
+    async fn remove_alias_deletes_alias() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let removed = router.remove_alias("fast").await;
+        assert!(removed);
+
+        let aliases = router.list_aliases().await;
+        assert_eq!(aliases.len(), 2);
+        assert!(!aliases.contains(&"fast".to_string()));
+    }
+
+    #[tokio::test]
+    async fn remove_unknown_alias_returns_false() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let removed = router.remove_alias("nonexistent").await;
+        assert!(!removed);
+    }
+
+    #[tokio::test]
+    async fn switch_default_model_changes_default() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router.switch_default_model("fast").await;
+        assert!(result.is_ok());
+
+        let default = router.get_default_model().await;
+        assert_eq!(default, "fast");
+    }
+
+    #[tokio::test]
+    async fn switch_unknown_model_fails() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router.switch_default_model("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_providers_returns_empty_when_none() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let providers = router.list_providers().await;
+        assert_eq!(providers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_provider() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let config = ProviderConfig {
+            provider_type: ProviderType::Anthropic,
+            api_key: "test-key".to_string(),
+            api_keys: vec![],
+            auth_profile: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        router.add_provider("test-provider", config).await.unwrap();
+        let providers = router.list_providers().await;
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name, "test-provider");
+
+        router.remove_provider("test-provider").await.unwrap();
+        let providers = router.list_providers().await;
+        assert_eq!(providers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn enable_disable_provider() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let config = ProviderConfig {
+            provider_type: ProviderType::Anthropic,
+            api_key: "test-key".to_string(),
+            api_keys: vec![],
+            auth_profile: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        router.add_provider("p1", config).await.unwrap();
+
+        // Default state is Closed (enabled)
+        let providers = router.list_providers().await;
+        assert!(providers[0].enabled);
+        assert_eq!(providers[0].circuit_state, CircuitState::Closed);
+
+        // Disable
+        router.disable_provider("p1").await.unwrap();
+        let providers = router.list_providers().await;
+        assert!(!providers[0].enabled);
+        assert_eq!(providers[0].circuit_state, CircuitState::Open);
+
+        // Enable
+        router.enable_provider("p1").await.unwrap();
+        let providers = router.list_providers().await;
+        assert!(providers[0].enabled);
+        assert_eq!(providers[0].circuit_state, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn enable_unknown_provider_fails() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let result = router.enable_provider("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_roundtrip() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_fallback_chain("default", vec!["p1".to_string(), "p2".to_string()])
+            .await
+            .unwrap();
+
+        let chain = router.get_fallback_chain("default").await;
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0], "p1");
+        assert_eq!(chain[1], "p2");
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_for_unknown_alias_returns_empty() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let chain = router.get_fallback_chain("nonexistent").await;
+        assert!(chain.is_empty());
+    }
+
+    #[tokio::test]
+    async fn provider_config_effective_key_prefers_auth_profile() {
+        let mut config = ProviderConfig {
+            provider_type: ProviderType::OpenAi,
+            api_key: "single-key".to_string(),
+            api_keys: vec!["multi-key".to_string()],
+            auth_profile: None,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        // api_keys takes precedence over api_key
+        assert_eq!(config.effective_key(), "multi-key");
+
+        // auth_profile takes precedence over both
+        config.auth_profile = Some(AuthProfileConfig {
+            keys: vec![
+                auth_profile::AuthKeyConfig {
+                    key: "profile-key".to_string(),
+                    label: "primary".to_string(),
+                }
+            ],
+            cooldown_secs: 60,
+            max_failures: 3,
+        });
+        assert_eq!(config.effective_key(), "profile-key");
+    }
+
+    #[tokio::test]
+    async fn circuit_state_default_is_closed() {
+        let state = CircuitState::default();
+        assert_eq!(state, CircuitState::Closed);
+    }
+}
