@@ -5,7 +5,7 @@
 
 use futures::StreamExt;
 use manta::providers::{
-    AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider, Role,
+    AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider,
 };
 use serial_test::serial;
 use wiremock::{

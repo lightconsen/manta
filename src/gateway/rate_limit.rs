@@ -22,7 +22,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::gateway::GatewayState;
 

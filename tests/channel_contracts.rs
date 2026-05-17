@@ -6,7 +6,6 @@
 //! integrations (webhooks, channel APIs, etc.).
 
 use manta::channels::*;
-use serde_json::json;
 
 // ── IncomingMessage Serialization Contract ───────────────────────────────────
 

@@ -2,7 +2,7 @@
 //!
 //! These tests verify that the application components work together correctly.
 
-use manta::core::models::{CreateEntityRequest, Entity, Status, UpdateEntityRequest};
+use manta::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
 use manta::core::Engine;
 
 #[tokio::test]

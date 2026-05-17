@@ -146,6 +146,7 @@ impl DiscordChannel {
     }
 
     #[cfg(feature = "discord")]
+    #[allow(dead_code)]
     /// Get or create a session UUID for a channel
     async fn get_or_create_session(&self, channel_id: u64) -> String {
         {
@@ -162,6 +163,7 @@ impl DiscordChannel {
     }
 
     #[cfg(feature = "discord")]
+    #[allow(dead_code)]
     /// Reset session for a channel (when /new is used)
     async fn reset_session(&self, channel_id: u64) -> String {
         let new_session = uuid::Uuid::new_v4().to_string();

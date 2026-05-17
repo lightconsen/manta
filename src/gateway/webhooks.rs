@@ -268,12 +268,14 @@ async fn whatsapp_webhook_handler(
 
 /// Telegram webhook payload
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TelegramUpdate {
     update_id: i64,
     message: Option<TelegramMessage>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TelegramMessage {
     message_id: i64,
     from: Option<TelegramUser>,
@@ -283,6 +285,7 @@ struct TelegramMessage {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TelegramUser {
     id: i64,
     first_name: String,

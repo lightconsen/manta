@@ -187,7 +187,7 @@ impl FallbackChainBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{Message, Usage};
+    use crate::providers::Message;
 
     struct MockProvider {
         name: String,

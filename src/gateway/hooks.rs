@@ -7,10 +7,9 @@
 
 use crate::gateway::GatewayEvent;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Hook execution result
 #[derive(Debug, Clone)]
@@ -175,7 +174,7 @@ impl EventHookRegistry {
             if let Some(ref after) = hook.after {
                 let event_clone = event.clone();
                 let after_clone = after.clone();
-                let hook_name = hook.name.clone();
+                let _hook_name = hook.name.clone();
                 tokio::spawn(async move {
                     after_clone(event_clone).await;
                 });

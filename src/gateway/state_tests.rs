@@ -7,7 +7,7 @@ use super::*;
 use crate::channels::{ChannelType, MentionState};
 use crate::security::mention_gate::{MentionGate, MentionPolicy};
 use crate::security::pairing::{DmPolicy, PairingStore};
-use crate::tools::command_gate::{AccessDecision, CommandGate};
+use crate::tools::command_gate::CommandGate;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -343,7 +343,7 @@ async fn require_mention_allows_mentioned_message() {
 #[tokio::test]
 async fn mention_gate_block_policy_blocks_mentions() {
     let mut config = GatewayConfig::default();
-    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    let ch = ChannelConfig::new(ChannelType::Discord);
     config.channels.insert("discord".to_string(), ch);
 
     let state = make_test_state(config).await;
@@ -367,7 +367,7 @@ async fn mention_gate_block_policy_blocks_mentions() {
 #[tokio::test]
 async fn mention_gate_allow_policy_passes_mentions() {
     let mut config = GatewayConfig::default();
-    let mut ch = ChannelConfig::new(ChannelType::Discord);
+    let ch = ChannelConfig::new(ChannelType::Discord);
     config.channels.insert("discord".to_string(), ch);
 
     let state = make_test_state(config).await;
@@ -388,7 +388,7 @@ async fn mention_gate_allow_policy_passes_mentions() {
 #[tokio::test]
 async fn command_gate_blocks_forbidden_content() {
     let mut config = GatewayConfig::default();
-    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    let ch = ChannelConfig::new(ChannelType::Telegram);
     config.channels.insert("telegram".to_string(), ch);
 
     let state = make_test_state(config).await;
@@ -415,7 +415,7 @@ async fn command_gate_blocks_forbidden_content() {
 #[tokio::test]
 async fn command_gate_allows_safe_content() {
     let mut config = GatewayConfig::default();
-    let mut ch = ChannelConfig::new(ChannelType::Telegram);
+    let ch = ChannelConfig::new(ChannelType::Telegram);
     config.channels.insert("telegram".to_string(), ch);
 
     let state = make_test_state(config).await;

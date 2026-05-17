@@ -706,7 +706,7 @@ mod tests {
     async fn test_revoke() {
         let store = PairingStore::new();
 
-        let user = store
+        let _user = store
             .add_to_allowlist("telegram", "123456", None, None)
             .await;
         assert!(store.is_authorized("telegram", "123456").await);

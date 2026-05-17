@@ -328,6 +328,7 @@ pub struct SlidingWindowState {
 }
 
 /// Axum middleware layer for sliding window rate limiting
+#[allow(unexpected_cfgs)]
 #[cfg(feature = "web")]
 pub mod middleware {
     use super::*;

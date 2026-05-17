@@ -148,7 +148,7 @@ async fn whatsapp_allowlist_normalizes_plus_prefix() {
         .await;
 
     // Store has + prefix, allowlist doesn't — should still match
-    let (allowed, reply) = channel.check_access("+14155552671", None).await;
+    let (allowed, _reply) = channel.check_access("+14155552671", None).await;
 
     assert!(
         allowed,

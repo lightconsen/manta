@@ -3219,7 +3219,7 @@ impl Gateway {
             let tx = event_tx.clone();
             let sid = progress_session.clone();
             let aid = progress_agent.clone();
-            let ch = progress_channel.clone();
+            let _ch = progress_channel.clone();
             Box::pin(async move {
                 match event {
                     crate::agent::ProgressEvent::Started => {
@@ -3310,6 +3310,7 @@ impl Gateway {
         });
     }
 
+    #[allow(dead_code)]
     /// Start Tailscale for remote access
     async fn start_tailscale(&self) -> crate::Result<()> {
         #[cfg(feature = "tailscale")]
@@ -5546,7 +5547,7 @@ async fn rotate_auth_profile_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
     match state.model_router.rotate_auth_key(&id).await {
-        Ok(new_key) => {
+        Ok(_new_key) => {
             let response = serde_json::json!({
                 "success": true,
                 "provider": id,
@@ -5935,6 +5936,7 @@ async fn disable_skill_handler(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct RunSkillRequest {
     /// Input for the skill
     input: String,
@@ -8158,6 +8160,7 @@ async fn delete_entity_handler(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SearchEntitiesRequest {
     query: String,
     #[serde(default)]

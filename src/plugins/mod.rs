@@ -28,6 +28,7 @@ use tracing::{debug, info, warn};
 use crate::tools::ToolRegistry;
 
 /// Plugin manager - high-level interface for plugin operations
+#[allow(dead_code)]
 pub struct PluginManager {
     runtime: Arc<PluginRuntime>,
     hook_registry: Arc<HookRegistry>,

@@ -453,6 +453,7 @@ impl DaemonManager {
         }
     }
 
+    #[allow(dead_code)]
     /// Initialize the SQLite memory store
     async fn init_memory_store() -> crate::Result<crate::memory::SqliteMemoryStore> {
         // Use centralized ~/.manta/memory directory

@@ -5,7 +5,7 @@
 //! into the Agent via the builder pattern. Tests use isolated temp directories.
 
 use manta::agent::{
-    Agent, AgentBuilder, AgentConfig, ArtifactStore, BudgetCategory, DiskBudgetManager,
+    AgentBuilder, AgentConfig, ArtifactStore, BudgetCategory, DiskBudgetManager,
     SessionFileManager, TranscriptStore,
 };
 use manta::tools::ToolRegistry;
@@ -148,7 +148,7 @@ fn artifact_store_adds_and_retrieves() {
 
 #[test]
 fn artifact_store_lists_by_session() {
-    use manta::agent::{Artifact, ArtifactType};
+    use manta::agent::Artifact;
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());

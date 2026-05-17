@@ -372,8 +372,8 @@ mod tests {
     fn test_clear_completed() {
         let mut store = TodoStore::new();
 
-        let mut task1 = store.create_task("Task 1");
-        let mut task2 = store.create_task("Task 2");
+        let task1 = store.create_task("Task 1");
+        let _task2 = store.create_task("Task 2");
 
         if let Some(t) = store.get_mut(&task1.id) {
             t.complete();
@@ -451,8 +451,8 @@ mod tests {
     #[test]
     fn test_todo_store_list_by_status() {
         let mut store = TodoStore::new();
-        let mut t1 = store.create_task("Task 1");
-        let t2 = store.create_task("Task 2");
+        let t1 = store.create_task("Task 1");
+        let _t2 = store.create_task("Task 2");
         if let Some(t) = store.get_mut(&t1.id) {
             t.complete();
         }
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn test_todo_store_count_by_status() {
         let mut store = TodoStore::new();
-        let mut t1 = store.create_task("Task 1");
+        let t1 = store.create_task("Task 1");
         store.create_task("Task 2");
         if let Some(t) = store.get_mut(&t1.id) {
             t.complete();

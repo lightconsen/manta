@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -29,6 +29,7 @@ impl Default for ImageTool {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ImageArgs {
     path: String,
     #[serde(default)]

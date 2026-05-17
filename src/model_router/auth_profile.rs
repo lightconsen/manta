@@ -8,9 +8,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Status of an individual API key within a profile
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

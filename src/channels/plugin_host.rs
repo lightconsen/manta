@@ -26,6 +26,7 @@ pub struct HostState {
 }
 
 /// A WASM-based channel plugin
+#[allow(dead_code)]
 pub struct PluginChannel {
     /// Plugin name
     name: String,
@@ -143,6 +144,7 @@ fn read_string_from_memory(
 }
 
 /// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok), low 32 bits = value/error ptr
+#[allow(dead_code)]
 fn encode_result(ok: &str, err: Option<&str>) -> i64 {
     match err {
         None => {

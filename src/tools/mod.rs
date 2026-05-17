@@ -1510,7 +1510,7 @@ mod tests {
 
     #[test]
     fn test_tool_registry() {
-        let mut registry = ToolRegistry::new();
+        let registry = ToolRegistry::new();
         assert!(registry.list().is_empty());
         assert!(!registry.has("test"));
     }
@@ -1541,7 +1541,7 @@ mod tests {
 
     #[test]
     fn test_name_validator_valid() {
-        use crate::providers::FunctionDefinition;
+        
 
         struct ValidTool;
 

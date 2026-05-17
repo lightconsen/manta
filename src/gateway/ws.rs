@@ -21,8 +21,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::gateway::auth::extract_session_cookie;
-use crate::gateway::auth::SessionCookieConfig;
 use crate::gateway::GatewayEvent;
 use crate::gateway::GatewayState;
 
@@ -70,6 +68,7 @@ pub enum WsServerMessage {
 }
 
 /// WebSocket connection state
+#[allow(dead_code)]
 struct WsConnection {
     /// Subscribed session IDs (empty = all events)
     subscriptions: HashSet<String>,

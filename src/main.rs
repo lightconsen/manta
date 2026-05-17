@@ -68,7 +68,7 @@ fn handle_error(error: manta::error::MantaError) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_version_available() {

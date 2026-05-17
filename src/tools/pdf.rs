@@ -39,9 +39,11 @@ struct PdfArgs {
     title: Option<String>,
     /// Page orientation: portrait or landscape
     #[serde(default = "default_orientation")]
+    #[allow(dead_code)]
     orientation: String,
     /// Paper size: a4, letter, legal
     #[serde(default = "default_paper")]
+    #[allow(dead_code)]
     paper: String,
 }
 
@@ -68,7 +70,7 @@ fn markdown_to_html(content: &str, title: &str) -> String {
         let tag = format!("h{}", level);
         let re = regex::Regex::new(&format!(r"(?m)^{prefix} (.+)$")).unwrap();
         html = re
-            .replace_all(&html, |caps: &regex::Captures| {
+            .replace_all(&html, |caps: &regex::Captures<'_>| {
                 format!("<{}>{}</{}>", tag, caps.get(1).unwrap().as_str(), tag)
             })
             .to_string();
@@ -127,7 +129,7 @@ fn markdown_to_html(content: &str, title: &str) -> String {
     // Inline code
     let re = regex::Regex::new(r"`([^`]+)`").unwrap();
     html = re
-        .replace_all(&html, |caps: &regex::Captures| {
+        .replace_all(&html, |caps: &regex::Captures<'_>| {
             format!("<code>{}</code>", caps.get(1).unwrap().as_str())
         })
         .to_string();

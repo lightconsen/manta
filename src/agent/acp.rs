@@ -240,6 +240,7 @@ enum SessionCommand {
         progress_cb: Option<ProgressCallback>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
+    #[allow(dead_code)]
     GetStatus {
         controller_state: RuntimeState,
         respond_to: oneshot::Sender<Option<AcpSessionStatus>>,
@@ -276,6 +277,7 @@ struct SessionHandle {
 
 /// Per-session execution tracking (held in the main ACP loop)
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SessionExecution {
     controller: Arc<ExecutionController>,
     mode: ExecutionMode,

@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_provider_registry() {
-        let mut registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new();
         assert!(registry.list().is_empty());
 
         // We can't easily test with real providers, but we can test the interface

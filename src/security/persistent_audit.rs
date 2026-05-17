@@ -9,11 +9,10 @@
 //! - Long-term retention
 
 use crate::security::runtime_audit::{AuditEntry, AuditEventType};
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// Persistent audit log backed by SQLite
 #[derive(Debug, Clone)]

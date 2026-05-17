@@ -17,13 +17,14 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::gateway::auth::{
-    build_set_cookie, OAuthConfig, OAuthProviderConfig, OAuthUserProfile, SessionCookieConfig,
+    build_set_cookie, OAuthProviderConfig, OAuthUserProfile, SessionCookieConfig,
 };
 use crate::gateway::GatewayState;
 use crate::security::{User, UserId};
 
 /// Query params for OAuth callback
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct OAuthCallbackQuery {
     code: String,
     state: Option<String>,

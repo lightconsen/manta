@@ -368,9 +368,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_hook_needs_approval() {
-        use super::super::{ApprovalDecision, RiskLevel};
+        use super::super::RiskLevel;
 
-        let hooks = ToolHooks::new().policy(|name, args| {
+        let hooks = ToolHooks::new().policy(|name, _args| {
             let name = name.to_string();
             async move {
                 if name == "shell" {

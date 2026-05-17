@@ -4,13 +4,13 @@
 //! Wraps the existing CanvasManager to expose canvas operations to the agent.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::canvas::{CanvasComponent, CanvasId, CanvasManager, CanvasUpdate};
+use crate::canvas::{CanvasComponent, CanvasManager, CanvasUpdate};
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -281,7 +281,7 @@ impl Tool for CanvasTool {
                 components,
             } => {
                 let (_tx, _rx): (mpsc::Sender<crate::canvas::CanvasEvent>, _) = mpsc::channel(16);
-                let session = self
+                let _session = self
                     .manager
                     .get_or_create_for_session(&session_id)
                     .await;

@@ -9,7 +9,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, warn};
 
@@ -123,6 +122,7 @@ impl Default for SseStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_subscribe_and_send() {

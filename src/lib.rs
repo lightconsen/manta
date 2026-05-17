@@ -28,7 +28,7 @@
 //! # }
 //! ```
 
-#![warn(rust_2018_idioms)]
+// rust_2018_idioms disabled to avoid elided_lifetime_in_paths noise
 // Documentation warnings allowed - public APIs are documented as needed
 #![allow(missing_docs)]
 // Unsafe code is allowed only for platform-specific resource limits

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Default signal-cli JSON-RPC endpoint
 const DEFAULT_SIGNAL_RPC_URL: &str = "http://localhost:8080/api/v1/rpc";
@@ -79,6 +79,7 @@ struct JsonRpcRequest {
 
 /// JSON-RPC response wrapper
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct JsonRpcResponse {
     jsonrpc: String,
     #[serde(default)]
@@ -295,6 +296,7 @@ impl SignalChannel {
         Ok(timestamp)
     }
 
+    #[allow(dead_code)]
     /// Poll for incoming messages (simplified)
     async fn poll_messages(&self) -> crate::Result<Vec<IncomingMessage>> {
         let params = serde_json::json!({
@@ -400,7 +402,7 @@ impl Channel for SignalChannel {
 
         // Spawn polling loop for incoming messages
         let running = self.running.clone();
-        let message_tx = self.message_tx.clone();
+        let _message_tx = self.message_tx.clone();
         let poll_interval = std::time::Duration::from_secs(5);
 
         tokio::spawn(async move {

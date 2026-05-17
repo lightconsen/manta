@@ -55,6 +55,7 @@ pub struct SkillUpdate {
 
 /// Skill registry client
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SkillRegistry {
     /// Registry base URL
     url: String,

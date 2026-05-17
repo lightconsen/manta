@@ -522,7 +522,7 @@ mod tests {
 
         // Fill up to limit — tasks won't complete so they stay Running
         for i in 0..2 {
-            let reg = Arc::clone(&registry);
+            let _reg = Arc::clone(&registry);
             registry
                 .spawn(
                     &format!("session-{}", i),
@@ -544,7 +544,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill() {
         let registry = Arc::new(SubagentRegistry::new(3, 10));
-        let reg = Arc::clone(&registry);
+        let _reg = Arc::clone(&registry);
 
         let run_id = registry
             .spawn("session-1", "agent", "task", |_, _| async { /* hangs */ })

@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::gateway::GatewayState;
 

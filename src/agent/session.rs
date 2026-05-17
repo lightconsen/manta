@@ -509,6 +509,7 @@ async fn session_processing_task(
 use tokio::sync::oneshot;
 
 /// Shared session manager
+#[allow(dead_code)]
 type SharedSessionManager = Arc<RwLock<SessionManager>>;
 
 #[cfg(test)]

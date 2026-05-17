@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use manta::providers::{Message, Role, ToolCall, ToolResult, Usage};
+use manta::providers::{Message, Role, ToolCall};
 use serde_json;
 
 fn bench_message_serialization(c: &mut Criterion) {

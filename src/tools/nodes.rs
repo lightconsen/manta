@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -357,7 +357,7 @@ impl Tool for NodesTool {
 
                 match output {
                     Ok(o) if o.status.success() => {
-                        let json: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
+                        let _json: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
                         // Tailscale doesn't expose location directly; this is a placeholder
                         Ok(ToolExecutionResult {
                             success: false,

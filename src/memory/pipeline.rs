@@ -12,6 +12,7 @@ use tracing::{debug, error, info};
 
 /// Shared state for tracking pipeline metrics.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct PipelineMetrics {
     batch_count: AtomicUsize,
 }
@@ -121,6 +122,7 @@ pub trait PipelineEmbeddingProvider: Send + Sync {
 }
 
 /// The embedding pipeline worker.
+#[allow(dead_code)]
 pub struct EmbeddingPipeline {
     config: EmbeddingPipelineConfig,
     handle: EmbeddingPipelineHandle,

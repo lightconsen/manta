@@ -12,8 +12,7 @@
 //! - Message history per session
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
-    MessageMetadata, OutgoingMessage,
+    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -22,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 /// Default WebSocket port for WebChat
 const DEFAULT_WEBCHAT_PORT: u16 = 8081;
@@ -116,6 +115,7 @@ pub enum WebchatMessage {
 
 /// Active WebSocket connection info
 #[derive(Debug)]
+#[allow(dead_code)]
 struct WebchatConnection {
     session_id: String,
     sender: mpsc::UnboundedSender<String>,
@@ -609,14 +609,14 @@ impl Channel for WebchatChannel {
 async fn handle_websocket(
     mut socket: axum::extract::ws::WebSocket,
     connections: Arc<RwLock<HashMap<String, WebchatConnection>>>,
-    message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
-    running: Arc<std::sync::atomic::AtomicBool>,
+    _message_tx: Arc<RwLock<Option<mpsc::UnboundedSender<IncomingMessage>>>>,
+    _running: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let mut session_id = String::new();
+    let (_tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let session_id = String::new();
 
     // Send task: forward messages from channel to WebSocket
-    let mut send_task = tokio::spawn(async move {
+    let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if socket
                 .send(axum::extract::ws::Message::Text(msg))

@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_default_capacity() {
-        let log: RuntimeAuditLog = Default::default();
+        let _log: RuntimeAuditLog = Default::default();
         // Capacity is 10_000 but we can't inspect it directly; test eviction indirectly
         // by verifying it works with many entries
     }

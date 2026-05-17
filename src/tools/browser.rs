@@ -60,6 +60,7 @@ pub struct BrowserTool {
     /// Whether to run headless (default: true)
     headless: bool,
     /// Default timeout for operations
+    #[allow(dead_code)]
     default_timeout: Duration,
 }
 

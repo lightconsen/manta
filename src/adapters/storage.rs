@@ -660,10 +660,12 @@ fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn system_time_to_rfc3339(time: std::time::SystemTime) -> String {
     chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()
 }
 
+#[allow(dead_code)]
 fn rfc3339_to_system_time(s: &str) -> Option<std::time::SystemTime> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()

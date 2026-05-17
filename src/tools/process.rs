@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 

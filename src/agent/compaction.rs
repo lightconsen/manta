@@ -338,7 +338,7 @@ mod tests {
         // Change first message (won't affect hash since only last 6 are used)
         messages_altered_early[0] = ("user".to_string(), "Changed".to_string());
 
-        let hash_altered = compute_context_hash(&messages_altered_early);
+        let _hash_altered = compute_context_hash(&messages_altered_early);
 
         // This assertion would fail with current implementation since message count is included
         // The hash includes both count AND last 6 messages for robust deduplication

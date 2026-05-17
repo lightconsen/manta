@@ -525,7 +525,7 @@ mod tests {
         let router = AgentRouter::new(AgentRouterConfig::default());
         let msg = IncomingMessage::new("u1", "s1", "hello");
 
-        let route1 = router.route(&msg, None).await;
+        let _route1 = router.route(&msg, None).await;
         router.unbind_session("s1").await;
 
         let msg2 = IncomingMessage::new("u1", "s1", "again");

@@ -12,8 +12,7 @@
 //! - Contact and chat management
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
-    MessageMetadata, OutgoingMessage,
+    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -22,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Default BlueBubbles server URL
 const DEFAULT_BLUEBUBBLES_URL: &str = "http://localhost:3000";
@@ -96,6 +95,7 @@ struct BbSendRequest {
 
 /// BlueBubbles API response wrapper
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BbResponse<T> {
     status: i32,
     message: String,
@@ -105,6 +105,7 @@ struct BbResponse<T> {
 
 /// BlueBubbles message data
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BbMessage {
     #[serde(rename = "guid")]
     guid: String,
@@ -120,6 +121,7 @@ struct BbMessage {
 
 /// BlueBubbles handle info
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BbHandle {
     #[serde(rename = "address")]
     address: String,

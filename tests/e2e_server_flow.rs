@@ -14,7 +14,7 @@ use axum::{
 use manta::{
     agent::{Agent, AgentConfig},
     core::Engine,
-    providers::{CompletionResponse, Message, OpenAiProvider, Provider, Role},
+    providers::OpenAiProvider,
     server::AppState,
     tools::ToolRegistry,
 };

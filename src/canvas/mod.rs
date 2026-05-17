@@ -793,7 +793,7 @@ mod tests {
     #[tokio::test]
     async fn test_canvas_websocket_handle_message() {
         let (event_tx, mut event_rx) = mpsc::channel(10);
-        let (update_tx, update_rx) = broadcast::channel(10);
+        let (_update_tx, update_rx) = broadcast::channel(10);
         let canvas_id = CanvasId::new();
 
         let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);
@@ -812,7 +812,7 @@ mod tests {
     #[tokio::test]
     async fn test_canvas_websocket_handle_binary_returns_none() {
         let (event_tx, _event_rx) = mpsc::channel(10);
-        let (update_tx, update_rx) = broadcast::channel(10);
+        let (_update_tx, update_rx) = broadcast::channel(10);
         let canvas_id = CanvasId::new();
 
         let handler = CanvasWebSocketHandler::new(canvas_id, event_tx, update_rx);

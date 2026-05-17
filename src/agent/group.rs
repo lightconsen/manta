@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_group_manager_create_and_get() {
         let mut manager = GroupSessionManager::new();
-        let group = manager.create_group("g1", "Test", "user1", "Alice");
+        let _group = manager.create_group("g1", "Test", "user1", "Alice");
         assert_eq!(manager.list_groups(), vec!["g1"]);
 
         let retrieved = manager.get_group("g1");

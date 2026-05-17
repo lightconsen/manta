@@ -630,6 +630,7 @@ impl BatchEmbeddingProcessor {
 }
 
 /// High-level vector memory service
+#[allow(dead_code)]
 pub struct VectorMemoryService {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     vector_store: Arc<dyn VectorStore>,

@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_check_memory_flush_token_threshold() {
         let config = default_config();
-        let mut state = default_state();
+        let state = default_state();
         let messages = vec![
             ("user".to_string(), "Hello".to_string()),
             ("assistant".to_string(), "Hi there!".to_string()),
@@ -219,7 +219,7 @@ mod tests {
         state.last_flush_context_hash = Some("abc123".to_string());
 
         let messages = vec![];
-        let decision = check_memory_flush(
+        let _decision = check_memory_flush(
             10000, // total_tokens
             10000, // transcript_bytes
             &config, 8000, // context_window

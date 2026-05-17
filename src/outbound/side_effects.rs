@@ -90,6 +90,7 @@ pub struct SideEffectContext {
 }
 
 /// Executor that runs side effects asynchronously.
+#[allow(dead_code)]
 pub struct SideEffectExecutor {
     registry: Arc<SideEffectRegistry>,
     /// Shared context populated at runtime by the gateway.
