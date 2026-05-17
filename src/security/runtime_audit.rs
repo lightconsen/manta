@@ -203,8 +203,10 @@ mod tests {
     #[tokio::test]
     async fn test_recent_ordering() {
         let log = RuntimeAuditLog::with_capacity(100);
-        log.log(AuditEventType::AccessCheck, "a", "t", true, "first", None).await;
-        log.log(AuditEventType::AccessCheck, "b", "t", true, "second", None).await;
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "first", None)
+            .await;
+        log.log(AuditEventType::AccessCheck, "b", "t", true, "second", None)
+            .await;
 
         let recent = log.recent(2).await;
         assert_eq!(recent.len(), 2);
@@ -217,7 +219,8 @@ mod tests {
         let log = RuntimeAuditLog::with_capacity(100);
         assert_eq!(log.len().await, 0);
 
-        log.log(AuditEventType::Security, "x", "t", true, "msg", None).await;
+        log.log(AuditEventType::Security, "x", "t", true, "msg", None)
+            .await;
         assert_eq!(log.len().await, 1);
 
         log.clear().await;

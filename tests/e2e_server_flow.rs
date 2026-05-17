@@ -76,12 +76,7 @@ async fn chat_handler(
                 });
                 (StatusCode::OK, Json(resp))
             }
-            Err(e) => {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": e.to_string()})),
-                )
-            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
         }
     } else {
         (
@@ -178,16 +173,11 @@ async fn e2e_root_endpoint_with_agent() {
         .await;
 
     let provider = Arc::new(
-        OpenAiProvider::with_base_url("e2e-key", &mock_server.uri())
-            .expect("create provider"),
+        OpenAiProvider::with_base_url("e2e-key", &mock_server.uri()).expect("create provider"),
     );
 
     let tool_registry = Arc::new(ToolRegistry::new());
-    let agent = Arc::new(Agent::new(
-        AgentConfig::default(),
-        provider,
-        tool_registry,
-    ));
+    let agent = Arc::new(Agent::new(AgentConfig::default(), provider, tool_registry));
 
     let engine = Arc::new(Engine::new());
     let state = AppState {
@@ -262,16 +252,11 @@ async fn e2e_chat_endpoint_full_roundtrip() {
         .await;
 
     let provider = Arc::new(
-        OpenAiProvider::with_base_url("e2e-key", &mock_server.uri())
-            .expect("create provider"),
+        OpenAiProvider::with_base_url("e2e-key", &mock_server.uri()).expect("create provider"),
     );
 
     let tool_registry = Arc::new(ToolRegistry::new());
-    let agent = Arc::new(Agent::new(
-        AgentConfig::default(),
-        provider,
-        tool_registry,
-    ));
+    let agent = Arc::new(Agent::new(AgentConfig::default(), provider, tool_registry));
 
     let engine = Arc::new(Engine::new());
     let state = AppState {

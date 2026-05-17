@@ -1302,10 +1302,7 @@ mod tests {
     fn test_cron_job_update_next_run() {
         let now = Utc::now();
         let interval = Duration::from_secs(3600);
-        let schedule = Schedule::Every {
-            interval,
-            anchor: Some(now),
-        };
+        let schedule = Schedule::Every { interval, anchor: Some(now) };
         let mut job = CronJob::new("j2", "Interval", schedule, ExecutionTarget::shell("echo"));
 
         job.update_next_run(now);
@@ -1329,10 +1326,7 @@ mod tests {
             DeliveryStatus::Failed("x".to_string()),
             DeliveryStatus::Failed("x".to_string())
         );
-        assert_ne!(
-            DeliveryStatus::Delivered,
-            DeliveryStatus::Failed("x".to_string())
-        );
+        assert_ne!(DeliveryStatus::Delivered, DeliveryStatus::Failed("x".to_string()));
     }
 
     #[test]
@@ -1364,14 +1358,10 @@ mod tests {
 
     #[test]
     fn test_cron_command_variants() {
-        
-
         let job = CronJob::new(
             "id",
             "name",
-            Schedule::At {
-                timestamp: Utc::now(),
-            },
+            Schedule::At { timestamp: Utc::now() },
             ExecutionTarget::shell("echo"),
         );
 

@@ -348,7 +348,8 @@ mod tests {
 
     #[test]
     fn test_ws_connect_query_deserialize() {
-        let query: WsConnectQuery = serde_json::from_str(r#"{"token":"abc","session_id":"s1"}"#).unwrap();
+        let query: WsConnectQuery =
+            serde_json::from_str(r#"{"token":"abc","session_id":"s1"}"#).unwrap();
         assert_eq!(query.token, Some("abc".to_string()));
         assert_eq!(query.session_id, Some("s1".to_string()));
     }

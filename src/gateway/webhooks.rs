@@ -630,12 +630,7 @@ async fn handle_slack_event(
         return (StatusCode::OK, "Empty user or text").into_response();
     }
 
-    info!(
-        "Slack message from {} in {}: {}",
-        user_id,
-        channel,
-        &text[..text.len().min(50)]
-    );
+    info!("Slack message from {} in {}: {}", user_id, channel, &text[..text.len().min(50)]);
 
     // Determine mention state: D-prefixed channels are DMs
     let mention = if channel.starts_with('D') {
@@ -654,15 +649,12 @@ async fn handle_slack_event(
     }
 
     // Route through inbound pipeline
-    let incoming = IncomingMessage::new(
-        user_id.to_string(),
-        format!("slack:{}", channel),
-        text.to_string(),
-    )
-    .with_provenance(InputProvenance::ExternalUser {
-        channel: "slack".to_string(),
-        is_direct: channel.starts_with('D'),
-    });
+    let incoming =
+        IncomingMessage::new(user_id.to_string(), format!("slack:{}", channel), text.to_string())
+            .with_provenance(InputProvenance::ExternalUser {
+                channel: "slack".to_string(),
+                is_direct: channel.starts_with('D'),
+            });
 
     let _ = state.inbound_pipeline.process(incoming).await;
 
@@ -910,22 +902,31 @@ mod tests {
     async fn make_webhook_state() -> GatewayState {
         let mut config = crate::gateway::GatewayConfig::default();
 
-        let mut whatsapp = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
-        whatsapp.credentials.insert("verify_token".to_string(), "secret123".to_string());
+        let mut whatsapp =
+            crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
+        whatsapp
+            .credentials
+            .insert("verify_token".to_string(), "secret123".to_string());
         config.channels.insert("whatsapp".to_string(), whatsapp);
 
-        let mut telegram = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Telegram);
-        telegram.credentials.insert("webhook_token".to_string(), "mytoken".to_string());
+        let mut telegram =
+            crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Telegram);
+        telegram
+            .credentials
+            .insert("webhook_token".to_string(), "mytoken".to_string());
         config.channels.insert("telegram".to_string(), telegram);
 
         let mut feishu = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Feishu);
-        feishu.credentials.insert("webhook_secret".to_string(), "feishu_secret".to_string());
+        feishu
+            .credentials
+            .insert("webhook_secret".to_string(), "feishu_secret".to_string());
         config.channels.insert("feishu".to_string(), feishu);
 
         let slack = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Slack);
         config.channels.insert("slack".to_string(), slack);
 
-        let mut disabled = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
+        let mut disabled =
+            crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Whatsapp);
         disabled.enabled = false;
         config.channels.insert("disabled".to_string(), disabled);
 
@@ -945,7 +946,9 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(body, "123456");
     }
 
@@ -1039,7 +1042,9 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["challenge"], "abc123");
     }
@@ -1114,7 +1119,9 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(body, "slack_challenge_123");
     }
 
@@ -1231,7 +1238,9 @@ mod tests {
     async fn make_slack_webhook_state_with_secret() -> GatewayState {
         let mut config = crate::gateway::GatewayConfig::default();
         let mut slack = crate::gateway::ChannelConfig::new(crate::channels::ChannelType::Slack);
-        slack.credentials.insert("signing_secret".to_string(), "slack_secret".to_string());
+        slack
+            .credentials
+            .insert("signing_secret".to_string(), "slack_secret".to_string());
         config.channels.insert("slack".to_string(), slack);
         crate::gateway::state_tests::make_test_state(config).await
     }

@@ -616,8 +616,8 @@ mod tests {
 
     #[test]
     fn test_compressor_with_strategy() {
-        let compressor = ContextCompressor::new(100)
-            .with_strategy(CompressionStrategy::SlidingWindow);
+        let compressor =
+            ContextCompressor::new(100).with_strategy(CompressionStrategy::SlidingWindow);
         let messages = create_test_messages(20);
         let compressed = compressor.compress(&messages);
         assert!(compressed.len() < messages.len());
@@ -713,8 +713,7 @@ mod tests {
 
     #[test]
     fn test_oldest_first_single_message() {
-        let compressor =
-            ContextCompressor::new(10).with_strategy(CompressionStrategy::OldestFirst);
+        let compressor = ContextCompressor::new(10).with_strategy(CompressionStrategy::OldestFirst);
         let messages = vec![msg(Role::System, "sys")];
         let compressed = compressor.compress(&messages);
         // System is Critical so it stays even over target
@@ -723,8 +722,7 @@ mod tests {
 
     #[test]
     fn test_summarize_strategy() {
-        let compressor =
-            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let compressor = ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
         let messages = create_test_messages(10);
         let compressed = compressor.compress(&messages);
 
@@ -735,8 +733,7 @@ mod tests {
 
     #[test]
     fn test_summarize_with_user_assistant_pairs() {
-        let compressor =
-            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let compressor = ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
         let messages = vec![
             msg(Role::System, "system"),
             msg(Role::User, "What is Rust?"),
@@ -749,13 +746,14 @@ mod tests {
         let compressed = compressor.compress(&messages);
         assert!(compressed.iter().any(|m| m.role == Role::System));
         // Should have a summary message inserted
-        assert!(compressed.iter().any(|m| m.name == Some("summary".to_string())));
+        assert!(compressed
+            .iter()
+            .any(|m| m.name == Some("summary".to_string())));
     }
 
     #[test]
     fn test_summarize_empty_middle() {
-        let compressor =
-            ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
+        let compressor = ContextCompressor::new(50).with_strategy(CompressionStrategy::Summarize);
         let messages = vec![
             msg(Role::System, "system"),
             msg(Role::User, "hi"),
@@ -858,10 +856,7 @@ mod tests {
             })
         }
 
-        async fn stream(
-            &self,
-            _request: CompletionRequest,
-        ) -> crate::Result<CompletionStream> {
+        async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
             let stream = tokio_stream::iter(vec![]);
             Ok(Box::pin(stream))
         }
@@ -879,7 +874,9 @@ mod tests {
             should_fail: false,
         });
         let messages = create_test_messages(3);
-        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
         assert_eq!(compacted.len(), 3);
     }
 
@@ -891,11 +888,15 @@ mod tests {
             should_fail: false,
         });
         let messages = create_test_messages(10);
-        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
 
         // head=2 + summary + tail=2 = 5
         assert_eq!(compacted.len(), 5);
-        assert!(compacted.iter().any(|m| m.name == Some("compaction_summary".to_string())));
+        assert!(compacted
+            .iter()
+            .any(|m| m.name == Some("compaction_summary".to_string())));
     }
 
     #[tokio::test]
@@ -906,7 +907,9 @@ mod tests {
             should_fail: false,
         });
         let messages = create_test_messages(10);
-        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
         // Empty summary returns original
         assert_eq!(compacted.len(), 10);
     }
@@ -919,7 +922,9 @@ mod tests {
             should_fail: true,
         });
         let messages = create_test_messages(10);
-        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
         // Error returns original
         assert_eq!(compacted.len(), 10);
     }
@@ -947,7 +952,9 @@ mod tests {
         });
         let messages = create_test_messages(4);
         // keep_head=2, keep_tail=2 → mid_start=2, mid_end=2 → no mid section
-        let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 2).await;
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 2)
+            .await;
         assert_eq!(compacted.len(), 4);
     }
 }

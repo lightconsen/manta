@@ -76,7 +76,9 @@ fn bench_engine_update_entity(c: &mut Criterion) {
                 status: Some(Status::Active),
                 ..Default::default()
             };
-            let _ = engine.update_entity(black_box(id), black_box(update)).unwrap();
+            let _ = engine
+                .update_entity(black_box(id), black_box(update))
+                .unwrap();
         })
     });
 }

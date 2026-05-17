@@ -967,7 +967,8 @@ mod tests {
 
     #[test]
     fn test_api_embedding_provider_new() {
-        let provider = ApiEmbeddingProvider::new("key123".into(), "text-embedding-3-small".into(), 1536);
+        let provider =
+            ApiEmbeddingProvider::new("key123".into(), "text-embedding-3-small".into(), 1536);
         assert_eq!(provider.model_name(), "text-embedding-3-small");
         assert_eq!(provider.dimension(), 1536);
     }
@@ -994,46 +995,61 @@ mod tests {
         };
         store.store_chunk(chunk.clone()).await.unwrap();
 
-        let results = store.search_similar(&[1.0, 0.0, 0.0], 5, 0.0).await.unwrap();
+        let results = store
+            .search_similar(&[1.0, 0.0, 0.0], 5, 0.0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, "c1");
         assert!((results[0].1 - 1.0).abs() < 0.001);
 
         // Orthogonal vector should not match above threshold
-        let results = store.search_similar(&[0.0, 1.0, 0.0], 5, 0.5).await.unwrap();
+        let results = store
+            .search_similar(&[0.0, 1.0, 0.0], 5, 0.5)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
     #[tokio::test]
     async fn test_memory_vector_store_delete_by_source() {
         let store = MemoryVectorStore::new(2);
-        store.store_chunk(EmbeddedChunk {
-            id: "c1".to_string(),
-            source_id: "doc-a".to_string(),
-            text: "a".to_string(),
-            embedding: vec![1.0, 0.0],
-            position: 0,
-            total_chunks: 2,
-            metadata: None,
-        }).await.unwrap();
-        store.store_chunk(EmbeddedChunk {
-            id: "c2".to_string(),
-            source_id: "doc-a".to_string(),
-            text: "b".to_string(),
-            embedding: vec![0.0, 1.0],
-            position: 1,
-            total_chunks: 2,
-            metadata: None,
-        }).await.unwrap();
-        store.store_chunk(EmbeddedChunk {
-            id: "c3".to_string(),
-            source_id: "doc-b".to_string(),
-            text: "c".to_string(),
-            embedding: vec![1.0, 1.0],
-            position: 0,
-            total_chunks: 1,
-            metadata: None,
-        }).await.unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c1".to_string(),
+                source_id: "doc-a".to_string(),
+                text: "a".to_string(),
+                embedding: vec![1.0, 0.0],
+                position: 0,
+                total_chunks: 2,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c2".to_string(),
+                source_id: "doc-a".to_string(),
+                text: "b".to_string(),
+                embedding: vec![0.0, 1.0],
+                position: 1,
+                total_chunks: 2,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c3".to_string(),
+                source_id: "doc-b".to_string(),
+                text: "c".to_string(),
+                embedding: vec![1.0, 1.0],
+                position: 0,
+                total_chunks: 1,
+                metadata: None,
+            })
+            .await
+            .unwrap();
 
         let deleted = store.delete_by_source("doc-a").await.unwrap();
         assert_eq!(deleted, 2);
@@ -1045,24 +1061,30 @@ mod tests {
     #[tokio::test]
     async fn test_memory_vector_store_stats() {
         let store = MemoryVectorStore::new(4);
-        store.store_chunk(EmbeddedChunk {
-            id: "c1".to_string(),
-            source_id: "s1".to_string(),
-            text: "a".to_string(),
-            embedding: vec![0.0; 4],
-            position: 0,
-            total_chunks: 1,
-            metadata: None,
-        }).await.unwrap();
-        store.store_chunk(EmbeddedChunk {
-            id: "c2".to_string(),
-            source_id: "s2".to_string(),
-            text: "b".to_string(),
-            embedding: vec![0.0; 4],
-            position: 0,
-            total_chunks: 1,
-            metadata: None,
-        }).await.unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c1".to_string(),
+                source_id: "s1".to_string(),
+                text: "a".to_string(),
+                embedding: vec![0.0; 4],
+                position: 0,
+                total_chunks: 1,
+                metadata: None,
+            })
+            .await
+            .unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c2".to_string(),
+                source_id: "s2".to_string(),
+                text: "b".to_string(),
+                embedding: vec![0.0; 4],
+                position: 0,
+                total_chunks: 1,
+                metadata: None,
+            })
+            .await
+            .unwrap();
 
         let stats = store.stats().await.unwrap();
         assert_eq!(stats.total_vectors, 2);
@@ -1073,15 +1095,18 @@ mod tests {
     #[tokio::test]
     async fn test_memory_vector_store_clear() {
         let store = MemoryVectorStore::new(2);
-        store.store_chunk(EmbeddedChunk {
-            id: "c1".to_string(),
-            source_id: "s1".to_string(),
-            text: "a".to_string(),
-            embedding: vec![1.0, 0.0],
-            position: 0,
-            total_chunks: 1,
-            metadata: None,
-        }).await.unwrap();
+        store
+            .store_chunk(EmbeddedChunk {
+                id: "c1".to_string(),
+                source_id: "s1".to_string(),
+                text: "a".to_string(),
+                embedding: vec![1.0, 0.0],
+                position: 0,
+                total_chunks: 1,
+                metadata: None,
+            })
+            .await
+            .unwrap();
 
         store.clear().await.unwrap();
         let stats = store.stats().await.unwrap();
@@ -1129,8 +1154,12 @@ mod tests {
         struct FixedEmbeddingProvider;
         #[async_trait]
         impl EmbeddingProvider for FixedEmbeddingProvider {
-            fn model_name(&self) -> &str { "fixed" }
-            fn dimension(&self) -> usize { 2 }
+            fn model_name(&self) -> &str {
+                "fixed"
+            }
+            fn dimension(&self) -> usize {
+                2
+            }
             async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
                 Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
             }
@@ -1141,9 +1170,7 @@ mod tests {
         let processor = BatchEmbeddingProcessor::new(provider, chunker, 5);
         let store = Arc::new(MemoryVectorStore::new(2)) as Arc<dyn VectorStore>;
 
-        let docs = vec![
-            ("doc1".to_string(), "hello world test document".to_string()),
-        ];
+        let docs = vec![("doc1".to_string(), "hello world test document".to_string())];
 
         let chunks = processor.process_documents(docs, &*store).await.unwrap();
         assert!(!chunks.is_empty());
@@ -1157,8 +1184,12 @@ mod tests {
         struct FixedEmbeddingProvider;
         #[async_trait]
         impl EmbeddingProvider for FixedEmbeddingProvider {
-            fn model_name(&self) -> &str { "fixed" }
-            fn dimension(&self) -> usize { 2 }
+            fn model_name(&self) -> &str {
+                "fixed"
+            }
+            fn dimension(&self) -> usize {
+                2
+            }
             async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
                 Ok(texts.iter().map(|t| vec![t.len() as f32, 0.0]).collect())
             }
@@ -1169,7 +1200,10 @@ mod tests {
         let config = EmbeddingConfig::default();
         let service = VectorMemoryService::new(provider, store, &config);
 
-        let doc_id = service.add_to_collection("hello world", None, "test-col").await.unwrap();
+        let doc_id = service
+            .add_to_collection("hello world", None, "test-col")
+            .await
+            .unwrap();
         assert!(!doc_id.is_empty());
 
         let collections = service.list_collections();

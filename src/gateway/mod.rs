@@ -622,8 +622,6 @@ pub struct GatewayState {
     pub session_file_manager: Arc<crate::agent::SessionFileManager>,
     /// Group session manager for multi-member sessions with role awareness.
     pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
-    /// ACP (Agent Control Plane) controller for centralized execution orchestration.
-    pub acp_controller: Arc<crate::agent::AcpController>,
 }
 
 impl GatewayState {
@@ -1166,9 +1164,8 @@ impl Gateway {
                 window_secs: config.security.rate_limit.per_endpoint.window_secs,
             },
         };
-        let multi_tier_rate_limiter = Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(
-            multi_tier_config,
-        ));
+        let multi_tier_rate_limiter =
+            Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(multi_tier_config));
 
         // Initialize storage adapter and shared SQLite pool (for SessionSearch)
         // For unified storage (sqlite), we keep a separate Arc to use for VectorStore/MemoryStore
@@ -1233,11 +1230,9 @@ impl Gateway {
             let binding_store = Arc::new(
                 crate::inbound::SqliteBindingStore::new(pool)
                     .await
-                    .map_err(|e| {
-                        crate::error::MantaError::Storage {
-                            context: "Failed to create binding store".to_string(),
-                            details: e.to_string(),
-                        }
+                    .map_err(|e| crate::error::MantaError::Storage {
+                        context: "Failed to create binding store".to_string(),
+                        details: e.to_string(),
                     })?,
             );
             let router = AgentRouter::new(crate::inbound::AgentRouterConfig::default())
@@ -1370,27 +1365,31 @@ impl Gateway {
                 Arc::new(manager)
             },
             session_file_manager: {
-                let manager = crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
+                let manager =
+                    crate::agent::SessionFileManager::new(crate::dirs::session_files_dir());
                 let _ = manager.init().await;
                 Arc::new(manager)
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
-            acp_controller: Arc::new(crate::agent::AcpController::new()),
         });
 
         // Dynamically register OpenClaw-compatible tools that need GatewayState
-        state.tool_registry.register_dynamic(Arc::new(
-            crate::tools::AgentsListTool::new(state.agent_registry.clone()),
-        ));
-        state.tool_registry.register_dynamic(Arc::new(
-            crate::tools::GatewayTool::new(state.clone()),
-        ));
-        state.tool_registry.register_dynamic(Arc::new(
-            crate::tools::MessageTool::new(state.clone()),
-        ));
-        state.tool_registry.register_dynamic(Arc::new(
-            crate::tools::CanvasTool::new(state.canvas_manager.clone()),
-        ));
+        state
+            .tool_registry
+            .register_dynamic(Arc::new(crate::tools::AgentsListTool::new(
+                state.agent_registry.clone(),
+            )));
+        state
+            .tool_registry
+            .register_dynamic(Arc::new(crate::tools::GatewayTool::new(state.clone())));
+        state
+            .tool_registry
+            .register_dynamic(Arc::new(crate::tools::MessageTool::new(state.clone())));
+        state
+            .tool_registry
+            .register_dynamic(Arc::new(crate::tools::CanvasTool::new(
+                state.canvas_manager.clone(),
+            )));
 
         // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
@@ -3225,9 +3224,7 @@ impl Gateway {
                     crate::agent::ProgressEvent::Started => {
                         let _ = tx.send(GatewayEvent::AgentStatus {
                             agent_id: aid.clone(),
-                            status: AgentStatus::Processing {
-                                session_id: sid.clone(),
-                            },
+                            status: AgentStatus::Processing { session_id: sid.clone() },
                         });
                     }
                     crate::agent::ProgressEvent::Generating => {
@@ -3237,10 +3234,7 @@ impl Gateway {
                             content: None,
                         });
                     }
-                    crate::agent::ProgressEvent::ToolCalling {
-                        name,
-                        arguments,
-                    } => {
+                    crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
                         let _ = tx.send(GatewayEvent::ToolCalling {
                             session_id: sid.clone(),
                             agent_id: aid.clone(),
@@ -3274,14 +3268,10 @@ impl Gateway {
             })
         });
 
-        // Route through ACP controller for serialized execution
+        // Route through ACP for serialized execution
         match state
-            .acp_controller
-            .execute_session_with_progress(
-                agent_handle.agent.clone(),
-                incoming_msg,
-                progress_cb,
-            )
+            .acp
+            .execute_session_with_progress(agent_handle.agent.clone(), incoming_msg, progress_cb)
             .await
         {
             Ok(outgoing) => {
@@ -6247,7 +6237,7 @@ async fn acp_session_status_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.acp_controller.get_status(id.clone()).await {
+    match state.acp.get_status(id.clone()).await {
         Some(status) => {
             let resp = serde_json::json!({
                 "session_id": status.session_id,
@@ -6273,7 +6263,7 @@ async fn acp_session_pause_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    state.acp_controller.pause(id.clone()).await;
+    state.acp.pause(id.clone()).await;
     let resp = serde_json::json!({
         "session_id": id,
         "action": "pause",
@@ -6287,7 +6277,7 @@ async fn acp_session_resume_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    state.acp_controller.resume(id.clone()).await;
+    state.acp.resume(id.clone()).await;
     let resp = serde_json::json!({
         "session_id": id,
         "action": "resume",
@@ -6301,7 +6291,7 @@ async fn acp_session_step_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    state.acp_controller.step(id.clone()).await;
+    state.acp.step(id.clone()).await;
     let resp = serde_json::json!({
         "session_id": id,
         "action": "step",
@@ -6315,7 +6305,7 @@ async fn acp_session_cancel_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    state.acp_controller.cancel(id.clone()).await;
+    state.acp.cancel(id.clone()).await;
     let resp = serde_json::json!({
         "session_id": id,
         "action": "cancel",
@@ -6372,7 +6362,7 @@ async fn acp_execute_session_handler(
     );
 
     match state
-        .acp_controller
+        .acp
         .execute_session(agent_handle.agent, incoming)
         .await
     {
@@ -6419,11 +6409,7 @@ async fn acp_execute_run_handler(
         body.message,
     );
 
-    match state
-        .acp_controller
-        .execute_run(agent_handle.agent, incoming)
-        .await
-    {
+    match state.acp.execute_run(agent_handle.agent, incoming).await {
         Ok(outgoing) => {
             let resp = serde_json::json!({
                 "session_id": session_id,
@@ -9329,7 +9315,10 @@ async fn list_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let channel = params.get("channel").cloned().unwrap_or_else(|| "*".to_string());
+    let channel = params
+        .get("channel")
+        .cloned()
+        .unwrap_or_else(|| "*".to_string());
     let entries = state.mention_gate.list_allowlist(&channel).await;
     (
         StatusCode::OK,
@@ -9346,7 +9335,10 @@ async fn add_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state.mention_gate.add_allowlist(&req.channel, &req.pattern).await;
+    state
+        .mention_gate
+        .add_allowlist(&req.channel, &req.pattern)
+        .await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -9363,7 +9355,10 @@ async fn remove_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state.mention_gate.remove_allowlist(&channel, &pattern).await;
+    let removed = state
+        .mention_gate
+        .remove_allowlist(&channel, &pattern)
+        .await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -9380,7 +9375,10 @@ async fn list_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let channel = params.get("channel").cloned().unwrap_or_else(|| "*".to_string());
+    let channel = params
+        .get("channel")
+        .cloned()
+        .unwrap_or_else(|| "*".to_string());
     let entries = state.mention_gate.list_blocklist(&channel).await;
     (
         StatusCode::OK,
@@ -9397,7 +9395,10 @@ async fn add_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<AddMentionPatternRequest>,
 ) -> impl IntoResponse {
-    state.mention_gate.add_blocklist(&req.channel, &req.pattern).await;
+    state
+        .mention_gate
+        .add_blocklist(&req.channel, &req.pattern)
+        .await;
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -9414,7 +9415,10 @@ async fn remove_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
     Path((channel, pattern)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let removed = state.mention_gate.remove_blocklist(&channel, &pattern).await;
+    let removed = state
+        .mention_gate
+        .remove_blocklist(&channel, &pattern)
+        .await;
     (
         StatusCode::OK,
         Json(serde_json::json!({

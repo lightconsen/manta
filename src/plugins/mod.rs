@@ -141,11 +141,7 @@ impl PluginManager {
                     self.runtime.clone(),
                 ));
                 registry.register_dynamic(wrapper);
-                info!(
-                    "Registered plugin tool '{}' from plugin '{}'",
-                    tool.name,
-                    plugin.id()
-                );
+                info!("Registered plugin tool '{}' from plugin '{}'", tool.name, plugin.id());
             }
         }
     }
@@ -157,11 +153,7 @@ impl PluginManager {
             if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
                 for tool in plugin.manifest.get_tools() {
                     registry.deregister_dynamic(&tool.name);
-                    debug!(
-                        "Deregistered plugin tool '{}' from plugin '{}'",
-                        tool.name,
-                        plugin_id
-                    );
+                    debug!("Deregistered plugin tool '{}' from plugin '{}'", tool.name, plugin_id);
                 }
             }
         }
@@ -295,7 +287,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("test-plugin", "A test plugin").await.unwrap();
+        let path = manager
+            .create_template("test-plugin", "A test plugin")
+            .await
+            .unwrap();
         assert!(path.join("plugin.json").exists());
         assert!(path.join("config.json").exists());
         assert!(path.join("README.md").exists());
@@ -307,8 +302,14 @@ mod tests {
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
         // Create two plugin templates
-        manager.create_template("plugin-a", "Plugin A").await.unwrap();
-        manager.create_template("plugin-b", "Plugin B").await.unwrap();
+        manager
+            .create_template("plugin-a", "Plugin A")
+            .await
+            .unwrap();
+        manager
+            .create_template("plugin-b", "Plugin B")
+            .await
+            .unwrap();
 
         let count = manager.initialize().await.unwrap();
         assert_eq!(count, 2);
@@ -322,7 +323,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("load-test", "Load test").await.unwrap();
+        let path = manager
+            .create_template("load-test", "Load test")
+            .await
+            .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
         assert_eq!(id, "com.example.load-test");
 
@@ -342,7 +346,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("get-test", "Get test").await.unwrap();
+        let path = manager
+            .create_template("get-test", "Get test")
+            .await
+            .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
 
         let plugin = manager.get_plugin(&id).await;
@@ -358,7 +365,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("toggle-test", "Toggle test").await.unwrap();
+        let path = manager
+            .create_template("toggle-test", "Toggle test")
+            .await
+            .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
 
         let plugin = manager.get_plugin(&id).await.unwrap();
@@ -387,7 +397,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("reload-test", "Reload test").await.unwrap();
+        let path = manager
+            .create_template("reload-test", "Reload test")
+            .await
+            .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
 
         // Modify manifest on disk
@@ -431,7 +444,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        let path = manager.create_template("shutdown-test", "Shutdown test").await.unwrap();
+        let path = manager
+            .create_template("shutdown-test", "Shutdown test")
+            .await
+            .unwrap();
         manager.load_plugin(&path).await.unwrap();
 
         manager.shutdown().await.unwrap();

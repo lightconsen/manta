@@ -687,7 +687,12 @@ mod tests {
     fn test_session_context_formatting_with_many_messages() {
         let mut messages = vec![];
         for i in 0..12 {
-            messages.push(ChatMessage::new("c1", "u1", if i % 2 == 0 { "user" } else { "assistant" }, format!("msg {}", i)));
+            messages.push(ChatMessage::new(
+                "c1",
+                "u1",
+                if i % 2 == 0 { "user" } else { "assistant" },
+                format!("msg {}", i),
+            ));
         }
         let ctx = SessionContext {
             messages,
@@ -719,8 +724,12 @@ mod tests {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
         let mm = MemoryManager::new(store, MemoryManagerConfig::default());
 
-        mm.remember_message("u1", "conv-a", "user", "Hello").await.unwrap();
-        mm.remember_message("u1", "conv-a", "assistant", "Hi").await.unwrap();
+        mm.remember_message("u1", "conv-a", "user", "Hello")
+            .await
+            .unwrap();
+        mm.remember_message("u1", "conv-a", "assistant", "Hi")
+            .await
+            .unwrap();
 
         let last = mm.last_conversation("u1").await.unwrap();
         assert_eq!(last, Some("conv-a".to_string()));
@@ -731,7 +740,10 @@ mod tests {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
         let mm = MemoryManager::new(store, MemoryManagerConfig::default());
 
-        let id = mm.observe("u1", "forgettable content", "test", 0.5).await.unwrap();
+        let id = mm
+            .observe("u1", "forgettable content", "test", 0.5)
+            .await
+            .unwrap();
         let deleted = mm.forget(&id).await.unwrap();
         assert!(deleted);
 
@@ -747,7 +759,9 @@ mod tests {
 
         // Only 3 messages, less than threshold of 10
         for i in 0..3 {
-            mm.remember_message("u1", "short-conv", "user", format!("msg {}", i)).await.unwrap();
+            mm.remember_message("u1", "short-conv", "user", format!("msg {}", i))
+                .await
+                .unwrap();
         }
 
         let ids = mm.compact_session("short-conv", None).await.unwrap();

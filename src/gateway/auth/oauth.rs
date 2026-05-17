@@ -577,7 +577,8 @@ mod tests {
             redirect_uri: "not-a-valid-uri".to_string(),
             scopes: vec![],
         };
-        let result = build_oauth_client(&config, "https://example.com/auth", "https://example.com/token");
+        let result =
+            build_oauth_client(&config, "https://example.com/auth", "https://example.com/token");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid redirect URI"));
     }

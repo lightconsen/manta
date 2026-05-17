@@ -263,5 +263,4 @@ mod tests {
         let entry: SkillEntryConfig = serde_json::from_str(json).unwrap();
         assert!(!entry.enabled);
     }
-
 }

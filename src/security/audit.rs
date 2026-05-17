@@ -1125,8 +1125,8 @@ mod tests {
         sandbox.isolation.network_isolation = true;
         let boundaries = SecurityBoundaries::default();
 
-        let score = auditor.calculate_score(
-            &permissions, &tools, &data_leaks, &sandbox, &boundaries);
+        let score =
+            auditor.calculate_score(&permissions, &tools, &data_leaks, &sandbox, &boundaries);
         assert_eq!(score, 100, "Perfect audit should score 100");
     }
 
@@ -1139,8 +1139,12 @@ mod tests {
         permissions.components.insert("test".to_string(), comp);
 
         let score = auditor.calculate_score(
-            &permissions, &ToolAudit::default(), &DataLeakAudit::default(),
-            &SandboxAudit::default(), &SecurityBoundaries::default());
+            &permissions,
+            &ToolAudit::default(),
+            &DataLeakAudit::default(),
+            &SandboxAudit::default(),
+            &SecurityBoundaries::default(),
+        );
         assert!(score < 100, "Missing permissions should reduce score");
     }
 
@@ -1153,8 +1157,12 @@ mod tests {
         tools.tool_results.insert("dangerous".to_string(), result);
 
         let score = auditor.calculate_score(
-            &PermissionAudit::default(), &tools, &DataLeakAudit::default(),
-            &SandboxAudit::default(), &SecurityBoundaries::default());
+            &PermissionAudit::default(),
+            &tools,
+            &DataLeakAudit::default(),
+            &SandboxAudit::default(),
+            &SecurityBoundaries::default(),
+        );
         assert!(score <= 75, "Critical tool risk should deduct at least 25, got {}", score);
     }
 
@@ -1167,8 +1175,12 @@ mod tests {
         tools.tool_results.insert("risky".to_string(), result);
 
         let score = auditor.calculate_score(
-            &PermissionAudit::default(), &tools, &DataLeakAudit::default(),
-            &SandboxAudit::default(), &SecurityBoundaries::default());
+            &PermissionAudit::default(),
+            &tools,
+            &DataLeakAudit::default(),
+            &SandboxAudit::default(),
+            &SecurityBoundaries::default(),
+        );
         assert!(score <= 85, "High tool risk should deduct at least 15, got {}", score);
     }
 
@@ -1179,8 +1191,12 @@ mod tests {
         data_leaks.leaks_found = 2;
 
         let score = auditor.calculate_score(
-            &PermissionAudit::default(), &ToolAudit::default(), &data_leaks,
-            &SandboxAudit::default(), &SecurityBoundaries::default());
+            &PermissionAudit::default(),
+            &ToolAudit::default(),
+            &data_leaks,
+            &SandboxAudit::default(),
+            &SecurityBoundaries::default(),
+        );
         assert!(score <= 80, "2 data leaks should deduct at least 20, got {}", score);
     }
 
@@ -1189,7 +1205,12 @@ mod tests {
         let auditor = SecurityAuditor::new();
         let mut permissions = PermissionAudit::default();
         let mut comp = ComponentPermissions::default();
-        comp.missing = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        comp.missing = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         permissions.components.insert("test".to_string(), comp);
 
         let mut tools = ToolAudit::default();
@@ -1209,8 +1230,8 @@ mod tests {
         let mut boundaries = SecurityBoundaries::default();
         boundaries.enforcement.not_enforced = 10;
 
-        let score = auditor.calculate_score(
-            &permissions, &tools, &data_leaks, &sandbox, &boundaries);
+        let score =
+            auditor.calculate_score(&permissions, &tools, &data_leaks, &sandbox, &boundaries);
         assert_eq!(score, 0, "Score should saturate at 0, got {}", score);
     }
 
@@ -1351,7 +1372,9 @@ mod tests {
         let mut recommendations = Vec::new();
         auditor.collect_sandbox_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
 
-        assert!(warnings.iter().any(|w| w.description.contains("Memory limits")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.description.contains("Memory limits")));
     }
 
     #[test]
@@ -1365,6 +1388,8 @@ mod tests {
         let mut recommendations = Vec::new();
         auditor.collect_sandbox_issues(&audit, &mut critical, &mut warnings, &mut recommendations);
 
-        assert!(warnings.iter().any(|w| w.description.contains("network isolation")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.description.contains("network isolation")));
     }
 }

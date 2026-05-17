@@ -180,10 +180,7 @@ impl SignalChannel {
                 if allow_from.contains(&user_id.to_string()) {
                     (true, None)
                 } else {
-                    (
-                        false,
-                        Some("You are not authorized to use this bot.".to_string()),
-                    )
+                    (false, Some("You are not authorized to use this bot.".to_string()))
                 }
             }
             DmPolicy::Pairing => {
@@ -255,12 +252,14 @@ impl SignalChannel {
                 cause: Some(Box::new(e)),
             })?;
 
-        let rpc_response: JsonRpcResponse = response.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse Signal RPC response: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let rpc_response: JsonRpcResponse =
+            response
+                .json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to parse Signal RPC response: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         if let Some(error) = rpc_response.error {
             return Err(crate::error::MantaError::ExternalService {
@@ -273,11 +272,7 @@ impl SignalChannel {
     }
 
     /// Send a Signal message
-    async fn send_signal_message(
-        &self,
-        recipient: &str,
-        content: &str,
-    ) -> crate::Result<String> {
+    async fn send_signal_message(&self, recipient: &str, content: &str) -> crate::Result<String> {
         let params = serde_json::json!({
             "account": self.config.account,
             "recipient": [recipient],
@@ -388,10 +383,7 @@ impl Channel for SignalChannel {
                 info!("Signal daemon connected successfully");
             }
             Err(e) => {
-                warn!(
-                    "Could not connect to signal-cli daemon at {}: {}",
-                    self.config.rpc_url, e
-                );
+                warn!("Could not connect to signal-cli daemon at {}: {}", self.config.rpc_url, e);
                 warn!("Make sure signal-cli is running: signal-cli daemon --http localhost:8080");
                 // Continue anyway - daemon might come online later
             }
@@ -464,11 +456,11 @@ impl Channel for SignalChannel {
         let msg_key = message_id.to_string();
         let timestamp = {
             let map = self.message_map.read().await;
-            map.get(&msg_key).cloned().ok_or_else(|| {
-                crate::error::MantaError::NotFound {
+            map.get(&msg_key)
+                .cloned()
+                .ok_or_else(|| crate::error::MantaError::NotFound {
                     resource: format!("Signal message {} not found", msg_key),
-                }
-            })?
+                })?
         };
 
         let params = serde_json::json!({

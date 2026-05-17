@@ -122,7 +122,9 @@ fn chat_message_ids_are_unique() {
 
 #[tokio::test]
 async fn database_store_memory_lifecycle() {
-    let store = DatabaseStore::new_in_memory().await.expect("create in-memory store");
+    let store = DatabaseStore::new_in_memory()
+        .await
+        .expect("create in-memory store");
 
     // Store a memory
     let mem = Memory::new("alice", "Likes coffee", "preference");
@@ -147,9 +149,7 @@ async fn database_store_memory_search_contract() {
     store.store(mem2).await.unwrap();
 
     // Search for "Rust" using MemoryQuery
-    let query = MemoryQuery::new()
-        .for_user("alice")
-        .with_content("Rust");
+    let query = MemoryQuery::new().for_user("alice").with_content("Rust");
     let results = store.search(query).await.expect("search memories");
     assert!(!results.is_empty(), "search must find the memory");
 }
@@ -166,7 +166,10 @@ async fn database_store_chat_history_contract() {
     ];
 
     for msg in &messages {
-        store.store_message(msg.clone()).await.expect("store message");
+        store
+            .store_message(msg.clone())
+            .await
+            .expect("store message");
     }
 
     // Get conversation history
@@ -205,7 +208,10 @@ async fn database_store_delete_conversation() {
     assert_eq!(before.len(), 2);
 
     // Delete
-    store.delete_conversation("conv_del").await.expect("delete conversation");
+    store
+        .delete_conversation("conv_del")
+        .await
+        .expect("delete conversation");
 
     // Verify gone
     let after = store

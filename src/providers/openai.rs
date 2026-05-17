@@ -641,26 +641,32 @@ mod tests {
 
     #[test]
     fn test_openai_provider_with_model() {
-        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4o");
+        let provider = OpenAiProvider::new("test-key")
+            .unwrap()
+            .with_model("gpt-4o");
         assert_eq!(provider.default_model(), "gpt-4o");
     }
 
     #[test]
     fn test_openai_provider_base_url() {
-        let provider = OpenAiProvider::with_base_url("test-key", "https://proxy.example.com/v1")
-            .unwrap();
+        let provider =
+            OpenAiProvider::with_base_url("test-key", "https://proxy.example.com/v1").unwrap();
         assert_eq!(provider.base_url(), "https://proxy.example.com/v1");
     }
 
     #[test]
     fn test_openai_provider_max_context_gpt4o() {
-        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4o");
+        let provider = OpenAiProvider::new("test-key")
+            .unwrap()
+            .with_model("gpt-4o");
         assert_eq!(provider.max_context(), 128_000);
     }
 
     #[test]
     fn test_openai_provider_max_context_gpt4_turbo() {
-        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-4-turbo");
+        let provider = OpenAiProvider::new("test-key")
+            .unwrap()
+            .with_model("gpt-4-turbo");
         assert_eq!(provider.max_context(), 128_000);
     }
 
@@ -672,13 +678,17 @@ mod tests {
 
     #[test]
     fn test_openai_provider_max_context_gpt35() {
-        let provider = OpenAiProvider::new("test-key").unwrap().with_model("gpt-3.5-turbo");
+        let provider = OpenAiProvider::new("test-key")
+            .unwrap()
+            .with_model("gpt-3.5-turbo");
         assert_eq!(provider.max_context(), 16_385);
     }
 
     #[test]
     fn test_openai_provider_max_context_unknown() {
-        let provider = OpenAiProvider::new("test-key").unwrap().with_model("custom-model");
+        let provider = OpenAiProvider::new("test-key")
+            .unwrap()
+            .with_model("custom-model");
         assert_eq!(provider.max_context(), 4_096);
     }
 

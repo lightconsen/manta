@@ -641,10 +641,7 @@ mod tests {
             storage.skill_file_path("docker", StorageLevel::User),
             Some(temp.path().join("user").join("docker").join("SKILL.md"))
         );
-        assert_eq!(
-            storage.skill_file_path("docker", StorageLevel::Project),
-            None
-        );
+        assert_eq!(storage.skill_file_path("docker", StorageLevel::Project), None);
     }
 
     #[test]
@@ -854,14 +851,14 @@ mod tests {
             workspace_dir: None,
         };
 
-        let dest = storage.install_to_user(&source, "test_skill").await.unwrap();
+        let dest = storage
+            .install_to_user(&source, "test_skill")
+            .await
+            .unwrap();
         assert_eq!(dest, user_dir.join("test_skill"));
         assert!(dest.exists());
         assert!(dest.join("SKILL.md").exists());
-        assert_eq!(
-            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
-            "# Test Skill"
-        );
+        assert_eq!(std::fs::read_to_string(dest.join("SKILL.md")).unwrap(), "# Test Skill");
     }
 
     #[tokio::test]
@@ -883,11 +880,11 @@ mod tests {
             workspace_dir: None,
         };
 
-        let dest = storage.install_to_user(&source, "test_skill").await.unwrap();
-        assert_eq!(
-            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
-            "# New Version"
-        );
+        let dest = storage
+            .install_to_user(&source, "test_skill")
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(dest.join("SKILL.md")).unwrap(), "# New Version");
     }
 
     #[tokio::test]
@@ -997,8 +994,7 @@ mod tests {
         let project_dir = temp.path().join("project");
         let docker_project = project_dir.join("docker");
         std::fs::create_dir_all(&docker_project).unwrap();
-        std::fs::write(docker_project.join("SKILL.md"), "# Project Docker")
-            .unwrap();
+        std::fs::write(docker_project.join("SKILL.md"), "# Project Docker").unwrap();
 
         let storage = SkillStorage {
             bundled_dir: None,

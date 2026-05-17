@@ -199,7 +199,8 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), None).await?
+                    self.load_wasm_plugin(&wasm_path, config.clone(), None)
+                        .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
                     (None, None)
@@ -297,12 +298,13 @@ impl PluginRuntime {
     /// previously stored `PluginState::memory` into the new instance.
     pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
         let mut plugins = self.plugins.write().await;
-        let existing = plugins.get_mut(plugin_id).ok_or_else(|| {
-            crate::error::ConfigError::InvalidValue {
-                key: "plugin_id".to_string(),
-                message: format!("Plugin '{}' not found", plugin_id),
-            }
-        })?;
+        let existing =
+            plugins
+                .get_mut(plugin_id)
+                .ok_or_else(|| crate::error::ConfigError::InvalidValue {
+                    key: "plugin_id".to_string(),
+                    message: format!("Plugin '{}' not found", plugin_id),
+                })?;
 
         let path = existing.path.clone();
 

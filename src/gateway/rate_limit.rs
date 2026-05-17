@@ -443,7 +443,10 @@ mod tests {
         assert!(allowed.is_allowed());
         assert_eq!(allowed.retry_after(), None);
 
-        let denied = MultiTierResult::Denied { tier: "global", retry_after_secs: 30 };
+        let denied = MultiTierResult::Denied {
+            tier: "global",
+            retry_after_secs: 30,
+        };
         assert!(!denied.is_allowed());
         assert_eq!(denied.retry_after(), Some(30));
     }
@@ -461,7 +464,11 @@ mod tests {
     #[test]
     fn test_multi_tier_ip_limit() {
         let config = MultiTierRateLimitConfig {
-            per_ip: TierConfig { enabled: true, capacity: 2, window_secs: 60 },
+            per_ip: TierConfig {
+                enabled: true,
+                capacity: 2,
+                window_secs: 60,
+            },
             ..Default::default()
         };
         let limiter = MultiTierRateLimiter::new(config);
@@ -469,10 +476,12 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         for _ in 0..2 {
-            let result = rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
+            let result =
+                rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
             assert!(result.is_allowed());
         }
-        let result = rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
+        let result =
+            rt.block_on(limiter.check(&user, Some("192.168.1.1".parse().unwrap()), "/api"));
         assert!(!result.is_allowed());
     }
 

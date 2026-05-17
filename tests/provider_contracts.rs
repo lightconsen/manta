@@ -60,7 +60,9 @@ fn message_with_metadata_serializes_to_flat_map() {
         .with_metadata("key2", "val2");
 
     let json = serde_json::to_value(&msg).unwrap();
-    let meta = json["metadata"].as_object().expect("metadata must be an object");
+    let meta = json["metadata"]
+        .as_object()
+        .expect("metadata must be an object");
     assert_eq!(meta.get("key1").unwrap(), "val1");
     assert_eq!(meta.get("key2").unwrap(), "val2");
 }
@@ -78,7 +80,9 @@ fn message_tool_calls_serializes_to_expected_shape() {
     let msg = Message::assistant("I'll run that for you.").with_tool_calls(vec![tool_call]);
 
     let json = serde_json::to_value(&msg).unwrap();
-    let calls = json["tool_calls"].as_array().expect("tool_calls must be array");
+    let calls = json["tool_calls"]
+        .as_array()
+        .expect("tool_calls must be array");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0]["id"], "call_abc");
     assert_eq!(calls[0]["call_type"], "function");
@@ -106,8 +110,8 @@ fn role_serializes_to_lowercase() {
 fn role_roundtrips_all_variants() {
     for original in [Role::System, Role::User, Role::Assistant, Role::Tool] {
         let json = serde_json::to_string(&original).unwrap();
-        let roundtripped: Role = serde_json::from_str(&json)
-            .expect(&format!("Role::{:?} must roundtrip", original));
+        let roundtripped: Role =
+            serde_json::from_str(&json).expect(&format!("Role::{:?} must roundtrip", original));
         assert_eq!(original, roundtripped);
     }
 }

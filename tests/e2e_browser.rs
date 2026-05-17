@@ -107,11 +107,7 @@ async fn start_web_terminal_with_mock() -> String {
     );
 
     let tool_registry = Arc::new(ToolRegistry::new());
-    let agent = Arc::new(Agent::new(
-        AgentConfig::default(),
-        provider,
-        tool_registry,
-    ));
+    let agent = Arc::new(Agent::new(AgentConfig::default(), provider, tool_registry));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -163,7 +159,9 @@ async fn browser_web_terminal_smoke_test() {
         .evaluate("() => 'Manta Browser OK'")
         .await
         .expect("JS evaluation should work");
-    let text = result.into_value::<String>().expect("should get string result");
+    let text = result
+        .into_value::<String>()
+        .expect("should get string result");
     assert_eq!(text, "Manta Browser OK");
 
     // Clean up browser process.
@@ -253,11 +251,7 @@ async fn web_terminal_websocket_endpoint_upgrades() {
 
     let result = tokio_tungstenite::connect_async(&ws_url).await;
 
-    assert!(
-        result.is_ok(),
-        "WebSocket endpoint should accept upgrade: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "WebSocket endpoint should accept upgrade: {:?}", result.err());
 
     // Clean up the connection
     if let Ok((mut ws_stream, _)) = result {

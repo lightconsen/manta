@@ -12,7 +12,8 @@
 //! - Contact and chat management
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage, OutgoingMessage,
+    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
+    OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -211,10 +212,7 @@ impl ImessageChannel {
                 if allow_from.contains(&user_id.to_string()) {
                     (true, None)
                 } else {
-                    (
-                        false,
-                        Some("You are not authorized to use this bot.".to_string()),
-                    )
+                    (false, Some("You are not authorized to use this bot.".to_string()))
                 }
             }
             DmPolicy::Pairing => {
@@ -267,11 +265,12 @@ impl ImessageChannel {
     /// Send an iMessage via BlueBubbles
     async fn send_imessage(&self, recipient: &str, content: &str) -> crate::Result<String> {
         // Determine if recipient is a chat GUID or individual address
-        let (chat_guid, address) = if recipient.starts_with("iMessage;+") || recipient.starts_with("SMS;+") {
-            (Some(recipient.to_string()), None)
-        } else {
-            (None, Some(recipient.to_string()))
-        };
+        let (chat_guid, address) =
+            if recipient.starts_with("iMessage;+") || recipient.starts_with("SMS;+") {
+                (Some(recipient.to_string()), None)
+            } else {
+                (None, Some(recipient.to_string()))
+            };
 
         let payload = BbSendRequest {
             chat_guid,
@@ -368,10 +367,7 @@ impl Channel for ImessageChannel {
                 if response.status().is_success() {
                     info!("BlueBubbles server connected at {}", self.config.server_url);
                 } else {
-                    warn!(
-                        "BlueBubbles server returned status {}",
-                        response.status()
-                    );
+                    warn!("BlueBubbles server returned status {}", response.status());
                 }
             }
             Err(e) => {
@@ -444,11 +440,11 @@ impl Channel for ImessageChannel {
         let msg_key = message_id.to_string();
         let guid = {
             let map = self.message_map.read().await;
-            map.get(&msg_key).cloned().ok_or_else(|| {
-                crate::error::MantaError::NotFound {
+            map.get(&msg_key)
+                .cloned()
+                .ok_or_else(|| crate::error::MantaError::NotFound {
                     resource: format!("iMessage {} not found", msg_key),
-                }
-            })?
+                })?
         };
 
         let response = self
@@ -462,10 +458,7 @@ impl Channel for ImessageChannel {
 
         if !response.status().is_success() {
             return Err(crate::error::MantaError::ExternalService {
-                source: format!(
-                    "BlueBubbles delete failed: {}",
-                    response.status()
-                ),
+                source: format!("BlueBubbles delete failed: {}", response.status()),
                 cause: None,
             });
         }

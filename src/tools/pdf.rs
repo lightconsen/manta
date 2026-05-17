@@ -327,7 +327,11 @@ mod tests {
     #[test]
     fn test_markdown_to_html_bold() {
         let html = markdown_to_html("**bold text**", "Test");
-        assert!(html.contains("<strong>bold text</strong>"), "bold tags should wrap text: {}", html);
+        assert!(
+            html.contains("<strong>bold text</strong>"),
+            "bold tags should wrap text: {}",
+            html
+        );
     }
 
     #[test]
@@ -340,7 +344,11 @@ mod tests {
     #[test]
     fn test_markdown_to_html_inline_code() {
         let html = markdown_to_html("use `cargo test` to run", "Doc");
-        assert!(html.contains("<code>cargo test</code>"), "inline code should be wrapped: {}", html);
+        assert!(
+            html.contains("<code>cargo test</code>"),
+            "inline code should be wrapped: {}",
+            html
+        );
     }
 
     #[test]
@@ -363,7 +371,8 @@ mod tests {
     fn test_pdf_args_defaults() {
         let args: PdfArgs = serde_json::from_value(serde_json::json!({
             "content": "Hello"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.content, "Hello");
         assert_eq!(args.orientation, "portrait");
         assert_eq!(args.paper, "a4");
@@ -379,7 +388,8 @@ mod tests {
             "paper": "letter",
             "title": "My Doc",
             "output": "/tmp/out.pdf"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.orientation, "landscape");
         assert_eq!(args.paper, "letter");
         assert_eq!(args.title, Some("My Doc".to_string()));

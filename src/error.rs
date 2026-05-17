@@ -176,19 +176,27 @@ mod tests {
             context: "db".to_string(),
             details: "connection failed".to_string(),
         };
-        assert!(err.to_string().contains("Storage error: db - connection failed"));
+        assert!(err
+            .to_string()
+            .contains("Storage error: db - connection failed"));
 
         let err = MantaError::Plugin("wasm error".to_string());
         assert!(err.to_string().contains("Plugin error: wasm error"));
 
         let err = MantaError::MaxSpawnDepth(5);
-        assert!(err.to_string().contains("Maximum subagent spawn depth (5) exceeded"));
+        assert!(err
+            .to_string()
+            .contains("Maximum subagent spawn depth (5) exceeded"));
 
         let err = MantaError::MaxConcurrentSubagents(10);
-        assert!(err.to_string().contains("Maximum concurrent subagents (10) already active"));
+        assert!(err
+            .to_string()
+            .contains("Maximum concurrent subagents (10) already active"));
 
         let err = MantaError::SubagentTimeout;
-        assert!(err.to_string().contains("Subagent timed out waiting for completion"));
+        assert!(err
+            .to_string()
+            .contains("Subagent timed out waiting for completion"));
 
         let err = MantaError::SubagentNotFound;
         assert!(err.to_string().contains("Subagent run not found"));
@@ -206,13 +214,17 @@ mod tests {
     #[test]
     fn test_config_error_variants() {
         let err = ConfigError::Parse("bad toml".to_string());
-        assert!(err.to_string().contains("Failed to parse config file: bad toml"));
+        assert!(err
+            .to_string()
+            .contains("Failed to parse config file: bad toml"));
 
         let err = ConfigError::InvalidValue {
             key: "port".to_string(),
             message: "not a number".to_string(),
         };
-        assert!(err.to_string().contains("Invalid configuration value for 'port': not a number"));
+        assert!(err
+            .to_string()
+            .contains("Invalid configuration value for 'port': not a number"));
 
         let err = ConfigError::FileRead {
             path: PathBuf::from("/tmp/config.toml"),
@@ -225,22 +237,16 @@ mod tests {
     fn test_external_service_error_display() {
         let err = MantaError::ExternalService {
             source: "openai".to_string(),
-            cause: Some(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "timeout",
-            ))),
+            cause: Some(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "timeout"))),
         };
         assert!(err.to_string().contains("External service error: openai"));
     }
 
     #[test]
     fn test_result_ext_io() {
-        let result: std::result::Result<i32, std::io::Error> = Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "missing",
-        ));
+        let result: std::result::Result<i32, std::io::Error> =
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         let manta_result: Result<i32> = result.with_context(|| "file op");
         assert!(manta_result.is_err());
     }
-
 }

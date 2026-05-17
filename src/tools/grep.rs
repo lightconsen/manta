@@ -466,8 +466,7 @@ Line 5: Hello world final"#;
             .unwrap();
 
         assert_eq!(matches.len(), 2);
-        let files: std::collections::HashSet<_> =
-            matches.iter().map(|m| m.file.clone()).collect();
+        let files: std::collections::HashSet<_> = matches.iter().map(|m| m.file.clone()).collect();
         assert!(files.contains(&file1.to_string_lossy().to_string()));
         assert!(files.contains(&file2.to_string_lossy().to_string()));
     }
@@ -501,8 +500,12 @@ Line 5: Hello world final"#;
         let tool = GrepTool::new();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        tokio::fs::write(temp_dir.path().join("a.rs"), "fn main()").await.unwrap();
-        tokio::fs::write(temp_dir.path().join("b.py"), "fn main()").await.unwrap();
+        tokio::fs::write(temp_dir.path().join("a.rs"), "fn main()")
+            .await
+            .unwrap();
+        tokio::fs::write(temp_dir.path().join("b.py"), "fn main()")
+            .await
+            .unwrap();
 
         let pattern = regex::Regex::new("fn main").unwrap();
         let matches = tool
@@ -581,7 +584,9 @@ Line 5: Hello world final"#;
         let binary_file = temp_dir.path().join("data.bin");
         let mut binary_content = b"binary".to_vec();
         binary_content.push(0);
-        tokio::fs::write(&binary_file, binary_content).await.unwrap();
+        tokio::fs::write(&binary_file, binary_content)
+            .await
+            .unwrap();
 
         let text_file = temp_dir.path().join("data.txt");
         tokio::fs::write(&text_file, "text content").await.unwrap();
@@ -602,7 +607,9 @@ Line 5: Hello world final"#;
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_grep_re_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio::fs::write(&test_file, "foo[bar] baz\nhello.world\n").await.unwrap();
+        tokio::fs::write(&test_file, "foo[bar] baz\nhello.world\n")
+            .await
+            .unwrap();
 
         let pattern = regex::Regex::new(r"foo\[bar\]").unwrap();
         let matches = tool.search_file(&pattern, &test_file, 0).await.unwrap();

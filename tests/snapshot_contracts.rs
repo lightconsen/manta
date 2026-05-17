@@ -33,16 +33,14 @@ fn snapshot_system_message() {
 
 #[test]
 fn snapshot_assistant_message_with_tool_calls() {
-    let msg = Message::assistant("I'll run that for you.").with_tool_calls(vec![
-        ToolCall {
-            id: "call_abc".to_string(),
-            call_type: "function".to_string(),
-            function: manta::providers::FunctionCall {
-                name: "shell".to_string(),
-                arguments: "{\"command\":\"ls\"}".to_string(),
-            },
+    let msg = Message::assistant("I'll run that for you.").with_tool_calls(vec![ToolCall {
+        id: "call_abc".to_string(),
+        call_type: "function".to_string(),
+        function: manta::providers::FunctionCall {
+            name: "shell".to_string(),
+            arguments: "{\"command\":\"ls\"}".to_string(),
         },
-    ]);
+    }]);
     assert_json_snapshot!(msg, @r###"
     {
       "role": "assistant",

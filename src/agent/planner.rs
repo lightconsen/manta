@@ -580,7 +580,9 @@ More text"#;
 
         assert!(!plan.dependencies_met(&task, &["t1".to_string()]));
         assert!(plan.dependencies_met(&task, &["t1".to_string(), "t3".to_string()]));
-        assert!(plan.dependencies_met(&task, &["t1".to_string(), "t3".to_string(), "t4".to_string()]));
+        assert!(
+            plan.dependencies_met(&task, &["t1".to_string(), "t3".to_string(), "t4".to_string()])
+        );
     }
 
     #[test]
@@ -638,7 +640,11 @@ More text"#;
         });
 
         let todos = TodoStore::new();
-        let mut active = ActivePlan { plan, todos, completed_tasks: vec![] };
+        let mut active = ActivePlan {
+            plan,
+            todos,
+            completed_tasks: vec![],
+        };
 
         assert!(active.current_task_prompt().is_some());
         active.complete_current_task();
@@ -663,7 +669,11 @@ More text"#;
         });
 
         let todos = TodoStore::new();
-        let active = ActivePlan { plan, todos, completed_tasks: vec![] };
+        let active = ActivePlan {
+            plan,
+            todos,
+            completed_tasks: vec![],
+        };
 
         let prompt = active.current_task_prompt().unwrap();
         assert!(prompt.contains("Write code"));

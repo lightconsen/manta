@@ -80,7 +80,8 @@ impl KeyEntry {
         self.failure_count += 1;
         self.last_failure = Some(Utc::now());
         if cooldown_secs > 0 {
-            self.cooldown_until = Some(Utc::now() + chrono::Duration::seconds(cooldown_secs as i64));
+            self.cooldown_until =
+                Some(Utc::now() + chrono::Duration::seconds(cooldown_secs as i64));
             self.status = KeyStatus::Cooldown;
         }
     }
@@ -128,7 +129,14 @@ impl AuthProfile {
             .enumerate()
             .map(|(i, (key, label))| {
                 let label = label.into();
-                KeyEntry::new(key, if label.is_empty() { format!("key-{}", i) } else { label })
+                KeyEntry::new(
+                    key,
+                    if label.is_empty() {
+                        format!("key-{}", i)
+                    } else {
+                        label
+                    },
+                )
             })
             .collect();
 
@@ -170,8 +178,7 @@ impl AuthProfile {
             } else {
                 info!(
                     "Auth key '{}' for provider '{}' put on {}s cooldown (failure {}/{})",
-                    entry.label, provider_name, cooldown_secs,
-                    entry.failure_count, max_failures
+                    entry.label, provider_name, cooldown_secs, entry.failure_count, max_failures
                 );
             }
         }
@@ -326,11 +333,7 @@ impl AuthProfileManager {
     }
 
     /// Create and register a profile from config
-    pub async fn register_from_config(
-        &self,
-        provider_name: &str,
-        config: &AuthProfileConfig,
-    ) {
+    pub async fn register_from_config(&self, provider_name: &str, config: &AuthProfileConfig) {
         let keys: Vec<(String, String)> = config
             .keys
             .iter()
@@ -345,12 +348,8 @@ impl AuthProfileManager {
             })
             .collect();
 
-        let profile = AuthProfile::with_keys(
-            provider_name,
-            keys,
-            config.cooldown_secs,
-            config.max_failures,
-        );
+        let profile =
+            AuthProfile::with_keys(provider_name, keys, config.cooldown_secs, config.max_failures);
         self.register_profile(provider_name, profile).await;
     }
 
@@ -365,9 +364,7 @@ impl AuthProfileManager {
     /// Rotate to the next available key for a provider. Returns the new key.
     pub async fn rotate(&self, provider_name: &str) -> Option<String> {
         let mut profiles = self.profiles.write().await;
-        profiles
-            .get_mut(provider_name)
-            .and_then(|p| p.rotate())
+        profiles.get_mut(provider_name).and_then(|p| p.rotate())
     }
 
     /// Record success on the current key for a provider
@@ -559,12 +556,8 @@ mod tests {
 
     #[test]
     fn test_auth_profile_rotate_disables_after_max_failures() {
-        let mut profile = AuthProfile::with_keys(
-            "openai",
-            vec![("key1".to_string(), "primary")],
-            0,
-            1,
-        );
+        let mut profile =
+            AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 0, 1);
 
         profile.rotate();
         let statuses = profile.key_statuses();
@@ -585,10 +578,7 @@ mod tests {
     fn test_auth_profile_key_statuses() {
         let profile = AuthProfile::with_keys(
             "openai",
-            vec![
-                ("key1".to_string(), "primary"),
-                ("key2".to_string(), ""),
-            ],
+            vec![("key1".to_string(), "primary"), ("key2".to_string(), "")],
             60,
             3,
         );

@@ -427,23 +427,11 @@ mod tests {
     fn test_change_kind_from_notify() {
         use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
         use notify::EventKind;
-        assert_eq!(
-            ChangeKind::from(&EventKind::Create(CreateKind::File)),
-            ChangeKind::Created
-        );
-        assert_eq!(
-            ChangeKind::from(&EventKind::Modify(ModifyKind::Any)),
-            ChangeKind::Modified
-        );
-        assert_eq!(
-            ChangeKind::from(&EventKind::Remove(RemoveKind::File)),
-            ChangeKind::Removed
-        );
+        assert_eq!(ChangeKind::from(&EventKind::Create(CreateKind::File)), ChangeKind::Created);
+        assert_eq!(ChangeKind::from(&EventKind::Modify(ModifyKind::Any)), ChangeKind::Modified);
+        assert_eq!(ChangeKind::from(&EventKind::Remove(RemoveKind::File)), ChangeKind::Removed);
         assert_eq!(ChangeKind::from(&EventKind::Other), ChangeKind::Mixed);
-        assert_eq!(
-            ChangeKind::from(&EventKind::Access(AccessKind::Read)),
-            ChangeKind::Mixed
-        );
+        assert_eq!(ChangeKind::from(&EventKind::Access(AccessKind::Read)), ChangeKind::Mixed);
     }
 
     #[test]

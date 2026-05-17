@@ -456,7 +456,9 @@ mod tests {
         assert!(tool.validate_code("exec('print(1)')").is_err());
         assert!(tool.validate_code("eval('1+1')").is_err());
         assert!(tool.validate_code("__import__('os')").is_err());
-        assert!(tool.validate_code("compile('x=1', '<string>', 'exec')").is_err());
+        assert!(tool
+            .validate_code("compile('x=1', '<string>', 'exec')")
+            .is_err());
     }
 
     #[test]
@@ -579,7 +581,11 @@ mod tests {
         let args = serde_json::json!({"code": "import subprocess"});
         let result = tool.execute(args, &ctx).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("Code validation failed"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Code validation failed"));
     }
 
     #[tokio::test]

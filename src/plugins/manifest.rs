@@ -249,9 +249,7 @@ mod tests {
             dangerous: true,
         };
         let manifest = PluginManifest {
-            capabilities: Some(vec![PluginCapability::Tools {
-                tools: vec![tool.clone()],
-            }]),
+            capabilities: Some(vec![PluginCapability::Tools { tools: vec![tool.clone()] }]),
             ..PluginManifest::minimal("test", "Test")
         };
         let tools = manifest.get_tools();
@@ -315,5 +313,4 @@ mod tests {
             matches!(decoded, PluginPermission::Filesystem { paths } if paths == vec!["/tmp".to_string()])
         );
     }
-
 }

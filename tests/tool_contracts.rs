@@ -5,8 +5,8 @@
 //! shape, or result structure without updating these tests signals a
 //! breaking change for LLM integrations.
 
-use manta::tools::*;
 use manta::providers::FunctionDefinition;
+use manta::tools::*;
 use serde_json::json;
 use std::time::Duration;
 
@@ -73,11 +73,7 @@ fn all_builtin_tools_have_valid_json_schema() {
 
         // Contract: schema must have "type": "object" at root
         let schema_type = schema.get("type");
-        assert!(
-            schema_type.is_some(),
-            "Tool '{}' schema missing 'type' field",
-            def.name
-        );
+        assert!(schema_type.is_some(), "Tool '{}' schema missing 'type' field", def.name);
         assert_eq!(
             schema_type,
             Some(&json!("object")),
@@ -103,7 +99,8 @@ fn all_builtin_tool_names_follow_contract() {
             name
         );
         assert!(
-            name.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == '-'),
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-'),
             "Tool '{}' name must be ASCII lowercase with underscores/hyphens only",
             name
         );
@@ -244,8 +241,8 @@ fn tool_execution_result_roundtrips_through_json() {
         .with_data(json!({"nested": {"value": true}}));
 
     let json = serde_json::to_string(&original).unwrap();
-    let roundtripped: ToolExecutionResult = serde_json::from_str(&json)
-        .expect("ToolExecutionResult must roundtrip through JSON");
+    let roundtripped: ToolExecutionResult =
+        serde_json::from_str(&json).expect("ToolExecutionResult must roundtrip through JSON");
 
     assert_eq!(original.success, roundtripped.success);
     assert_eq!(original.output, roundtripped.output);
@@ -370,25 +367,25 @@ fn shell_tool_schema_contract() {
     let shell = registry.get("shell").expect("shell tool must exist");
     let schema = shell.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
-    assert!(
-        props.get("command").is_some(),
-        "shell tool schema must have 'command' property"
-    );
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
+    assert!(props.get("command").is_some(), "shell tool schema must have 'command' property");
 }
 
 /// Contract: file_read tool must accept "path"
 #[test]
 fn file_read_tool_schema_contract() {
     let registry = build_test_registry();
-    let tool = registry.get("file_read").expect("file_read tool must exist");
+    let tool = registry
+        .get("file_read")
+        .expect("file_read tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
-    assert!(
-        props.get("path").is_some(),
-        "file_read tool schema must have 'path' property"
-    );
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
+    assert!(props.get("path").is_some(), "file_read tool schema must have 'path' property");
 }
 
 /// Contract: time tool must accept "action"
@@ -398,7 +395,9 @@ fn time_tool_schema_contract() {
     let tool = registry.get("time").expect("time tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("action").is_some(), "time tool schema must have 'action' property");
 
     let required = schema.get("required").expect("schema must have required");
@@ -413,7 +412,9 @@ fn todo_tool_schema_contract() {
     let tool = registry.get("todo").expect("todo tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("action").is_some(), "todo must have 'action' property");
 }
 
@@ -424,7 +425,9 @@ fn cron_tool_schema_contract() {
     let tool = registry.get("cron").expect("cron tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("action").is_some(), "cron must have 'action' property");
 }
 
@@ -435,7 +438,9 @@ fn grep_tool_schema_contract() {
     let tool = registry.get("grep").expect("grep tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("pattern").is_some(), "grep must have 'pattern'");
     assert!(props.get("path").is_some(), "grep must have 'path'");
 }
@@ -444,14 +449,15 @@ fn grep_tool_schema_contract() {
 #[test]
 fn web_search_tool_schema_contract() {
     let registry = build_test_registry();
-    let tool = registry.get("web_search").expect("web_search tool must exist");
+    let tool = registry
+        .get("web_search")
+        .expect("web_search tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
-    assert!(
-        props.get("query").is_some(),
-        "web_search must have 'query' property"
-    );
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
+    assert!(props.get("query").is_some(), "web_search must have 'query' property");
 }
 
 /// Contract: process tool schema must have "action"
@@ -461,7 +467,9 @@ fn process_tool_schema_contract() {
     let tool = registry.get("process").expect("process tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("action").is_some(), "process must have 'action' property");
 }
 
@@ -472,7 +480,9 @@ fn pdf_tool_schema_contract() {
     let tool = registry.get("pdf").expect("pdf tool must exist");
     let schema = tool.parameters_schema();
 
-    let props = schema.get("properties").expect("schema must have properties");
+    let props = schema
+        .get("properties")
+        .expect("schema must have properties");
     assert!(props.get("content").is_some(), "pdf must have 'content' property");
 }
 
@@ -508,9 +518,15 @@ fn sandbox_config_path_checking_contract() {
         ..Default::default()
     };
 
-    assert!(config.check_path(std::path::Path::new("/tmp/file.txt")).is_ok());
-    assert!(config.check_path(std::path::Path::new("/etc/passwd")).is_err());
-    assert!(config.check_path(std::path::Path::new("/home/user")).is_err());
+    assert!(config
+        .check_path(std::path::Path::new("/tmp/file.txt"))
+        .is_ok());
+    assert!(config
+        .check_path(std::path::Path::new("/etc/passwd"))
+        .is_err());
+    assert!(config
+        .check_path(std::path::Path::new("/home/user"))
+        .is_err());
 }
 
 #[test]
@@ -520,7 +536,9 @@ fn sandbox_config_blocks_file_access_when_disabled() {
         ..Default::default()
     };
 
-    assert!(config.check_path(std::path::Path::new("/tmp/file")).is_err());
+    assert!(config
+        .check_path(std::path::Path::new("/tmp/file"))
+        .is_err());
 }
 
 // ── FunctionDefinition Contract ──────────────────────────────────────────────

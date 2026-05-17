@@ -568,7 +568,11 @@ mod tests {
         let args = serde_json::json!({"path": "/etc/passwd"});
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]
@@ -616,9 +620,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_limit_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio_fs::write(&test_file, "abcdefghij")
-            .await
-            .unwrap();
+        tokio_fs::write(&test_file, "abcdefghij").await.unwrap();
 
         let tool = FileReadTool::new();
         let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
@@ -662,7 +664,11 @@ mod tests {
         });
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]
@@ -670,9 +676,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_nobak_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio_fs::write(&test_file, "original")
-            .await
-            .unwrap();
+        tokio_fs::write(&test_file, "original").await.unwrap();
 
         let tool = FileWriteTool::new().without_backup();
         let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
@@ -738,7 +742,11 @@ mod tests {
         });
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]
@@ -760,9 +768,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_edit_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio_fs::write(&test_file, "hello world")
-            .await
-            .unwrap();
+        tokio_fs::write(&test_file, "hello world").await.unwrap();
 
         let tool = FileEditTool::new();
         let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
@@ -773,7 +779,11 @@ mod tests {
         });
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("Could not find text"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Could not find text"));
 
         let _ = tokio_fs::remove_file(&test_file).await;
     }
@@ -783,9 +793,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_edit_ok_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio_fs::write(&test_file, "foo bar foo")
-            .await
-            .unwrap();
+        tokio_fs::write(&test_file, "foo bar foo").await.unwrap();
 
         let tool = FileEditTool::new();
         let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
@@ -823,7 +831,11 @@ mod tests {
         });
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]
@@ -833,7 +845,11 @@ mod tests {
         let args = serde_json::json!({"pattern": "[invalid"});
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("Invalid glob pattern"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Invalid glob pattern"));
     }
 
     #[tokio::test]
@@ -841,9 +857,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join(format!("manta_glob_{}.txt", uuid::Uuid::new_v4()));
 
-        tokio_fs::write(&test_file, "test")
-            .await
-            .unwrap();
+        tokio_fs::write(&test_file, "test").await.unwrap();
 
         let tool = GlobTool::new();
         let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);

@@ -19,7 +19,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
 
-pub use auth_profile::{AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus};
+pub use auth_profile::{
+    AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
+};
 
 /// Model alias configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,11 +305,7 @@ impl ModelRouter {
             self.auth_profiles
                 .register_from_config(name, &auth_config)
                 .await;
-            info!(
-                "Registered auth profile for '{}' with {} key(s)",
-                name,
-                auth_config.keys.len()
-            );
+            info!("Registered auth profile for '{}' with {} key(s)", name, auth_config.keys.len());
 
             let provider = self.create_provider(provider_config).await?;
 
@@ -392,10 +390,7 @@ impl ModelRouter {
     }
 
     /// Rebuild a provider with the current auth profile key after rotation.
-    async fn rebuild_provider_with_rotated_key(
-        &self,
-        provider_name: &str,
-    ) -> crate::Result<()> {
+    async fn rebuild_provider_with_rotated_key(&self, provider_name: &str) -> crate::Result<()> {
         let config = {
             let cfg = self.config.read().await;
             cfg.providers.get(provider_name).cloned().ok_or_else(|| {
@@ -420,7 +415,9 @@ impl ModelRouter {
 
             // Update config
             let mut router_config = self.config.write().await;
-            router_config.providers.insert(provider_name.to_string(), new_config);
+            router_config
+                .providers
+                .insert(provider_name.to_string(), new_config);
 
             info!("Rebuilt provider '{}' with rotated API key", provider_name);
             Ok(())
@@ -499,18 +496,18 @@ impl ModelRouter {
                         );
                         drop(providers);
 
-                        match self.rebuild_provider_with_rotated_key(&entry.provider).await {
+                        match self
+                            .rebuild_provider_with_rotated_key(&entry.provider)
+                            .await
+                        {
                             Ok(()) => {
                                 // Retry once with the new key
                                 let providers = self.providers.read().await;
                                 if let Some(provider) = providers.get(&entry.provider) {
                                     match provider.complete(request.clone()).await {
                                         Ok(response) => {
-                                            self.record_success(
-                                                &entry.provider,
-                                                start.elapsed(),
-                                            )
-                                            .await;
+                                            self.record_success(&entry.provider, start.elapsed())
+                                                .await;
                                             self.auth_profiles
                                                 .record_success(&entry.provider)
                                                 .await;
@@ -704,7 +701,8 @@ impl ModelRouter {
 
             if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
                 info!("Creating default Anthropic provider from environment");
-                let provider = crate::providers::anthropic::AnthropicProvider::new(api_key.clone())?;
+                let provider =
+                    crate::providers::anthropic::AnthropicProvider::new(api_key.clone())?;
                 let provider_arc = Arc::new(provider);
 
                 // Register auth profile
@@ -1008,13 +1006,19 @@ impl ModelRouter {
                         } else {
                             Err(crate::error::ConfigError::InvalidValue {
                                 key: "provider".to_string(),
-                                message: format!("Provider '{}' not found after rotation", provider_name),
+                                message: format!(
+                                    "Provider '{}' not found after rotation",
+                                    provider_name
+                                ),
                             }
                             .into())
                         }
                     }
                     Err(rotate_err) => {
-                        error!("Key rotation failed for provider {}: {}", provider_name, rotate_err);
+                        error!(
+                            "Key rotation failed for provider {}: {}",
+                            provider_name, rotate_err
+                        );
                         self.record_failure(provider_name).await;
                         Err(rotate_err)
                     }
@@ -1082,24 +1086,17 @@ impl ModelRouter {
     // ==================== AUTH PROFILE MANAGEMENT ====================
 
     /// Get auth profile status for a provider
-    pub async fn get_auth_profile_status(
-        &self,
-        provider_name: &str,
-    ) -> Option<ProfileStatus> {
+    pub async fn get_auth_profile_status(&self, provider_name: &str) -> Option<ProfileStatus> {
         self.auth_profiles.get_status(provider_name).await
     }
 
     /// Get auth profile status for all providers
-    pub async fn list_auth_profiles(&self,
-    ) -> Vec<ProfileStatus> {
+    pub async fn list_auth_profiles(&self) -> Vec<ProfileStatus> {
         self.auth_profiles.all_statuses().await
     }
 
     /// Manually rotate the auth key for a provider
-    pub async fn rotate_auth_key(
-        &self,
-        provider_name: &str,
-    ) -> crate::Result<String> {
+    pub async fn rotate_auth_key(&self, provider_name: &str) -> crate::Result<String> {
         // Check provider exists
         let providers = self.providers.read().await;
         if !providers.contains_key(provider_name) {
@@ -1115,7 +1112,8 @@ impl ModelRouter {
         match self.auth_profiles.rotate(provider_name).await {
             Some(new_key) => {
                 // Rebuild provider with new key
-                self.rebuild_provider_with_rotated_key(provider_name).await?;
+                self.rebuild_provider_with_rotated_key(provider_name)
+                    .await?;
                 info!("Manually rotated auth key for provider '{}'", provider_name);
                 Ok(new_key)
             }
@@ -1375,12 +1373,10 @@ mod tests {
 
         // auth_profile takes precedence over both
         config.auth_profile = Some(AuthProfileConfig {
-            keys: vec![
-                auth_profile::AuthKeyConfig {
-                    key: "profile-key".to_string(),
-                    label: "primary".to_string(),
-                }
-            ],
+            keys: vec![auth_profile::AuthKeyConfig {
+                key: "profile-key".to_string(),
+                label: "primary".to_string(),
+            }],
             cooldown_secs: 60,
             max_failures: 3,
         });
@@ -1468,10 +1464,7 @@ mod tests {
         assert_eq!(chain, vec!["a", "b"]);
 
         // Clear by setting empty
-        router
-            .set_fallback_chain("default", vec![])
-            .await
-            .unwrap();
+        router.set_fallback_chain("default", vec![]).await.unwrap();
         let chain = router.get_fallback_chain("default").await;
         assert!(chain.is_empty());
     }

@@ -477,6 +477,7 @@ pub mod image;
 pub mod mcp;
 pub mod memory;
 pub mod nodes;
+pub mod openclaw_tools;
 pub mod pdf;
 pub mod process;
 pub mod sandbox;
@@ -484,9 +485,8 @@ pub mod sdk;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
-pub mod tts;
-pub mod openclaw_tools;
 pub mod todo_tool;
+pub mod tts;
 pub mod update_plan;
 pub mod web;
 
@@ -505,8 +505,7 @@ pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use nodes::NodesTool;
 pub use openclaw_tools::{
     AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
-    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
-    SubagentsTool,
+    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool, SubagentsTool,
 };
 pub use pdf::PdfTool;
 pub use process::ProcessTool;
@@ -1541,8 +1540,6 @@ mod tests {
 
     #[test]
     fn test_name_validator_valid() {
-        
-
         struct ValidTool;
 
         #[async_trait]

@@ -39,8 +39,8 @@ fn incoming_message_roundtrips_through_json() {
         .with_mention(MentionState::Mentioned);
 
     let json = serde_json::to_string(&original).unwrap();
-    let roundtripped: IncomingMessage = serde_json::from_str(&json)
-        .expect("IncomingMessage must roundtrip through JSON");
+    let roundtripped: IncomingMessage =
+        serde_json::from_str(&json).expect("IncomingMessage must roundtrip through JSON");
 
     assert_eq!(original.user_id.0, roundtripped.user_id.0);
     assert_eq!(original.conversation_id.0, roundtripped.conversation_id.0);
@@ -113,8 +113,8 @@ fn outgoing_message_serializes_to_expected_shape() {
 
 #[test]
 fn attachment_serializes_to_expected_shape() {
-    let attachment = Attachment::new("doc.pdf", "application/pdf")
-        .with_data(vec![0x25, 0x50, 0x44, 0x46]);
+    let attachment =
+        Attachment::new("doc.pdf", "application/pdf").with_data(vec![0x25, 0x50, 0x44, 0x46]);
 
     let json = serde_json::to_value(&attachment).unwrap();
 
@@ -132,12 +132,12 @@ fn attachment_serializes_to_expected_shape() {
 
 #[test]
 fn attachment_roundtrips_through_json() {
-    let original = Attachment::new("image.png", "image/png")
-        .with_data(vec![0x89, 0x50, 0x4E, 0x47]);
+    let original =
+        Attachment::new("image.png", "image/png").with_data(vec![0x89, 0x50, 0x4E, 0x47]);
 
     let json = serde_json::to_string(&original).unwrap();
-    let roundtripped: Attachment = serde_json::from_str(&json)
-        .expect("Attachment must roundtrip through JSON");
+    let roundtripped: Attachment =
+        serde_json::from_str(&json).expect("Attachment must roundtrip through JSON");
 
     assert_eq!(original.filename, roundtripped.filename);
     assert_eq!(original.content_type, roundtripped.content_type);
@@ -232,17 +232,14 @@ fn full_message_flow_serialization_contract() {
             is_direct: true,
         })
         .with_attachment(
-            Attachment::new("screenshot.png", "image/png")
-                .with_data(vec![0x89, 0x50, 0x4E, 0x47]),
+            Attachment::new("screenshot.png", "image/png").with_data(vec![0x89, 0x50, 0x4E, 0x47]),
         );
 
     let incoming_json = serde_json::to_string(&incoming).unwrap();
 
     // Simulate processing and creating outgoing
-    let outgoing = OutgoingMessage::new(
-        incoming.conversation_id.clone(),
-        "Here is the help you requested...",
-    );
+    let outgoing =
+        OutgoingMessage::new(incoming.conversation_id.clone(), "Here is the help you requested...");
 
     let outgoing_json = serde_json::to_string(&outgoing).unwrap();
 
@@ -254,8 +251,5 @@ fn full_message_flow_serialization_contract() {
     let outgoing_value: serde_json::Value = serde_json::from_str(&outgoing_json).unwrap();
 
     // Conversation ID must be preserved across the flow
-    assert_eq!(
-        incoming_value["conversation_id"],
-        outgoing_value["conversation_id"]
-    );
+    assert_eq!(incoming_value["conversation_id"], outgoing_value["conversation_id"]);
 }

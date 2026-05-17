@@ -92,10 +92,7 @@ impl BindingStore for InMemoryBindingStore {
         workspace_id: Option<&str>,
     ) -> crate::Result<()> {
         let mut data = self.data.write().await;
-        data.insert(
-            session_id.to_string(),
-            (agent_id.to_string(), workspace_id.map(String::from)),
-        );
+        data.insert(session_id.to_string(), (agent_id.to_string(), workspace_id.map(String::from)));
         Ok(())
     }
 
@@ -142,15 +139,13 @@ impl SqliteBindingStore {
 #[async_trait]
 impl BindingStore for SqliteBindingStore {
     async fn load_bindings(&self) -> crate::Result<HashMap<String, (String, Option<String>)>> {
-        let rows = sqlx::query(
-            "SELECT session_id, agent_id, workspace_id FROM session_bindings",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| crate::error::MantaError::Storage {
-            context: "Failed to load session bindings".to_string(),
-            details: e.to_string(),
-        })?;
+        let rows = sqlx::query("SELECT session_id, agent_id, workspace_id FROM session_bindings")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to load session bindings".to_string(),
+                details: e.to_string(),
+            })?;
 
         let mut bindings = HashMap::new();
         for row in rows {

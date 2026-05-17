@@ -123,7 +123,6 @@ macro_rules! load_builtin_skills {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_builtin_skills_macro() {

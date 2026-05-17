@@ -214,12 +214,9 @@ mod tests {
         let policy = crate::gateway::send_policy::SendPolicy::new(
             crate::gateway::send_policy::DefaultPolicy::Allow,
         );
-        policy.add_rule(
-            crate::gateway::send_policy::PolicyRule::deny("block-spam")
-                .condition(crate::gateway::send_policy::RuleCondition::ContentContains(
-                    "spam".to_string(),
-                )),
-        );
+        policy.add_rule(crate::gateway::send_policy::PolicyRule::deny("block-spam").condition(
+            crate::gateway::send_policy::RuleCondition::ContentContains("spam".to_string()),
+        ));
 
         let mut config = AutoReplyDispatchConfig::default();
         config.send_policy = Some(policy);
@@ -291,10 +288,7 @@ mod tests {
 
     #[test]
     fn test_extract_workspace_mention_none() {
-        assert_eq!(
-            AutoReplyDispatch::extract_workspace_mention("hello world"),
-            None
-        );
+        assert_eq!(AutoReplyDispatch::extract_workspace_mention("hello world"), None);
     }
 
     #[test]
@@ -320,9 +314,6 @@ mod tests {
 
     #[test]
     fn test_extract_workspace_mention_empty() {
-        assert_eq!(
-            AutoReplyDispatch::extract_workspace_mention("just #"),
-            None
-        );
+        assert_eq!(AutoReplyDispatch::extract_workspace_mention("just #"), None);
     }
 }

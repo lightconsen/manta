@@ -41,8 +41,8 @@ fn gateway_config_serializes_to_json() {
 fn gateway_config_roundtrips_through_json() {
     let original = GatewayConfig::default();
     let json = serde_json::to_string(&original).unwrap();
-    let roundtripped: GatewayConfig = serde_json::from_str(&json)
-        .expect("GatewayConfig must roundtrip through JSON");
+    let roundtripped: GatewayConfig =
+        serde_json::from_str(&json).expect("GatewayConfig must roundtrip through JSON");
 
     assert_eq!(original.host, roundtripped.host);
     assert_eq!(original.port, roundtripped.port);
@@ -94,8 +94,8 @@ fn channel_config_with_allowlist() {
 
 #[test]
 fn channel_config_blocklist() {
-    let config = ChannelConfig::new(ChannelType::Whatsapp)
-        .with_allow_from(vec!["user1".to_string()]);
+    let config =
+        ChannelConfig::new(ChannelType::Whatsapp).with_allow_from(vec!["user1".to_string()]);
 
     // block_from is not set via builder, but we can test the method
     assert!(!config.is_blocked("user1"));
@@ -305,19 +305,14 @@ fn gateway_event_agent_status_serializes() {
 fn agent_status_variants_serialize() {
     let statuses = vec![
         AgentStatus::Idle,
-        AgentStatus::Processing {
-            session_id: "s1".to_string(),
-        },
+        AgentStatus::Processing { session_id: "s1".to_string() },
         AgentStatus::Error("fail".to_string()),
         AgentStatus::Shutdown,
     ];
 
     for status in statuses {
         let json = serde_json::to_value(&status).unwrap();
-        assert!(
-            json.is_object() || json.is_string(),
-            "AgentStatus must serialize to JSON"
-        );
+        assert!(json.is_object() || json.is_string(), "AgentStatus must serialize to JSON");
     }
 }
 
@@ -364,8 +359,8 @@ fn gateway_config_toml_roundtrip() {
     let config = GatewayConfig::default();
 
     let toml_str = toml::to_string(&config).expect("GatewayConfig must serialize to TOML");
-    let roundtripped: GatewayConfig = toml::from_str(&toml_str)
-        .expect("GatewayConfig must deserialize from TOML");
+    let roundtripped: GatewayConfig =
+        toml::from_str(&toml_str).expect("GatewayConfig must deserialize from TOML");
 
     assert_eq!(config.host, roundtripped.host);
     assert_eq!(config.port, roundtripped.port);

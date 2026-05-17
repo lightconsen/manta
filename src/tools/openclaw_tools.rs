@@ -450,10 +450,7 @@ impl Tool for SessionStatusTool {
             match self.acp.get_session_info(&session_id).await {
                 Some(info) => Ok(ToolExecutionResult {
                     success: true,
-                    output: format!(
-                        "Session {} has {} subagent(s)",
-                        info.id, info.subagent_count
-                    ),
+                    output: format!("Session {} has {} subagent(s)", info.id, info.subagent_count),
                     error: None,
                     data: Some(serde_json::json!({
                         "session_id": info.id.to_string(),
@@ -754,7 +751,9 @@ impl Tool for GatewayTool {
         let output = if args.detail {
             format!(
                 "Gateway status: {} agent(s), {} plugin(s), version {}",
-                agent_count, plugin_count, env!("CARGO_PKG_VERSION")
+                agent_count,
+                plugin_count,
+                env!("CARGO_PKG_VERSION")
             )
         } else {
             format!("Gateway: {} agents, {} plugins", agent_count, plugin_count)
@@ -882,7 +881,10 @@ impl Tool for ApplyPatchTool {
             return Ok(ToolExecutionResult {
                 success: false,
                 output: String::new(),
-                error: Some("Patch does not apply cleanly. Check the patch format and target files.".to_string()),
+                error: Some(
+                    "Patch does not apply cleanly. Check the patch format and target files."
+                        .to_string(),
+                ),
                 data: None,
                 execution_time: start.elapsed(),
             });
@@ -1036,7 +1038,8 @@ mod tests {
     fn test_sessions_history_args_parsing() {
         let args: SessionsHistoryArgs = serde_json::from_value(serde_json::json!({
             "session_id": "sess-123"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.session_id, "sess-123");
     }
 
@@ -1046,7 +1049,8 @@ mod tests {
             "session_id": "sess-123",
             "subagent_id": "sub-456",
             "message": "hello"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.session_id, "sess-123");
         assert_eq!(args.subagent_id, "sub-456");
         assert_eq!(args.message, "hello");
@@ -1056,7 +1060,8 @@ mod tests {
     fn test_sessions_yield_args_parsing() {
         let args: SessionsYieldArgs = serde_json::from_value(serde_json::json!({
             "subagent_id": "sub-789"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.subagent_id, "sub-789");
     }
 
@@ -1064,13 +1069,15 @@ mod tests {
     fn test_session_status_args_parsing() {
         let args: SessionStatusArgs = serde_json::from_value(serde_json::json!({
             "session_id": "sess-1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.session_id, Some("sess-1".to_string()));
         assert_eq!(args.subagent_id, None);
 
         let args2: SessionStatusArgs = serde_json::from_value(serde_json::json!({
             "subagent_id": "sub-1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args2.subagent_id, Some("sub-1".to_string()));
         assert_eq!(args2.session_id, None);
     }
@@ -1079,20 +1086,27 @@ mod tests {
     fn test_subagents_action_parsing() {
         let action: SubagentsAction = serde_json::from_value(serde_json::json!({
             "action": "list"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, SubagentsAction::List));
 
         let action: SubagentsAction = serde_json::from_value(serde_json::json!({
             "action": "status",
             "subagent_id": "sub-1"
-        })).unwrap();
-        assert!(matches!(action, SubagentsAction::Status { subagent_id } if subagent_id == "sub-1"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, SubagentsAction::Status { subagent_id } if subagent_id == "sub-1")
+        );
 
         let action: SubagentsAction = serde_json::from_value(serde_json::json!({
             "action": "shutdown",
             "subagent_id": "sub-1"
-        })).unwrap();
-        assert!(matches!(action, SubagentsAction::Shutdown { subagent_id } if subagent_id == "sub-1"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, SubagentsAction::Shutdown { subagent_id } if subagent_id == "sub-1")
+        );
     }
 
     #[test]
@@ -1100,13 +1114,15 @@ mod tests {
         let args: ApplyPatchArgs = serde_json::from_value(serde_json::json!({
             "patch": "diff content",
             "directory": "/tmp"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.patch, "diff content");
         assert_eq!(args.directory, "/tmp");
 
         let args2: ApplyPatchArgs = serde_json::from_value(serde_json::json!({
             "patch": "diff content"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args2.directory, "");
     }
 
@@ -1116,7 +1132,8 @@ mod tests {
             "channel": "telegram",
             "user_id": "user1",
             "content": "hello"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.channel, "telegram");
         assert_eq!(args.user_id, "user1");
         assert_eq!(args.content, "hello");
@@ -1132,7 +1149,8 @@ mod tests {
     fn test_gateway_args_detail() {
         let args: GatewayArgs = serde_json::from_value(serde_json::json!({
             "detail": true
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(args.detail);
     }
 }

@@ -1497,7 +1497,9 @@ impl Agent {
             *ctrl = Some(controller);
         }
 
-        let result = self.process_message_with_progress(message, progress_cb).await;
+        let result = self
+            .process_message_with_progress(message, progress_cb)
+            .await;
 
         {
             let mut ctrl = self.execution_controller.write().await;
@@ -2307,12 +2309,7 @@ impl Agent {
 
     /// Extract artifacts (code blocks, links) from tool result content
     /// and store them in the artifact store.
-    fn extract_and_store_artifacts(
-        &self,
-        session_id: &str,
-        content: &str,
-        tool_name: &str,
-    ) {
+    fn extract_and_store_artifacts(&self, session_id: &str, content: &str, tool_name: &str) {
         use regex::Regex;
 
         let Some(ref artifact_store) = self.artifact_store else {
@@ -2320,8 +2317,7 @@ impl Agent {
         };
 
         // Extract code blocks: ```language\ncode\n```
-        let code_block_re =
-            Regex::new(r"```(\w+)?\n(.*?)\n```").expect("valid code block regex");
+        let code_block_re = Regex::new(r"```(\w+)?\n(.*?)\n```").expect("valid code block regex");
         for (idx, cap) in code_block_re.captures_iter(content).enumerate() {
             let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
             let code = cap.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -2529,10 +2525,7 @@ mod tests {
         fn max_context(&self) -> usize {
             4096
         }
-        async fn complete(
-            &self,
-            _req: CompletionRequest,
-        ) -> crate::Result<CompletionResponse> {
+        async fn complete(&self, _req: CompletionRequest) -> crate::Result<CompletionResponse> {
             Ok(CompletionResponse {
                 message: Message::assistant("hello"),
                 usage: None,
@@ -2540,10 +2533,7 @@ mod tests {
                 finish_reason: None,
             })
         }
-        async fn stream(
-            &self,
-            _req: CompletionRequest,
-        ) -> crate::Result<CompletionStream> {
+        async fn stream(&self, _req: CompletionRequest) -> crate::Result<CompletionStream> {
             Ok(Box::pin(tokio_stream::iter(vec![])))
         }
         async fn health_check(&self) -> crate::Result<bool> {
@@ -2853,9 +2843,7 @@ mod tests {
 
     #[test]
     fn test_progress_event_debug() {
-        let event = ProgressEvent::Completed {
-            response: "hi".to_string(),
-        };
+        let event = ProgressEvent::Completed { response: "hi".to_string() };
         let debug = format!("{:?}", event);
         assert!(debug.contains("Completed"));
     }

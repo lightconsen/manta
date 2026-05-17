@@ -762,7 +762,9 @@ mod tests {
         // Subscribe before sending
         let mut rx = session.update_tx.subscribe();
 
-        session.notify("info".to_string(), "Test message".to_string()).await;
+        session
+            .notify("info".to_string(), "Test message".to_string())
+            .await;
 
         let update = rx.try_recv();
         assert!(update.is_ok());
@@ -896,7 +898,11 @@ mod tests {
 
     #[test]
     fn test_text_style_default() {
-        let style = TextStyle { size: None, weight: None, color: None };
+        let style = TextStyle {
+            size: None,
+            weight: None,
+            color: None,
+        };
         assert!(style.size.is_none());
         assert!(style.weight.is_none());
         assert!(style.color.is_none());

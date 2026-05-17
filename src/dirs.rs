@@ -314,14 +314,30 @@ mod tests {
 
     #[test]
     fn test_path_for_workspace_files() {
-        assert!(path_for(FileType::Soul).to_string_lossy().contains("SOUL.md"));
-        assert!(path_for(FileType::Identity).to_string_lossy().contains("IDENTITY.md"));
-        assert!(path_for(FileType::Bootstrap).to_string_lossy().contains("BOOTSTRAP.md"));
-        assert!(path_for(FileType::User).to_string_lossy().contains("USER.md"));
-        assert!(path_for(FileType::Agents).to_string_lossy().contains("AGENTS.md"));
-        assert!(path_for(FileType::Tools).to_string_lossy().contains("TOOLS.md"));
-        assert!(path_for(FileType::Heartbeat).to_string_lossy().contains("HEARTBEAT.md"));
-        assert!(path_for(FileType::Memory).to_string_lossy().contains("MEMORY.md"));
+        assert!(path_for(FileType::Soul)
+            .to_string_lossy()
+            .contains("SOUL.md"));
+        assert!(path_for(FileType::Identity)
+            .to_string_lossy()
+            .contains("IDENTITY.md"));
+        assert!(path_for(FileType::Bootstrap)
+            .to_string_lossy()
+            .contains("BOOTSTRAP.md"));
+        assert!(path_for(FileType::User)
+            .to_string_lossy()
+            .contains("USER.md"));
+        assert!(path_for(FileType::Agents)
+            .to_string_lossy()
+            .contains("AGENTS.md"));
+        assert!(path_for(FileType::Tools)
+            .to_string_lossy()
+            .contains("TOOLS.md"));
+        assert!(path_for(FileType::Heartbeat)
+            .to_string_lossy()
+            .contains("HEARTBEAT.md"));
+        assert!(path_for(FileType::Memory)
+            .to_string_lossy()
+            .contains("MEMORY.md"));
     }
 
     #[test]
@@ -365,7 +381,9 @@ mod tests {
 
     #[test]
     fn test_session_files_dir() {
-        assert!(session_files_dir().to_string_lossy().contains("session_files"));
+        assert!(session_files_dir()
+            .to_string_lossy()
+            .contains("session_files"));
     }
 
     #[test]

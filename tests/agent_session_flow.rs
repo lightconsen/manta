@@ -94,8 +94,14 @@ async fn session_file_manager_isolates_sessions() {
     let manager = SessionFileManager::new(dir.path());
     let _ = manager.init().await;
 
-    manager.create_session("session-a").await.expect("create session-a");
-    manager.create_session("session-b").await.expect("create session-b");
+    manager
+        .create_session("session-a")
+        .await
+        .expect("create session-a");
+    manager
+        .create_session("session-b")
+        .await
+        .expect("create session-b");
 
     let path_a = manager.resolve_path("session-a", "data.txt").await.unwrap();
     let path_b = manager.resolve_path("session-b", "data.txt").await.unwrap();
@@ -113,7 +119,10 @@ async fn session_file_manager_cleanup_removes_session() {
 
     manager.create_session("session-del").await.unwrap();
 
-    let path = manager.resolve_path("session-del", "file.txt").await.unwrap();
+    let path = manager
+        .resolve_path("session-del", "file.txt")
+        .await
+        .unwrap();
     assert!(path.parent().unwrap().exists(), "session dir should exist");
 
     manager.cleanup_session("session-del").await.unwrap();
@@ -140,7 +149,9 @@ fn artifact_store_adds_and_retrieves() {
 
     store.add(artifact.clone());
 
-    let retrieved = store.get("session-1", "test-code-1").expect("artifact must exist");
+    let retrieved = store
+        .get("session-1", "test-code-1")
+        .expect("artifact must exist");
     assert_eq!(retrieved.title, "Hello World in Rust");
     assert_eq!(retrieved.language.as_deref(), Some("rust"));
     assert_eq!(retrieved.artifact_type, ArtifactType::Code);
@@ -173,12 +184,8 @@ fn artifact_store_link_artifact_contract() {
     let store = ArtifactStore::new(dir.path());
     let _ = store.init();
 
-    let link = Artifact::link(
-        "link-1",
-        "session-1",
-        "Rust Book",
-        "https://doc.rust-lang.org/book/",
-    );
+    let link =
+        Artifact::link("link-1", "session-1", "Rust Book", "https://doc.rust-lang.org/book/");
 
     store.add(link.clone());
 
@@ -230,20 +237,8 @@ fn transcript_store_multiple_sessions_isolated() {
     let store = TranscriptStore::new(dir.path());
     let _ = store.init();
 
-    store.append(
-        "session-a",
-        "web",
-        "alice",
-        "room-1",
-        TranscriptMessage::new("user", "msg a"),
-    );
-    store.append(
-        "session-b",
-        "web",
-        "bob",
-        "room-2",
-        TranscriptMessage::new("user", "msg b"),
-    );
+    store.append("session-a", "web", "alice", "room-1", TranscriptMessage::new("user", "msg a"));
+    store.append("session-b", "web", "bob", "room-2", TranscriptMessage::new("user", "msg b"));
 
     let ta = store.get("session-a").unwrap();
     let tb = store.get("session-b").unwrap();

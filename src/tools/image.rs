@@ -86,7 +86,11 @@ impl Tool for ImageTool {
         };
 
         let path = std::path::PathBuf::from(&args.path);
-        let path = if path.is_absolute() { path } else { context.working_directory.join(path) };
+        let path = if path.is_absolute() {
+            path
+        } else {
+            context.working_directory.join(path)
+        };
 
         if !path.exists() {
             return Ok(ToolExecutionResult {
@@ -178,9 +182,7 @@ impl Tool for ImageTool {
             output: format!(
                 "{} image: {} ({} bytes, {})",
                 format,
-                path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy(),
+                path.file_name().unwrap_or_default().to_string_lossy(),
                 file_size,
                 dim_str
             ),
@@ -394,10 +396,7 @@ impl Tool for ImageGenerateTool {
                                 info!("Image generated and saved: {:?}", output_path);
                                 Ok(ToolExecutionResult {
                                     success: true,
-                                    output: format!(
-                                        "Image generated: {}",
-                                        output_path.display()
-                                    ),
+                                    output: format!("Image generated: {}", output_path.display()),
                                     error: None,
                                     data: Some(serde_json::json!({
                                         "url": url,
@@ -460,14 +459,16 @@ mod tests {
     fn test_image_args_parsing() {
         let args: ImageArgs = serde_json::from_value(serde_json::json!({
             "path": "/tmp/test.png"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.path, "/tmp/test.png");
         assert_eq!(args.action, None);
 
         let args2: ImageArgs = serde_json::from_value(serde_json::json!({
             "path": "/tmp/test.jpg",
             "action": "info"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args2.action, Some("info".to_string()));
     }
 
@@ -501,7 +502,8 @@ mod tests {
     fn test_image_generate_args_parsing() {
         let args: ImageGenerateArgs = serde_json::from_value(serde_json::json!({
             "prompt": "a cat"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.prompt, "a cat");
         assert_eq!(args.size, None);
         assert_eq!(args.style, None);
@@ -510,7 +512,8 @@ mod tests {
             "prompt": "a dog",
             "size": "1024x1024",
             "style": "vivid"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args2.size, Some("1024x1024".to_string()));
         assert_eq!(args2.style, Some("vivid".to_string()));
     }
@@ -519,10 +522,10 @@ mod tests {
     async fn test_image_tool_missing_file() {
         let tool = ImageTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "path": "/nonexistent/path/image.png" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "path": "/nonexistent/path/image.png" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -532,10 +535,7 @@ mod tests {
     async fn test_image_tool_invalid_args() {
         let tool = ImageTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid arguments"));
@@ -545,12 +545,15 @@ mod tests {
     async fn test_image_generate_tool_no_api_key() {
         let tool = ImageGenerateTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "prompt": "a cat" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "prompt": "a cat" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("No image generation API key"));
+        assert!(result
+            .error
+            .unwrap()
+            .contains("No image generation API key"));
     }
 }

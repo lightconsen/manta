@@ -686,9 +686,6 @@ mod tests {
             !html.contains("{VERSION}"),
             "HTML should not contain unreplaced {{VERSION}} placeholder"
         );
-        assert!(
-            html.contains(version),
-            "HTML should contain the actual version {version}"
-        );
+        assert!(html.contains(version), "HTML should contain the actual version {version}");
     }
 }

@@ -258,8 +258,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let debouncer = InboundDebouncer::new(InboundDebouncerConfig::default(), tx);
 
-        assert!(debouncer.enqueue(IncomingMessage::new("u1", "s1", "a")).await.is_none());
-        assert!(debouncer.enqueue(IncomingMessage::new("u2", "s2", "b")).await.is_none());
+        assert!(debouncer
+            .enqueue(IncomingMessage::new("u1", "s1", "a"))
+            .await
+            .is_none());
+        assert!(debouncer
+            .enqueue(IncomingMessage::new("u2", "s2", "b"))
+            .await
+            .is_none());
 
         let all = debouncer.flush_all().await;
         assert_eq!(all.len(), 2);

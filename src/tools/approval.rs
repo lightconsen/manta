@@ -530,12 +530,7 @@ mod tests {
     #[test]
     fn test_approval_decision_equality() {
         assert_eq!(ApprovalDecision::Approve, ApprovalDecision::Approve);
-        assert_ne!(
-            ApprovalDecision::Approve,
-            ApprovalDecision::Deny {
-                reason: "no".to_string()
-            }
-        );
+        assert_ne!(ApprovalDecision::Approve, ApprovalDecision::Deny { reason: "no".to_string() });
     }
 
     #[tokio::test]

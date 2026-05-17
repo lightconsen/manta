@@ -347,10 +347,9 @@ mod tests {
     async fn test_team_communicate_missing_team() {
         let tool = TeamCommunicateTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "action": "status" }),
-            &ctx,
-        ).await;
+        let result = tool
+            .execute(serde_json::json!({ "action": "status" }), &ctx)
+            .await;
         assert!(result.is_err());
     }
 
@@ -358,10 +357,12 @@ mod tests {
     async fn test_team_communicate_send_missing_to() {
         let tool = TeamCommunicateTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "action": "send", "team": "test-team", "message": "hi" }),
-            &ctx,
-        ).await;
+        let result = tool
+            .execute(
+                serde_json::json!({ "action": "send", "team": "test-team", "message": "hi" }),
+                &ctx,
+            )
+            .await;
         assert!(result.is_err());
     }
 
@@ -369,10 +370,9 @@ mod tests {
     async fn test_team_communicate_broadcast_missing_message() {
         let tool = TeamCommunicateTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "action": "broadcast", "team": "test-team" }),
-            &ctx,
-        ).await;
+        let result = tool
+            .execute(serde_json::json!({ "action": "broadcast", "team": "test-team" }), &ctx)
+            .await;
         assert!(result.is_err());
     }
 
@@ -380,10 +380,9 @@ mod tests {
     async fn test_team_communicate_unknown_action() {
         let tool = TeamCommunicateTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "action": "unknown", "team": "test" }),
-            &ctx,
-        ).await;
+        let result = tool
+            .execute(serde_json::json!({ "action": "unknown", "team": "test" }), &ctx)
+            .await;
         assert!(result.is_err());
     }
 }

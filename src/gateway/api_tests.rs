@@ -94,10 +94,7 @@ async fn get_provider_health_not_found() {
     let state =
         Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
     let app = Router::new()
-        .route(
-            "/api/v1/providers/:id/health",
-            get(super::get_provider_health_handler),
-        )
+        .route("/api/v1/providers/:id/health", get(super::get_provider_health_handler))
         .with_state(state);
 
     let req = Request::builder()
@@ -260,10 +257,7 @@ async fn list_pairing_pending_returns_empty() {
     let state =
         Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
     let app = Router::new()
-        .route(
-            "/api/v1/pairing/pending",
-            get(super::list_pairing_pending_handler),
-        )
+        .route("/api/v1/pairing/pending", get(super::list_pairing_pending_handler))
         .with_state(state);
 
     let req = Request::builder()
@@ -313,10 +307,7 @@ async fn get_mention_policy_returns_policy() {
     let state =
         Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
     let app = Router::new()
-        .route(
-            "/api/v1/mentions/policy",
-            get(super::get_mention_policy_handler),
-        )
+        .route("/api/v1/mentions/policy", get(super::get_mention_policy_handler))
         .with_state(state);
 
     let req = Request::builder()
@@ -391,8 +382,7 @@ async fn set_mention_policy_updates_policy() {
     let app = Router::new()
         .route(
             "/api/v1/mentions/policy",
-            get(super::get_mention_policy_handler)
-                .post(super::set_mention_policy_handler),
+            get(super::get_mention_policy_handler).post(super::set_mention_policy_handler),
         )
         .with_state(state.clone());
 

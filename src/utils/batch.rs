@@ -569,9 +569,7 @@ mod tests {
             inputs.iter().map(|x| x * 3).collect::<Vec<_>>()
         });
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result: Vec<i32> = rt
-            .block_on(processor.process_batch(vec![1, 2, 3]))
-            .unwrap();
+        let result: Vec<i32> = rt.block_on(processor.process_batch(vec![1, 2, 3])).unwrap();
         assert_eq!(result, vec![3, 6, 9]);
     }
 

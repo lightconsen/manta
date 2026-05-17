@@ -68,7 +68,6 @@ fn handle_error(error: manta::error::MantaError) {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_version_available() {

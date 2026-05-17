@@ -235,7 +235,10 @@ impl PersistentAuditLog {
     /// Filter entries by event type
     pub async fn filter(&self, event_type: AuditEventType) -> Vec<AuditEntry> {
         let mem = self.memory.read().await;
-        mem.iter().filter(|e| e.event_type == event_type).cloned().collect()
+        mem.iter()
+            .filter(|e| e.event_type == event_type)
+            .cloned()
+            .collect()
     }
 
     /// Current entry count in memory
@@ -268,15 +271,8 @@ mod tests {
     #[tokio::test]
     async fn test_memory_audit_log() {
         let log = PersistentAuditLog::new();
-        log.log(
-            AuditEventType::AccessCheck,
-            "user1",
-            "telegram",
-            true,
-            "Access allowed",
-            None,
-        )
-        .await;
+        log.log(AuditEventType::AccessCheck, "user1", "telegram", true, "Access allowed", None)
+            .await;
 
         let entries = log.recent(10).await;
         assert_eq!(entries.len(), 1);
@@ -300,9 +296,12 @@ mod tests {
     #[tokio::test]
     async fn test_log_and_recent_ordering() {
         let log = PersistentAuditLog::new();
-        log.log(AuditEventType::AccessCheck, "a", "t1", true, "first", None).await;
-        log.log(AuditEventType::ToolInvocation, "b", "t2", true, "second", None).await;
-        log.log(AuditEventType::Security, "c", "t3", false, "third", None).await;
+        log.log(AuditEventType::AccessCheck, "a", "t1", true, "first", None)
+            .await;
+        log.log(AuditEventType::ToolInvocation, "b", "t2", true, "second", None)
+            .await;
+        log.log(AuditEventType::Security, "c", "t3", false, "third", None)
+            .await;
 
         let entries = log.recent(10).await;
         assert_eq!(entries.len(), 3);
@@ -316,7 +315,8 @@ mod tests {
     async fn test_recent_limit() {
         let log = PersistentAuditLog::new();
         for i in 0..5 {
-            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None).await;
+            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None)
+                .await;
         }
         let entries = log.recent(2).await;
         assert_eq!(entries.len(), 2);
@@ -327,8 +327,10 @@ mod tests {
     #[tokio::test]
     async fn test_all_returns_oldest_first() {
         let log = PersistentAuditLog::new();
-        log.log(AuditEventType::AccessCheck, "a", "t", true, "first", None).await;
-        log.log(AuditEventType::AccessCheck, "b", "t", true, "second", None).await;
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "first", None)
+            .await;
+        log.log(AuditEventType::AccessCheck, "b", "t", true, "second", None)
+            .await;
 
         let entries = log.all().await;
         assert_eq!(entries.len(), 2);
@@ -339,13 +341,18 @@ mod tests {
     #[tokio::test]
     async fn test_filter_by_event_type() {
         let log = PersistentAuditLog::new();
-        log.log(AuditEventType::AccessCheck, "a", "t", true, "ac", None).await;
-        log.log(AuditEventType::ToolInvocation, "b", "t", true, "ti", None).await;
-        log.log(AuditEventType::AccessCheck, "c", "t", false, "ac2", None).await;
+        log.log(AuditEventType::AccessCheck, "a", "t", true, "ac", None)
+            .await;
+        log.log(AuditEventType::ToolInvocation, "b", "t", true, "ti", None)
+            .await;
+        log.log(AuditEventType::AccessCheck, "c", "t", false, "ac2", None)
+            .await;
 
         let filtered = log.filter(AuditEventType::AccessCheck).await;
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().all(|e| e.event_type == AuditEventType::AccessCheck));
+        assert!(filtered
+            .iter()
+            .all(|e| e.event_type == AuditEventType::AccessCheck));
 
         let filtered = log.filter(AuditEventType::ToolInvocation).await;
         assert_eq!(filtered.len(), 1);
@@ -357,7 +364,8 @@ mod tests {
         let log = PersistentAuditLog::new();
         assert_eq!(log.len().await, 0);
 
-        log.log(AuditEventType::Security, "x", "t", true, "msg", None).await;
+        log.log(AuditEventType::Security, "x", "t", true, "msg", None)
+            .await;
         assert_eq!(log.len().await, 1);
 
         log.clear().await;
@@ -368,7 +376,15 @@ mod tests {
     #[tokio::test]
     async fn test_export_json() {
         let log = PersistentAuditLog::new();
-        log.log(AuditEventType::AccessCheck, "a", "t", true, "ok", Some(serde_json::json!({"key": "val"}))).await;
+        log.log(
+            AuditEventType::AccessCheck,
+            "a",
+            "t",
+            true,
+            "ok",
+            Some(serde_json::json!({"key": "val"})),
+        )
+        .await;
 
         let json_str = log.export_json().await.unwrap();
         assert!(json_str.contains("a"));
@@ -382,7 +398,15 @@ mod tests {
     async fn test_log_with_details() {
         let log = PersistentAuditLog::new();
         let details = Some(serde_json::json!({"ip": "1.2.3.4", "reason": "test"}));
-        log.log(AuditEventType::ConfigChange, "admin", "system", true, "updated", details.clone()).await;
+        log.log(
+            AuditEventType::ConfigChange,
+            "admin",
+            "system",
+            true,
+            "updated",
+            details.clone(),
+        )
+        .await;
 
         let entries = log.recent(1).await;
         assert_eq!(entries[0].details, details);
@@ -405,7 +429,8 @@ mod tests {
         log.memory_capacity = 3; // Small capacity for testing
 
         for i in 0..5 {
-            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None).await;
+            log.log(AuditEventType::AccessCheck, format!("u{}", i), "t", true, "msg", None)
+                .await;
         }
 
         assert_eq!(log.len().await, 3);
@@ -430,7 +455,8 @@ mod tests {
             AuditEventType::Security,
         ];
         for (i, t) in types.iter().enumerate() {
-            log.log(t.clone(), format!("user{}", i), "target", i % 2 == 0, "desc", None).await;
+            log.log(t.clone(), format!("user{}", i), "target", i % 2 == 0, "desc", None)
+                .await;
         }
         assert_eq!(log.len().await, 10);
     }

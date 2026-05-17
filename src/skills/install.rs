@@ -628,12 +628,10 @@ mod tests {
     #[tokio::test]
     async fn test_install_all_with_specs() {
         use crate::skills::frontmatter::InstallSpec;
-        let specs = vec![
-            InstallSpec::Shell {
-                command: "echo hello".to_string(),
-                binary: Some("this_binary_definitely_does_not_exist_12345".to_string()),
-            },
-        ];
+        let specs = vec![InstallSpec::Shell {
+            command: "echo hello".to_string(),
+            binary: Some("this_binary_definitely_does_not_exist_12345".to_string()),
+        }];
         let results = install_all(&specs).await;
         assert_eq!(results.len(), 1);
         let (spec, result) = &results[0];

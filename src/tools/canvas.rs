@@ -139,12 +139,12 @@ impl CanvasComponentArg {
                     _ => None,
                 }),
             },
-            CanvasComponentArg::Text { id, content } => CanvasComponent::Text {
-                id,
-                content,
-                style: None,
-            },
-            CanvasComponentArg::Markdown { id, content } => CanvasComponent::Markdown { id, content },
+            CanvasComponentArg::Text { id, content } => {
+                CanvasComponent::Text { id, content, style: None }
+            }
+            CanvasComponentArg::Markdown { id, content } => {
+                CanvasComponent::Markdown { id, content }
+            }
             CanvasComponentArg::Input { id, label, placeholder } => CanvasComponent::Input {
                 id,
                 label,
@@ -159,33 +159,20 @@ impl CanvasComponentArg {
                 variant: None,
                 disabled: None,
             },
-            CanvasComponentArg::Progress { id, value, max, label } => CanvasComponent::Progress {
-                id,
-                value,
-                max,
-                label,
-            },
+            CanvasComponentArg::Progress { id, value, max, label } => {
+                CanvasComponent::Progress { id, value, max, label }
+            }
             CanvasComponentArg::Spinner { id, label } => CanvasComponent::Spinner { id, label },
-            CanvasComponentArg::Image { id, src } => CanvasComponent::Image {
-                id,
-                src,
-                alt: None,
-            },
-            CanvasComponentArg::Code { id, content, language } => CanvasComponent::Code {
-                id,
-                content,
-                language,
-            },
-            CanvasComponentArg::Table { id, headers, rows } => CanvasComponent::Table {
-                id,
-                headers,
-                rows,
-            },
-            CanvasComponentArg::Alert { id, level, message } => CanvasComponent::Alert {
-                id,
-                level,
-                message,
-            },
+            CanvasComponentArg::Image { id, src } => CanvasComponent::Image { id, src, alt: None },
+            CanvasComponentArg::Code { id, content, language } => {
+                CanvasComponent::Code { id, content, language }
+            }
+            CanvasComponentArg::Table { id, headers, rows } => {
+                CanvasComponent::Table { id, headers, rows }
+            }
+            CanvasComponentArg::Alert { id, level, message } => {
+                CanvasComponent::Alert { id, level, message }
+            }
         }
     }
 }
@@ -275,16 +262,9 @@ impl Tool for CanvasTool {
         };
 
         match action {
-            CanvasAction::Present {
-                session_id,
-                title,
-                components,
-            } => {
+            CanvasAction::Present { session_id, title, components } => {
                 let (_tx, _rx): (mpsc::Sender<crate::canvas::CanvasEvent>, _) = mpsc::channel(16);
-                let _session = self
-                    .manager
-                    .get_or_create_for_session(&session_id)
-                    .await;
+                let _session = self.manager.get_or_create_for_session(&session_id).await;
 
                 let root = if let Some(title_text) = title {
                     CanvasComponent::Container {
@@ -301,7 +281,10 @@ impl Tool for CanvasTool {
                             },
                             CanvasComponent::Container {
                                 id: "body".to_string(),
-                                children: components.into_iter().map(|c| c.into_component()).collect(),
+                                children: components
+                                    .into_iter()
+                                    .map(|c| c.into_component())
+                                    .collect(),
                                 layout: Some(crate::canvas::ContainerLayout::Vertical),
                             },
                         ],
@@ -348,10 +331,7 @@ impl Tool for CanvasTool {
                 component,
             } => {
                 let component = component.into_component();
-                let update = CanvasUpdate::Update {
-                    component_id,
-                    component,
-                };
+                let update = CanvasUpdate::Update { component_id, component };
                 self.manager.apply_update(&session_id, update).await;
 
                 Ok(ToolExecutionResult {
@@ -368,10 +348,7 @@ impl Tool for CanvasTool {
                 component,
             } => {
                 let component = component.into_component();
-                let update = CanvasUpdate::Append {
-                    parent_id,
-                    component,
-                };
+                let update = CanvasUpdate::Append { parent_id, component };
                 self.manager.apply_update(&session_id, update).await;
 
                 Ok(ToolExecutionResult {
@@ -393,7 +370,11 @@ impl Tool for CanvasTool {
                     } else {
                         format!("No canvas found for session {}", session_id)
                     },
-                    error: if found { None } else { Some("Canvas not found".to_string()) },
+                    error: if found {
+                        None
+                    } else {
+                        Some("Canvas not found".to_string())
+                    },
                     data: Some(serde_json::json!({
                         "session_id": session_id,
                         "active": found,
@@ -402,11 +383,7 @@ impl Tool for CanvasTool {
                     execution_time: start.elapsed(),
                 })
             }
-            CanvasAction::Notify {
-                session_id,
-                level,
-                message,
-            } => {
+            CanvasAction::Notify { session_id, level, message } => {
                 let update = CanvasUpdate::Notify { level, message };
                 self.manager.apply_update(&session_id, update).await;
 
@@ -456,16 +433,19 @@ mod tests {
             content: "Hello".to_string(),
         };
         let comp = arg.into_component();
-        assert!(matches!(comp, CanvasComponent::Text { id, content, .. } if id == "t1" && content == "Hello"));
+        assert!(
+            matches!(comp, CanvasComponent::Text { id, content, .. } if id == "t1" && content == "Hello")
+        );
     }
 
     #[test]
     fn test_canvas_component_arg_container() {
         let arg = CanvasComponentArg::Container {
             id: "root".to_string(),
-            children: vec![
-                CanvasComponentArg::Text { id: "c1".to_string(), content: "A".to_string() },
-            ],
+            children: vec![CanvasComponentArg::Text {
+                id: "c1".to_string(),
+                content: "A".to_string(),
+            }],
             layout: Some("vertical".to_string()),
         };
         let comp = arg.into_component();
@@ -481,7 +461,9 @@ mod tests {
             label: Some("Progress".to_string()),
         };
         let comp = arg.into_component();
-        assert!(matches!(comp, CanvasComponent::Progress { id, value, max, .. } if id == "p1" && value == 50.0 && max == Some(100.0)));
+        assert!(
+            matches!(comp, CanvasComponent::Progress { id, value, max, .. } if id == "p1" && value == 50.0 && max == Some(100.0))
+        );
     }
 
     #[test]
@@ -492,7 +474,9 @@ mod tests {
             rows: vec![vec!["1".to_string(), "2".to_string()]],
         };
         let comp = arg.into_component();
-        assert!(matches!(comp, CanvasComponent::Table { id, headers, rows } if id == "tbl1" && headers.len() == 2 && rows.len() == 1));
+        assert!(
+            matches!(comp, CanvasComponent::Table { id, headers, rows } if id == "tbl1" && headers.len() == 2 && rows.len() == 1)
+        );
     }
 
     #[test]
@@ -503,7 +487,9 @@ mod tests {
             message: "Oops".to_string(),
         };
         let comp = arg.into_component();
-        assert!(matches!(comp, CanvasComponent::Alert { id, level, message } if id == "a1" && level == "error" && message == "Oops"));
+        assert!(
+            matches!(comp, CanvasComponent::Alert { id, level, message } if id == "a1" && level == "error" && message == "Oops")
+        );
     }
 
     #[test]
@@ -521,19 +507,24 @@ mod tests {
             "action": "present",
             "session_id": "sess-1",
             "title": "My UI"
-        })).unwrap();
-        assert!(matches!(action, CanvasAction::Present { session_id, .. } if session_id == "sess-1"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, CanvasAction::Present { session_id, .. } if session_id == "sess-1")
+        );
 
         let action: CanvasAction = serde_json::from_value(serde_json::json!({
             "action": "hide",
             "session_id": "sess-1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, CanvasAction::Hide { session_id } if session_id == "sess-1"));
 
         let action: CanvasAction = serde_json::from_value(serde_json::json!({
             "action": "snapshot",
             "session_id": "sess-1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, CanvasAction::Snapshot { session_id } if session_id == "sess-1"));
 
         let action: CanvasAction = serde_json::from_value(serde_json::json!({
@@ -541,8 +532,11 @@ mod tests {
             "session_id": "sess-1",
             "level": "info",
             "message": "Hello"
-        })).unwrap();
-        assert!(matches!(action, CanvasAction::Notify { session_id, level, message } if session_id == "sess-1" && level == "info" && message == "Hello"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, CanvasAction::Notify { session_id, level, message } if session_id == "sess-1" && level == "info" && message == "Hello")
+        );
     }
 
     #[test]
@@ -553,6 +547,8 @@ mod tests {
             language: Some("rust".to_string()),
         };
         let comp = arg.into_component();
-        assert!(matches!(comp, CanvasComponent::Code { id, content, language: Some(lang) } if id == "code1" && content == "fn main() {}" && lang == "rust"));
+        assert!(
+            matches!(comp, CanvasComponent::Code { id, content, language: Some(lang) } if id == "code1" && content == "fn main() {}" && lang == "rust")
+        );
     }
 }

@@ -489,7 +489,9 @@ mod tests {
             "session_id": "sess-1"
         }))
         .unwrap();
-        assert!(matches!(action, SessionAction::Terminate { session_id } if session_id == "sess-1"));
+        assert!(
+            matches!(action, SessionAction::Terminate { session_id } if session_id == "sess-1")
+        );
 
         let action: SessionAction = serde_json::from_value(serde_json::json!({
             "action": "message",
@@ -498,15 +500,13 @@ mod tests {
             "message": "hello"
         }))
         .unwrap();
-        assert!(
-            matches!(action, SessionAction::Message { session_id, subagent_id, message }
-                if session_id == "sess-1" && subagent_id == "sub-1" && message == "hello"
-            )
-        );
+        assert!(matches!(action, SessionAction::Message { session_id, subagent_id, message }
+            if session_id == "sess-1" && subagent_id == "sub-1" && message == "hello"
+        ));
     }
 
-    #[test]
-    fn test_acp_spawn_tool_name_and_schema() {
+    #[tokio::test]
+    async fn test_acp_spawn_tool_name_and_schema() {
         let acp = Arc::new(AcpControlPlane::new());
         let tool = AcpSpawnTool::new(acp);
         assert_eq!(tool.name(), "spawn_subagent");
@@ -516,8 +516,8 @@ mod tests {
         assert!(req.contains(&serde_json::json!("task")));
     }
 
-    #[test]
-    fn test_acp_session_tool_name_and_schema() {
+    #[tokio::test]
+    async fn test_acp_session_tool_name_and_schema() {
         let acp = Arc::new(AcpControlPlane::new());
         let tool = AcpSessionTool::new(acp);
         assert_eq!(tool.name(), "manage_acp_session");
@@ -547,10 +547,7 @@ mod tests {
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
         let result = tool
-            .execute(
-                serde_json::json!({ "action": "get", "session_id": "nonexistent" }),
-                &ctx,
-            )
+            .execute(serde_json::json!({ "action": "get", "session_id": "nonexistent" }), &ctx)
             .await
             .unwrap();
         assert!(!result.success);
@@ -562,10 +559,7 @@ mod tests {
         let acp = Arc::new(AcpControlPlane::new());
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
-        let result = tool
-            .execute(serde_json::json!({}), &ctx)
-            .await
-            .unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid arguments"));
     }
@@ -585,7 +579,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("No agent builder configured"));
+        assert!(result
+            .error
+            .unwrap()
+            .contains("No agent builder configured"));
     }
 
     #[tokio::test]

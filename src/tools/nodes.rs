@@ -30,15 +30,33 @@ impl Default for NodesTool {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum NodesAction {
     Status,
-    Describe { node_id: String },
+    Describe {
+        node_id: String,
+    },
     List,
-    Ping { node_id: String },
-    CameraSnap { node_id: String },
-    CameraList { node_id: String },
-    ScreenRecord { node_id: String, #[serde(default)] duration: Option<u64> },
-    LocationGet { node_id: String },
-    DeviceStatus { node_id: String },
-    DeviceInfo { node_id: String },
+    Ping {
+        node_id: String,
+    },
+    CameraSnap {
+        node_id: String,
+    },
+    CameraList {
+        node_id: String,
+    },
+    ScreenRecord {
+        node_id: String,
+        #[serde(default)]
+        duration: Option<u64>,
+    },
+    LocationGet {
+        node_id: String,
+    },
+    DeviceStatus {
+        node_id: String,
+    },
+    DeviceInfo {
+        node_id: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -195,7 +213,8 @@ impl Tool for NodesTool {
                 success: false,
                 output: String::new(),
                 error: Some(
-                    "Tailscale is not installed or not in PATH. Install from https://tailscale.com".to_string(),
+                    "Tailscale is not installed or not in PATH. Install from https://tailscale.com"
+                        .to_string(),
                 ),
                 data: None,
                 execution_time: start.elapsed(),
@@ -221,13 +240,18 @@ impl Tool for NodesTool {
             }
             NodesAction::Describe { node_id } => {
                 let nodes = fetch_tailscale_nodes().await;
-                match nodes.into_iter().find(|n| n.id == node_id || n.name == node_id) {
+                match nodes
+                    .into_iter()
+                    .find(|n| n.id == node_id || n.name == node_id)
+                {
                     Some(node) => Ok(ToolExecutionResult {
                         success: true,
                         output: format!(
                             "Node {}: {} ({}, {})",
-                            node.name, if node.online { "online" } else { "offline" },
-                            node.ipv4, node.os
+                            node.name,
+                            if node.online { "online" } else { "offline" },
+                            node.ipv4,
+                            node.os
                         ),
                         error: None,
                         data: Some(serde_json::to_value(node).unwrap_or_default()),
@@ -284,7 +308,11 @@ impl Tool for NodesTool {
                             } else {
                                 stderr.to_string()
                             },
-                            error: if success { None } else { Some(stderr.to_string()) },
+                            error: if success {
+                                None
+                            } else {
+                                Some(stderr.to_string())
+                            },
                             data: Some(serde_json::json!({
                                 "node_id": node_id,
                                 "exit_code": o.status.code(),
@@ -330,10 +358,7 @@ impl Tool for NodesTool {
                 })
             }
             NodesAction::ScreenRecord { node_id, duration } => {
-                warn!(
-                    "Screen record requested for node {} — requires remote agent",
-                    node_id
-                );
+                warn!("Screen record requested for node {} — requires remote agent", node_id);
                 Ok(ToolExecutionResult {
                     success: false,
                     output: String::new(),
@@ -381,7 +406,10 @@ impl Tool for NodesTool {
             }
             NodesAction::DeviceStatus { node_id } => {
                 let nodes = fetch_tailscale_nodes().await;
-                match nodes.into_iter().find(|n| n.id == node_id || n.name == node_id) {
+                match nodes
+                    .into_iter()
+                    .find(|n| n.id == node_id || n.name == node_id)
+                {
                     Some(node) => Ok(ToolExecutionResult {
                         success: true,
                         output: format!(
@@ -404,7 +432,10 @@ impl Tool for NodesTool {
             }
             NodesAction::DeviceInfo { node_id } => {
                 let nodes = fetch_tailscale_nodes().await;
-                match nodes.into_iter().find(|n| n.id == node_id || n.name == node_id) {
+                match nodes
+                    .into_iter()
+                    .find(|n| n.id == node_id || n.name == node_id)
+                {
                     Some(node) => Ok(ToolExecutionResult {
                         success: true,
                         output: format!(
@@ -439,27 +470,33 @@ mod tests {
     fn test_nodes_action_parsing() {
         let action: NodesAction = serde_json::from_value(serde_json::json!({
             "action": "status"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, NodesAction::Status));
 
         let action: NodesAction = serde_json::from_value(serde_json::json!({
             "action": "describe",
             "node_id": "node1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, NodesAction::Describe { node_id } if node_id == "node1"));
 
         let action: NodesAction = serde_json::from_value(serde_json::json!({
             "action": "camera_snap",
             "node_id": "node1"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(action, NodesAction::CameraSnap { node_id } if node_id == "node1"));
 
         let action: NodesAction = serde_json::from_value(serde_json::json!({
             "action": "screen_record",
             "node_id": "node1",
             "duration": 10
-        })).unwrap();
-        assert!(matches!(action, NodesAction::ScreenRecord { node_id, duration } if node_id == "node1" && duration == Some(10)));
+        }))
+        .unwrap();
+        assert!(
+            matches!(action, NodesAction::ScreenRecord { node_id, duration } if node_id == "node1" && duration == Some(10))
+        );
     }
 
     #[test]
@@ -492,10 +529,10 @@ mod tests {
     async fn test_nodes_tool_no_tailscale() {
         let tool = NodesTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "action": "status" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "status" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Tailscale"));
@@ -505,10 +542,7 @@ mod tests {
     async fn test_nodes_tool_invalid_args() {
         let tool = NodesTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid arguments"));

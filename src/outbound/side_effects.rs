@@ -257,9 +257,7 @@ mod tests {
         let registry = Arc::new(SideEffectRegistry::new());
 
         registry
-            .register(Arc::new(TestHandler {
-                name: "test".to_string(),
-            }))
+            .register(Arc::new(TestHandler { name: "test".to_string() }))
             .await;
         assert!(registry.get("test").await.is_some());
         assert!(registry.get("missing").await.is_none());
@@ -332,9 +330,7 @@ mod tests {
     async fn test_execute_custom_with_handler() {
         let registry = Arc::new(SideEffectRegistry::new());
         registry
-            .register(Arc::new(TestHandler {
-                name: "custom".to_string(),
-            }))
+            .register(Arc::new(TestHandler { name: "custom".to_string() }))
             .await;
 
         let executor = SideEffectExecutor::new(registry);

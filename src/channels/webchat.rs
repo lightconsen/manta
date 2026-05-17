@@ -12,7 +12,8 @@
 //! - Message history per session
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage, OutgoingMessage,
+    Channel, ChannelCapabilities, ChatType, ConversationId, FormattedContent, IncomingMessage,
+    OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -86,10 +87,7 @@ impl Default for WebchatConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WebchatMessage {
     /// Client sends a chat message
-    Chat {
-        session_id: String,
-        content: String,
-    },
+    Chat { session_id: String, content: String },
     /// Server sends a response
     Response {
         session_id: String,
@@ -98,19 +96,11 @@ pub enum WebchatMessage {
         html_content: Option<String>,
     },
     /// Typing indicator
-    Typing {
-        session_id: String,
-        is_typing: bool,
-    },
+    Typing { session_id: String, is_typing: bool },
     /// System notification
-    System {
-        session_id: String,
-        message: String,
-    },
+    System { session_id: String, message: String },
     /// Client ready / handshake
-    Ready {
-        session_id: String,
-    },
+    Ready { session_id: String },
 }
 
 /// Active WebSocket connection info
@@ -185,19 +175,13 @@ impl WebchatChannel {
     }
 
     /// Set message sender
-    pub async fn set_message_sender(
-        &self,
-        sender: mpsc::UnboundedSender<IncomingMessage>,
-    ) {
+    pub async fn set_message_sender(&self, sender: mpsc::UnboundedSender<IncomingMessage>) {
         let mut tx = self.message_tx.write().await;
         *tx = Some(sender);
     }
 
     /// Check if session is authorized
-    pub async fn check_access(
-        &self,
-        session_id: &str,
-    ) -> (bool, Option<String>) {
+    pub async fn check_access(&self, session_id: &str) -> (bool, Option<String>) {
         let policy = self.dm_policy.read().await.clone();
         match policy {
             DmPolicy::Open => (true, None),
@@ -206,10 +190,7 @@ impl WebchatChannel {
                 if allow_from.contains(&session_id.to_string()) {
                     (true, None)
                 } else {
-                    (
-                        false,
-                        Some("Session not authorized.".to_string()),
-                    )
+                    (false, Some("Session not authorized.".to_string()))
                 }
             }
             DmPolicy::Pairing => {
@@ -222,22 +203,14 @@ impl WebchatChannel {
                         Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
                         Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
                             false,
-                            Some(format!(
-                                "Access pending approval. Pairing code: `{}`",
-                                code
-                            )),
+                            Some(format!("Access pending approval. Pairing code: `{}`", code)),
                         ),
-                        Ok(RequestAccessResult::NewRequest { code }) => (
-                            false,
-                            Some(format!(
-                                "Access requested. Pairing code: `{}`",
-                                code
-                            )),
-                        ),
-                        Ok(RequestAccessResult::RateLimited { .. }) => (
-                            false,
-                            Some("Too many requests.".to_string()),
-                        ),
+                        Ok(RequestAccessResult::NewRequest { code }) => {
+                            (false, Some(format!("Access requested. Pairing code: `{}`", code)))
+                        }
+                        Ok(RequestAccessResult::RateLimited { .. }) => {
+                            (false, Some("Too many requests.".to_string()))
+                        }
                         Err(_) => (false, Some("Access check error.".to_string())),
                     }
                 } else {
@@ -248,11 +221,7 @@ impl WebchatChannel {
     }
 
     /// Send a message to a specific WebSocket session
-    pub async fn send_to_session(
-        &self,
-        session_id: &str,
-        content: &str,
-    ) -> crate::Result<()> {
+    pub async fn send_to_session(&self, session_id: &str, content: &str) -> crate::Result<()> {
         let connections = self.connections.read().await;
         if let Some(conn) = connections.get(session_id) {
             let msg = WebchatMessage::Response {
@@ -271,9 +240,7 @@ impl WebchatChannel {
     }
 
     /// Broadcast a message to all connected sessions
-    pub async fn broadcast(&self,
-        content: &str,
-    ) -> crate::Result<()> {
+    pub async fn broadcast(&self, content: &str) -> crate::Result<()> {
         let connections = self.connections.read().await;
         for (session_id, conn) in connections.iter() {
             let msg = WebchatMessage::Response {
@@ -506,20 +473,26 @@ impl Channel for WebchatChannel {
         let running = self.running.clone();
 
         let app = axum::Router::new()
-            .route("/", axum::routing::get(move || {
-                let html = html.clone();
-                async move {
-                    axum::response::Html(html)
-                }
-            }))
-            .route("/ws", axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| {
-                let connections = connections.clone();
-                let message_tx = message_tx.clone();
-                let running = running.clone();
-                async move {
-                    ws.on_upgrade(move |socket| handle_websocket(socket, connections, message_tx, running))
-                }
-            }));
+            .route(
+                "/",
+                axum::routing::get(move || {
+                    let html = html.clone();
+                    async move { axum::response::Html(html) }
+                }),
+            )
+            .route(
+                "/ws",
+                axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| {
+                    let connections = connections.clone();
+                    let message_tx = message_tx.clone();
+                    let running = running.clone();
+                    async move {
+                        ws.on_upgrade(move |socket| {
+                            handle_websocket(socket, connections, message_tx, running)
+                        })
+                    }
+                }),
+            );
 
         let listener = tokio::net::TcpListener::bind(&self.config.bind_addr)
             .await
@@ -589,15 +562,11 @@ impl Channel for WebchatChannel {
     }
 
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
-        Err(crate::error::MantaError::Internal(
-            "WebChat edit not implemented".to_string(),
-        ))
+        Err(crate::error::MantaError::Internal("WebChat edit not implemented".to_string()))
     }
 
     async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
-        Err(crate::error::MantaError::Internal(
-            "WebChat delete not implemented".to_string(),
-        ))
+        Err(crate::error::MantaError::Internal("WebChat delete not implemented".to_string()))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {

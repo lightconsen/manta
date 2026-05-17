@@ -66,7 +66,9 @@ async fn slack_pairing_requires_store() {
 async fn slack_pairing_new_user_gets_code() {
     let channel = SlackChannel::new(SlackConfig::new("xoxb-test"));
     channel.set_dm_policy(DmPolicy::Pairing).await;
-    channel.set_pairing_store(Arc::new(PairingStore::new())).await;
+    channel
+        .set_pairing_store(Arc::new(PairingStore::new()))
+        .await;
 
     let (allowed, reply) = channel.check_access("U123", Some("Alice")).await;
 
@@ -119,7 +121,9 @@ async fn whatsapp_open_policy_allows_any_number() {
 async fn whatsapp_allowlist_blocks_unauthorized_number() {
     let channel = WhatsappChannel::new(WhatsappConfig::new("123456", "token"));
     channel.set_dm_policy(DmPolicy::Allowlist).await;
-    channel.set_allow_from(vec!["+14155552671".to_string()]).await;
+    channel
+        .set_allow_from(vec!["+14155552671".to_string()])
+        .await;
 
     let (allowed, reply) = channel.check_access("+9999999999", None).await;
 
@@ -131,7 +135,9 @@ async fn whatsapp_allowlist_blocks_unauthorized_number() {
 async fn whatsapp_allowlist_allows_authorized_number() {
     let channel = WhatsappChannel::new(WhatsappConfig::new("123456", "token"));
     channel.set_dm_policy(DmPolicy::Allowlist).await;
-    channel.set_allow_from(vec!["+14155552671".to_string()]).await;
+    channel
+        .set_allow_from(vec!["+14155552671".to_string()])
+        .await;
 
     let (allowed, reply) = channel.check_access("+14155552671", None).await;
 
@@ -150,17 +156,16 @@ async fn whatsapp_allowlist_normalizes_plus_prefix() {
     // Store has + prefix, allowlist doesn't — should still match
     let (allowed, _reply) = channel.check_access("+14155552671", None).await;
 
-    assert!(
-        allowed,
-        "Should match number regardless of + prefix normalization"
-    );
+    assert!(allowed, "Should match number regardless of + prefix normalization");
 }
 
 #[tokio::test]
 async fn whatsapp_pairing_new_user_gets_code() {
     let channel = WhatsappChannel::new(WhatsappConfig::new("123456", "token"));
     channel.set_dm_policy(DmPolicy::Pairing).await;
-    channel.set_pairing_store(Arc::new(PairingStore::new())).await;
+    channel
+        .set_pairing_store(Arc::new(PairingStore::new()))
+        .await;
 
     let (allowed, reply) = channel.check_access("+14155552671", Some("Bob")).await;
 
@@ -180,7 +185,9 @@ async fn whatsapp_pairing_authorized_user_allowed() {
     channel.set_dm_policy(DmPolicy::Pairing).await;
     channel.set_pairing_store(store.clone()).await;
 
-    let result = store.request_access("whatsapp", "14155552671", Some("Bob")).await;
+    let result = store
+        .request_access("whatsapp", "14155552671", Some("Bob"))
+        .await;
     let code = match result.unwrap() {
         manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("Expected NewRequest, got {:?}", other),
@@ -234,7 +241,9 @@ async fn qq_allowlist_allows_authorized_user() {
 async fn qq_pairing_new_user_gets_code() {
     let channel = QqChannel::new(QqConfig::new("app_1", "secret", "12345"));
     channel.set_dm_policy(DmPolicy::Pairing).await;
-    channel.set_pairing_store(Arc::new(PairingStore::new())).await;
+    channel
+        .set_pairing_store(Arc::new(PairingStore::new()))
+        .await;
 
     let (allowed, reply) = channel.check_access("12345", Some("User")).await;
 
@@ -286,7 +295,11 @@ async fn lark_allowlist_blocks_unauthorized_user() {
     assert!(!allowed);
     assert!(reply.is_some());
     let text = reply.unwrap();
-    assert!(text.contains("无权") || text.contains("authorized"), "Reply should indicate unauthorized: {}", text);
+    assert!(
+        text.contains("无权") || text.contains("authorized"),
+        "Reply should indicate unauthorized: {}",
+        text
+    );
 }
 
 #[tokio::test]
@@ -305,7 +318,9 @@ async fn lark_allowlist_allows_authorized_user() {
 async fn lark_pairing_new_user_gets_code() {
     let channel = LarkChannel::new(LarkConfig::new("app_1", "secret"));
     channel.set_dm_policy(DmPolicy::Pairing).await;
-    channel.set_pairing_store(Arc::new(PairingStore::new())).await;
+    channel
+        .set_pairing_store(Arc::new(PairingStore::new()))
+        .await;
 
     let (allowed, reply) = channel.check_access("user_1", Some("User")).await;
 

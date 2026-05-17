@@ -391,8 +391,12 @@ mod tests {
     #[tokio::test]
     async fn test_record_duration() {
         let profiler = Profiler::new();
-        profiler.record_duration("op", Duration::from_millis(10)).await;
-        profiler.record_duration("op", Duration::from_millis(20)).await;
+        profiler
+            .record_duration("op", Duration::from_millis(10))
+            .await;
+        profiler
+            .record_duration("op", Duration::from_millis(20))
+            .await;
 
         let stats = profiler.get_timer_stats("op").await.unwrap();
         assert_eq!(stats.count, 2);
@@ -438,8 +442,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_timer_stats() {
         let profiler = Profiler::new();
-        profiler.record_duration("fast", Duration::from_millis(10)).await;
-        profiler.record_duration("slow", Duration::from_millis(100)).await;
+        profiler
+            .record_duration("fast", Duration::from_millis(10))
+            .await;
+        profiler
+            .record_duration("slow", Duration::from_millis(100))
+            .await;
 
         let stats = profiler.get_all_timer_stats().await;
         assert_eq!(stats.len(), 2);
@@ -499,7 +507,9 @@ mod tests {
     async fn test_reset() {
         let profiler = Profiler::new();
         profiler.increment_counter("c").await;
-        profiler.record_duration("t", Duration::from_millis(1)).await;
+        profiler
+            .record_duration("t", Duration::from_millis(1))
+            .await;
         profiler.record_allocation(100, "a").await;
 
         profiler.reset().await;
@@ -516,7 +526,9 @@ mod tests {
     async fn test_performance_report_format() {
         let profiler = Profiler::new();
         profiler.increment_counter("requests").await;
-        profiler.record_duration("handler", Duration::from_millis(5)).await;
+        profiler
+            .record_duration("handler", Duration::from_millis(5))
+            .await;
         profiler.record_allocation(1024, "buf").await;
 
         let report = profiler.generate_report().await;
@@ -577,9 +589,15 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_timers_same_name() {
         let profiler = Profiler::new();
-        profiler.record_duration("api", Duration::from_millis(10)).await;
-        profiler.record_duration("api", Duration::from_millis(20)).await;
-        profiler.record_duration("api", Duration::from_millis(30)).await;
+        profiler
+            .record_duration("api", Duration::from_millis(10))
+            .await;
+        profiler
+            .record_duration("api", Duration::from_millis(20))
+            .await;
+        profiler
+            .record_duration("api", Duration::from_millis(30))
+            .await;
 
         let stats = profiler.get_timer_stats("api").await.unwrap();
         assert_eq!(stats.count, 3);

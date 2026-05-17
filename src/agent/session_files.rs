@@ -59,12 +59,12 @@ impl SessionFileManager {
 
     /// Initialize the root directory.
     pub async fn init(&self) -> crate::Result<()> {
-        tokio::fs::create_dir_all(&self.root_dir).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+        tokio::fs::create_dir_all(&self.root_dir)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
                 context: "Failed to create session files root".into(),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 
@@ -77,15 +77,17 @@ impl SessionFileManager {
         let session_path = self.root_dir.join(&session_id);
 
         // Create directory if it doesn't exist
-        tokio::fs::create_dir_all(&session_path).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+        tokio::fs::create_dir_all(&session_path)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
                 context: format!("Failed to create session dir for {}", session_id),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Canonicalize to resolve symlinks (e.g. /tmp -> /private/tmp on macOS)
-        let session_path = tokio::fs::canonicalize(&session_path).await.unwrap_or(session_path);
+        let session_path = tokio::fs::canonicalize(&session_path)
+            .await
+            .unwrap_or(session_path);
 
         let dir = SessionFileDir {
             session_id: session_id.clone(),
@@ -104,19 +106,13 @@ impl SessionFileManager {
     }
 
     /// Get the session directory (if it exists).
-    pub async fn get_session(&self,
-        session_id: &str,
-    ) -> Option<SessionFileDir> {
+    pub async fn get_session(&self, session_id: &str) -> Option<SessionFileDir> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).cloned()
     }
 
     /// Resolve a path within a session directory (with traversal protection).
-    pub async fn resolve_path(
-        &self,
-        session_id: &str,
-        relative_path: &str,
-    ) -> Option<PathBuf> {
+    pub async fn resolve_path(&self, session_id: &str, relative_path: &str) -> Option<PathBuf> {
         let sessions = self.sessions.read().await;
         let session_dir = sessions.get(session_id)?;
 
@@ -148,9 +144,7 @@ impl SessionFileManager {
     }
 
     /// List files in a session directory.
-    pub async fn list_files(&self,
-        session_id: &str,
-    ) -> Vec<String> {
+    pub async fn list_files(&self, session_id: &str) -> Vec<String> {
         let sessions = self.sessions.read().await;
         let Some(dir) = sessions.get(session_id) else {
             return Vec::new();
@@ -174,10 +168,7 @@ impl SessionFileManager {
     }
 
     /// Clean up a session directory.
-    pub async fn cleanup_session(
-        &self,
-        session_id: &str,
-    ) -> crate::Result<()> {
+    pub async fn cleanup_session(&self, session_id: &str) -> crate::Result<()> {
         let path = {
             let mut sessions = self.sessions.write().await;
             let dir = sessions.remove(session_id);
@@ -438,9 +429,13 @@ mod tests {
     #[tokio::test]
     async fn test_dir_size() {
         let tmp = tempfile::tempdir().unwrap();
-        tokio::fs::write(tmp.path().join("a.txt"), "hello").await.unwrap();
+        tokio::fs::write(tmp.path().join("a.txt"), "hello")
+            .await
+            .unwrap();
         tokio::fs::create_dir(tmp.path().join("sub")).await.unwrap();
-        tokio::fs::write(tmp.path().join("sub/b.txt"), "world").await.unwrap();
+        tokio::fs::write(tmp.path().join("sub/b.txt"), "world")
+            .await
+            .unwrap();
 
         let size = SessionFileManager::dir_size(tmp.path()).await.unwrap();
         assert_eq!(size, 10); // "hello" + "world" = 10 bytes

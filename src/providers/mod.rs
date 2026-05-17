@@ -561,17 +561,27 @@ mod tests {
 
     #[async_trait]
     impl Provider for MockProvider {
-        fn name(&self) -> &str { "mock" }
-        fn default_model(&self) -> &str { "mock-model" }
-        fn supports_tools(&self) -> bool { true }
-        fn max_context(&self) -> usize { 4096 }
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn default_model(&self) -> &str {
+            "mock-model"
+        }
+        fn supports_tools(&self) -> bool {
+            true
+        }
+        fn max_context(&self) -> usize {
+            4096
+        }
         async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
             unimplemented!()
         }
         async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
             unimplemented!()
         }
-        async fn health_check(&self) -> crate::Result<bool> { Ok(true) }
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
     }
 
     #[test]

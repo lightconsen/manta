@@ -587,7 +587,9 @@ mod tests {
     fn test_group_session_get_members() {
         let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
         group.add_member("user2", "Bob", GroupRole::Member).unwrap();
-        group.add_member("user3", "Charlie", GroupRole::Observer).unwrap();
+        group
+            .add_member("user3", "Charlie", GroupRole::Observer)
+            .unwrap();
 
         let members = group.get_members();
         assert_eq!(members.len(), 3);
@@ -600,7 +602,9 @@ mod tests {
     fn test_group_session_get_members_by_role() {
         let mut group = GroupSession::new("g1", "Test", "user1", "Alice");
         group.add_member("user2", "Bob", GroupRole::Admin).unwrap();
-        group.add_member("user3", "Charlie", GroupRole::Member).unwrap();
+        group
+            .add_member("user3", "Charlie", GroupRole::Member)
+            .unwrap();
 
         let admins = group.get_members_by_role(GroupRole::Admin);
         assert_eq!(admins.len(), 1);
@@ -654,10 +658,7 @@ mod tests {
             GroupSessionError::CannotRemoveOwner.to_string(),
             "Cannot remove the owner from the group"
         );
-        assert_eq!(
-            GroupSessionError::CannotDemoteOwner.to_string(),
-            "Cannot demote the owner"
-        );
+        assert_eq!(GroupSessionError::CannotDemoteOwner.to_string(), "Cannot demote the owner");
         assert_eq!(
             GroupSessionError::InsufficientPermissions.to_string(),
             "Insufficient permissions"
@@ -701,7 +702,10 @@ mod tests {
     async fn test_group_manager_remove_group() {
         let mut manager = GroupSessionManager::new();
         manager.create_group("g1", "Test", "user1", "Alice");
-        manager.add_member("g1", "user2", "Bob", GroupRole::Member).await.unwrap();
+        manager
+            .add_member("g1", "user2", "Bob", GroupRole::Member)
+            .await
+            .unwrap();
 
         assert_eq!(manager.get_user_groups("user2").len(), 1);
         manager.remove_group("g1").await;
@@ -714,7 +718,10 @@ mod tests {
         let mut manager = GroupSessionManager::new();
         manager.create_group("g1", "Test", "user1", "Alice");
 
-        manager.add_member("g1", "user2", "Bob", GroupRole::Member).await.unwrap();
+        manager
+            .add_member("g1", "user2", "Bob", GroupRole::Member)
+            .await
+            .unwrap();
         assert_eq!(manager.get_user_groups("user2").len(), 1);
 
         manager.remove_member("g1", "user2").await.unwrap();

@@ -435,9 +435,12 @@ mod tests {
         let cli = Cli::try_parse_from(["manta", "security", "pairing", "list"]).unwrap();
         match cli.command {
             Commands::Security { command } => {
-                assert!(
-                    matches!(command, SecurityCommands::Pairing { command: PairingCommands::List { channel: None } })
-                );
+                assert!(matches!(
+                    command,
+                    SecurityCommands::Pairing {
+                        command: PairingCommands::List { channel: None }
+                    }
+                ));
             }
             _ => panic!("expected Security command"),
         }

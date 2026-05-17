@@ -289,10 +289,7 @@ pub async fn rate_limit_middleware(
                 headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
                 Ok(response)
             }
-            crate::gateway::rate_limit::MultiTierResult::Denied {
-                tier,
-                retry_after_secs,
-            } => {
+            crate::gateway::rate_limit::MultiTierResult::Denied { tier, retry_after_secs } => {
                 warn!("Rate limit exceeded for user: {} on tier: {}", user_id, tier);
                 let mut response = Response::builder()
                     .status(StatusCode::TOO_MANY_REQUESTS)
@@ -315,10 +312,7 @@ pub async fn rate_limit_middleware(
         let result = state.rate_limiter.check(&user_id).await;
 
         match result {
-            crate::security::RateLimitResult::Allowed {
-                remaining,
-                reset_after_secs,
-            } => {
+            crate::security::RateLimitResult::Allowed { remaining, reset_after_secs } => {
                 let mut response = next.run(req).await;
 
                 let headers = response.headers_mut();
@@ -493,10 +487,7 @@ mod tests {
 
     #[test]
     fn test_is_ip_allowed_any() {
-        assert!(is_ip_allowed(
-            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
-            &AllowedOrigin::Any
-        ));
+        assert!(is_ip_allowed(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), &AllowedOrigin::Any));
     }
 
     #[test]
@@ -525,14 +516,8 @@ mod tests {
 
     #[test]
     fn test_is_ip_allowed_private() {
-        assert!(is_ip_allowed(
-            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            &AllowedOrigin::Private
-        ));
-        assert!(!is_ip_allowed(
-            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
-            &AllowedOrigin::Private
-        ));
+        assert!(is_ip_allowed(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), &AllowedOrigin::Private));
+        assert!(!is_ip_allowed(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), &AllowedOrigin::Private));
     }
 
     #[test]
@@ -541,14 +526,8 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
         ]);
-        assert!(is_ip_allowed(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-            &allowed
-        ));
-        assert!(!is_ip_allowed(
-            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
-            &allowed
-        ));
+        assert!(is_ip_allowed(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), &allowed));
+        assert!(!is_ip_allowed(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), &allowed));
     }
 
     #[test]
@@ -616,9 +595,7 @@ mod tests {
 
     #[test]
     fn test_csp_policy_admin() {
-        let policy = CspPolicy::Admin {
-            nonce: "abc123".to_string(),
-        };
+        let policy = CspPolicy::Admin { nonce: "abc123".to_string() };
         let header = policy.to_header_value();
         assert!(header.contains("script-src 'self' 'nonce-abc123'"));
         assert!(header.contains("style-src 'self' 'nonce-abc123'"));
@@ -632,7 +609,7 @@ mod tests {
         assert_eq!(nonce1.len(), 32); // 16 bytes hex = 32 chars
         assert_eq!(nonce2.len(), 32);
         assert_ne!(nonce1, nonce2); // Very unlikely to collide
-        // Should be valid hex
+                                    // Should be valid hex
         assert!(hex::decode(&nonce1).is_ok());
     }
 }

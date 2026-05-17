@@ -775,7 +775,6 @@ mod tests {
     }
 }
 
-
 /// Device fingerprinting for security tracking
 
 /// Secret scanning for detecting sensitive data leaks
@@ -1127,7 +1126,6 @@ mod secret_tests {
         assert!(!redacted.contains("abcdefghijklmnop"));
     }
 }
-
 
 /// Security audit module
 pub mod audit;

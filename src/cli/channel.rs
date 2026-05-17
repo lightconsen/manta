@@ -795,7 +795,9 @@ async fn add_imessage_channel(
         agent_id: agent,
     };
 
-    config.channels.insert("imessage".to_string(), channel_config);
+    config
+        .channels
+        .insert("imessage".to_string(), channel_config);
     save_gateway_config(&config).await?;
 
     println!("✅ iMessage channel configured in Gateway");
@@ -831,7 +833,9 @@ async fn add_webchat_channel(
         agent_id: agent,
     };
 
-    config.channels.insert("webchat".to_string(), channel_config);
+    config
+        .channels
+        .insert("webchat".to_string(), channel_config);
     save_gateway_config(&config).await?;
 
     println!("✅ WebChat channel configured in Gateway");

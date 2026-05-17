@@ -323,18 +323,9 @@ mod tests {
 
     #[test]
     fn test_hook_type_display() {
-        assert_eq!(
-            HookType::BeforeMessageProcess.to_string(),
-            "before_message_process"
-        );
-        assert_eq!(
-            HookType::AfterMessageProcess.to_string(),
-            "after_message_process"
-        );
-        assert_eq!(
-            HookType::BeforeToolExecute.to_string(),
-            "before_tool_execute"
-        );
+        assert_eq!(HookType::BeforeMessageProcess.to_string(), "before_message_process");
+        assert_eq!(HookType::AfterMessageProcess.to_string(), "after_message_process");
+        assert_eq!(HookType::BeforeToolExecute.to_string(), "before_tool_execute");
         assert_eq!(HookType::SessionStart.to_string(), "session_start");
         assert_eq!(HookType::ConfigLoad.to_string(), "config_load");
     }
@@ -367,7 +358,9 @@ mod tests {
             user_id: "u1".to_string(),
             agent_id: None,
         };
-        let result = registry.execute(HookType::SessionStart, payload.clone()).await;
+        let result = registry
+            .execute(HookType::SessionStart, payload.clone())
+            .await;
         assert!(result.should_continue());
         assert!(matches!(result.payload(), Some(HookPayload::Session { .. })));
     }
@@ -395,12 +388,14 @@ mod tests {
     #[tokio::test]
     async fn test_hook_registry_modify_payload() {
         let registry = HookRegistry::new();
-        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
-            .handler(|_payload| HookResult::Modify(HookPayload::ToolExecute {
-                tool_name: "modified".to_string(),
-                parameters: serde_json::json!({}),
-                result: None,
-            }));
+        let handler =
+            HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute).handler(|_payload| {
+                HookResult::Modify(HookPayload::ToolExecute {
+                    tool_name: "modified".to_string(),
+                    parameters: serde_json::json!({}),
+                    result: None,
+                })
+            });
         registry.register(handler).await;
 
         let payload = HookPayload::ToolExecute {
@@ -421,9 +416,7 @@ mod tests {
     async fn test_hook_registry_cancel() {
         let registry = HookRegistry::new();
         let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
-            .handler(|_payload| HookResult::Cancel {
-                reason: "blocked".to_string(),
-            });
+            .handler(|_payload| HookResult::Cancel { reason: "blocked".to_string() });
         registry.register(handler).await;
 
         let payload = HookPayload::ToolExecute {
@@ -439,9 +432,11 @@ mod tests {
     #[tokio::test]
     async fn test_hook_registry_error() {
         let registry = HookRegistry::new();
-        let handler = HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute)
-            .handler(|_payload| HookResult::Error {
-                message: "something went wrong".to_string(),
+        let handler =
+            HookHandlerBuilder::new("plugin-1", HookType::BeforeToolExecute).handler(|_payload| {
+                HookResult::Error {
+                    message: "something went wrong".to_string(),
+                }
             });
         registry.register(handler).await;
 
@@ -452,7 +447,9 @@ mod tests {
         };
         let result = registry.execute(HookType::BeforeToolExecute, payload).await;
         assert!(!result.should_continue());
-        assert!(matches!(result, HookExecutionResult::Error { message } if message == "something went wrong"));
+        assert!(
+            matches!(result, HookExecutionResult::Error { message } if message == "something went wrong")
+        );
     }
 
     #[tokio::test]
@@ -520,6 +517,8 @@ mod tests {
         };
         let json = serde_json::to_value(&payload).unwrap();
         let decoded: HookPayload = serde_json::from_value(json).unwrap();
-        assert!(matches!(decoded, HookPayload::MessageProcess { session_id, .. } if session_id == "s1"));
+        assert!(
+            matches!(decoded, HookPayload::MessageProcess { session_id, .. } if session_id == "s1")
+        );
     }
 }

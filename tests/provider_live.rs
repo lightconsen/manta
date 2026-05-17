@@ -7,8 +7,8 @@
 use manta::providers::{
     AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider, Role, ToolDefinition,
 };
-use serial_test::serial;
 use serde_json::json;
+use serial_test::serial;
 use wiremock::{
     matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -58,7 +58,10 @@ async fn openai_provider_completes_successfully() {
         ..Default::default()
     };
 
-    let response = provider.complete(request).await.expect("completion should succeed");
+    let response = provider
+        .complete(request)
+        .await
+        .expect("completion should succeed");
 
     assert_eq!(response.message.role, Role::Assistant);
     assert_eq!(response.message.content, "Hello from mock OpenAI!");
@@ -130,9 +133,15 @@ async fn openai_provider_handles_tool_calls() {
         ..Default::default()
     };
 
-    let response = provider.complete(request).await.expect("completion should succeed");
+    let response = provider
+        .complete(request)
+        .await
+        .expect("completion should succeed");
 
-    let tool_calls = response.message.tool_calls.expect("tool_calls should be present");
+    let tool_calls = response
+        .message
+        .tool_calls
+        .expect("tool_calls should be present");
     assert_eq!(tool_calls.len(), 1);
     assert_eq!(tool_calls[0].id, "call_abc");
     assert_eq!(tool_calls[0].function.name, "shell");
@@ -230,16 +239,18 @@ async fn anthropic_provider_completes_successfully() {
         .mount(&mock_server)
         .await;
 
-    let provider =
-        AnthropicProvider::with_base_url("test-anthropic-key", &mock_server.uri())
-            .expect("create provider");
+    let provider = AnthropicProvider::with_base_url("test-anthropic-key", &mock_server.uri())
+        .expect("create provider");
 
     let request = CompletionRequest {
         messages: vec![Message::user("Greet me")],
         ..Default::default()
     };
 
-    let response = provider.complete(request).await.expect("completion should succeed");
+    let response = provider
+        .complete(request)
+        .await
+        .expect("completion should succeed");
 
     assert_eq!(response.message.role, Role::Assistant);
     assert_eq!(response.message.content, "Hello from mock Claude!");
@@ -275,10 +286,7 @@ async fn anthropic_provider_handles_system_prompt() {
     let provider = AnthropicProvider::with_base_url("key", &mock_server.uri()).unwrap();
 
     let request = CompletionRequest {
-        messages: vec![
-            Message::system("You are a pirate"),
-            Message::user("Speak"),
-        ],
+        messages: vec![Message::system("You are a pirate"), Message::user("Speak")],
         ..Default::default()
     };
 

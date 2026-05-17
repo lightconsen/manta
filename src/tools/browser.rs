@@ -650,7 +650,9 @@ mod tests {
 
     #[test]
     fn test_browser_action_serialization() {
-        let nav = BrowserAction::Navigate { url: "https://example.com".to_string() };
+        let nav = BrowserAction::Navigate {
+            url: "https://example.com".to_string(),
+        };
         let json = serde_json::to_string(&nav).unwrap();
         assert!(json.contains("navigate"));
         assert!(json.contains("example.com"));

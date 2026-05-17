@@ -14,8 +14,8 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::agent::{Agent, AgentConfig};
-use crate::channels::IncomingMessage;
+use crate::agent::{Agent, AgentConfig, ProgressCallback};
+use crate::channels::{IncomingMessage, OutgoingMessage};
 
 // AgentHandle is defined in gateway module
 pub use crate::gateway::AgentHandle;
@@ -78,6 +78,517 @@ impl Default for ThreadBinding {
     }
 }
 
+/// Execution mode for an ACP command
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    /// Persistent session — context is kept across turns
+    Session,
+    /// One-shot run — context is discarded after completion
+    Run,
+}
+
+/// Runtime state of a session's execution
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeState {
+    /// Idle, waiting for input
+    Idle,
+    /// Actively running
+    Running,
+    /// Paused between iterations
+    Paused,
+    /// Will execute one iteration then pause
+    Stepping,
+    /// Cancelled, will stop at next check
+    Cancelled,
+}
+
+impl std::fmt::Display for RuntimeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeState::Idle => write!(f, "idle"),
+            RuntimeState::Running => write!(f, "running"),
+            RuntimeState::Paused => write!(f, "paused"),
+            RuntimeState::Stepping => write!(f, "stepping"),
+            RuntimeState::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+/// Controller for pausing / resuming / stepping execution.
+///
+/// Inserted into the Agent's tool-call loop so operators can pause
+/// between LLM iterations.
+#[derive(Debug)]
+pub struct ExecutionController {
+    state: RwLock<RuntimeState>,
+    notify: tokio::sync::Notify,
+}
+
+impl ExecutionController {
+    /// Create a new controller in the `Idle` state.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: RwLock::new(RuntimeState::Idle),
+            notify: tokio::sync::Notify::new(),
+        })
+    }
+
+    /// Check if execution should proceed.
+    pub async fn check_and_wait(&self) -> Result<(), &'static str> {
+        loop {
+            let state = *self.state.read().await;
+            match state {
+                RuntimeState::Idle | RuntimeState::Running => return Ok(()),
+                RuntimeState::Stepping => {
+                    *self.state.write().await = RuntimeState::Paused;
+                    return Ok(());
+                }
+                RuntimeState::Paused => {
+                    self.notify.notified().await;
+                    continue;
+                }
+                RuntimeState::Cancelled => return Err("Execution cancelled by user"),
+            }
+        }
+    }
+
+    /// Transition to `Paused`.
+    pub async fn pause(&self) {
+        let mut state = self.state.write().await;
+        if *state == RuntimeState::Running || *state == RuntimeState::Idle {
+            *state = RuntimeState::Paused;
+            info!("Execution paused");
+        }
+    }
+
+    /// Transition to `Running` and wake waiters.
+    pub async fn resume(&self) {
+        let mut state = self.state.write().await;
+        if *state == RuntimeState::Paused || *state == RuntimeState::Stepping {
+            *state = RuntimeState::Running;
+            drop(state);
+            self.notify.notify_waiters();
+            info!("Execution resumed");
+        }
+    }
+
+    /// Transition to `Stepping` and wake waiters.
+    pub async fn step(&self) {
+        let mut state = self.state.write().await;
+        *state = RuntimeState::Stepping;
+        drop(state);
+        self.notify.notify_waiters();
+        info!("Single step triggered");
+    }
+
+    /// Transition to `Cancelled` and wake waiters.
+    pub async fn cancel(&self) {
+        let mut state = self.state.write().await;
+        *state = RuntimeState::Cancelled;
+        drop(state);
+        self.notify.notify_waiters();
+        info!("Execution cancelled");
+    }
+
+    /// Reset to `Idle`.
+    pub async fn reset(&self) {
+        let mut state = self.state.write().await;
+        *state = RuntimeState::Idle;
+    }
+
+    /// Current runtime state.
+    pub async fn current_state(&self) -> RuntimeState {
+        *self.state.read().await
+    }
+}
+
+/// Status of an ACP-managed session
+#[derive(Debug, Clone)]
+pub struct AcpSessionStatus {
+    pub session_id: String,
+    pub runtime_state: RuntimeState,
+    pub mode: ExecutionMode,
+    pub current_iteration: usize,
+    pub max_iterations: usize,
+    pub queue_depth: usize,
+    pub current_message: Option<String>,
+}
+
+/// Commands sent to the ACP actor
+pub enum AcpCommand {
+    /// Execute in persistent session mode
+    ExecuteSession {
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+    },
+    /// Execute in one-shot run mode
+    ExecuteRun {
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+    },
+    /// Execute with progress callbacks in session mode
+    ExecuteSessionWithProgress {
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        progress_cb: ProgressCallback,
+        respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+    },
+    /// Pause a running session
+    Pause { session_id: String },
+    /// Resume a paused session
+    Resume { session_id: String },
+    /// Single step a paused session
+    Step { session_id: String },
+    /// Cancel a running session
+    Cancel { session_id: String },
+    /// Get session status
+    GetStatus {
+        session_id: String,
+        respond_to: oneshot::Sender<Option<AcpSessionStatus>>,
+    },
+    /// Shutdown the ACP
+    Shutdown,
+}
+
+impl std::fmt::Debug for AcpCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AcpCommand::ExecuteSession { message, respond_to: _, .. } => f
+                .debug_struct("ExecuteSession")
+                .field("message", message)
+                .finish(),
+            AcpCommand::ExecuteRun { message, respond_to: _, .. } => f
+                .debug_struct("ExecuteRun")
+                .field("message", message)
+                .finish(),
+            AcpCommand::ExecuteSessionWithProgress { message, respond_to: _, .. } => f
+                .debug_struct("ExecuteSessionWithProgress")
+                .field("message", message)
+                .finish(),
+            AcpCommand::Pause { session_id } => f
+                .debug_struct("Pause")
+                .field("session_id", session_id)
+                .finish(),
+            AcpCommand::Resume { session_id } => f
+                .debug_struct("Resume")
+                .field("session_id", session_id)
+                .finish(),
+            AcpCommand::Step { session_id } => f
+                .debug_struct("Step")
+                .field("session_id", session_id)
+                .finish(),
+            AcpCommand::Cancel { session_id } => f
+                .debug_struct("Cancel")
+                .field("session_id", session_id)
+                .finish(),
+            AcpCommand::GetStatus { session_id, .. } => f
+                .debug_struct("GetStatus")
+                .field("session_id", session_id)
+                .finish(),
+            AcpCommand::Shutdown => write!(f, "Shutdown"),
+        }
+    }
+}
+
+/// Payload for the `SessionCommand::Execute` variant.
+/// Boxed to keep the enum size small.
+struct SessionExecutePayload {
+    agent: Arc<Agent>,
+    message: IncomingMessage,
+    mode: ExecutionMode,
+    progress_cb: Option<ProgressCallback>,
+    respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
+}
+
+/// Internal command sent to a per-session actor
+enum SessionCommand {
+    Execute(Box<SessionExecutePayload>),
+    Shutdown,
+}
+
+impl std::fmt::Debug for SessionCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionCommand::Execute(payload) => f
+                .debug_struct("Execute")
+                .field("message", &payload.message)
+                .field("mode", &payload.mode)
+                .finish(),
+            SessionCommand::Shutdown => write!(f, "Shutdown"),
+        }
+    }
+}
+
+/// Handle to a running session actor
+#[derive(Debug)]
+struct SessionHandle {
+    tx: mpsc::Sender<SessionCommand>,
+    controller: Arc<ExecutionController>,
+    mode: ExecutionMode,
+}
+
+/// Per-session execution tracking (held in the main ACP loop)
+#[derive(Debug)]
+#[allow(dead_code)]
+struct SessionExecution {
+    controller: Arc<ExecutionController>,
+    mode: ExecutionMode,
+    current_iteration: usize,
+    max_iterations: usize,
+    current_message: Option<String>,
+}
+
+/// ACP actor loop — routes commands to per-session serial queues
+async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>) {
+    let mut sessions: HashMap<String, SessionHandle> = HashMap::new();
+    let mut session_meta: HashMap<String, SessionExecution> = HashMap::new();
+
+    while let Some(cmd) = command_rx.recv().await {
+        match cmd {
+            AcpCommand::ExecuteSession { agent, message, respond_to } => {
+                let session_id = message.conversation_id.0.clone();
+                let handle = get_or_create_session(
+                    &mut sessions,
+                    &mut session_meta,
+                    &session_id,
+                    ExecutionMode::Session,
+                )
+                .await;
+
+                let _ = handle
+                    .tx
+                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Session,
+                        progress_cb: None,
+                        respond_to,
+                    })))
+                    .await;
+            }
+
+            AcpCommand::ExecuteRun { agent, message, respond_to } => {
+                let session_id = message.conversation_id.0.clone();
+                let handle = get_or_create_session(
+                    &mut sessions,
+                    &mut session_meta,
+                    &session_id,
+                    ExecutionMode::Run,
+                )
+                .await;
+
+                let _ = handle
+                    .tx
+                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Run,
+                        progress_cb: None,
+                        respond_to,
+                    })))
+                    .await;
+            }
+
+            AcpCommand::ExecuteSessionWithProgress {
+                agent,
+                message,
+                progress_cb,
+                respond_to,
+            } => {
+                let session_id = message.conversation_id.0.clone();
+                let handle = get_or_create_session(
+                    &mut sessions,
+                    &mut session_meta,
+                    &session_id,
+                    ExecutionMode::Session,
+                )
+                .await;
+
+                let _ = handle
+                    .tx
+                    .send(SessionCommand::Execute(Box::new(SessionExecutePayload {
+                        agent,
+                        message,
+                        mode: ExecutionMode::Session,
+                        progress_cb: Some(progress_cb),
+                        respond_to,
+                    })))
+                    .await;
+            }
+
+            AcpCommand::Pause { session_id } => {
+                if let Some(handle) = sessions.get(&session_id) {
+                    handle.controller.pause().await;
+                }
+            }
+
+            AcpCommand::Resume { session_id } => {
+                if let Some(handle) = sessions.get(&session_id) {
+                    handle.controller.resume().await;
+                }
+            }
+
+            AcpCommand::Step { session_id } => {
+                if let Some(handle) = sessions.get(&session_id) {
+                    handle.controller.step().await;
+                }
+            }
+
+            AcpCommand::Cancel { session_id } => {
+                if let Some(handle) = sessions.get(&session_id) {
+                    handle.controller.cancel().await;
+                }
+            }
+
+            AcpCommand::GetStatus { session_id, respond_to } => {
+                let status = if let Some(handle) = sessions.get(&session_id) {
+                    let queue_depth = 256_usize.saturating_sub(handle.tx.capacity());
+                    let current_message = session_meta
+                        .get(&session_id)
+                        .and_then(|m| m.current_message.clone());
+                    Some(AcpSessionStatus {
+                        session_id: session_id.clone(),
+                        runtime_state: handle.controller.current_state().await,
+                        mode: handle.mode,
+                        current_iteration: session_meta
+                            .get(&session_id)
+                            .map(|m| m.current_iteration)
+                            .unwrap_or(0),
+                        max_iterations: session_meta
+                            .get(&session_id)
+                            .map(|m| m.max_iterations)
+                            .unwrap_or(50),
+                        queue_depth,
+                        current_message,
+                    })
+                } else {
+                    None
+                };
+                let _ = respond_to.send(status);
+            }
+
+            AcpCommand::Shutdown => {
+                info!("ACP actor shutting down");
+                for handle in sessions.values() {
+                    handle.controller.cancel().await;
+                    let _ = handle.tx.send(SessionCommand::Shutdown).await;
+                }
+                sessions.clear();
+                session_meta.clear();
+                break;
+            }
+        }
+    }
+}
+
+/// Get or create a session actor for the given session_id.
+async fn get_or_create_session<'a>(
+    sessions: &'a mut HashMap<String, SessionHandle>,
+    session_meta: &'a mut HashMap<String, SessionExecution>,
+    session_id: &str,
+    mode: ExecutionMode,
+) -> &'a SessionHandle {
+    if !sessions.contains_key(session_id) {
+        let (tx, rx) = mpsc::channel::<SessionCommand>(256);
+        let controller = ExecutionController::new();
+        let ctrl_clone = controller.clone();
+
+        let meta = SessionExecution {
+            controller: controller.clone(),
+            mode,
+            current_iteration: 0,
+            max_iterations: 50,
+            current_message: None,
+        };
+
+        let handle = SessionHandle {
+            tx,
+            controller: controller.clone(),
+            mode,
+        };
+
+        tokio::spawn(session_actor_loop(rx, ctrl_clone, session_id.to_string()));
+
+        sessions.insert(session_id.to_string(), handle);
+        session_meta.insert(session_id.to_string(), meta);
+    }
+
+    sessions.get(session_id).unwrap()
+}
+
+/// Per-session actor loop — processes messages serially for one session.
+async fn session_actor_loop(
+    mut rx: mpsc::Receiver<SessionCommand>,
+    controller: Arc<ExecutionController>,
+    session_id: String,
+) {
+    info!("Session actor started for {}", session_id);
+
+    while let Some(cmd) = rx.recv().await {
+        match cmd {
+            SessionCommand::Execute(payload) => {
+                let msg_preview = payload.message.content.chars().take(60).collect::<String>();
+                debug!(
+                    "Session {} executing {} mode message: {}...",
+                    session_id,
+                    if payload.mode == ExecutionMode::Session {
+                        "session"
+                    } else {
+                        "run"
+                    },
+                    msg_preview
+                );
+
+                controller.reset().await;
+                let max_iter = 50;
+
+                let result = if let Some(cb) = payload.progress_cb {
+                    payload
+                        .agent
+                        .process_message_with_progress_and_controller(
+                            payload.message,
+                            cb,
+                            controller.clone(),
+                            max_iter,
+                        )
+                        .await
+                } else if payload.mode == ExecutionMode::Run {
+                    payload
+                        .agent
+                        .run_message_with_controller(payload.message, controller.clone(), max_iter)
+                        .await
+                } else {
+                    payload
+                        .agent
+                        .process_message_with_controller(
+                            payload.message,
+                            controller.clone(),
+                            max_iter,
+                        )
+                        .await
+                };
+
+                controller.reset().await;
+
+                if let Err(ref e) = result {
+                    warn!("Session {} execution error: {}", session_id, e);
+                }
+
+                let _ = payload.respond_to.send(result);
+            }
+
+            SessionCommand::Shutdown => {
+                info!("Session actor shutting down for {}", session_id);
+                break;
+            }
+        }
+    }
+
+    info!("Session actor ended for {}", session_id);
+}
+
 /// Subagent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentConfig {
@@ -134,6 +645,8 @@ pub struct SubagentHandle {
     pub command_tx: mpsc::Sender<SubagentCommand>,
     /// Current status
     pub status: SubagentStatus,
+    /// Execution controller for runtime pause/resume/step/cancel
+    pub controller: Arc<ExecutionController>,
 }
 
 /// Subagent status
@@ -213,7 +726,7 @@ pub struct ThreadMessage {
     pub queued_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// ACP Control Plane - manages subagents and threads
+/// ACP Control Plane - unified control plane for agents and subagents
 pub struct AcpControlPlane {
     /// Subagents by ID
     subagents: Arc<RwLock<HashMap<String, SubagentHandle>>>,
@@ -223,6 +736,8 @@ pub struct AcpControlPlane {
     sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
     /// Default agent builder (set after initialization when provider/tools are ready)
     default_agent_builder: Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
+    /// Command channel to the ACP actor loop
+    command_tx: mpsc::Sender<AcpCommand>,
 }
 
 /// ACP Session - groups related subagents
@@ -235,13 +750,16 @@ pub struct AcpSession {
 }
 
 impl AcpControlPlane {
-    /// Create a new ACP control plane
+    /// Create a new ACP control plane and spawn the actor loop
     pub fn new() -> Self {
+        let (command_tx, command_rx) = mpsc::channel(256);
+        tokio::spawn(acp_actor_loop(command_rx));
         Self {
             subagents: Arc::new(RwLock::new(HashMap::new())),
             threads: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             default_agent_builder: Arc::new(RwLock::new(None)),
+            command_tx,
         }
     }
 
@@ -265,6 +783,106 @@ impl AcpControlPlane {
         *guard = Some(Arc::new(builder));
         info!("ACP default agent builder configured");
     }
+
+    // ------------------------------------------------------------------
+    // Serial execution queue (inherited from legacy AcpController)
+    // ------------------------------------------------------------------
+
+    /// Execute a message in persistent session mode
+    pub async fn execute_session(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+    ) -> crate::Result<OutgoingMessage> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .command_tx
+            .send(AcpCommand::ExecuteSession { agent, message, respond_to: tx })
+            .await;
+        rx.await
+            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+    }
+
+    /// Execute a message in one-shot run mode
+    pub async fn execute_run(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+    ) -> crate::Result<OutgoingMessage> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .command_tx
+            .send(AcpCommand::ExecuteRun { agent, message, respond_to: tx })
+            .await;
+        rx.await
+            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+    }
+
+    /// Execute with progress callbacks in session mode
+    pub async fn execute_session_with_progress(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        progress_cb: ProgressCallback,
+    ) -> crate::Result<OutgoingMessage> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .command_tx
+            .send(AcpCommand::ExecuteSessionWithProgress {
+                agent,
+                message,
+                progress_cb,
+                respond_to: tx,
+            })
+            .await;
+        rx.await
+            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+    }
+
+    /// Pause a running session
+    pub async fn pause(&self, session_id: String) {
+        let _ = self.command_tx.send(AcpCommand::Pause { session_id }).await;
+    }
+
+    /// Resume a paused session
+    pub async fn resume(&self, session_id: String) {
+        let _ = self
+            .command_tx
+            .send(AcpCommand::Resume { session_id })
+            .await;
+    }
+
+    /// Single step a paused session
+    pub async fn step(&self, session_id: String) {
+        let _ = self.command_tx.send(AcpCommand::Step { session_id }).await;
+    }
+
+    /// Cancel a running session
+    pub async fn cancel(&self, session_id: String) {
+        let _ = self
+            .command_tx
+            .send(AcpCommand::Cancel { session_id })
+            .await;
+    }
+
+    /// Get session status
+    pub async fn get_status(&self, session_id: String) -> Option<AcpSessionStatus> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .command_tx
+            .send(AcpCommand::GetStatus { session_id, respond_to: tx })
+            .await;
+        rx.await.ok().flatten()
+    }
+
+    /// Shutdown the ACP actor loop
+    pub async fn shutdown(&self) {
+        let _ = self.command_tx.send(AcpCommand::Shutdown).await;
+    }
+
+    // ------------------------------------------------------------------
+    // Subagent management
+    // ------------------------------------------------------------------
 
     /// Create a new ACP session
     pub async fn create_session(&self, parent_agent_id: String) -> AcpSessionId {
@@ -327,6 +945,10 @@ impl AcpControlPlane {
             }
         };
 
+        // Create execution controller for runtime pause/resume/step/cancel
+        let controller = ExecutionController::new();
+        let controller_clone = controller.clone();
+
         // Spawn subagent task
         let subagent_id_clone = subagent_id.clone();
         let mode = config.mode;
@@ -373,16 +995,35 @@ impl AcpControlPlane {
                             })
                         });
 
+                        controller.reset().await;
+                        let max_iter = 50;
+
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(timeout.unwrap_or(300)),
                             async {
-                                // Process through the agent with progress visibility
-                                agent
-                                    .process_message_with_progress(message, progress_cb)
-                                    .await
+                                if mode == SpawnMode::Run {
+                                    agent
+                                        .run_message_with_controller(
+                                            message,
+                                            controller.clone(),
+                                            max_iter,
+                                        )
+                                        .await
+                                } else {
+                                    agent
+                                        .process_message_with_progress_and_controller(
+                                            message,
+                                            progress_cb,
+                                            controller.clone(),
+                                            max_iter,
+                                        )
+                                        .await
+                                }
                             },
                         )
                         .await;
+
+                        controller.reset().await;
 
                         let response = match result {
                             Ok(Ok(response)) => Ok(response.content),
@@ -390,8 +1031,8 @@ impl AcpControlPlane {
                             Err(_) => Err("Timeout".to_string()),
                         };
 
-                        let _ = response_tx
-                            .send(response.map_err(|e| crate::error::MantaError::Internal(e)));
+                        let _ =
+                            response_tx.send(response.map_err(crate::error::MantaError::Internal));
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -405,6 +1046,7 @@ impl AcpControlPlane {
                     }
                     SubagentCommand::Cancel => {
                         debug!("Subagent {} cancelled", subagent_id_clone);
+                        controller.cancel().await;
                     }
                     SubagentCommand::Shutdown => {
                         info!("Subagent {} shutting down", subagent_id_clone);
@@ -452,6 +1094,7 @@ impl AcpControlPlane {
             thread_id: thread_id.clone(),
             command_tx,
             status: SubagentStatus::Ready,
+            controller: controller_clone,
         };
 
         // Register subagent
@@ -824,14 +1467,18 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_info_not_found() {
         let acp = AcpControlPlane::new();
-        let info = acp.get_session_info(&AcpSessionId("nonexistent".to_string())).await;
+        let info = acp
+            .get_session_info(&AcpSessionId("nonexistent".to_string()))
+            .await;
         assert!(info.is_none());
     }
 
     #[tokio::test]
     async fn test_terminate_session_not_found() {
         let acp = AcpControlPlane::new();
-        let result = acp.terminate_session(&AcpSessionId("nonexistent".to_string())).await;
+        let result = acp
+            .terminate_session(&AcpSessionId("nonexistent".to_string()))
+            .await;
         assert!(result.is_err());
     }
 
@@ -860,7 +1507,9 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_thread_id_parent() {
         let acp = AcpControlPlane::new();
-        let id = acp.resolve_thread_id(&ThreadBinding::Parent, "parent-1").await;
+        let id = acp
+            .resolve_thread_id(&ThreadBinding::Parent, "parent-1")
+            .await;
         assert!(id.contains("parent-1"));
     }
 
@@ -876,7 +1525,53 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_thread_id_auto() {
         let acp = AcpControlPlane::new();
-        let id = acp.resolve_thread_id(&ThreadBinding::Auto, "parent-1").await;
+        let id = acp
+            .resolve_thread_id(&ThreadBinding::Auto, "parent-1")
+            .await;
         assert!(id.contains("parent-1"));
+    }
+
+    #[tokio::test]
+    async fn test_execution_controller_running() {
+        let ctrl = ExecutionController::new();
+        ctrl.reset().await;
+        // Running / Idle -> returns immediately
+        assert!(ctrl.check_and_wait().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execution_controller_cancel() {
+        let ctrl = ExecutionController::new();
+        ctrl.cancel().await;
+        assert!(ctrl.check_and_wait().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execution_controller_step_then_pause() {
+        let ctrl = ExecutionController::new();
+        ctrl.step().await;
+        // First call: Stepping -> returns, then becomes Paused
+        assert!(ctrl.check_and_wait().await.is_ok());
+        assert_eq!(ctrl.current_state().await, RuntimeState::Paused);
+    }
+
+    #[tokio::test]
+    async fn test_execution_controller_pause_resume() {
+        let ctrl = ExecutionController::new();
+
+        // Start paused
+        ctrl.pause().await;
+
+        // Spawn a task that waits
+        let ctrl2 = ctrl.clone();
+        let handle = tokio::spawn(async move { ctrl2.check_and_wait().await });
+
+        // Small delay to let the task reach the wait
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Resume
+        ctrl.resume().await;
+
+        assert!(handle.await.unwrap().is_ok());
     }
 }

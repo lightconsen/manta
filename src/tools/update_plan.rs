@@ -86,9 +86,7 @@ pub struct UpdatePlanTool {
 
 impl UpdatePlanTool {
     pub fn new() -> Self {
-        Self {
-            store: PlanStore::new(),
-        }
+        Self { store: PlanStore::new() }
     }
 }
 
@@ -247,7 +245,11 @@ impl Tool for UpdatePlanTool {
 
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!("Created plan '{}' with {} step(s)", plan.title, plan.steps.len()),
+                    output: format!(
+                        "Created plan '{}' with {} step(s)",
+                        plan.title,
+                        plan.steps.len()
+                    ),
                     error: None,
                     data: Some(serde_json::to_value(plan).unwrap_or_default()),
                     execution_time: start.elapsed(),
@@ -284,30 +286,32 @@ impl Tool for UpdatePlanTool {
 
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!("Updated plan '{}' with {} step(s)", plan.title, plan.steps.len()),
+                    output: format!(
+                        "Updated plan '{}' with {} step(s)",
+                        plan.title,
+                        plan.steps.len()
+                    ),
                     error: None,
                     data: Some(serde_json::to_value(plan).unwrap_or_default()),
                     execution_time: start.elapsed(),
                 })
             }
-            UpdatePlanAction::Get { plan_id } => {
-                match self.store.get(&plan_id).await {
-                    Some(plan) => Ok(ToolExecutionResult {
-                        success: true,
-                        output: format!("Plan '{}': {} step(s)", plan.title, plan.steps.len()),
-                        error: None,
-                        data: Some(serde_json::to_value(plan).unwrap_or_default()),
-                        execution_time: start.elapsed(),
-                    }),
-                    None => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Plan {} not found", plan_id)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
-                }
-            }
+            UpdatePlanAction::Get { plan_id } => match self.store.get(&plan_id).await {
+                Some(plan) => Ok(ToolExecutionResult {
+                    success: true,
+                    output: format!("Plan '{}': {} step(s)", plan.title, plan.steps.len()),
+                    error: None,
+                    data: Some(serde_json::to_value(plan).unwrap_or_default()),
+                    execution_time: start.elapsed(),
+                }),
+                None => Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Plan {} not found", plan_id)),
+                    data: None,
+                    execution_time: start.elapsed(),
+                }),
+            },
             UpdatePlanAction::List => {
                 let plans = self.store.list().await;
                 let summary: Vec<_> = plans
@@ -384,7 +388,11 @@ impl Tool for UpdatePlanTool {
                 plan.updated_at = chrono::Utc::now();
                 self.store.update(plan.clone()).await;
 
-                let completed = plan.steps.iter().filter(|s| s.status == StepStatus::Completed).count();
+                let completed = plan
+                    .steps
+                    .iter()
+                    .filter(|s| s.status == StepStatus::Completed)
+                    .count();
                 let total = plan.steps.len();
 
                 Ok(ToolExecutionResult {
@@ -413,9 +421,12 @@ mod tests {
         let plan = Plan {
             id: "p1".to_string(),
             title: "Test Plan".to_string(),
-            steps: vec![
-                PlanStep { id: "s1".to_string(), description: "Step 1".to_string(), status: StepStatus::Pending, notes: None },
-            ],
+            steps: vec![PlanStep {
+                id: "s1".to_string(),
+                description: "Step 1".to_string(),
+                status: StepStatus::Pending,
+                notes: None,
+            }],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -442,14 +453,17 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({
-                "action": "create",
-                "title": "My Plan",
-                "steps": ["Step A", "Step B"]
-            }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "create",
+                    "title": "My Plan",
+                    "steps": ["Step A", "Step B"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.output.contains("My Plan"));
@@ -461,10 +475,10 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "get", "plan_id": "nonexistent" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "get", "plan_id": "nonexistent" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -475,25 +489,31 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let create_res = tool.execute(
-            serde_json::json!({
-                "action": "create",
-                "title": "Test",
-                "steps": ["S1", "S2"]
-            }),
-            &ctx,
-        ).await.unwrap();
+        let create_res = tool
+            .execute(
+                serde_json::json!({
+                    "action": "create",
+                    "title": "Test",
+                    "steps": ["S1", "S2"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
         let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
 
-        let result = tool.execute(
-            serde_json::json!({
-                "action": "set_status",
-                "plan_id": plan_id,
-                "step_id": "step_1",
-                "status": "completed"
-            }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "set_status",
+                    "plan_id": plan_id,
+                    "step_id": "step_1",
+                    "status": "completed"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.output.contains("1/2 completed"));
@@ -504,25 +524,31 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let create_res = tool.execute(
-            serde_json::json!({
-                "action": "create",
-                "title": "Test",
-                "steps": ["S1"]
-            }),
-            &ctx,
-        ).await.unwrap();
+        let create_res = tool
+            .execute(
+                serde_json::json!({
+                    "action": "create",
+                    "title": "Test",
+                    "steps": ["S1"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
         let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
 
-        let result = tool.execute(
-            serde_json::json!({
-                "action": "set_status",
-                "plan_id": plan_id,
-                "step_id": "no_such_step",
-                "status": "completed"
-            }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "set_status",
+                    "plan_id": plan_id,
+                    "step_id": "no_such_step",
+                    "status": "completed"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -533,20 +559,23 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let create_res = tool.execute(
-            serde_json::json!({
-                "action": "create",
-                "title": "ToDelete",
-                "steps": []
-            }),
-            &ctx,
-        ).await.unwrap();
+        let create_res = tool
+            .execute(
+                serde_json::json!({
+                    "action": "create",
+                    "title": "ToDelete",
+                    "steps": []
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
         let plan_id = create_res.data.unwrap()["id"].as_str().unwrap().to_string();
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "delete", "plan_id": plan_id }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "delete", "plan_id": plan_id }), &ctx)
+            .await
+            .unwrap();
 
         assert!(result.success);
     }
@@ -556,10 +585,10 @@ mod tests {
         let tool = UpdatePlanTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "list" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "list" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.output.contains("0 plan"));

@@ -4,9 +4,7 @@
 //! Server-Sent Events (SSE) streams. Tests run serially to avoid mock conflicts.
 
 use futures::StreamExt;
-use manta::providers::{
-    AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider,
-};
+use manta::providers::{AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider};
 use serial_test::serial;
 use wiremock::{
     matchers::{header, method, path},
@@ -56,16 +54,10 @@ async fn openai_provider_streams_text_chunks() {
     }
 
     // Concatenate all text content
-    let full_text: String = chunks
-        .iter()
-        .filter_map(|c| c.content.as_deref())
-        .collect();
+    let full_text: String = chunks.iter().filter_map(|c| c.content.as_deref()).collect();
 
     assert_eq!(full_text, "Hello world", "streamed text should concatenate");
-    assert!(
-        chunks.iter().any(|c| c.is_done),
-        "should receive done chunk"
-    );
+    assert!(chunks.iter().any(|c| c.is_done), "should receive done chunk");
 }
 
 #[tokio::test]

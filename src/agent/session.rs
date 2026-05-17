@@ -671,11 +671,8 @@ mod tests {
     #[test]
     fn test_multi_agent_session_spawn_agent() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        let agent = session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        let agent =
+            session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         assert_eq!(agent.id, "a1");
         assert_eq!(session.get_agents().len(), 1);
     }
@@ -683,11 +680,7 @@ mod tests {
     #[test]
     fn test_multi_agent_session_terminate_agent() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         session.terminate_agent("a1");
         let agent = session.get_agent("a1").unwrap();
         assert!(!agent.is_active);
@@ -697,11 +690,7 @@ mod tests {
     #[test]
     fn test_multi_agent_session_get_agent() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         assert!(session.get_agent("a1").is_some());
         assert!(session.get_agent("nonexistent").is_none());
     }
@@ -709,11 +698,7 @@ mod tests {
     #[test]
     fn test_multi_agent_session_get_agent_mut() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         if let Some(agent) = session.get_agent_mut("a1") {
             agent.mark_ready();
         }
@@ -723,16 +708,8 @@ mod tests {
     #[test]
     fn test_multi_agent_session_get_agents_by_thread() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Parent,
-        );
-        session.spawn_agent(
-            "a2".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::New,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Parent);
+        session.spawn_agent("a2".to_string(), AgentPersonality::default(), ThreadBinding::New);
         let agents = session.get_agents_by_thread(&session.primary_thread_id);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].id, "a1");
@@ -741,16 +718,8 @@ mod tests {
     #[test]
     fn test_multi_agent_session_get_active_agents() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
-        session.spawn_agent(
-            "a2".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
+        session.spawn_agent("a2".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         session.terminate_agent("a2");
         let active = session.get_active_agents();
         assert_eq!(active.len(), 1);
@@ -760,16 +729,8 @@ mod tests {
     #[test]
     fn test_multi_agent_session_get_status() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Parent,
-        );
-        session.spawn_agent(
-            "a2".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::New,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Parent);
+        session.spawn_agent("a2".to_string(), AgentPersonality::default(), ThreadBinding::New);
         let status = session.get_status();
         assert_eq!(status.session_id, "sess1");
         assert_eq!(status.agent_count, 2);
@@ -788,16 +749,8 @@ mod tests {
     #[test]
     fn test_multi_agent_session_cleanup_terminated() {
         let (mut session, _rx) = MultiAgentSession::new("sess1".to_string());
-        session.spawn_agent(
-            "a1".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
-        session.spawn_agent(
-            "a2".to_string(),
-            AgentPersonality::default(),
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("a1".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
+        session.spawn_agent("a2".to_string(), AgentPersonality::default(), ThreadBinding::Auto);
         session.terminate_agent("a2");
         assert_eq!(session.get_agents().len(), 2);
         session.cleanup_terminated();
@@ -812,11 +765,7 @@ mod tests {
         let mut code_personality = AgentPersonality::default();
         code_personality.soul = "I am a code and debug expert".to_string();
 
-        session.spawn_agent(
-            "coder".to_string(),
-            code_personality,
-            ThreadBinding::Auto,
-        );
+        session.spawn_agent("coder".to_string(), code_personality, ThreadBinding::Auto);
         {
             let agent = session.get_agent_mut("coder").unwrap();
             agent.mark_ready();

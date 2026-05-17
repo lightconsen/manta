@@ -395,24 +395,31 @@ mod tests {
     #[test]
     fn test_model_source_parse_hf_url() {
         let source = ModelSource::parse("https://huggingface.co/org/model/file.gguf");
-        assert!(matches!(source, ModelSource::HuggingFace { repo_id, filename } if repo_id == "org/model" && filename == "file.gguf"));
+        assert!(
+            matches!(source, ModelSource::HuggingFace { repo_id, filename } if repo_id == "org/model" && filename == "file.gguf")
+        );
     }
 
     #[test]
     fn test_model_source_parse_local_relative() {
         let source = ModelSource::parse("./model.gguf");
-        assert!(matches!(source, ModelSource::Local(path) if path.to_string_lossy() == "./model.gguf"));
+        assert!(
+            matches!(source, ModelSource::Local(path) if path.to_string_lossy() == "./model.gguf")
+        );
     }
 
     #[test]
     fn test_model_source_parse_hf_default_filename() {
         let source = ModelSource::parse("org/model");
-        assert!(matches!(source, ModelSource::HuggingFace { repo_id, filename } if repo_id == "org/model" && filename == "model.gguf"));
+        assert!(
+            matches!(source, ModelSource::HuggingFace { repo_id, filename } if repo_id == "org/model" && filename == "model.gguf")
+        );
     }
 
     #[test]
     fn test_lazy_embedding_model_name_local() {
-        let model = LazyEmbeddingModel::new(ModelSource::Local(PathBuf::from("/models/bge.gguf")), 384);
+        let model =
+            LazyEmbeddingModel::new(ModelSource::Local(PathBuf::from("/models/bge.gguf")), 384);
         assert_eq!(model.model_name(), "bge.gguf");
         assert_eq!(model.dimension(), 384);
     }
@@ -420,7 +427,10 @@ mod tests {
     #[test]
     fn test_lazy_embedding_model_name_hf() {
         let model = LazyEmbeddingModel::new(
-            ModelSource::HuggingFace { repo_id: "org/model".to_string(), filename: "file.gguf".to_string() },
+            ModelSource::HuggingFace {
+                repo_id: "org/model".to_string(),
+                filename: "file.gguf".to_string(),
+            },
             768,
         );
         assert_eq!(model.model_name(), "org/model/file.gguf");
@@ -438,7 +448,8 @@ mod tests {
 
     #[test]
     fn test_local_embedding_provider_not_fts_only() {
-        let model = LazyEmbeddingModel::new(ModelSource::Local(PathBuf::from("/tmp/model.gguf")), 128);
+        let model =
+            LazyEmbeddingModel::new(ModelSource::Local(PathBuf::from("/tmp/model.gguf")), 128);
         let provider = LocalEmbeddingProvider::Gguf(model);
         assert!(!provider.is_fts_only());
         assert_eq!(provider.fts_reason(), None);

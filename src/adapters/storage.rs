@@ -1382,10 +1382,7 @@ mod tests {
     #[test]
     fn test_storage_error_display() {
         let id = Id::new();
-        assert_eq!(
-            StorageError::NotFound(id).to_string(),
-            format!("Entity not found: {}", id)
-        );
+        assert_eq!(StorageError::NotFound(id).to_string(), format!("Entity not found: {}", id));
         assert_eq!(StorageError::Full.to_string(), "Storage is full");
         assert_eq!(
             StorageError::Serialization("bad json".to_string()).to_string(),

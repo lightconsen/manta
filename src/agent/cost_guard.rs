@@ -334,9 +334,9 @@ mod tests {
     #[test]
     fn test_cost_guard_multiple_models() {
         let guard = CostGuard::new(0, 0);
-        guard.record_usage(1_000_000, 0, "claude-3-opus");   // 1500 cents
+        guard.record_usage(1_000_000, 0, "claude-3-opus"); // 1500 cents
         guard.record_usage(1_000_000, 0, "claude-3-sonnet"); // +300 cents
-        guard.record_usage(1_000_000, 0, "claude-3-haiku");  // +25 cents
+        guard.record_usage(1_000_000, 0, "claude-3-haiku"); // +25 cents
         assert_eq!(guard.daily_spend_cents(), 1_825);
         assert_eq!(guard.hourly_action_count(), 3);
     }

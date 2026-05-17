@@ -375,7 +375,9 @@ mod tests {
     async fn test_cron_tool_no_scheduler_returns_error() {
         let tool = CronTool::new();
         // Without scheduler set, any execution returns an Ok-wrapped error
-        let result = tool.execute(serde_json::json!({"action": "list"}), &ToolContext::default()).await;
+        let result = tool
+            .execute(serde_json::json!({"action": "list"}), &ToolContext::default())
+            .await;
         assert!(result.is_ok());
         let r = result.unwrap();
         assert!(!r.success);

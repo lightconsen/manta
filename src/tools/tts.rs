@@ -103,10 +103,7 @@ impl Tool for TtsTool {
         };
 
         // Try OpenAI TTS API first
-        if let Some(api_key) = context
-            .environment
-            .get("OPENAI_API_KEY")
-        {
+        if let Some(api_key) = context.environment.get("OPENAI_API_KEY") {
             let voice = args.voice.as_deref().unwrap_or("alloy");
             let speed = args.speed.unwrap_or(1.0).clamp(0.25, 4.0);
 
@@ -174,9 +171,7 @@ impl Tool for TtsTool {
             if !voice.is_empty() && voice != "alloy" {
                 cmd.arg("-v").arg(voice);
             }
-            cmd.arg("-o")
-                .arg(&output_aiff)
-                .arg(&args.text);
+            cmd.arg("-o").arg(&output_aiff).arg(&args.text);
 
             match cmd.output().await {
                 Ok(output) if output.status.success() => {
@@ -200,9 +195,7 @@ impl Tool for TtsTool {
         {
             let output_wav = output_path.with_extension("wav");
             let mut cmd = tokio::process::Command::new("espeak");
-            cmd.arg("-w")
-                .arg(&output_wav)
-                .arg(&args.text);
+            cmd.arg("-w").arg(&output_wav).arg(&args.text);
 
             match cmd.output().await {
                 Ok(output) if output.status.success() => {
@@ -247,7 +240,8 @@ mod tests {
     fn test_tts_args_defaults() {
         let args: TtsArgs = serde_json::from_value(serde_json::json!({
             "text": "Hello world"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.text, "Hello world");
         assert_eq!(args.voice, None);
         assert_eq!(args.speed, None);
@@ -261,7 +255,8 @@ mod tests {
             "voice": "nova",
             "speed": 1.5,
             "output": "/tmp/out.mp3"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(args.voice, Some("nova".to_string()));
         assert_eq!(args.speed, Some(1.5));
         assert_eq!(args.output, Some("/tmp/out.mp3".to_string()));
@@ -273,23 +268,31 @@ mod tests {
         assert_eq!(tool.name(), "tts");
         let schema = tool.parameters_schema();
         assert!(schema.get("properties").is_some());
-        assert!(schema.get("required").unwrap().as_array().unwrap().contains(&serde_json::json!("text")));
+        assert!(schema
+            .get("required")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("text")));
     }
 
     #[tokio::test]
     async fn test_tts_tool_execution_result() {
         let tool = TtsTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({ "text": "Hello" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "text": "Hello" }), &ctx)
+            .await
+            .unwrap();
 
         // On macOS, the `say` fallback may succeed even without API key.
         // On other platforms without espeak, this would fail.
         // We just verify the result is well-formed.
         if result.success {
-            assert!(result.output.contains("TTS audio saved") || result.output.contains("TTS audio saved"));
+            assert!(
+                result.output.contains("TTS audio saved")
+                    || result.output.contains("TTS audio saved")
+            );
         } else {
             assert!(result.error.unwrap().contains("No TTS provider"));
         }
@@ -299,10 +302,7 @@ mod tests {
     async fn test_tts_tool_invalid_args() {
         let tool = TtsTool::new();
         let ctx = ToolContext::new("user", "conv");
-        let result = tool.execute(
-            serde_json::json!({}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid arguments"));

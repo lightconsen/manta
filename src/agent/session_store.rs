@@ -979,9 +979,15 @@ mod tests {
     async fn test_set_session_active() {
         let store = create_test_store().await;
         let meta = SessionMetadata::new("active-test", "main", "cli", "local");
-        store.save_session("active-test", &meta, "{}").await.unwrap();
+        store
+            .save_session("active-test", &meta, "{}")
+            .await
+            .unwrap();
 
-        store.set_session_active("active-test", false).await.unwrap();
+        store
+            .set_session_active("active-test", false)
+            .await
+            .unwrap();
         let loaded = store.load_session("active-test").await.unwrap().unwrap();
         assert!(!loaded.metadata.is_active);
 
@@ -1011,7 +1017,10 @@ mod tests {
 
         let meta = SessionMetadata::new("stats-test", "main", "cli", "local");
         store.save_session("stats-test", &meta, "{}").await.unwrap();
-        store.append_message("stats-test", "user", "hi", None).await.unwrap();
+        store
+            .append_message("stats-test", "user", "hi", None)
+            .await
+            .unwrap();
 
         let stats2 = store.get_stats().await.unwrap();
         assert_eq!(stats2.total_sessions, 1);
@@ -1023,9 +1032,15 @@ mod tests {
     async fn test_save_and_load_thread() {
         let store = create_test_store().await;
         let meta = SessionMetadata::new("thread-test", "main", "cli", "local");
-        store.save_session("thread-test", &meta, "{}").await.unwrap();
+        store
+            .save_session("thread-test", &meta, "{}")
+            .await
+            .unwrap();
 
-        store.save_thread("thread-test", "t1", "main thread", 12345).await.unwrap();
+        store
+            .save_thread("thread-test", "t1", "main thread", 12345)
+            .await
+            .unwrap();
 
         let threads = store.load_threads_for_session("thread-test").await.unwrap();
         assert_eq!(threads.len(), 1);
@@ -1042,7 +1057,10 @@ mod tests {
         store.save_session("turn-test", &meta, "{}").await.unwrap();
         store.save_thread("turn-test", "t1", "", 0).await.unwrap();
 
-        store.append_turn("turn-test", "t1", 0, "user msg", "asst msg", "complete").await.unwrap();
+        store
+            .append_turn("turn-test", "t1", 0, "user msg", "asst msg", "complete")
+            .await
+            .unwrap();
 
         let threads = store.load_threads_for_session("turn-test").await.unwrap();
         assert_eq!(threads[0].3.len(), 1);
@@ -1057,13 +1075,25 @@ mod tests {
     async fn test_delete_turn() {
         let store = create_test_store().await;
         let meta = SessionMetadata::new("del-turn-test", "main", "cli", "local");
-        store.save_session("del-turn-test", &meta, "{}").await.unwrap();
-        store.save_thread("del-turn-test", "t1", "", 0).await.unwrap();
+        store
+            .save_session("del-turn-test", &meta, "{}")
+            .await
+            .unwrap();
+        store
+            .save_thread("del-turn-test", "t1", "", 0)
+            .await
+            .unwrap();
 
-        store.append_turn("del-turn-test", "t1", 0, "u", "a", "complete").await.unwrap();
+        store
+            .append_turn("del-turn-test", "t1", 0, "u", "a", "complete")
+            .await
+            .unwrap();
         store.delete_turn("del-turn-test", "t1", 0).await.unwrap();
 
-        let threads = store.load_threads_for_session("del-turn-test").await.unwrap();
+        let threads = store
+            .load_threads_for_session("del-turn-test")
+            .await
+            .unwrap();
         assert!(threads[0].3.is_empty());
     }
 
@@ -1075,7 +1105,10 @@ mod tests {
 
         let mut meta2 = SessionMetadata::new("inactive-1", "main", "cli", "local");
         meta2.is_active = false;
-        store.save_session("inactive-1", &meta2, "{}").await.unwrap();
+        store
+            .save_session("inactive-1", &meta2, "{}")
+            .await
+            .unwrap();
 
         let all = store.find_sessions(None, None, None, false).await.unwrap();
         assert_eq!(all.len(), 2);
@@ -1094,7 +1127,10 @@ mod tests {
         store.save_session("old", &meta, "{}").await.unwrap();
 
         // Cleanup with 30 days should not affect a session that was just saved
-        let deleted = store.cleanup_old_sessions(Duration::from_secs(86400 * 30)).await.unwrap();
+        let deleted = store
+            .cleanup_old_sessions(Duration::from_secs(86400 * 30))
+            .await
+            .unwrap();
         assert_eq!(deleted, 0);
 
         // Session should still exist
@@ -1109,7 +1145,10 @@ mod tests {
         store.save_session("limit-test", &meta, "{}").await.unwrap();
 
         for i in 0..5 {
-            store.append_message("limit-test", "user", &format!("msg{}", i), None).await.unwrap();
+            store
+                .append_message("limit-test", "user", &format!("msg{}", i), None)
+                .await
+                .unwrap();
         }
 
         let msgs = store.get_messages("limit-test", 2, None).await.unwrap();
@@ -1120,7 +1159,10 @@ mod tests {
     async fn test_persisted_session_fields() {
         let store = create_test_store().await;
         let meta = SessionMetadata::new("persist-test", "main", "cli", "local");
-        store.save_session("persist-test", &meta, r#"{"key":"val"}"#).await.unwrap();
+        store
+            .save_session("persist-test", &meta, r#"{"key":"val"}"#)
+            .await
+            .unwrap();
 
         let loaded = store.load_session("persist-test").await.unwrap().unwrap();
         assert_eq!(loaded.id, "persist-test");

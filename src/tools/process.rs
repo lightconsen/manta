@@ -47,12 +47,7 @@ impl ProcessRegistry {
         Self::default()
     }
 
-    pub async fn register(
-        &self,
-        id: String,
-        command: String,
-        pid: Option<u32>,
-    ) {
+    pub async fn register(&self, id: String, command: String, pid: Option<u32>) {
         let proc = TrackedProcess {
             id: id.clone(),
             command,
@@ -259,9 +254,7 @@ impl Tool for ProcessTool {
                                     registry
                                         .update_status(
                                             &id,
-                                            ProcessStatus::Exited {
-                                                code: status.code(),
-                                            },
+                                            ProcessStatus::Exited { code: status.code() },
                                         )
                                         .await;
                                 }
@@ -294,27 +287,22 @@ impl Tool for ProcessTool {
                     }),
                 }
             }
-            ProcessAction::Status { process_id } => {
-                match self.registry.get(&process_id).await {
-                    Some(proc) => Ok(ToolExecutionResult {
-                        success: true,
-                        output: format!(
-                            "Process {}: {:?}",
-                            process_id, proc.status
-                        ),
-                        error: None,
-                        data: Some(serde_json::to_value(proc).unwrap_or_default()),
-                        execution_time: start.elapsed(),
-                    }),
-                    None => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Process {} not found", process_id)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
-                }
-            }
+            ProcessAction::Status { process_id } => match self.registry.get(&process_id).await {
+                Some(proc) => Ok(ToolExecutionResult {
+                    success: true,
+                    output: format!("Process {}: {:?}", process_id, proc.status),
+                    error: None,
+                    data: Some(serde_json::to_value(proc).unwrap_or_default()),
+                    execution_time: start.elapsed(),
+                }),
+                None => Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Process {} not found", process_id)),
+                    data: None,
+                    execution_time: start.elapsed(),
+                }),
+            },
             ProcessAction::Stop { process_id, force } => {
                 let proc = match self.registry.get(&process_id).await {
                     Some(p) => p,
@@ -370,7 +358,10 @@ impl Tool for ProcessTool {
                             .await;
                         Ok(ToolExecutionResult {
                             success: true,
-                            output: format!("Process {} marked as stopped (signal not supported)", process_id),
+                            output: format!(
+                                "Process {} marked as stopped (signal not supported)",
+                                process_id
+                            ),
                             error: None,
                             data: None,
                             execution_time: start.elapsed(),
@@ -382,7 +373,10 @@ impl Tool for ProcessTool {
                         .await;
                     Ok(ToolExecutionResult {
                         success: true,
-                        output: format!("Process {} marked as stopped (no PID available)", process_id),
+                        output: format!(
+                            "Process {} marked as stopped (no PID available)",
+                            process_id
+                        ),
                         error: None,
                         data: None,
                         execution_time: start.elapsed(),
@@ -436,7 +430,9 @@ mod tests {
     #[tokio::test]
     async fn test_process_registry_register_and_get() {
         let registry = ProcessRegistry::new();
-        registry.register("p1".to_string(), "echo hello".to_string(), Some(1234)).await;
+        registry
+            .register("p1".to_string(), "echo hello".to_string(), Some(1234))
+            .await;
 
         let proc = registry.get("p1").await;
         assert!(proc.is_some());
@@ -450,9 +446,13 @@ mod tests {
     #[tokio::test]
     async fn test_process_registry_update_status() {
         let registry = ProcessRegistry::new();
-        registry.register("p1".to_string(), "cmd".to_string(), None).await;
+        registry
+            .register("p1".to_string(), "cmd".to_string(), None)
+            .await;
 
-        registry.update_status("p1", ProcessStatus::Exited { code: Some(0) }).await;
+        registry
+            .update_status("p1", ProcessStatus::Exited { code: Some(0) })
+            .await;
 
         let proc = registry.get("p1").await.unwrap();
         assert!(matches!(proc.status, ProcessStatus::Exited { code: Some(0) }));
@@ -461,8 +461,12 @@ mod tests {
     #[tokio::test]
     async fn test_process_registry_list_and_remove() {
         let registry = ProcessRegistry::new();
-        registry.register("p1".to_string(), "cmd1".to_string(), None).await;
-        registry.register("p2".to_string(), "cmd2".to_string(), None).await;
+        registry
+            .register("p1".to_string(), "cmd1".to_string(), None)
+            .await;
+        registry
+            .register("p2".to_string(), "cmd2".to_string(), None)
+            .await;
 
         let list = registry.list().await;
         assert_eq!(list.len(), 2);
@@ -483,10 +487,10 @@ mod tests {
         let tool = ProcessTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "list" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "list" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.output.contains("0 process"));
@@ -497,10 +501,10 @@ mod tests {
         let tool = ProcessTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "status", "process_id": "noexist" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "status", "process_id": "noexist" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -511,10 +515,10 @@ mod tests {
         let tool = ProcessTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({ "action": "stop", "process_id": "noexist" }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({ "action": "stop", "process_id": "noexist" }), &ctx)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -525,10 +529,7 @@ mod tests {
         let tool = ProcessTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        let result = tool.execute(
-            serde_json::json!({}),
-            &ctx,
-        ).await.unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid arguments"));
@@ -540,14 +541,17 @@ mod tests {
         // Only allow "echo", not "rm"
         let ctx = ToolContext::new("user", "conv").allow_command("echo");
 
-        let result = tool.execute(
-            serde_json::json!({
-                "action": "start",
-                "command": "rm",
-                "args": ["-rf", "/"]
-            }),
-            &ctx,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "start",
+                    "command": "rm",
+                    "args": ["-rf", "/"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not allowed"));

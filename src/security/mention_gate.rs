@@ -197,9 +197,7 @@ impl MentionGate {
     pub async fn add_allowlist(&self, channel: impl Into<String>, pattern: impl Into<String>) {
         let mut channels = self.channels.write().await;
         let channel = channel.into();
-        let entry = channels
-            .entry(channel.clone())
-            .or_default();
+        let entry = channels.entry(channel.clone()).or_default();
         let pattern = pattern.into();
         if !entry.allowlist.contains(&pattern) {
             entry.allowlist.push(pattern.clone());
@@ -227,9 +225,7 @@ impl MentionGate {
     pub async fn add_blocklist(&self, channel: impl Into<String>, pattern: impl Into<String>) {
         let mut channels = self.channels.write().await;
         let channel = channel.into();
-        let entry = channels
-            .entry(channel.clone())
-            .or_default();
+        let entry = channels.entry(channel.clone()).or_default();
         let pattern = pattern.into();
         if !entry.blocklist.contains(&pattern) {
             entry.blocklist.push(pattern.clone());

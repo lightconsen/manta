@@ -139,9 +139,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         outbound_pipeline,
         side_effect_executor,
         sse_streamer,
-        channel_extensions: Arc::new(RwLock::new(
-            crate::channels::ChannelExtensionRegistry::new(),
-        )),
+        channel_extensions: Arc::new(RwLock::new(crate::channels::ChannelExtensionRegistry::new())),
         provider_sdk: Arc::new(RwLock::new(crate::providers::ProviderSdk::new())),
         tool_sdk: Arc::new(RwLock::new(crate::tools::ToolSdk::new())),
         session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
@@ -151,7 +149,6 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         disk_budget: Arc::new(disk_budget),
         session_file_manager: Arc::new(session_file_manager),
         group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
-        acp_controller: Arc::new(crate::agent::AcpController::new()),
     }
 }
 
@@ -170,10 +167,7 @@ async fn blocklist_blocks_user() {
         .await;
 
     assert!(result.is_err(), "blocked user should be rejected");
-    assert!(
-        result.unwrap_err().contains("blocked"),
-        "error should mention blocklist"
-    );
+    assert!(result.unwrap_err().contains("blocked"), "error should mention blocklist");
 }
 
 #[tokio::test]
@@ -207,10 +201,7 @@ async fn allowlist_blocks_unauthorized_user() {
         .await;
 
     assert!(result.is_err(), "user not in allowlist should be rejected");
-    assert!(
-        result.unwrap_err().contains("allowlist"),
-        "error should mention allowlist"
-    );
+    assert!(result.unwrap_err().contains("allowlist"), "error should mention allowlist");
 }
 
 #[tokio::test]
@@ -244,10 +235,7 @@ async fn pairing_blocks_unauthorized_user_and_creates_request() {
         .await;
 
     assert!(result.is_err(), "unpaired user should be rejected");
-    assert!(
-        result.unwrap_err().contains("pairing"),
-        "error should mention pairing"
-    );
+    assert!(result.unwrap_err().contains("pairing"), "error should mention pairing");
 
     // A pairing request should have been created silently
     assert!(
@@ -275,7 +263,10 @@ async fn pairing_allows_authorized_user() {
         crate::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("expected new request, got {:?}", other),
     };
-    state.pairing_store.approve("slack", &code, Some("admin")).await;
+    state
+        .pairing_store
+        .approve("slack", &code, Some("admin"))
+        .await;
 
     let result = state
         .check_incoming_access("slack", "alice", "hello", &MentionState::DirectMessage)
@@ -295,12 +286,7 @@ async fn require_mention_blocks_group_message_without_mention() {
 
     let state = make_test_state(config).await;
     let result = state
-        .check_incoming_access(
-            "telegram",
-            "user1",
-            "hello",
-            &MentionState::NotMentioned,
-        )
+        .check_incoming_access("telegram", "user1", "hello", &MentionState::NotMentioned)
         .await;
 
     assert!(result.is_err(), "group msg without mention should be rejected");
@@ -348,10 +334,7 @@ async fn mention_gate_block_policy_blocks_mentions() {
 
     let state = make_test_state(config).await;
     // Set mention gate to Block
-    state
-        .mention_gate
-        .set_policy(MentionPolicy::Block)
-        .await;
+    state.mention_gate.set_policy(MentionPolicy::Block).await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
@@ -371,10 +354,7 @@ async fn mention_gate_allow_policy_passes_mentions() {
     config.channels.insert("discord".to_string(), ch);
 
     let state = make_test_state(config).await;
-    state
-        .mention_gate
-        .set_policy(MentionPolicy::Allow)
-        .await;
+    state.mention_gate.set_policy(MentionPolicy::Allow).await;
 
     let result = state
         .check_incoming_access("discord", "user1", "hello", &MentionState::Mentioned)
@@ -448,10 +428,7 @@ async fn blocklist_takes_precedence_over_allowlist() {
         .await;
 
     assert!(result.is_err());
-    assert!(
-        result.unwrap_err().contains("blocked"),
-        "blocklist should be checked first"
-    );
+    assert!(result.unwrap_err().contains("blocked"), "blocklist should be checked first");
 }
 
 #[tokio::test]
@@ -538,7 +515,10 @@ async fn status_handler_returns_summary() {
         .route("/status", get(super::status_handler))
         .with_state(state);
 
-    let req = Request::builder().uri("/status").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/status")
+        .body(Body::empty())
+        .unwrap();
     let response = app.oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
@@ -560,7 +540,10 @@ async fn health_handler_degraded_without_agents() {
         .route("/health", get(super::health_handler))
         .with_state(state);
 
-    let req = Request::builder().uri("/health").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
     let response = app.oneshot(req).await.unwrap();
 
     // Without a default agent or healthy providers, health is degraded (503)
