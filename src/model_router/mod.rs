@@ -121,6 +121,278 @@ impl ProviderConfig {
     }
 }
 
+/// Cost information for a model (per 1K tokens in USD)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCost {
+    /// Input cost per 1K tokens
+    pub input_cost_per_1k: f64,
+    /// Output cost per 1K tokens
+    pub output_cost_per_1k: f64,
+}
+
+impl ModelCost {
+    /// Estimate cost for a given usage
+    pub fn estimate(&self, usage: &crate::providers::Usage) -> f64 {
+        let input = usage.prompt_tokens as f64 * self.input_cost_per_1k / 1000.0;
+        let output = usage.completion_tokens as f64 * self.output_cost_per_1k / 1000.0;
+        input + output
+    }
+}
+
+/// Task type classification for cost-aware routing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    /// Complex code generation or refactoring
+    Coding,
+    /// Multi-step logical reasoning
+    Reasoning,
+    /// Creative writing, storytelling
+    Creative,
+    /// Summarizing long content
+    Summarization,
+    /// Simple categorization or labeling
+    Classification,
+    /// Structured data extraction
+    Extraction,
+    /// Language translation
+    Translation,
+    /// General conversation
+    Chat,
+    /// Default / fallback
+    Unknown,
+}
+
+impl std::fmt::Display for TaskType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).unwrap_or_default().trim_matches('"'))
+    }
+}
+
+/// Task-to-model routing rule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRoutingRule {
+    /// Task type this rule applies to
+    pub task_type: TaskType,
+    /// Preferred model alias
+    pub preferred_alias: String,
+    /// Fallback alias if preferred is unavailable
+    pub fallback_alias: Option<String>,
+    /// Maximum input tokens for this rule (route to larger model if exceeded)
+    pub max_input_tokens: Option<u32>,
+}
+
+/// Cost-aware routing configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostAwareConfig {
+    /// Whether cost-aware routing is enabled
+    pub enabled: bool,
+    /// Cost per 1K tokens for each model alias
+    pub model_costs: HashMap<String, ModelCost>,
+    /// Routing rules by task type
+    pub routing_rules: Vec<TaskRoutingRule>,
+    /// Default alias when no rule matches
+    pub default_alias: String,
+    /// Optional daily budget limit in USD
+    pub budget_limit_usd: Option<f64>,
+    /// Current daily spend (reset at midnight UTC)
+    #[serde(skip)]
+    pub daily_spend_usd: f64,
+}
+
+impl Default for CostAwareConfig {
+    fn default() -> Self {
+        let mut model_costs = HashMap::new();
+        // Default costs (approximate, should be updated with actual pricing)
+        model_costs.insert(
+            "fast".to_string(),
+            ModelCost {
+                input_cost_per_1k: 0.25,
+                output_cost_per_1k: 1.25,
+            },
+        );
+        model_costs.insert(
+            "default".to_string(),
+            ModelCost {
+                input_cost_per_1k: 3.0,
+                output_cost_per_1k: 15.0,
+            },
+        );
+        model_costs.insert(
+            "smart".to_string(),
+            ModelCost {
+                input_cost_per_1k: 15.0,
+                output_cost_per_1k: 75.0,
+            },
+        );
+
+        let routing_rules = vec![
+            TaskRoutingRule {
+                task_type: TaskType::Coding,
+                preferred_alias: "smart".to_string(),
+                fallback_alias: Some("default".to_string()),
+                max_input_tokens: Some(8000),
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Reasoning,
+                preferred_alias: "smart".to_string(),
+                fallback_alias: Some("default".to_string()),
+                max_input_tokens: None,
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Classification,
+                preferred_alias: "fast".to_string(),
+                fallback_alias: Some("default".to_string()),
+                max_input_tokens: Some(4000),
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Summarization,
+                preferred_alias: "default".to_string(),
+                fallback_alias: Some("fast".to_string()),
+                max_input_tokens: Some(16000),
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Extraction,
+                preferred_alias: "fast".to_string(),
+                fallback_alias: Some("default".to_string()),
+                max_input_tokens: Some(8000),
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Translation,
+                preferred_alias: "fast".to_string(),
+                fallback_alias: Some("default".to_string()),
+                max_input_tokens: None,
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Creative,
+                preferred_alias: "default".to_string(),
+                fallback_alias: Some("smart".to_string()),
+                max_input_tokens: None,
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Chat,
+                preferred_alias: "default".to_string(),
+                fallback_alias: Some("fast".to_string()),
+                max_input_tokens: Some(4000),
+            },
+            TaskRoutingRule {
+                task_type: TaskType::Unknown,
+                preferred_alias: "default".to_string(),
+                fallback_alias: Some("fast".to_string()),
+                max_input_tokens: None,
+            },
+        ];
+
+        Self {
+            enabled: false,
+            model_costs,
+            routing_rules,
+            default_alias: "default".to_string(),
+            budget_limit_usd: None,
+            daily_spend_usd: 0.0,
+        }
+    }
+}
+
+/// Lightweight rule-based task classifier
+pub struct TaskClassifier;
+
+impl TaskClassifier {
+    /// Classify a conversation into a task type based on message content
+    pub fn classify(messages: &[crate::providers::Message]) -> TaskType {
+        use crate::providers::Role;
+
+        let text: String = messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::User))
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let lower = text.to_lowercase();
+
+        // Coding patterns
+        if lower.contains("code")
+            || lower.contains("function")
+            || lower.contains("bug")
+            || lower.contains("refactor")
+            || lower.contains("implement")
+            || lower.contains("debug")
+            || lower.contains("programming")
+            || lower.contains("algorithm")
+            || (lower.starts_with("write a") && lower.contains("script"))
+            || lower.contains("```")
+        {
+            return TaskType::Coding;
+        }
+
+        // Reasoning patterns
+        if lower.contains("explain why")
+            || lower.contains("analyze")
+            || lower.contains("compare")
+            || lower.contains("evaluate")
+            || lower.contains("reason")
+            || lower.contains("logic")
+            || lower.contains("step by step")
+            || lower.contains("prove")
+            || lower.contains("why does")
+            || lower.contains("how does")
+        {
+            return TaskType::Reasoning;
+        }
+
+        // Summarization
+        if lower.contains("summarize")
+            || lower.contains("summary")
+            || lower.contains("tl;dr")
+            || lower.contains("key points")
+            || lower.contains("main ideas")
+        {
+            return TaskType::Summarization;
+        }
+
+        // Classification
+        if lower.contains("classify")
+            || lower.contains("categor")
+            || lower.contains("label")
+            || lower.contains("sentiment")
+            || lower.contains("is this")
+            || lower.starts_with("what type")
+        {
+            return TaskType::Classification;
+        }
+
+        // Translation
+        if lower.contains("translate") || lower.contains("translation") {
+            return TaskType::Translation;
+        }
+
+        // Extraction
+        if lower.contains("extract")
+            || lower.contains("pull out")
+            || lower.contains("parse")
+            || lower.contains("find all")
+            || lower.contains("list the")
+            || lower.contains("get the")
+        {
+            return TaskType::Extraction;
+        }
+
+        // Creative
+        if lower.contains("write a story")
+            || lower.contains("poem")
+            || lower.contains("creative")
+            || lower.contains("draft")
+            || lower.contains("compose")
+            || lower.contains("rewrite")
+        {
+            return TaskType::Creative;
+        }
+
+        TaskType::Chat
+    }
+}
+
 /// Supported provider types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,6 +446,9 @@ pub struct ModelRouterConfig {
     pub circuit_breaker_threshold: u32,
     /// Circuit breaker reset timeout
     pub circuit_breaker_reset_secs: u64,
+    /// Cost-aware routing configuration
+    #[serde(default)]
+    pub cost_aware: Option<CostAwareConfig>,
 }
 
 impl Default for ModelRouterConfig {
@@ -218,6 +493,7 @@ impl Default for ModelRouterConfig {
             health_check_interval_secs: 60,
             circuit_breaker_threshold: 5,
             circuit_breaker_reset_secs: 300,
+            cost_aware: None,
         }
     }
 }
@@ -547,6 +823,152 @@ impl ModelRouter {
             source: "All providers failed".to_string(),
             cause: None,
         }))
+    }
+
+    /// Complete a request with cost-aware automatic model selection
+    ///
+    /// If cost-aware routing is enabled in config, this method classifies the
+    /// task type from the messages and routes to the most cost-effective model
+    /// alias for that task. Otherwise, it falls back to the default alias.
+    pub async fn complete_auto(
+        &self,
+        messages: Vec<Message>,
+    ) -> crate::Result<CompletionResponse> {
+        let config = self.config.read().await;
+
+        // Check if cost-aware routing is enabled
+        let alias_name = if let Some(ref cost_aware) = config.cost_aware {
+            if cost_aware.enabled {
+                drop(config);
+                return self.complete_with_cost_routing(messages).await;
+            }
+            cost_aware.default_alias.clone()
+        } else {
+            config.default_model.clone()
+        };
+        drop(config);
+
+        self.complete(&alias_name, messages).await
+    }
+
+    /// Internal: route based on task classification and cost
+    async fn complete_with_cost_routing(
+        &self,
+        messages: Vec<Message>,
+    ) -> crate::Result<CompletionResponse> {
+        let task_type = TaskClassifier::classify(&messages);
+        info!("Task classified as: {:?}", task_type);
+
+        let config = self.config.read().await;
+        let cost_aware = config
+            .cost_aware
+            .as_ref()
+            .expect("cost_aware config checked above");
+
+        // Check budget limit
+        if let Some(budget) = cost_aware.budget_limit_usd {
+            let current_spend = cost_aware.daily_spend_usd;
+            if current_spend >= budget {
+                warn!(
+                    "Daily budget exceeded: ${:.2} / ${:.2}. Falling back to cheapest model.",
+                    current_spend, budget
+                );
+                // Find cheapest alias
+                let cheapest = cost_aware
+                    .model_costs
+                    .iter()
+                    .min_by(|a, b| {
+                        let a_total = a.1.input_cost_per_1k + a.1.output_cost_per_1k;
+                        let b_total = b.1.input_cost_per_1k + b.1.output_cost_per_1k;
+                        a_total.partial_cmp(&b_total).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| cost_aware.default_alias.clone());
+                drop(config);
+                return self.complete(&cheapest, messages).await;
+            }
+        }
+
+        // Find routing rule for this task type
+        let rule = cost_aware
+            .routing_rules
+            .iter()
+            .find(|r| r.task_type == task_type)
+            .or_else(|| {
+                cost_aware
+                    .routing_rules
+                    .iter()
+                    .find(|r| r.task_type == TaskType::Unknown)
+            });
+
+        let alias_name = if let Some(rule) = rule {
+            // Check token limit - if exceeded, use fallback (usually larger model)
+            let estimated_tokens: u32 = messages
+                .iter()
+                .map(|m| m.content.len() as u32 / 4)
+                .sum();
+
+            if let Some(max_tokens) = rule.max_input_tokens {
+                if estimated_tokens > max_tokens {
+                    info!(
+                        "Estimated tokens ({}) exceeds max for '{}' ({}), using fallback",
+                        estimated_tokens, rule.preferred_alias, max_tokens
+                    );
+                    if let Some(ref fallback) = rule.fallback_alias {
+                        fallback.clone()
+                    } else {
+                        rule.preferred_alias.clone()
+                    }
+                } else {
+                    rule.preferred_alias.clone()
+                }
+            } else {
+                rule.preferred_alias.clone()
+            }
+        } else {
+            cost_aware.default_alias.clone()
+        };
+        drop(config);
+
+        // Complete and track cost
+        let alias_name_for_cost = alias_name.clone();
+        let response = self.complete(&alias_name, messages).await?;
+
+        // Update spend if usage is available
+        if let Some(ref usage) = response.usage {
+            let mut config = self.config.write().await;
+            if let Some(ref mut cost_aware) = config.cost_aware {
+                if let Some(cost) = cost_aware.model_costs.get(&alias_name_for_cost) {
+                    let estimated = cost.estimate(usage);
+                    cost_aware.daily_spend_usd += estimated;
+                    info!(
+                        "Cost tracked: ${:.4} for '{}' (task: {:?})",
+                        estimated, alias_name_for_cost, task_type
+                    );
+                }
+            }
+        }
+
+        Ok(response)
+    }
+
+    /// Get current daily spend
+    pub async fn get_daily_spend(&self) -> f64 {
+        let config = self.config.read().await;
+        if let Some(ref cost_aware) = config.cost_aware {
+            cost_aware.daily_spend_usd
+        } else {
+            0.0
+        }
+    }
+
+    /// Reset daily spend counter
+    pub async fn reset_daily_spend(&self) {
+        let mut config = self.config.write().await;
+        if let Some(ref mut cost_aware) = config.cost_aware {
+            cost_aware.daily_spend_usd = 0.0;
+            info!("Daily spend counter reset");
+        }
     }
 
     /// Get the ordered list of providers to try
@@ -1498,5 +1920,120 @@ mod tests {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let default = router.get_default_model().await;
         assert_eq!(default, "default");
+    }
+
+    #[test]
+    fn task_classifier_detects_coding() {
+        let msgs = vec![
+            crate::providers::Message::user("Write a function to sort an array in Python"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Coding);
+    }
+
+    #[test]
+    fn task_classifier_detects_summarization() {
+        let msgs = vec![
+            crate::providers::Message::user("Summarize this article for me"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Summarization);
+    }
+
+    #[test]
+    fn task_classifier_detects_reasoning() {
+        let msgs = vec![
+            crate::providers::Message::user("Explain why the sky is blue step by step"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Reasoning);
+    }
+
+    #[test]
+    fn task_classifier_defaults_to_chat() {
+        let msgs = vec![
+            crate::providers::Message::user("Hello, how are you today?"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Chat);
+    }
+
+    #[test]
+    fn task_classifier_detects_classification() {
+        let msgs = vec![
+            crate::providers::Message::user("Classify this text as positive or negative"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Classification);
+    }
+
+    #[test]
+    fn task_classifier_detects_translation() {
+        let msgs = vec![
+            crate::providers::Message::user("Translate this to French"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Translation);
+    }
+
+    #[test]
+    fn task_classifier_detects_extraction() {
+        let msgs = vec![
+            crate::providers::Message::user("Extract all email addresses from this text"),
+        ];
+        assert_eq!(TaskClassifier::classify(&msgs), TaskType::Extraction);
+    }
+
+    #[test]
+    fn model_cost_estimate() {
+        let cost = ModelCost {
+            input_cost_per_1k: 3.0,
+            output_cost_per_1k: 15.0,
+        };
+        let usage = crate::providers::Usage {
+            prompt_tokens: 1000,
+            completion_tokens: 500,
+            total_tokens: 1500,
+        };
+        let estimated = cost.estimate(&usage);
+        assert!((estimated - 10.5).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn cost_aware_disabled_by_default() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        let spend = router.get_daily_spend().await;
+        assert_eq!(spend, 0.0);
+    }
+
+    #[tokio::test]
+    async fn cost_aware_config_default_routing_rules() {
+        let config = CostAwareConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.model_costs.len(), 3);
+        assert_eq!(config.routing_rules.len(), 9);
+        assert_eq!(config.default_alias, "default");
+    }
+
+    #[tokio::test]
+    async fn reset_daily_spend_no_op_when_disabled() {
+        let router = ModelRouter::new(ModelRouterConfig::default());
+        router.reset_daily_spend().await;
+        assert_eq!(router.get_daily_spend().await, 0.0);
+    }
+
+    #[tokio::test]
+    async fn cost_aware_config_with_enabled_spend_tracking() {
+        let mut config = ModelRouterConfig::default();
+        let mut cost_aware = CostAwareConfig::default();
+        cost_aware.enabled = true;
+        cost_aware.daily_spend_usd = 5.0;
+        config.cost_aware = Some(cost_aware);
+
+        let router = ModelRouter::new(config);
+        assert_eq!(router.get_daily_spend().await, 5.0);
+
+        router.reset_daily_spend().await;
+        assert_eq!(router.get_daily_spend().await, 0.0);
+    }
+
+    #[test]
+    fn cost_aware_budget_limit_none_by_default() {
+        let config = CostAwareConfig::default();
+        assert!(config.budget_limit_usd.is_none());
     }
 }
