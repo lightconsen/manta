@@ -213,6 +213,12 @@ pub enum ChannelType {
     Feishu,
     /// Custom WebSocket endpoint
     Websocket,
+    /// Signal via signal-cli
+    Signal,
+    /// iMessage via BlueBubbles
+    Imessage,
+    /// WebChat browser interface
+    Webchat,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

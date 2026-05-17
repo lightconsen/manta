@@ -2647,6 +2647,36 @@ impl Gateway {
             ChannelType::Websocket => {
                 info!("WebSocket channel '{}' requires external connection", name);
             }
+            ChannelType::Signal => {
+                #[cfg(feature = "signal")]
+                {
+                    info!("Signal channel '{}' initialized (signal-cli daemon required)", name);
+                }
+                #[cfg(not(feature = "signal"))]
+                {
+                    warn!("Signal feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Imessage => {
+                #[cfg(feature = "imessage")]
+                {
+                    info!("iMessage channel '{}' initialized (BlueBubbles required)", name);
+                }
+                #[cfg(not(feature = "imessage"))]
+                {
+                    warn!("iMessage feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::Webchat => {
+                #[cfg(feature = "webchat")]
+                {
+                    info!("WebChat channel '{}' initialized", name);
+                }
+                #[cfg(not(feature = "webchat"))]
+                {
+                    warn!("WebChat feature not enabled, skipping channel '{}'", name);
+                }
+            }
         }
         Ok(())
     }

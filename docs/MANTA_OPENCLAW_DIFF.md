@@ -7,7 +7,7 @@
 | **Language** | Rust | TypeScript/Node.js |
 | **Primary Focus** | Multi-channel AI gateway with extensible agent runtime | Personal AI assistant with rich UI integration |
 | **Architecture** | Modular Rust crates with async/await | Plugin-based TypeScript with ESM |
-| **Channels** | 6 (Telegram, Discord, Slack, WhatsApp, QQ, Lark/Feishu) | 20+ (including Signal, iMessage, WebChat, etc.) |
+| **Channels** | 9 (Telegram, Discord, Slack, WhatsApp, QQ, Lark/Feishu, Signal, iMessage, WebChat) | 20+ (including Signal, iMessage, WebChat, etc.) |
 | **Deployment** | Single binary, daemon mode | Node.js app, gateway daemon + CLI |
 
 ---
@@ -378,14 +378,14 @@ class VoyageBatchProcessor
 
 | Feature | Manta | OpenClaw |
 |---------|-------|----------|
-| **Total Channels** | 6 | 20+ |
+| **Total Channels** | 9 | 20+ |
 | **Architecture** | Trait-based (Channel trait) | Plugin-based with dock.ts |
 | **Telegram** | ✅ teloxide | ✅ grammY |
 | **Discord** | ✅ serenity | ✅ discord.js |
 | **Slack** | ✅ Web API + Events API webhooks | ✅ Bolt |
 | **WhatsApp** | ✅ Webhooks + HMAC | ✅ Baileys |
-| **Signal** | ❌ Not implemented | ✅ signal-cli |
-| **iMessage** | ❌ Not implemented | ✅ BlueBubbles |
+| **Signal** | ✅ signal-cli | ✅ signal-cli |
+| **iMessage** | ✅ BlueBubbles | ✅ BlueBubbles |
 | **WebChat** | Web terminal | ✅ Full web interface |
 | **QQ** | Stub | Extension |
 | **Lark/Feishu** | ✅ Re-export from Lark | Extension |
@@ -507,14 +507,14 @@ commandGating: CommandGatingConfig
 | **SQLite Memory** | ✅ | Optional |
 | **Vector DB** | ✅ (pgvector, SQLite-vec) | ✅ |
 | **Embeddings** | ✅ (local GGUF + API providers) | ✅ |
-| **Multi-Channel (6+)** | 6 | 20+ |
+| **Multi-Channel (9+)** | 9 | 20+ |
 | **Telegram** | ✅ | ✅ |
 | **Discord** | ✅ | ✅ |
 | **Slack** | ✅ | ✅ |
 | **WhatsApp** | ✅ | ✅ |
 | **Signal** | ❌ | ✅ |
 | **iMessage** | ❌ | ✅ |
-| **WebChat** | Terminal | Full UI |
+| **WebChat** | ✅ WebSocket interface | Full UI |
 | **DM Pairing** | ✅ `PairingStore` with code approval | ✅ |
 | **Allowlists** | Basic | Advanced |
 | **Mention Gating** | ✅ `MentionGate` with wildcard patterns | ✅ |
@@ -699,19 +699,19 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Discord** | ✅ discord.js | ✅ serenity |
 | **Slack** | ✅ Bolt | ✅ Web API + Events API |
 | **WhatsApp** | ✅ Baileys | ✅ Webhooks + HMAC |
-| **Signal** | ✅ signal-cli | ❌ |
-| **iMessage** | ✅ BlueBubbles | ❌ |
-| **WebChat** | Full web interface | Web Terminal |
-| **QQ** | Extension | stub |
+| **Signal** | ✅ signal-cli | ✅ signal-cli |
+| **iMessage** | ✅ BlueBubbles | ✅ BlueBubbles |
+| **WebChat** | Full web interface | ✅ WebSocket interface |
+| **QQ** | Extension | ✅ (Tencent Bot API) |
 | **Lark/Feishu** | Extension | ✅ |
-| **Total Channels** | 20+ | 6 |
+| **Total Channels** | 20+ | 9 |
 | **Architecture** | Plugin-based `dock.ts` | Trait-based (`Channel` trait) |
 | **ChannelExtension** | Unified interface | ✅ `ChannelExtension` trait + `TelegramChannelExtension` |
 | **Mention Gating** | ✅ `mention-gating.ts` | ✅ `MentionGate` with wildcard patterns |
 | **Command Gating** | ✅ `command-gating.ts` | ✅ `CommandGate` with user levels |
 | **Allowlist** | Sophisticated pattern matching | Basic |
 
-**Gap**: Manta lacks Signal/iMessage channels.
+**Gap**: Manta now has Signal/iMessage/WebChat channels. Remaining gap is in UI richness for WebChat.
 
 ---
 
@@ -823,7 +823,7 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **Model Router** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta has circuit breaker advantage |
 | **Tool System** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
 | **Memory** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
-| **Channels** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Missing Signal/iMessage |
+| **Channels** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Feature parity for major channels |
 | **Canvas** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Skeleton aligned, UI richness gap |
 | **SSE** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Fully implemented |
 | **Cron** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta more production-grade |

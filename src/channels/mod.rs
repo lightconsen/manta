@@ -36,6 +36,12 @@ pub enum ChannelType {
     Websocket,
     /// Web terminal (built-in)
     WebTerminal,
+    /// Signal via signal-cli daemon
+    Signal,
+    /// iMessage via BlueBubbles
+    Imessage,
+    /// WebChat browser interface
+    Webchat,
 }
 
 #[cfg(feature = "telegram")]
@@ -58,6 +64,15 @@ pub mod lark;
 
 #[cfg(feature = "plugins")]
 pub mod plugin_host;
+
+#[cfg(feature = "signal")]
+pub mod signal;
+
+#[cfg(feature = "imessage")]
+pub mod imessage;
+
+#[cfg(feature = "webchat")]
+pub mod webchat;
 
 pub mod extension;
 
@@ -822,6 +837,15 @@ pub use qq::{QqChannel, QqConfig};
 
 #[cfg(feature = "feishu")]
 pub use lark::{LarkChannel, LarkConfig};
+
+#[cfg(feature = "signal")]
+pub use signal::{SignalChannel, SignalConfig};
+
+#[cfg(feature = "imessage")]
+pub use imessage::{ImessageChannel, ImessageConfig};
+
+#[cfg(feature = "webchat")]
+pub use webchat::{WebchatChannel, WebchatConfig};
 
 #[cfg(feature = "plugins")]
 pub use plugin_host::{PluginChannel, PluginChannelRegistry, PluginManifest};

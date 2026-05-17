@@ -151,6 +151,9 @@ async fn run_channel_add(
         ChannelType::Qq => add_qq_channel(token, agent, extra_creds).await,
         ChannelType::Feishu => add_feishu_channel(token, agent, extra_creds).await,
         ChannelType::Websocket => add_websocket_channel(token, agent, extra_creds).await,
+        ChannelType::Signal => add_signal_channel(token, agent, extra_creds).await,
+        ChannelType::Imessage => add_imessage_channel(token, agent, extra_creds).await,
+        ChannelType::Webchat => add_webchat_channel(token, agent, extra_creds).await,
     }
 }
 
@@ -164,6 +167,9 @@ async fn run_channel_stop(channel: ChannelType) -> Result<()> {
         ChannelType::Qq => "qq",
         ChannelType::Feishu => "feishu",
         ChannelType::Websocket => "websocket",
+        ChannelType::Signal => "signal",
+        ChannelType::Imessage => "imessage",
+        ChannelType::Webchat => "webchat",
     };
 
     println!("🛑 Disabling {} channel...", channel_name);
@@ -198,6 +204,9 @@ async fn run_channel_remove(channel: ChannelType, agent: Option<String>) -> Resu
         ChannelType::Qq => "qq",
         ChannelType::Feishu => "feishu",
         ChannelType::Websocket => "websocket",
+        ChannelType::Signal => "signal",
+        ChannelType::Imessage => "imessage",
+        ChannelType::Webchat => "webchat",
     };
 
     // Check if agent filter was specified
@@ -721,6 +730,118 @@ async fn add_websocket_channel(
     Ok(())
 }
 
+async fn add_signal_channel(
+    token: Option<String>,
+    agent: Option<String>,
+    extra_creds: Vec<(String, String)>,
+) -> Result<()> {
+    println!("🚀 Adding Signal channel to Gateway...");
+
+    let mut config = ensure_gateway_config().await?;
+
+    let mut credentials = HashMap::new();
+    if let Some(token) = token {
+        credentials.insert("account".to_string(), token);
+    }
+    for (k, v) in extra_creds {
+        credentials.insert(k, v);
+    }
+
+    let channel_config = crate::gateway::ChannelConfig {
+        enabled: true,
+        channel_type: crate::channels::ChannelType::Signal,
+        credentials,
+        dm_policy: DmPolicy::Open,
+        require_mention: false,
+        allow_from: vec![],
+        block_from: vec![],
+        agent_id: agent,
+    };
+
+    config.channels.insert("signal".to_string(), channel_config);
+    save_gateway_config(&config).await?;
+
+    println!("✅ Signal channel configured in Gateway");
+    println!("   Make sure signal-cli daemon is running:");
+    println!("   signal-cli daemon --http localhost:8080");
+    println!("   Start the Gateway to activate the channel:");
+    println!("   manta start");
+
+    Ok(())
+}
+
+async fn add_imessage_channel(
+    _token: Option<String>,
+    agent: Option<String>,
+    extra_creds: Vec<(String, String)>,
+) -> Result<()> {
+    println!("🚀 Adding iMessage channel to Gateway...");
+
+    let mut config = ensure_gateway_config().await?;
+
+    let mut credentials = HashMap::new();
+    for (k, v) in extra_creds {
+        credentials.insert(k, v);
+    }
+
+    let channel_config = crate::gateway::ChannelConfig {
+        enabled: true,
+        channel_type: crate::channels::ChannelType::Imessage,
+        credentials,
+        dm_policy: DmPolicy::Open,
+        require_mention: false,
+        allow_from: vec![],
+        block_from: vec![],
+        agent_id: agent,
+    };
+
+    config.channels.insert("imessage".to_string(), channel_config);
+    save_gateway_config(&config).await?;
+
+    println!("✅ iMessage channel configured in Gateway");
+    println!("   Make sure BlueBubbles server is running on your Mac.");
+    println!("   Start the Gateway to activate the channel:");
+    println!("   manta start");
+
+    Ok(())
+}
+
+async fn add_webchat_channel(
+    _token: Option<String>,
+    agent: Option<String>,
+    extra_creds: Vec<(String, String)>,
+) -> Result<()> {
+    println!("🚀 Adding WebChat channel to Gateway...");
+
+    let mut config = ensure_gateway_config().await?;
+
+    let mut credentials = HashMap::new();
+    for (k, v) in extra_creds {
+        credentials.insert(k, v);
+    }
+
+    let channel_config = crate::gateway::ChannelConfig {
+        enabled: true,
+        channel_type: crate::channels::ChannelType::Webchat,
+        credentials,
+        dm_policy: DmPolicy::Open,
+        require_mention: false,
+        allow_from: vec![],
+        block_from: vec![],
+        agent_id: agent,
+    };
+
+    config.channels.insert("webchat".to_string(), channel_config);
+    save_gateway_config(&config).await?;
+
+    println!("✅ WebChat channel configured in Gateway");
+    println!("   Access the chat interface at http://localhost:8081");
+    println!("   Start the Gateway to activate the channel:");
+    println!("   manta start");
+
+    Ok(())
+}
+
 /// List configured channels
 async fn run_channel_list(all: bool) -> Result<()> {
     println!("📱 Manta Channels");
@@ -736,6 +857,9 @@ async fn run_channel_list(all: bool) -> Result<()> {
         ("qq", "QQ", ChannelType::Qq),
         ("feishu", "Feishu/Lark", ChannelType::Feishu),
         ("websocket", "WebSocket", ChannelType::Websocket),
+        ("signal", "Signal", ChannelType::Signal),
+        ("imessage", "iMessage", ChannelType::Imessage),
+        ("webchat", "WebChat", ChannelType::Webchat),
     ];
 
     // Load gateway config
@@ -810,6 +934,21 @@ async fn run_channel_list(all: bool) -> Result<()> {
     println!("  ✅ Feishu/Lark - Compiled");
     #[cfg(not(feature = "feishu"))]
     println!("  ❌ Feishu/Lark - Not compiled");
+
+    #[cfg(feature = "signal")]
+    println!("  ✅ Signal     - Compiled");
+    #[cfg(not(feature = "signal"))]
+    println!("  ❌ Signal     - Not compiled");
+
+    #[cfg(feature = "imessage")]
+    println!("  ✅ iMessage   - Compiled");
+    #[cfg(not(feature = "imessage"))]
+    println!("  ❌ iMessage   - Not compiled");
+
+    #[cfg(feature = "webchat")]
+    println!("  ✅ WebChat    - Compiled");
+    #[cfg(not(feature = "webchat"))]
+    println!("  ❌ WebChat    - Not compiled");
 
     println!();
     println!("Available commands:");
@@ -891,6 +1030,9 @@ async fn run_channel_status(
                 ChannelType::Qq => "qq",
                 ChannelType::Feishu => "feishu",
                 ChannelType::Websocket => "websocket",
+                ChannelType::Signal => "signal",
+                ChannelType::Imessage => "imessage",
+                ChannelType::Webchat => "webchat",
             };
 
             let display_name = match ch {
@@ -901,6 +1043,9 @@ async fn run_channel_status(
                 ChannelType::Qq => "QQ",
                 ChannelType::Feishu => "Feishu/Lark",
                 ChannelType::Websocket => "WebSocket",
+                ChannelType::Signal => "Signal",
+                ChannelType::Imessage => "iMessage",
+                ChannelType::Webchat => "WebChat",
             };
 
             // If --agent is specified, include it in the title
@@ -971,6 +1116,9 @@ async fn run_channel_status(
                     ("qq", "QQ"),
                     ("feishu", "Feishu/Lark"),
                     ("websocket", "WebSocket"),
+                    ("signal", "Signal"),
+                    ("imessage", "iMessage"),
+                    ("webchat", "WebChat"),
                 ];
 
                 println!("{:<15} {:<12} {:<20}", "Channel", "Status", "Agent");
@@ -1009,6 +1157,9 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Qq => "QQ",
         ChannelType::Feishu => "Feishu/Lark",
         ChannelType::Websocket => "WebSocket",
+        ChannelType::Signal => "Signal",
+        ChannelType::Imessage => "iMessage",
+        ChannelType::Webchat => "WebChat",
     };
 
     println!("🧪 Testing {} configuration...", channel_name);
@@ -1027,6 +1178,9 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Qq => cfg!(feature = "qq"),
         ChannelType::Feishu => cfg!(feature = "feishu"),
         ChannelType::Websocket => true,
+        ChannelType::Signal => cfg!(feature = "signal"),
+        ChannelType::Imessage => cfg!(feature = "imessage"),
+        ChannelType::Webchat => cfg!(feature = "webchat"),
     };
 
     if feature_enabled {
@@ -1105,6 +1259,19 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Websocket => {
             println!("    ℹ️  WebSocket requires no environment variables");
         }
+        ChannelType::Signal => {
+            if std::env::var("SIGNAL_ACCOUNT").is_ok() {
+                println!("    ✅ SIGNAL_ACCOUNT set");
+            } else {
+                println!("    ⚠️  SIGNAL_ACCOUNT not set");
+            }
+        }
+        ChannelType::Imessage => {
+            println!("    ℹ️  iMessage requires BlueBubbles server running on macOS");
+        }
+        ChannelType::Webchat => {
+            println!("    ℹ️  WebChat requires no environment variables");
+        }
     }
 
     // Check Gateway config
@@ -1117,6 +1284,9 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Qq => "qq",
         ChannelType::Feishu => "feishu",
         ChannelType::Websocket => "websocket",
+        ChannelType::Signal => "signal",
+        ChannelType::Imessage => "imessage",
+        ChannelType::Webchat => "webchat",
     };
 
     if let Some(ref cfg) = load_gateway_config().await {
