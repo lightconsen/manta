@@ -19,19 +19,23 @@ use tracing::{error, info, warn};
 mod builtin;
 mod builtin_macros;
 mod config;
+pub mod dependencies;
 mod frontmatter;
 mod install;
 pub mod registry;
+pub mod semver;
 mod storage;
 mod watcher;
 
 pub use config::{SkillConfig, SkillEntryConfig};
+pub use dependencies::{DependencyGraph, DependencySpec, resolve_skill_chain};
 pub use frontmatter::{
     InstallSpec as SkillInstallSpec, OpenClawFrontmatter, SkillFile, SkillFrontmatter,
     SkillTriggerItem,
 };
 pub use install::{install_all, install_binary, InstallResult};
 pub use registry::{SkillListing, SkillRegistry, SkillUpdate};
+pub use semver::{Version, VersionReq};
 pub use storage::SkillStorage;
 pub use storage::StorageLevel;
 pub use watcher::SkillWatcher;
@@ -170,6 +174,15 @@ pub struct Skill {
     /// OpenClaw-specific metadata
     #[serde(rename = "openclaw", default)]
     pub metadata: OpenClawMetadata,
+    /// Skill dependencies: name -> version constraint
+    #[serde(default)]
+    pub depends_on: HashMap<String, String>,
+    /// Capabilities this skill provides
+    #[serde(default)]
+    pub provides: Vec<String>,
+    /// Skills to chain after this one in execution pipeline
+    #[serde(default)]
+    pub chain: Vec<String>,
     /// Source file path
     #[serde(skip)]
     pub source_path: PathBuf,
@@ -209,6 +222,9 @@ impl Skill {
             triggers: Vec::new(),
             prompt: prompt.into(),
             metadata: OpenClawMetadata::default(),
+            depends_on: HashMap::new(),
+            provides: Vec::new(),
+            chain: Vec::new(),
             source_path: PathBuf::new(),
             is_eligible: true,
             eligibility_errors: Vec::new(),
@@ -888,6 +904,272 @@ impl SkillManager {
 
         Ok(())
     }
+
+    // ------------------------------------------------------------------
+    // Dependency resolution
+    // ------------------------------------------------------------------
+
+    /// Build a dependency graph from all loaded skills
+    pub async fn build_dependency_graph(&self) -> dependencies::DependencyGraph {
+        let skills = self.skills.read().await;
+        let mut graph = dependencies::DependencyGraph::new();
+
+        for skill in skills.values() {
+            let version = match semver::Version::parse(&skill.version) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Skill '{}' has invalid version '{}': {}", skill.name, skill.version, e);
+                    continue;
+                }
+            };
+
+            let deps: Vec<_> = skill
+                .depends_on
+                .iter()
+                .filter_map(|(dep_name, dep_constraint)| {
+                    let spec = format!("{}: {}", dep_name, dep_constraint);
+                    dependencies::DependencySpec::parse(&spec)
+                        .map_err(|e| {
+                            warn!("Invalid dependency spec '{}' for skill '{}': {}", spec, skill.name, e);
+                        })
+                        .ok()
+                })
+                .collect();
+
+            let provides = skill.provides.clone();
+
+            graph.add_node(dependencies::DependencyNode {
+                name: skill.name.clone(),
+                version,
+                dependencies: deps,
+                provides,
+            });
+        }
+
+        graph
+    }
+
+    /// Resolve dependencies for a skill and return activation order
+    pub async fn resolve_dependencies(&self, name: &str) -> crate::Result<Vec<String>> {
+        let graph = self.build_dependency_graph().await;
+
+        match graph.resolve(name) {
+            Ok(order) => {
+                info!("Resolved {} dependencies for '{}'", order.len(), name);
+                Ok(order)
+            }
+            Err(e) => {
+                error!("Dependency resolution failed for '{}': {}", name, e);
+                Err(crate::error::MantaError::Validation(format!(
+                    "Dependency resolution failed: {}",
+                    e
+                )))
+            }
+        }
+    }
+
+    /// Resolve all loaded skills in dependency order
+    pub async fn resolve_all_dependencies(&self) -> crate::Result<Vec<String>> {
+        let graph = self.build_dependency_graph().await;
+
+        match graph.check_versions() {
+            Ok(()) => {}
+            Err(e) => {
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Version check failed: {}",
+                    e
+                )));
+            }
+        }
+
+        match graph.resolve_all() {
+            Ok(order) => {
+                info!("Resolved {} skills in dependency order", order.len());
+                Ok(order)
+            }
+            Err(e) => {
+                error!("Dependency resolution failed: {}", e);
+                Err(crate::error::MantaError::Validation(format!(
+                    "Dependency resolution failed: {}",
+                    e
+                )))
+            }
+        }
+    }
+
+    /// Install all dependencies for a skill (both binary deps and skill deps)
+    pub async fn install_all_dependencies(&self, name: &str) -> crate::Result<Vec<InstallResult>> {
+        let mut results = Vec::new();
+
+        // First install binary dependencies
+        let binary_results = self.install_skill(name).await?;
+        results.extend(binary_results);
+
+        // Then resolve and install skill dependencies
+        let order = self.resolve_dependencies(name).await?;
+        for dep_name in order {
+            if dep_name != name {
+                if let Some(dep_skill) = self.get_skill(&dep_name).await {
+                    for spec in &dep_skill.metadata.install {
+                        match install::install_skill(spec).await {
+                            Ok(result) => results.push(result),
+                            Err(e) => {
+                                warn!("Failed to install dependency for '{}': {}", dep_name, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    // ------------------------------------------------------------------
+    // Skill chaining
+    // ------------------------------------------------------------------
+
+    /// Build an execution chain for a skill
+    /// Returns the ordered list of skills to execute (including dependencies)
+    pub async fn build_execution_chain(&self, name: &str) -> crate::Result<SkillChain> {
+        let skills = self.skills.read().await;
+
+        let root_skill = skills.get(name).cloned().ok_or_else(|| {
+            crate::error::MantaError::NotFound {
+                resource: format!("Skill: {}", name),
+            }
+        })?;
+
+        let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+
+        // First add dependencies in order
+        drop(skills);
+        let deps = self.resolve_dependencies(name).await?;
+        for dep_name in deps {
+            if dep_name != name && visited.insert(dep_name.clone()) {
+                if let Some(skill) = self.get_skill(&dep_name).await {
+                    chain.push(skill);
+                }
+            }
+        }
+
+        // Then add the root skill
+        if visited.insert(name.to_string()) {
+            chain.push(root_skill.clone());
+        }
+
+        // Add chained skills (skills that follow the root in the pipeline)
+        let skills = self.skills.read().await;
+        for chained_name in &root_skill.chain {
+            if visited.insert(chained_name.clone()) {
+                if let Some(skill) = skills.get(chained_name) {
+                    chain.push(skill.clone());
+                }
+            }
+        }
+
+        Ok(SkillChain {
+            skills: chain,
+            trigger_skill: name.to_string(),
+        })
+    }
+
+    /// Execute a chain of skills, returning the combined prompt
+    pub async fn execute_chain(&self, name: &str, _input: &str) -> crate::Result<String> {
+        let chain = self.build_execution_chain(name).await?;
+
+        let mut combined_prompt = String::new();
+        combined_prompt.push_str(&format!("# Skill Chain: {}\n\n", chain.trigger_skill));
+
+        for (i, skill) in chain.skills.iter().enumerate() {
+            combined_prompt.push_str(&format!("## Step {}: {}\n\n", i + 1, skill.name));
+            combined_prompt.push_str(&skill.to_prompt_section());
+            combined_prompt.push_str("\n\n---\n\n");
+        }
+
+        Ok(combined_prompt)
+    }
+
+    /// Check if all dependencies for a skill are satisfied
+    pub async fn check_dependencies(&self, name: &str) -> DependencyCheckResult {
+        let graph = self.build_dependency_graph().await;
+
+        let mut missing = Vec::new();
+        let mut version_mismatches = Vec::new();
+
+        if let Some(node) = graph.get(name) {
+            for dep in &node.dependencies {
+                if let Some(dep_node) = graph.get(&dep.name) {
+                    if !dep.is_satisfied_by(&dep_node.version) {
+                        version_mismatches.push(VersionMismatch {
+                            skill: dep.name.clone(),
+                            required: dep.version_req.to_string(),
+                            found: dep_node.version.to_string(),
+                        });
+                    }
+                } else {
+                    missing.push(dep.name.clone());
+                }
+            }
+        }
+
+        let satisfied = missing.is_empty() && version_mismatches.is_empty();
+
+        DependencyCheckResult {
+            satisfied,
+            missing,
+            version_mismatches,
+        }
+    }
+}
+
+/// Result of a dependency check
+#[derive(Debug, Clone)]
+pub struct DependencyCheckResult {
+    pub satisfied: bool,
+    pub missing: Vec<String>,
+    pub version_mismatches: Vec<VersionMismatch>,
+}
+
+/// A version mismatch between required and found
+#[derive(Debug, Clone)]
+pub struct VersionMismatch {
+    pub skill: String,
+    pub required: String,
+    pub found: String,
+}
+
+/// An execution chain of skills
+#[derive(Debug, Clone)]
+pub struct SkillChain {
+    pub skills: Vec<Skill>,
+    pub trigger_skill: String,
+}
+
+impl SkillChain {
+    /// Get the number of skills in the chain
+    pub fn len(&self) -> usize {
+        self.skills.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+    }
+
+    /// Get the combined prompt for all skills
+    pub fn to_combined_prompt(&self) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Skill Chain: {}\n\n", self.trigger_skill));
+
+        for (i, skill) in self.skills.iter().enumerate() {
+            output.push_str(&format!("## Step {}: {}\n\n", i + 1, skill.name));
+            output.push_str(&skill.to_prompt_section());
+            output.push_str("\n\n---\n\n");
+        }
+
+        output
+    }
 }
 
 /// Security scanning for skills
@@ -1195,5 +1477,173 @@ mod tests {
         };
         assert!(trigger.user_invocable);
         assert!(trigger.model_invocable);
+    }
+
+    // ------------------------------------------------------------------
+    // Dependency / chaining tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_skill_depends_on_default() {
+        let skill = Skill::new("a", "d", "p");
+        assert!(skill.depends_on.is_empty());
+        assert!(skill.provides.is_empty());
+        assert!(skill.chain.is_empty());
+    }
+
+    #[test]
+    fn test_skill_chain_empty() {
+        let chain = SkillChain {
+            skills: vec![],
+            trigger_skill: "test".to_string(),
+        };
+        assert!(chain.is_empty());
+        assert_eq!(chain.len(), 0);
+    }
+
+    #[test]
+    fn test_skill_chain_combined_prompt() {
+        let chain = SkillChain {
+            skills: vec![
+                Skill::new("step1", "First", "Do first thing"),
+                Skill::new("step2", "Second", "Do second thing"),
+            ],
+            trigger_skill: "pipeline".to_string(),
+        };
+        let prompt = chain.to_combined_prompt();
+        assert!(prompt.contains("Skill Chain: pipeline"));
+        assert!(prompt.contains("Step 1: step1"));
+        assert!(prompt.contains("Step 2: step2"));
+    }
+
+    #[test]
+    fn test_dependency_check_result_satisfied() {
+        let result = DependencyCheckResult {
+            satisfied: true,
+            missing: vec![],
+            version_mismatches: vec![],
+        };
+        assert!(result.satisfied);
+    }
+
+    #[test]
+    fn test_dependency_check_result_missing() {
+        let result = DependencyCheckResult {
+            satisfied: false,
+            missing: vec!["missing-skill".to_string()],
+            version_mismatches: vec![],
+        };
+        assert!(!result.satisfied);
+        assert_eq!(result.missing.len(), 1);
+    }
+
+    #[test]
+    fn test_frontmatter_with_depends_on() {
+        let content = r#"---
+name: weather
+version: "1.2.0"
+depends_on:
+  base-utils: ">=1.0.0"
+  http-client: "^2.0.0"
+provides:
+  - forecast
+  - alerts
+chain:
+  - summarize
+---
+Weather skill content.
+"#;
+        let file = SkillFile::parse(content, std::path::PathBuf::from("weather/SKILL.md")).unwrap();
+        assert_eq!(file.frontmatter.depends_on.len(), 2);
+        assert_eq!(file.frontmatter.depends_on.get("base-utils"), Some(">=1.0.0".to_string()).as_ref());
+        assert_eq!(file.frontmatter.provides, vec!["forecast", "alerts"]);
+        assert_eq!(file.frontmatter.chain, vec!["summarize"]);
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_dependency_graph_empty() {
+        let manager = SkillManager::new().await.unwrap();
+        let graph = manager.build_dependency_graph().await;
+        assert!(graph.names().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_dependency_graph_with_skills() {
+        let manager = SkillManager::new().await.unwrap();
+
+        // Insert a skill with dependencies directly
+        {
+            let mut skills = manager.skills.write().await;
+            let mut base = Skill::new("base", "Base", "Base prompt");
+            base.version = "1.0.0".to_string();
+            skills.insert("base".to_string(), base);
+
+            let mut app = Skill::new("app", "App", "App prompt");
+            app.version = "1.0.0".to_string();
+            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            skills.insert("app".to_string(), app);
+        }
+
+        let graph = manager.build_dependency_graph().await;
+        assert!(graph.has("base"));
+        assert!(graph.has("app"));
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_resolve_dependencies() {
+        let manager = SkillManager::new().await.unwrap();
+
+        {
+            let mut skills = manager.skills.write().await;
+            let mut base = Skill::new("base", "Base", "Base prompt");
+            base.version = "1.0.0".to_string();
+            skills.insert("base".to_string(), base);
+
+            let mut app = Skill::new("app", "App", "App prompt");
+            app.version = "1.0.0".to_string();
+            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            skills.insert("app".to_string(), app);
+        }
+
+        let order = manager.resolve_dependencies("app").await.unwrap();
+        assert_eq!(order, vec!["base", "app"]);
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_check_dependencies_satisfied() {
+        let manager = SkillManager::new().await.unwrap();
+
+        {
+            let mut skills = manager.skills.write().await;
+            let mut base = Skill::new("base", "Base", "Base prompt");
+            base.version = "1.0.0".to_string();
+            skills.insert("base".to_string(), base);
+
+            let mut app = Skill::new("app", "App", "App prompt");
+            app.version = "1.0.0".to_string();
+            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            skills.insert("app".to_string(), app);
+        }
+
+        let check = manager.check_dependencies("app").await;
+        assert!(check.satisfied);
+        assert!(check.missing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_check_dependencies_missing() {
+        let manager = SkillManager::new().await.unwrap();
+
+        {
+            let mut skills = manager.skills.write().await;
+            let mut app = Skill::new("app", "App", "App prompt");
+            app.version = "1.0.0".to_string();
+            app.depends_on.insert("missing".to_string(), ">=1.0.0".to_string());
+            skills.insert("app".to_string(), app);
+        }
+
+        let check = manager.check_dependencies("app").await;
+        assert!(!check.satisfied);
+        assert_eq!(check.missing, vec!["missing"]);
     }
 }

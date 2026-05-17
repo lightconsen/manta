@@ -94,6 +94,19 @@ pub struct SkillFrontmatter {
     #[serde(rename = "openclaw", default)]
     pub openclaw: OpenClawFrontmatter,
 
+    /// Skill dependencies: name -> version constraint
+    /// Example: `{ "weather": "^1.0.0", "base-utils": ">=2.0.0" }`
+    #[serde(default)]
+    pub depends_on: HashMap<String, String>,
+
+    /// Capabilities this skill provides
+    #[serde(default)]
+    pub provides: Vec<String>,
+
+    /// Skills to chain after this one (execution pipeline)
+    #[serde(default)]
+    pub chain: Vec<String>,
+
     /// Custom configuration values
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
