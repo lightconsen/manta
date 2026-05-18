@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Message } from './components/Message';
 import { TypingIndicator } from './components/TypingIndicator';
-import { Header } from './components/Header';
 import { InputArea } from './components/InputArea';
+import { MantaLogo } from './components/MantaLogo';
 import { SSEManager } from './utils/sse';
 import { MessageType, MessageData, ConnectionState } from './types';
 import './styles.css';
@@ -311,6 +311,10 @@ function App() {
   // Empty state: show welcome message when no messages
   const showEmptyState = messages.length === 0 && !isTyping;
 
+  const isDisconnected =
+    connectionState === ConnectionState.Disconnected ||
+    connectionState === ConnectionState.Error;
+
   return (
     <div className="app-container">
       {/* Mobile sidebar overlay */}
@@ -321,22 +325,26 @@ function App() {
 
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+        {/* Top: Logo + controls */}
         <div className="sidebar-header">
           <div className="sidebar-logo">
-            <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="16" cy="16" r="14" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 16h12M16 10v12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            AI 对话
+            <MantaLogo />
           </div>
-          <button className="new-session-btn" onClick={handleNewSession}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            新建对话
-          </button>
+          <div className="sidebar-toolbar">
+            <span className="version">{version}</span>
+            <div className="status">
+              <span className={`status-dot ${isDisconnected ? 'disconnected' : ''}`} />
+            </div>
+            <button className="toolbar-btn" onClick={toggleTheme} title="切换主题">
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
+            <button className="toolbar-btn" onClick={handleSettingsClick} title="设置">
+              ⚙
+            </button>
+          </div>
         </div>
+
+        {/* Middle: Session list */}
         <div className="session-list">
           {sessions.length === 0 && (
             <div className="session-empty">暂无对话</div>
@@ -352,23 +360,21 @@ function App() {
               <span className="session-label">{session.label}</span>
             </button>
           ))}
-        </div>
-        <div className="sidebar-footer">
-          <div className="user-avatar">U</div>
-          <span>web_user</span>
+          {/* New session text button at bottom of list */}
+          <button className="new-session-text-btn" onClick={handleNewSession}>
+            + New Session
+          </button>
         </div>
       </aside>
 
       {/* Main content */}
       <div className="main-content">
-        <Header
-          connectionState={connectionState}
-          version={version}
-          onSettingsClick={handleSettingsClick}
-          onMenuClick={() => setSidebarOpen(true)}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
+        {/* Mobile-only top bar with menu button */}
+        <div className="mobile-topbar">
+          <button className="menu-btn" onClick={() => setSidebarOpen(true)} title="菜单">
+            ☰
+          </button>
+        </div>
 
         <div className="messages-container" ref={messagesRef}>
           <div className="messages-inner">

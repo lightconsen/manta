@@ -127,54 +127,58 @@ body {
 }
 
 .sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 16px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .sidebar-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  font-size: 18px;
-  font-weight: 600;
+  justify-content: center;
   color: var(--text-primary);
 }
 
 .sidebar-logo svg {
-  width: 28px;
-  height: 28px;
+  width: 120px;
+  height: auto;
 }
 
-.new-session-btn {
-  width: 100%;
+/* Toolbar row: version + status + theme + settings */
+.sidebar-toolbar {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 10px 14px;
-  background: var(--accent-new-chat);
-  color: #fff;
-  border: none;
+}
+
+.toolbar-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
-  font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  font-size: 14px;
+  padding: 0;
 }
 
-.new-session-btn:hover {
-  background: var(--accent-primary-hover);
-}
-
-.new-session-btn svg {
-  width: 16px;
-  height: 16px;
+.toolbar-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-input-focus);
+  color: var(--text-primary);
 }
 
 .session-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 
 .session-empty {
@@ -229,28 +233,25 @@ body {
   flex: 1;
 }
 
-.sidebar-footer {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  gap: 10px;
+/* + New Session text button at bottom of session list */
+.new-session-text-btn {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 4px;
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
 }
 
-.user-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent-primary);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
+.new-session-text-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 /* ── Main Content ─────────────────────────────────────────────── */
@@ -263,23 +264,15 @@ body {
   position: relative;
 }
 
-/* ── Header ───────────────────────────────────────────────────── */
-.header {
+/* ── Mobile top bar ───────────────────────────────────────────── */
+.mobile-topbar {
+  display: none;
   height: var(--header-height);
   background: var(--bg-main);
   border-bottom: 1px solid var(--border-color);
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 16px;
   flex-shrink: 0;
-  z-index: 10;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .menu-btn {
@@ -292,44 +285,10 @@ body {
   padding: 4px;
 }
 
-.header-title {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.theme-toggle {
-  background: none;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  font-size: 16px;
-}
-
-.theme-toggle:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-input-focus);
-}
-
 .status {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 .status-dot {
@@ -875,6 +834,10 @@ body {
 
   .sidebar-overlay.open {
     display: block;
+  }
+
+  .mobile-topbar {
+    display: flex;
   }
 
   .menu-btn {
