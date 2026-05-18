@@ -38,15 +38,20 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private subscribedSessions: string[] = [];
 
   constructor() {
-    this.sessionId = localStorage.getItem("manta_session") || this.generateId();
-    localStorage.setItem("manta_session", this.sessionId);
+    // Device ID persists across sessions
     this.deviceId = localStorage.getItem("manta_device_id") || this.generateId();
     localStorage.setItem("manta_device_id", this.deviceId);
+
+    // Session key follows protocol.md 7.3: web:{device_id}
+    const storedSession = localStorage.getItem("manta_session");
+    this.sessionId = storedSession || `web:${this.deviceId}`;
+    localStorage.setItem("manta_session", this.sessionId);
+
     this.connect();
   }
 
   private generateId(): string {
-    return "sess_" + Math.random().toString(36).slice(2, 10);
+    return "dev_" + Math.random().toString(36).slice(2, 10);
   }
 
   private connect() {
@@ -132,11 +137,35 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return id;
   }
 
+  /** Create a new session via the protocol (protocol.md 7.2: CreateThread) */
+  createSession(): string {
+    const newSessionId = `web:${this.deviceId}`;
+    this.sessionId = newSessionId;
+    localStorage.setItem("manta_session", this.sessionId);
+    this.subscribedSessions = [];
+    this.sendRequest("sessions.create", {
+      session_id: this.sessionId,
+    });
+    return this.sessionId;
+  }
+
+  /** Switch to a different session ID */
+  switchSession(sessionId: string): void {
+    this.sessionId = sessionId;
+    localStorage.setItem("manta_session", this.sessionId);
+    if (!this.subscribedSessions.includes(sessionId)) {
+      this.subscribedSessions.push(sessionId);
+      this.sendRequest("sessions.subscribe", {
+        session_ids: [sessionId],
+      });
+    }
+  }
+
   async *run(options: {
     messages: ThreadMessage[];
     abortSignal: AbortSignal;
   }): AsyncGenerator<ChatModelRunResult> {
-    const { messages } = options;
+    const { messages, abortSignal } = options;
     const last = messages[messages.length - 1];
     if (!last || last.role !== "user") return;
 
@@ -150,48 +179,61 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     });
 
     let buffer = "";
+    let aborted = false;
 
-    while (true) {
-      const evt = await this.nextEvent(options.abortSignal);
-      if (!evt) break;
-
-      switch (evt.event) {
-        case "chat.delta": {
-          const delta = (evt.payload?.content as string) || "";
-          buffer += delta;
-          yield { content: [{ type: "text" as const, text: buffer }] };
+    try {
+      while (true) {
+        const evt = await this.nextEvent(abortSignal);
+        if (!evt) {
+          aborted = true;
           break;
         }
-        case "chat.final": {
-          buffer = (evt.payload?.response as string) || buffer;
-          yield { content: [{ type: "text" as const, text: buffer }] };
-          return;
+
+        switch (evt.event) {
+          case "chat.delta": {
+            const delta = (evt.payload?.content as string) || "";
+            buffer += delta;
+            yield { content: [{ type: "text" as const, text: buffer }] };
+            break;
+          }
+          case "chat.final": {
+            buffer = (evt.payload?.response as string) || buffer;
+            yield { content: [{ type: "text" as const, text: buffer }] };
+            return;
+          }
+          case "chat.error": {
+            throw new Error((evt.payload?.message as string) || "Chat error");
+          }
+          case "agent.thinking":
+          case "tool.calling":
+          case "tool.result": {
+            // Assistant-UI shows these as status/tool-call UI elements
+            yield {
+              content: [{ type: "text" as const, text: buffer }],
+              metadata: {
+                thinking:
+                  evt.event === "agent.thinking"
+                    ? ((evt.payload?.content as string) ?? "")
+                    : undefined,
+                toolCall:
+                  evt.event === "tool.calling"
+                    ? {
+                        name: (evt.payload?.tool_name as string) ?? "",
+                        args: (evt.payload?.arguments as Record<string, unknown>) ?? {},
+                      }
+                    : undefined,
+              },
+            };
+            break;
+          }
         }
-        case "chat.error": {
-          throw new Error((evt.payload?.message as string) || "Chat error");
-        }
-        case "agent.thinking":
-        case "tool.calling":
-        case "tool.result": {
-          // Assistant-UI shows these as status/tool-call UI elements
-          yield {
-            content: [{ type: "text" as const, text: buffer }],
-            metadata: {
-              thinking:
-                evt.event === "agent.thinking"
-                  ? ((evt.payload?.content as string) ?? "")
-                  : undefined,
-              toolCall:
-                evt.event === "tool.calling"
-                  ? {
-                      name: (evt.payload?.tool_name as string) ?? "",
-                      args: (evt.payload?.arguments as Record<string, unknown>) ?? {},
-                    }
-                  : undefined,
-            },
-          };
-          break;
-        }
+      }
+    } finally {
+      // protocol.md 7.2: CancelRun -> chat.abort
+      if (aborted) {
+        this.sendRequest("chat.abort", {
+          session_id: this.sessionId,
+        });
       }
     }
   }

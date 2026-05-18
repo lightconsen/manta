@@ -23,7 +23,7 @@ function ChatApp() {
           </h1>
           <button
             onClick={() => {
-              localStorage.removeItem("manta_session");
+              transport.createSession();
               window.location.reload();
             }}
             className="text-xs px-3 py-1 rounded bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 transition"
