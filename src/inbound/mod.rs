@@ -113,23 +113,17 @@ impl DefaultInboundPipeline {
         let mut rx = self.flush_rx.lock().await;
         while let Some(batch) = rx.recv().await {
             for item in batch {
-                let _ = self.process(item.message).await;
+                let _ = self.process_stages(item.message).await;
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl InboundPipeline for DefaultInboundPipeline {
-    async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
-        // Stage 1: Debounce
-        // If the message should be batched, the debouncer absorbs it and
-        // will emit a flushed batch later.
-        let debounced = self.debouncer.enqueue(message).await?;
-
+    /// Run the pipeline stages after debounce (media, dispatch, queue, router).
+    /// Called directly for messages that have already passed through the debouncer.
+    async fn process_stages(&self, message: IncomingMessage) -> Option<RoutedMessage> {
         // Stage 2: Media understanding
-        let media_results = if !debounced.attachments.is_empty() {
-            Some(self.media_pipeline.process(&debounced).await)
+        let media_results = if !message.attachments.is_empty() {
+            Some(self.media_pipeline.process(&message).await)
         } else {
             None
         };
@@ -137,23 +131,23 @@ impl InboundPipeline for DefaultInboundPipeline {
         // Stage 3: Dispatch (send policy, plugin-owned binding, etc.)
         let dispatch_result = self
             .dispatch
-            .process(&debounced, media_results.as_ref())
+            .process(&message, media_results.as_ref())
             .await;
         if dispatch_result.suppress {
             return None;
         }
 
         // Stage 4: Queue mode resolution
-        let queue_mode = self.queue_resolver.resolve(&debounced).await;
+        let queue_mode = self.queue_resolver.resolve(&message).await;
 
         // Stage 5: Agent routing
         let route = self
             .router
-            .route(&debounced, dispatch_result.workspace_hint.as_deref())
+            .route(&message, dispatch_result.workspace_hint.as_deref())
             .await;
 
         let routed = RoutedMessage {
-            incoming: debounced,
+            incoming: message,
             agent_id: route.agent_id,
             workspace_id: route.workspace_id,
             queue_mode,
@@ -166,12 +160,23 @@ impl InboundPipeline for DefaultInboundPipeline {
 
         Some(routed)
     }
+}
+
+#[async_trait::async_trait]
+impl InboundPipeline for DefaultInboundPipeline {
+    async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
+        // Stage 1: Debounce
+        // If the message should be batched, the debouncer absorbs it and
+        // will emit a flushed batch later.
+        let debounced = self.debouncer.enqueue(message).await?;
+        self.process_stages(debounced).await
+    }
 
     async fn flush(&self, key: &str) -> Vec<RoutedMessage> {
         let messages = self.debouncer.flush_key(key).await;
         let mut routed = Vec::new();
         for msg in messages {
-            if let Some(r) = self.process(msg).await {
+            if let Some(r) = self.process_stages(msg).await {
                 routed.push(r);
             }
         }

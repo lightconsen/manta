@@ -621,7 +621,12 @@ async fn web_terminal_chat_daemon_handler(
 /// HTML/CSS/JS for the terminal interface (loaded from assets/web_terminal.html)
 fn terminal_html() -> String {
     let version = env!("CARGO_PKG_VERSION");
-    let html = include_str!("../assets/web_terminal.html");
+    let built_path = std::path::Path::new("assets/chat/index.html");
+    let html = if built_path.exists() {
+        std::fs::read_to_string(built_path).unwrap_or_else(|_| include_str!("../assets/chat.html").to_string())
+    } else {
+        include_str!("../assets/chat.html").to_string()
+    };
     html.replace("{VERSION}", version)
 }
 
@@ -641,17 +646,16 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_html_contains_settings_button() {
+    fn test_terminal_html_contains_theme_toggle() {
         let html = terminal_html();
-        assert!(html.contains("settings-btn"), "HTML should contain settings button class");
-        assert!(html.contains("⚙️"), "HTML should contain settings icon");
+        assert!(html.contains("theme-toggle"), "HTML should contain theme toggle button");
     }
 
     #[test]
-    fn test_terminal_html_contains_version_span() {
+    fn test_terminal_html_contains_messages_area() {
         let html = terminal_html();
-        assert!(html.contains("version"), "HTML should contain version class");
-        assert!(html.contains("header-center"), "HTML should contain header-center div");
+        assert!(html.contains("messages"), "HTML should contain messages container");
+        assert!(html.contains("input"), "HTML should contain input textarea");
     }
 
     #[test]

@@ -112,6 +112,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         cron_scheduler: RwLock::new(None),
         auth_manager: Arc::new(crate::security::AuthManager::new()),
         pairing_store: Arc::new(PairingStore::new()),
+        device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
         command_gate: Arc::new(CommandGate::new()),
         mention_gate: Arc::new(MentionGate::new(MentionPolicy::Allow)),
         audit_log: Arc::new(crate::security::persistent_audit::PersistentAuditLog::new()),

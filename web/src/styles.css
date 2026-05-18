@@ -393,9 +393,9 @@ body {
 }
 
 /* ── Message Bubble ───────────────────────────────────────────── */
-.message-bubble {
-  max-width: 70%;
-  padding: 10px 16px;
+  .message-bubble {
+    max-width: 85%;
+    padding: 10px 16px;
   border-radius: var(--radius-lg);
   word-wrap: break-word;
   position: relative;
@@ -717,6 +717,7 @@ body {
   flex: 1;
   display: flex;
   align-items: flex-end;
+  min-width: 0;
   background: var(--bg-input);
   border: 1px solid var(--border-input);
   border-radius: var(--radius-lg);
@@ -731,6 +732,8 @@ body {
 
 #messageInput {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   background: transparent;
   border: none;
   color: var(--text-primary);
@@ -743,6 +746,7 @@ body {
   min-height: 24px;
   max-height: 120px;
   overflow-y: auto;
+  box-sizing: border-box;
 }
 
 #messageInput::placeholder {

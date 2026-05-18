@@ -206,7 +206,7 @@ pub async fn github_callback_handler(
     }
 
     // Create session
-    let session = match state.auth_manager.create_session(user_id, 24 * 7).await {
+    let session = match state.auth_manager.create_session(user_id, 24 * 7, None).await {
         Ok(s) => s,
         Err(e) => {
             error!("Failed to create session: {}", e);
@@ -404,7 +404,7 @@ pub async fn google_callback_handler(
         }
     }
 
-    let session = match state.auth_manager.create_session(user_id, 24 * 7).await {
+    let session = match state.auth_manager.create_session(user_id, 24 * 7, None).await {
         Ok(s) => s,
         Err(e) => {
             error!("Failed to create session: {}", e);

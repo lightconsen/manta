@@ -10,7 +10,7 @@
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
-    middleware::{from_fn, from_fn_with_state},
+    middleware::{from_fn, from_fn_with_state, Next},
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post},
     Router,
@@ -24,7 +24,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
 use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
@@ -47,6 +46,7 @@ use crate::tools::ToolRegistry;
 pub mod auth;
 pub mod hooks;
 pub mod middleware;
+pub mod protocol;
 pub mod rate_limit;
 pub mod send_policy;
 pub mod webhooks;
@@ -286,6 +286,12 @@ pub struct SecurityConfig {
     pub auth_required: bool,
     /// Require pairing for new users
     pub pairing_required: bool,
+    /// Authentication mode
+    #[serde(default)]
+    pub auth_mode: crate::gateway::protocol::AuthMode,
+    /// Shared secret token for simple authentication
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_token: Option<String>,
     /// Rate limiting configuration
     pub rate_limit: RateLimitConfig,
     /// Enable security headers
@@ -357,6 +363,8 @@ impl Default for SecurityConfig {
             enabled: true,
             auth_required: false,
             pairing_required: false,
+            auth_mode: crate::gateway::protocol::AuthMode::None,
+            shared_token: None,
             rate_limit: RateLimitConfig::default(),
             security_headers: true,
             oauth: crate::gateway::auth::OAuthConfig::default(),
@@ -558,6 +566,8 @@ pub struct GatewayState {
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// DM pairing store for access control
     pub pairing_store: Arc<crate::security::pairing::PairingStore>,
+    /// Device pairing store for WebSocket device auth
+    pub device_pairing_store: Arc<crate::security::device_pairing::DevicePairingStore>,
     /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
     /// Mention gate for controlling which mentions trigger agent responses
@@ -839,17 +849,6 @@ pub enum AgentQuery {
     },
 }
 
-/// A single Server-Sent Event sent to `GET /api/events` subscribers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SseEvent {
-    /// Event type label (e.g. `"tool_calling"`, `"tool_result"`, `"completed"`).
-    pub event_type: String,
-    /// Arbitrary JSON payload.
-    pub data: serde_json::Value,
-    /// Session / conversation ID the event belongs to (if applicable).
-    pub session_id: Option<String>,
-}
-
 /// Events broadcast by gateway
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GatewayEvent {
@@ -899,6 +898,12 @@ pub enum GatewayEvent {
         requested_by: String,
         risk_level: crate::tools::approval::RiskLevel,
         message: String,
+    },
+    /// Device pairing request initiated
+    DevicePairRequested {
+        device_id: String,
+        code: String,
+        display_name: Option<String>,
     },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
@@ -1301,6 +1306,7 @@ impl Gateway {
             cron_scheduler: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
+            device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
             command_gate: {
                 let gate = crate::tools::command_gate::CommandGate::new();
                 // Web terminal and API users need User level for slash commands
@@ -1836,6 +1842,21 @@ impl Gateway {
         Ok(())
     }
 
+    /// Middleware that logs a deprecation warning for REST API endpoints.
+    /// Per protocol.md, these endpoints are deprecated in favor of the WebSocket-native protocol.
+    async fn deprecation_middleware(
+        req: axum::extract::Request,
+        next: Next,
+    ) -> impl IntoResponse {
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
+        warn!(
+            "DEPRECATED: {} {} is deprecated and will be removed in v2.0. Use WebSocket protocol instead.",
+            method, path
+        );
+        next.run(req).await
+    }
+
     /// Build the HTTP router
     async fn build_router(&self) -> Router {
         let state = self.state.clone();
@@ -1854,17 +1875,27 @@ impl Gateway {
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
-        // Admin tier: Protected APIs (localhost/Tailscale only)
-        let admin_router = Router::new()
+        // Admin tier: Essential APIs (not deprecated)
+        let essential_router = Router::new()
             // Health checks (public)
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
             .route("/live", get(live_handler))
-            // Simple chat endpoint (backwards compatibility with DaemonClient)
-            .route("/chat", post(chat_handler))
             // WebSocket endpoints (localhost/Tailscale only)
             .route("/ws", get(ws::ws_handler))
             .route("/ws/canvas/:id", get(canvas_ws_handler))
+            // OpenAI-compatible API
+            .route("/v1/chat/completions", post(openai_chat_completions_handler))
+            .route("/v1/models", get(openai_list_models_handler))
+            // Manta as MCP server – Streamable-HTTP endpoint
+            .route("/mcp", post(manta_as_mcp_server_handler))
+            // Admin redirect — management UI moved to CLI
+            .route("/admin", get(admin_redirect_handler));
+
+        // Deprecated REST API routes (use WebSocket protocol instead)
+        let deprecated_router = Router::new()
+            // Simple chat endpoint (backwards compatibility with DaemonClient)
+            .route("/chat", post(chat_handler))
             // Agent management
             .route("/api/v1/agents", get(list_agents_handler).post(create_agent_handler))
             .route(
@@ -1973,8 +2004,6 @@ impl Gateway {
             .route("/api/v1/mcp/servers/:id/tools/:tool/call", post(call_mcp_tool_handler))
             .route("/api/v1/mcp/servers/:id/resources", get(list_mcp_resources_handler))
             .route("/api/v1/mcp/servers/:id/resources/read", post(read_mcp_resource_handler))
-            // Manta as MCP server (9.9) – Streamable-HTTP endpoint
-            .route("/mcp", post(manta_as_mcp_server_handler))
             // ── Event Hooks API ────────────────────────────────────────────
             .route("/api/v1/hooks", get(list_hooks_handler))
             .route("/api/v1/hooks/:name", delete(unregister_hook_handler))
@@ -1999,13 +2028,8 @@ impl Gateway {
             .route("/api/v1/mentions/blocklist/:channel/:pattern", delete(remove_mention_blocklist_handler))
             // ── Audit Log API ──────────────────────────────────────────────
             .route("/api/v1/audit/log", get(list_audit_log_handler))
-            // ── SSE real-time event streaming ──────────────────────────────
-            .route("/api/events", get(sse_events_handler))
             // ── Web terminal API ───────────────────────────────────────────
             .route("/api/chat", post(web_terminal_chat_handler))
-            // ── OpenAI-compatible API ──────────────────────────────────────
-            .route("/v1/chat/completions", post(openai_chat_completions_handler))
-            .route("/v1/models", get(openai_list_models_handler))
             // ── Runtime settings CRUD ──────────────────────────────────────
             .route("/api/settings", get(list_settings_handler).post(set_setting_handler))
             .route("/api/settings/:key", get(get_setting_handler).delete(delete_setting_handler))
@@ -2029,12 +2053,12 @@ impl Gateway {
                 "/api/sessions/:id/threads/:thread_id/redo",
                 post(redo_turn_handler),
             )
-            // Control UI static files
-            .nest_service(
-                "/admin",
-                ServeDir::new("assets/control_ui").append_index_html_on_directories(true),
-            )
-            // Apply security middleware (order matters - applied in reverse)
+            .layer(from_fn(Self::deprecation_middleware));
+
+        // Merge essential and deprecated routers, then apply security middleware
+        // (order matters - applied in reverse)
+        let admin_router = essential_router
+            .merge(deprecated_router)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
@@ -3351,9 +3375,7 @@ impl Gateway {
         // Build web terminal router with state
         let app = Router::new()
             .route("/", get(web_terminal_html_handler))
-            .route("/ws", get(web_terminal_ws_handler))
-            .route("/api/events", get(web_terminal_events_handler))
-            .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
+            .route("/ws", get(ws::ws_handler))
             .route("/api/v1/conversations", get(list_conversations_handler))
             .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
             .route("/api/v1/conversations/last", get(get_last_conversation_handler))
@@ -3784,204 +3806,24 @@ impl Gateway {
 }
 
 /// HTML handler for web terminal
+///
+/// Serves the built assistant-ui app from `assets/chat/index.html` if available,
+/// otherwise falls back to the standalone `assets/chat.html`.
 async fn web_terminal_html_handler() -> Html<String> {
-    Html(include_str!("../../assets/web_terminal.html").replace("{VERSION}", crate::VERSION))
-}
-
-/// WebSocket upgrade handler for web terminal
-async fn web_terminal_ws_handler(
-    ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_web_terminal_websocket(socket, query, state))
-}
-
-/// Handle WebSocket connection for web terminal
-async fn handle_web_terminal_websocket(
-    mut socket: axum::extract::ws::WebSocket,
-    query: WsQuery,
-    state: Arc<GatewayState>,
-) {
-    use axum::extract::ws::Message;
-
-    // Generate session ID (mutable to allow /new command to change it)
-    let mut session_id = if query.new == Some(true) {
-        uuid::Uuid::new_v4().to_string()
-    } else if let Some(conv) = query.conversation {
-        conv
+    let built_path = std::path::Path::new("assets/chat/index.html");
+    let html = if built_path.exists() {
+        tokio::fs::read_to_string(built_path)
+            .await
+            .unwrap_or_else(|_| include_str!("../../assets/chat.html").to_string())
     } else {
-        uuid::Uuid::new_v4().to_string()
+        include_str!("../../assets/chat.html").to_string()
     };
+    Html(html.replace("{VERSION}", crate::VERSION))
+}
 
-    info!("Web terminal connected, session: {}", session_id);
-
-    // Send welcome message
-    let welcome = serde_json::json!({
-        "type": "system",
-        "content": format!("Connected to Manta Gateway.\nSession: {}\nType /new to start a fresh conversation.", session_id)
-    });
-    if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
-        error!("Failed to send welcome: {}", e);
-        return;
-    }
-
-    // Create event subscription for this session
-    let mut event_rx = state.event_tx.subscribe();
-
-    // Main message loop - use select! to handle both incoming messages and events
-    loop {
-        tokio::select! {
-            // Handle incoming WebSocket messages from client
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        // Handle /new command
-                        if text.trim() == "/new" {
-                            let new_id = uuid::Uuid::new_v4().to_string();
-                            // Update session_id for subsequent messages
-                            session_id = new_id.clone();
-                            let system_msg = serde_json::json!({
-                                "type": "system",
-                                "content": format!("🆕 Started new session: {}", new_id),
-                                "conversation_id": new_id
-                            });
-                            if socket.send(Message::Text(system_msg.to_string())).await.is_err() {
-                                break;
-                            }
-                            continue;
-                        }
-
-                        // Send typing indicator
-                        let typing = serde_json::json!({
-                            "type": "typing",
-                            "content": true
-                        });
-                        if socket.send(Message::Text(typing.to_string())).await.is_err() {
-                            break;
-                        }
-
-                        // Route message to AI agent via GatewayState
-                        let agents = state.agents.read().await;
-                        if let Some(agent_handle) = agents.get("default") {
-                            // Send ProcessMessage command to agent
-                            let cmd = AgentCommand::ProcessMessage {
-                                session_id: session_id.clone(),
-                                message: text.clone(),
-                                user_id: "web_user".to_string(),
-                                channel: "web".to_string(),
-                            };
-
-                            if let Err(e) = agent_handle.tx.send(cmd).await {
-                                error!("Failed to send message to agent: {}", e);
-                                let error_msg = serde_json::json!({
-                                    "type": "error",
-                                    "content": "Failed to process message"
-                                });
-                                let _ = socket.send(Message::Text(error_msg.to_string())).await;
-                            }
-                            // Don't wait for response here - it will come through events
-                        } else {
-                            // No default agent available
-                            let error_msg = serde_json::json!({
-                                "type": "error",
-                                "content": "No AI agent available"
-                            });
-                            if socket.send(Message::Text(error_msg.to_string())).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | Some(Ok(Message::Binary(_))) => {
-                        info!("Web terminal disconnected");
-                        break;
-                    }
-                    Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-
-            // Handle gateway events (tool calls, responses, etc.)
-            event = event_rx.recv() => {
-                match event {
-                    Ok(GatewayEvent::ToolCalling { session_id: event_session, tool_name, arguments, .. }) => {
-                        info!("WebSocket received ToolCalling event for session {}: {}", event_session, tool_name);
-                        if event_session == session_id {
-                            let tool_msg = serde_json::json!({
-                                "type": "tool_call",
-                                "tool": tool_name,
-                                "arguments": arguments
-                            });
-                            let msg_text = tool_msg.to_string();
-                            info!("Sending tool_call message to WebSocket: {}", msg_text);
-                            if socket.send(Message::Text(msg_text)).await.is_err() {
-                                break;
-                            }
-                        } else {
-                            tracing::debug!("ToolCalling event for different session: {} vs {}", event_session, session_id);
-                        }
-                    }
-                    Ok(GatewayEvent::ToolResult { session_id: event_session, tool_name, result, .. }) => {
-                        info!("WebSocket received ToolResult event for session {}: {}", event_session, tool_name);
-                        if event_session == session_id {
-                            let result_msg = serde_json::json!({
-                                "type": "tool_result",
-                                "tool": tool_name,
-                                "result": result
-                            });
-                            let msg_text = result_msg.to_string();
-                            info!("Sending tool_result message to WebSocket: {}", msg_text);
-                            if socket.send(Message::Text(msg_text)).await.is_err() {
-                                break;
-                            }
-                        } else {
-                            tracing::debug!("ToolResult event for different session: {} vs {}", event_session, session_id);
-                        }
-                    }
-                    Ok(GatewayEvent::AgentResponse { session_id: resp_session, content, .. }) => {
-                        if resp_session == session_id {
-                            // Turn off typing indicator
-                            let typing_off = serde_json::json!({
-                                "type": "typing",
-                                "content": false
-                            });
-                            let _ = socket.send(Message::Text(typing_off.to_string())).await;
-
-                            // Send AI response
-                            let response = serde_json::json!({
-                                "type": "message",
-                                "role": "assistant",
-                                "content": content
-                            });
-                            if socket.send(Message::Text(response.to_string())).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Ok(GatewayEvent::CronAnnounce { message, .. }) => {
-                        // Broadcast cron job output to all connected web terminal clients
-                        let cron_msg = serde_json::json!({
-                            "event_type": "cron_announce",
-                            "message": message
-                        });
-                        if socket.send(Message::Text(cron_msg.to_string())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(_) => {
-                        // Other events - ignore for now
-                    }
-                    Err(_) => {
-                        // Event channel closed or lagged
-                        continue;
-                    }
-                }
-            }
-        }
-    }
+/// Admin redirect handler — admin UI moved to CLI
+async fn admin_redirect_handler() -> Html<&'static str> {
+    Html(include_str!("../../assets/admin_redirect.html"))
 }
 
 /// Create default tool registry with all built-in tools
@@ -7246,190 +7088,6 @@ fn json_rpc_error_response(
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
 }
 
-// ── SSE event streaming ───────────────────────────────────────────────────────
-
-/// Convert an internal [`GatewayEvent`] to the wire-format [`SseEvent`] that is
-/// pushed to web clients on `GET /api/events`.
-///
-/// This is called inline by [`sse_events_handler`], which subscribes directly to
-/// the `event_tx` bus and converts each event to SSE wire format before streaming.
-fn gateway_event_to_sse(evt: GatewayEvent) -> SseEvent {
-    match evt {
-        GatewayEvent::MessageReceived {
-            channel,
-            user_id,
-            content,
-            timestamp,
-        } => SseEvent {
-            event_type: "message_received".into(),
-            data: serde_json::json!({
-                "channel": channel,
-                "user_id": user_id,
-                "content": content,
-                "timestamp": timestamp,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::AgentResponse {
-            session_id,
-            agent_id,
-            content,
-            channel,
-            conversation_id,
-            usage,
-        } => SseEvent {
-            event_type: "agent_response".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "content": content,
-                "channel": channel,
-                "conversation_id": conversation_id,
-                "usage": usage,
-            }),
-            session_id: Some(session_id),
-        },
-        GatewayEvent::AgentStatus { agent_id, status } => SseEvent {
-            event_type: "agent_status".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "status": status,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::ChannelStatus { channel, connected } => SseEvent {
-            event_type: "channel_status".into(),
-            data: serde_json::json!({
-                "channel": channel,
-                "connected": connected,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::ToolCalling {
-            session_id,
-            agent_id,
-            tool_name,
-            arguments,
-        } => SseEvent {
-            event_type: "tool_calling".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "tool": tool_name,
-                "arguments": arguments,
-            }),
-            session_id: Some(session_id),
-        },
-        GatewayEvent::ToolResult {
-            session_id,
-            agent_id,
-            tool_name,
-            result,
-        } => SseEvent {
-            event_type: "tool_result".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "tool": tool_name,
-                "result": result,
-            }),
-            session_id: Some(session_id),
-        },
-        GatewayEvent::ApprovalRequired {
-            approval_id,
-            tool_name,
-            requested_by,
-            risk_level,
-            message,
-        } => SseEvent {
-            event_type: "approval_required".into(),
-            data: serde_json::json!({
-                "approval_id": approval_id,
-                "tool_name": tool_name,
-                "requested_by": requested_by,
-                "risk_level": risk_level,
-                "message": message,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::RepairAction {
-            kind,
-            target_id,
-            description,
-            restart_count,
-        } => SseEvent {
-            event_type: "repair_action".into(),
-            data: serde_json::json!({
-                "kind": kind,
-                "target_id": target_id,
-                "description": description,
-                "restart_count": restart_count,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::Completed { session_id, agent_id, response } => SseEvent {
-            event_type: "completed".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "response": response,
-            }),
-            session_id: Some(session_id),
-        },
-        GatewayEvent::ProcessingError { session_id, agent_id, message } => SseEvent {
-            event_type: "processing_error".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "error": message,
-            }),
-            session_id: Some(session_id),
-        },
-        GatewayEvent::CronAnnounce { channel, to, message } => SseEvent {
-            event_type: "cron_announce".into(),
-            data: serde_json::json!({
-                "channel": channel,
-                "to": to,
-                "message": message,
-            }),
-            session_id: None,
-        },
-        GatewayEvent::Thinking { session_id, agent_id, content } => SseEvent {
-            event_type: "thinking".into(),
-            data: serde_json::json!({
-                "agent_id": agent_id,
-                "content": content,
-            }),
-            session_id: Some(session_id),
-        },
-    }
-}
-
-/// `GET /api/events`
-///
-/// Opens a Server-Sent Events stream. Each [`GatewayEvent`] on the internal bus
-/// is converted to wire format via [`gateway_event_to_sse`] and pushed to the
-/// client as `data: <json>\n\n` with the `event` field set to the event type.
-async fn sse_events_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> axum::response::sse::Sse<
-    impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-> {
-    use axum::response::sse::{Event, KeepAlive, Sse};
-    use tokio_stream::wrappers::BroadcastStream;
-
-    let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| async move {
-        match result {
-            Ok(evt) => {
-                let sse_evt = gateway_event_to_sse(evt);
-                let event_type = sse_evt.event_type.clone();
-                let data = serde_json::to_string(&sse_evt).unwrap_or_default();
-                Some(Ok(Event::default().data(data).event(event_type)))
-            }
-            // Receiver lagged — skip the dropped events rather than closing.
-            Err(_) => None,
-        }
-    });
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
 // ── OpenAI-compatible API ─────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -8786,6 +8444,7 @@ async fn redo_turn_handler(
 
 /// SSE events handler for web terminal
 /// Streams gateway events to the browser in the format expected by the web UI
+#[allow(dead_code)]
 async fn web_terminal_events_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> axum::response::sse::Sse<
@@ -8818,6 +8477,7 @@ async fn web_terminal_events_handler(
                         GatewayEvent::ChannelStatus { .. } => "channel_status",
                         GatewayEvent::ApprovalRequired { .. } => "approval_required",
                         GatewayEvent::RepairAction { .. } => "repair_action",
+                        GatewayEvent::DevicePairRequested { .. } => "device_pair_requested",
                         GatewayEvent::CronAnnounce { .. } => "cron_announce",
                     };
                     map.insert("event_type".to_string(), serde_json::json!(event_type));

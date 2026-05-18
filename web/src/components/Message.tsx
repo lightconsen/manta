@@ -126,7 +126,7 @@ export function Message({ message }: MessageProps) {
   return (
     <div className={`message-row ${role}`}>
       <div className="message-avatar">{avatarMap[role]}</div>
-      <div style={{ position: 'relative', maxWidth: '70%' }}>
+      <div style={{ position: 'relative', maxWidth: '85%' }}>
         <div
           className="message-bubble"
           dangerouslySetInnerHTML={{ __html: html }}

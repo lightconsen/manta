@@ -4,30 +4,6 @@ use crate::daemon::{DaemonConfig, DaemonManager};
 use crate::error::Result;
 use std::path::PathBuf;
 
-/// Show configuration in specified format
-pub async fn show_config(format: &crate::cli::ConfigFormat) -> Result<()> {
-    use crate::config::Config;
-
-    let config = Config::load()?;
-
-    match format {
-        crate::cli::ConfigFormat::Toml => {
-            println!("# Manta Configuration");
-            println!("# Config file: {:?}", crate::dirs::manta_dir().join("manta.toml"));
-            println!();
-            println!("{:#?}", config);
-        }
-        crate::cli::ConfigFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&config).unwrap_or_default());
-        }
-        crate::cli::ConfigFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&config).unwrap_or_default());
-        }
-    }
-
-    Ok(())
-}
-
 /// Run health check
 pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
     println!("🏥 Health Check");

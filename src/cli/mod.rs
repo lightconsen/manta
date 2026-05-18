@@ -11,29 +11,41 @@ use std::path::PathBuf;
 // Subcommand modules
 mod admin;
 mod agent;
+mod approval;
+mod audit;
 mod channel;
 mod chat;
+mod config_cmd;
 mod cron;
 mod daemon;
+mod device;
 mod entity;
 mod export;
 mod mcp;
 mod plugin;
+mod provider;
 mod security;
 mod session;
+mod setup;
 mod skill;
 mod team;
 
 pub use admin::AdminCommands;
 pub use agent::AgentCommands;
+pub use approval::ApprovalCommands;
+pub use audit::AuditCommands;
 pub use channel::ChannelCommands;
+pub use config_cmd::ConfigCommands;
 pub use cron::CronCommands;
+pub use device::DeviceCommands;
 pub use entity::EntityCommands;
 pub use export::ExportCommands;
 pub use mcp::McpCommands;
 pub use plugin::PluginCommands;
+pub use provider::ProviderCommands;
 pub use security::{PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
+pub use setup::SetupCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 
@@ -70,11 +82,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ExportCommands,
     },
-    /// Show configuration
+    /// Configuration management (get, set, validate)
     Config {
-        /// Output format
-        #[arg(short, long, value_enum, default_value = "toml")]
-        format: ConfigFormat,
+        /// Config subcommand
+        #[command(subcommand)]
+        command: ConfigCommands,
     },
     /// Health check
     Health,
@@ -192,6 +204,36 @@ pub enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
+    /// Initialize Manta with an interactive setup wizard
+    Setup {
+        /// Setup subcommand
+        #[command(subcommand)]
+        command: SetupCommands,
+    },
+    /// Device pairing management
+    Device {
+        /// Device subcommand
+        #[command(subcommand)]
+        command: DeviceCommands,
+    },
+    /// Tool approval management (human-in-the-loop)
+    Approval {
+        /// Approval subcommand
+        #[command(subcommand)]
+        command: ApprovalCommands,
+    },
+    /// Audit log and security audit
+    Audit {
+        /// Audit subcommand
+        #[command(subcommand)]
+        command: AuditCommands,
+    },
+    /// Provider management (list, enable, disable, switch)
+    Provider {
+        /// Provider subcommand
+        #[command(subcommand)]
+        command: ProviderCommands,
+    },
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -284,7 +326,7 @@ impl Cli {
         match &self.command {
             Commands::Entity { command } => entity::run_entity_command(command).await,
             Commands::Export { command } => export::run_export_command(command).await,
-            Commands::Config { format } => daemon::show_config(format).await,
+            Commands::Config { command } => config_cmd::run_config_command(command).await,
             Commands::Health => daemon::run_health_check(config).await,
             Commands::Chat { conversation, message } => {
                 chat::run_chat(config, conversation.clone(), message.clone()).await
@@ -312,6 +354,11 @@ impl Cli {
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
+            Commands::Setup { command } => setup::run_setup_command(command).await,
+            Commands::Device { command } => device::run_device_command(command).await,
+            Commands::Approval { command } => approval::run_approval_command(command).await,
+            Commands::Audit { command } => audit::run_audit_command(command).await,
+            Commands::Provider { command } => provider::run_provider_command(command).await,
         }
     }
 }
@@ -328,25 +375,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_command_defaults_to_toml() {
-        let cli = Cli::try_parse_from(["manta", "config"]).unwrap();
-        match cli.command {
-            Commands::Config { format } => {
-                assert!(matches!(format, ConfigFormat::Toml));
-            }
-            _ => panic!("expected Config command"),
-        }
+    fn parse_config_show_command() {
+        let cli = Cli::try_parse_from(["manta", "config", "show"]).unwrap();
+        assert!(matches!(cli.command, Commands::Config { .. }));
     }
 
     #[test]
-    fn parse_config_command_with_json_format() {
-        let cli = Cli::try_parse_from(["manta", "config", "--format", "json"]).unwrap();
-        match cli.command {
-            Commands::Config { format } => {
-                assert!(matches!(format, ConfigFormat::Json));
-            }
-            _ => panic!("expected Config command"),
-        }
+    fn parse_config_get_command() {
+        let cli = Cli::try_parse_from(["manta", "config", "get", "gateway.host"]).unwrap();
+        assert!(matches!(cli.command, Commands::Config { .. }));
+    }
+
+    #[test]
+    fn parse_config_set_command() {
+        let cli = Cli::try_parse_from(["manta", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
+        assert!(matches!(cli.command, Commands::Config { .. }));
     }
 
     // NOTE: `start` command has a clap conflict: `-h` is used by both `host`

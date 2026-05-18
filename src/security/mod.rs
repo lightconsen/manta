@@ -37,6 +37,9 @@ pub struct User {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Whether the user is an admin
     pub is_admin: bool,
+    /// Granted scopes (e.g. ["chat", "read", "admin"])
+    #[serde(default)]
+    pub scopes: Vec<String>,
     /// Additional metadata
     pub metadata: HashMap<String, String>,
 }
@@ -49,6 +52,7 @@ impl User {
             name: name.into(),
             created_at: chrono::Utc::now(),
             is_admin: false,
+            scopes: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -84,6 +88,8 @@ pub struct Session {
     pub expires_at: chrono::DateTime<chrono::Utc>,
     /// Device fingerprint
     pub device_fingerprint: Option<String>,
+    /// Granted scopes for this session
+    pub scopes: Vec<String>,
 }
 
 impl AuthManager {
@@ -124,8 +130,13 @@ impl AuthManager {
         users.contains_key(user_id)
     }
 
-    /// Create a new session
-    pub async fn create_session(&self, user_id: UserId, ttl_hours: i64) -> crate::Result<Session> {
+    /// Create a new session with optional scopes
+    pub async fn create_session(
+        &self,
+        user_id: UserId,
+        ttl_hours: i64,
+        scopes: Option<Vec<String>>,
+    ) -> crate::Result<Session> {
         // Verify user exists
         if !self.user_exists(&user_id).await {
             return Err(crate::error::MantaError::Validation(format!(
@@ -133,6 +144,15 @@ impl AuthManager {
                 user_id
             )));
         }
+
+        // Use user's scopes if none provided
+        let resolved_scopes = match scopes {
+            Some(s) => s,
+            None => {
+                let users = self.users.read().await;
+                users.get(&user_id).map(|u| u.scopes.clone()).unwrap_or_default()
+            }
+        };
 
         let token = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
@@ -142,13 +162,30 @@ impl AuthManager {
             created_at: now,
             expires_at: now + chrono::Duration::hours(ttl_hours),
             device_fingerprint: None,
+            scopes: resolved_scopes,
         };
 
         let mut sessions = self.sessions.write().await;
         sessions.insert(token, session.clone());
 
-        debug!("Created session for user: {}", user_id);
+        debug!("Created session for user: {} with scopes {:?}", user_id, session.scopes);
         Ok(session)
+    }
+
+    /// Validate that a session has all required scopes
+    pub async fn validate_scopes(&self, token: &str, required: &[&str]) -> bool {
+        let sessions = self.sessions.read().await;
+        let Some(session) = sessions.get(token) else {
+            return false;
+        };
+        if session.expires_at <= chrono::Utc::now() {
+            return false;
+        }
+        // Admin scope bypasses all checks
+        if session.scopes.contains(&"admin".to_string()) {
+            return true;
+        }
+        required.iter().all(|req| session.scopes.contains(&req.to_string()))
     }
 
     /// Validate a session token
@@ -770,7 +807,7 @@ mod tests {
         auth.register_user(user.clone()).await.unwrap();
         assert!(auth.user_exists(&user.id).await);
 
-        let session = auth.create_session(user.id.clone(), 24).await.unwrap();
+        let session = auth.create_session(user.id.clone(), 24, None).await.unwrap();
         assert!(auth.validate_session(&session.token).await.is_some());
     }
 }
@@ -1138,6 +1175,9 @@ pub mod persistent_audit;
 
 /// DM pairing and access control
 pub mod pairing;
+
+/// Device pairing for WebSocket-native protocol
+pub mod device_pairing;
 
 /// Mention gating for controlling agent responses to mentions
 pub mod mention_gate;
