@@ -48,6 +48,29 @@ pub enum SecurityCommands {
         #[arg(short, long)]
         user_id: String,
     },
+    /// Manage command gate permission levels
+    Gate {
+        #[command(subcommand)]
+        command: GateCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GateCommands {
+    /// Set a user's permission level
+    Set {
+        /// User ID
+        user_id: String,
+        /// Permission level: chat, user, admin
+        level: String,
+    },
+    /// List all configured gate levels
+    List,
+    /// Clear a user's custom gate level
+    Clear {
+        /// User ID
+        user_id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -457,5 +480,75 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
             }
             Ok(())
         }
+
+        SecurityCommands::Gate { command } => match command {
+            GateCommands::Set { user_id, level } => {
+                let url = format!("{}/api/v1/gate/levels", DAEMON_URL);
+                let body = json!({
+                    "user_id": user_id,
+                    "level": level,
+                });
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            println!("✅ Set gate level for {} to {}", user_id, level);
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            eprintln!("Failed to set gate level: {}", text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+            GateCommands::List => {
+                let url = format!("{}/api/v1/gate/levels", DAEMON_URL);
+                match client.get(&url).send().await {
+                    Ok(resp) => {
+                        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                        if let Some(levels) = body.get("levels").and_then(|l| l.as_object()) {
+                            if levels.is_empty() {
+                                println!("No custom gate levels configured.");
+                            } else {
+                                println!("{:<20} {}", "User ID", "Level");
+                                println!("{}", "-".repeat(40));
+                                for (user, level) in levels {
+                                    println!("{:<20} {}", user, level.as_str().unwrap_or("?"));
+                                }
+                            }
+                        }
+                        if let Some(default_level) = body.get("default").and_then(|d| d.as_str()) {
+                            println!("\nDefault level: {}", default_level);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+            GateCommands::Clear { user_id } => {
+                let url = format!("{}/api/v1/gate/levels/{}", DAEMON_URL, user_id);
+                match client.delete(&url).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            println!("✅ Cleared gate level for {}", user_id);
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            eprintln!("Failed to clear gate level: {}", text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(MantaError::Internal(e.to_string()));
+                    }
+                }
+                Ok(())
+            }
+        },
     }
 }

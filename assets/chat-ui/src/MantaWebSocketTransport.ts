@@ -30,10 +30,18 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private sessionId: string;
   private eventQueue: WsEvent[] = [];
   private eventWaiters: Array<(evt: WsEvent | null) => void> = [];
+  private reconnectDelay = 800;
+  private readonly reconnectCap = 15000;
+  private readonly reconnectMultiplier = 1.7;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private deviceId: string;
+  private subscribedSessions: string[] = [];
 
   constructor() {
     this.sessionId = localStorage.getItem("manta_session") || this.generateId();
     localStorage.setItem("manta_session", this.sessionId);
+    this.deviceId = localStorage.getItem("manta_device_id") || this.generateId();
+    localStorage.setItem("manta_device_id", this.deviceId);
     this.connect();
   }
 
@@ -42,14 +50,21 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   }
 
   private connect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws`;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
+      this.reconnectDelay = 800;
       this.sendRequest("connect", {
         protocol_version: 1,
-        auth: { token: "" },
+        client: { id: "web", version: "1.0.0" },
+        device: { id: this.deviceId },
         scopes: ["chat", "read"],
       });
     };
@@ -59,9 +74,22 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
         const msg = JSON.parse(event.data);
         if (msg.type === "res" && msg.ok && msg.payload?.protocol_version) {
           this.connected = true;
+          // Re-subscribe to previous sessions after reconnect
+          if (this.subscribedSessions.length > 0) {
+            this.sendRequest("sessions.subscribe", {
+              session_ids: this.subscribedSessions,
+            });
+          }
         }
         if (msg.type === "event") {
           const evt = msg as WsEvent;
+          // Track auto-created sessions
+          if (evt.event === "session.created") {
+            const sid = evt.payload?.session_id as string;
+            if (sid && !this.subscribedSessions.includes(sid)) {
+              this.subscribedSessions.push(sid);
+            }
+          }
           if (this.eventWaiters.length > 0) {
             const waiter = this.eventWaiters.shift()!;
             waiter(evt);
@@ -76,8 +104,25 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
     this.ws.onclose = () => {
       this.connected = false;
-      setTimeout(() => this.connect(), 3000);
+      this.scheduleReconnect();
     };
+
+    this.ws.onerror = () => {
+      this.connected = false;
+      this.scheduleReconnect();
+    };
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.reconnectDelay);
+    this.reconnectDelay = Math.min(
+      this.reconnectDelay * this.reconnectMultiplier,
+      this.reconnectCap
+    );
   }
 
   private sendRequest(method: string, params?: Record<string, unknown>): string {
@@ -101,7 +146,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
     this.sendRequest("chat.send", {
       session_id: this.sessionId,
-      content: text,
+      message: text,
     });
 
     let buffer = "";

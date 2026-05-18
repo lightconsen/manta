@@ -454,6 +454,16 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 }),
             ))
         }
+        GatewayEvent::SessionCreated { session_id, agent_id, user_id } => {
+            Some((
+                "session.created".to_string(),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "user_id": user_id,
+                }),
+            ))
+        }
     }
 }
 

@@ -574,13 +574,13 @@ async fn handle_chat_send(
     };
 
     // Derive or use session ID
-    let session_id = if let Some(sid) = params.session_id {
-        sid
+    let (session_id, is_new_session) = if let Some(sid) = params.session_id {
+        (sid, false)
     } else {
         let cg = conn.read().await;
         let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws");
         let user = cg.user_id.as_ref().map(|u| u.0.as_str()).unwrap_or("anonymous");
-        format!("{}:{}", channel, user)
+        (format!("{}:{}", channel, user), true)
     };
 
     // Build IncomingMessage
@@ -605,6 +605,16 @@ async fn handle_chat_send(
             let mut cg = conn.write().await;
             if !cg.subscriptions.contains(&session_id) {
                 cg.subscriptions.push(session_id.clone());
+            }
+            drop(cg);
+
+            // Notify clients if this is a newly derived session
+            if is_new_session {
+                let _ = state.event_tx.send(crate::gateway::GatewayEvent::SessionCreated {
+                    session_id: session_id.clone(),
+                    agent_id: routed.agent_id.clone(),
+                    user_id: user_id.clone(),
+                });
             }
 
             WsResponse::ok(&req.id, serde_json::json!({

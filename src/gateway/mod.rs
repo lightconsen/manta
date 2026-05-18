@@ -7,12 +7,17 @@
 //! - WebSocket/HTTP API for channel adapters
 //! - Authentication and security policies
 
+// Transitional: management REST handlers are no longer routed (protocol.md v1.0
+// Phase 3) but kept in source for reference during the migration window.
+// They will be fully removed in Phase 5 cleanup.
+#![allow(dead_code)]
+
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     middleware::{from_fn, from_fn_with_state, Next},
     response::{Html, IntoResponse, Json},
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -904,6 +909,12 @@ pub enum GatewayEvent {
         device_id: String,
         code: String,
         display_name: Option<String>,
+    },
+    /// New session auto-created during chat.send
+    SessionCreated {
+        session_id: String,
+        agent_id: String,
+        user_id: String,
     },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
@@ -1892,24 +1903,11 @@ impl Gateway {
             // Admin redirect — management UI moved to CLI
             .route("/admin", get(admin_redirect_handler));
 
-        // Deprecated REST API routes (use WebSocket protocol instead)
+        // Deprecated REST API routes (use WebSocket protocol instead).
+        // Management endpoints removed per protocol.md v1.0 — management is CLI-only.
         let deprecated_router = Router::new()
             // Simple chat endpoint (backwards compatibility with DaemonClient)
             .route("/chat", post(chat_handler))
-            // Agent management
-            .route("/api/v1/agents", get(list_agents_handler).post(create_agent_handler))
-            .route(
-                "/api/v1/agents/:id",
-                get(get_agent_handler).delete(delete_agent_handler),
-            )
-            // Spawn discovered agent from registry
-            .route("/api/v1/agents/:id/spawn", post(spawn_discovered_agent_handler))
-            // Spawn all discovered agents
-            .route("/api/v1/agents/spawn-all", post(spawn_all_discovered_agents_handler))
-            // List discovered agents in registry
-            .route("/api/v1/agents/discovered", get(list_discovered_agents_handler))
-            // Channel management
-            .route("/api/v1/channels", get(list_channels_handler))
             // Session messaging with provider override
             .route("/api/v1/sessions/:id/messages", post(send_message_handler))
             // Conversation history
@@ -1923,136 +1921,6 @@ impl Gateway {
             // Canvas/A2UI
             .route("/api/v1/canvas", post(create_canvas_handler))
             .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
-            // Provider management (runtime switching)
-            .route("/api/v1/providers", get(list_providers_handler))
-            .route("/api/v1/providers/switch", post(switch_model_handler))
-            .route("/api/v1/providers/:id/health", get(get_provider_health_handler))
-            .route("/api/v1/providers/:id/enable", post(enable_provider_handler))
-            .route("/api/v1/providers/:id/disable", post(disable_provider_handler))
-            .route("/api/v1/providers/:id/check", post(check_provider_handler))
-            .route("/api/v1/providers/:id/auth-profile", get(get_auth_profile_handler))
-            .route("/api/v1/providers/:id/auth-profile/rotate", post(rotate_auth_profile_handler))
-            .route("/api/v1/auth-profiles", get(list_auth_profiles_handler))
-            .route("/api/v1/providers/fallback/:alias", get(get_fallback_chain_handler).post(set_fallback_chain_handler))
-            // Model aliases
-            .route("/api/v1/models", get(list_models_handler))
-            .route("/api/v1/models/default", get(get_default_model_handler))
-            // Vector Memory API
-            .route("/api/v1/memory/search", post(memory_search_handler))
-            .route("/api/v1/memory/add", post(memory_add_handler))
-            .route("/api/v1/memory/collections", get(list_memory_collections_handler))
-            // Plugin management API
-            .route("/api/v1/plugins", get(list_plugins_handler))
-            .route("/api/v1/plugins/reload", post(reload_plugins_handler))
-            .route("/api/v1/plugins/:id/reload", post(reload_plugin_handler))
-            .route("/api/v1/plugins/:id/enable", post(enable_plugin_handler))
-            .route("/api/v1/plugins/:id/disable", post(disable_plugin_handler))
-            .route("/api/v1/plugins/:id/unload", delete(unload_plugin_handler))
-            // Skills API
-            .route("/api/v1/skills", get(list_skills_handler))
-            .route("/api/v1/skills/:id", get(get_skill_handler))
-            .route("/api/v1/skills/:id/enable", post(enable_skill_handler))
-            .route("/api/v1/skills/:id/disable", post(disable_skill_handler))
-            .route("/api/v1/skills/:id/run", post(run_skill_handler))
-            // Cron job management API
-            .route("/api/v1/cron", get(list_cron_jobs_handler).post(add_cron_job_handler))
-            .route("/api/v1/cron/:id", delete(remove_cron_job_handler))
-            .route("/api/v1/cron/:id/enable", post(enable_cron_job_handler))
-            .route("/api/v1/cron/:id/disable", post(disable_cron_job_handler))
-            .route("/api/v1/cron/:id/run", post(trigger_cron_job_handler))
-            .route("/api/v1/cron/:id/logs", get(cron_job_logs_handler))
-            // Entity management API
-            .route("/api/v1/entities", get(list_entities_handler).post(create_entity_handler))
-            .route("/api/v1/entities/search", post(search_entities_handler))
-            .route("/api/v1/entities/export", get(export_entities_handler))
-            .route("/api/v1/entities/import", post(import_entities_handler))
-            .route(
-                "/api/v1/entities/:id",
-                get(get_entity_handler).put(update_entity_handler).delete(delete_entity_handler),
-            )
-            // Team management API
-            .route("/api/v1/teams", get(list_teams_handler).post(create_team_handler))
-            .route("/api/v1/teams/:id", get(get_team_handler).delete(delete_team_handler))
-            .route(
-                "/api/v1/teams/:id/members",
-                get(list_team_members_handler).post(add_team_member_handler),
-            )
-            .route(
-                "/api/v1/teams/:id/members/:agent",
-                delete(remove_team_member_handler),
-            )
-            .route("/api/v1/teams/:id/tasks", post(assign_team_task_handler))
-            // ACP (Agent Control Plane) API
-            .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
-            .route("/api/v1/acp/sessions", post(spawn_subagent_handler))
-            .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
-            .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
-            // ACP Runtime Controls (OpenClaw-aligned)
-            .route("/api/v1/acp/sessions/:id/status", get(acp_session_status_handler))
-            .route("/api/v1/acp/sessions/:id/pause", post(acp_session_pause_handler))
-            .route("/api/v1/acp/sessions/:id/resume", post(acp_session_resume_handler))
-            .route("/api/v1/acp/sessions/:id/step", post(acp_session_step_handler))
-            .route("/api/v1/acp/sessions/:id/cancel", post(acp_session_cancel_handler))
-            .route("/api/v1/acp/sessions/:id/tree", get(acp_session_tree_handler))
-            .route("/api/v1/acp/execute/session", post(acp_execute_session_handler))
-            .route("/api/v1/acp/execute/run", post(acp_execute_run_handler))
-            // MCP API (9.5)
-            .route("/api/v1/mcp/servers", get(list_mcp_servers_handler))
-            .route("/api/v1/mcp/servers/:id/connect", post(connect_mcp_server_handler))
-            .route("/api/v1/mcp/servers/:id", delete(disconnect_mcp_server_handler))
-            .route("/api/v1/mcp/servers/:id/tools", get(list_mcp_tools_handler))
-            .route("/api/v1/mcp/servers/:id/tools/:tool/call", post(call_mcp_tool_handler))
-            .route("/api/v1/mcp/servers/:id/resources", get(list_mcp_resources_handler))
-            .route("/api/v1/mcp/servers/:id/resources/read", post(read_mcp_resource_handler))
-            // ── Event Hooks API ────────────────────────────────────────────
-            .route("/api/v1/hooks", get(list_hooks_handler))
-            .route("/api/v1/hooks/:name", delete(unregister_hook_handler))
-            // ── Config Runtime Modification API ───────────────────────────
-            .route("/api/v1/config", get(get_config_handler).put(put_config_handler))
-            .route("/api/v1/config/validate", post(validate_config_handler))
-            // ── Pairing / DM Access Control API ────────────────────────────
-            .route("/api/v1/pairing/pending", get(list_pairing_pending_handler))
-            .route("/api/v1/pairing/authorized", get(list_pairing_authorized_handler))
-            .route("/api/v1/pairing/approve", post(approve_pairing_handler))
-            .route("/api/v1/pairing/reject", post(reject_pairing_handler))
-            .route("/api/v1/pairing/revoke", post(revoke_pairing_handler))
-            .route("/api/v1/pairing/allowlist", post(add_allowlist_handler))
-            // ── Command Gate API ───────────────────────────────────────────
-            .route("/api/v1/gate/levels", get(list_gate_levels_handler).post(set_gate_level_handler))
-            .route("/api/v1/gate/levels/:user_id", delete(clear_gate_level_handler))
-            // ── Mention Gate API ───────────────────────────────────────────
-            .route("/api/v1/mentions/policy", get(get_mention_policy_handler).post(set_mention_policy_handler))
-            .route("/api/v1/mentions/allowlist", get(list_mention_allowlist_handler).post(add_mention_allowlist_handler))
-            .route("/api/v1/mentions/allowlist/:channel/:pattern", delete(remove_mention_allowlist_handler))
-            .route("/api/v1/mentions/blocklist", get(list_mention_blocklist_handler).post(add_mention_blocklist_handler))
-            .route("/api/v1/mentions/blocklist/:channel/:pattern", delete(remove_mention_blocklist_handler))
-            // ── Audit Log API ──────────────────────────────────────────────
-            .route("/api/v1/audit/log", get(list_audit_log_handler))
-            // ── Web terminal API ───────────────────────────────────────────
-            .route("/api/chat", post(web_terminal_chat_handler))
-            // ── Runtime settings CRUD ──────────────────────────────────────
-            .route("/api/settings", get(list_settings_handler).post(set_setting_handler))
-            .route("/api/settings/:key", get(get_setting_handler).delete(delete_setting_handler))
-            // ── Tool approval management (human-in-the-loop) ──────────────
-            .route("/api/v1/approvals", get(list_approvals_handler))
-            .route("/api/v1/approvals/:id", get(get_approval_handler))
-            .route("/api/v1/approvals/:id/approve", post(approve_tool_handler))
-            .route("/api/v1/approvals/:id/deny", post(deny_tool_handler))
-            // ── Session / Thread / Turn introspection ──────────────────────
-            .route("/api/sessions", get(list_sessions_handler))
-            .route("/api/sessions/:id/threads", get(list_threads_handler))
-            .route(
-                "/api/sessions/:id/threads/:thread_id/turns",
-                get(list_turns_handler),
-            )
-            .route(
-                "/api/sessions/:id/threads/:thread_id/undo",
-                post(undo_turn_handler),
-            )
-            .route(
-                "/api/sessions/:id/threads/:thread_id/redo",
-                post(redo_turn_handler),
-            )
             .layer(from_fn(Self::deprecation_middleware));
 
         // Merge essential and deprecated routers, then apply security middleware
@@ -8478,6 +8346,7 @@ async fn web_terminal_events_handler(
                         GatewayEvent::ApprovalRequired { .. } => "approval_required",
                         GatewayEvent::RepairAction { .. } => "repair_action",
                         GatewayEvent::DevicePairRequested { .. } => "device_pair_requested",
+                        GatewayEvent::SessionCreated { .. } => "session_created",
                         GatewayEvent::CronAnnounce { .. } => "cron_announce",
                     };
                     map.insert("event_type".to_string(), serde_json::json!(event_type));

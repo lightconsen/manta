@@ -56,6 +56,17 @@ pub enum SkillCommands {
         /// Skill name (if not provided, sets up all eligible skills)
         name: Option<String>,
     },
+    /// Run a skill with the given input
+    Run {
+        /// Skill name/ID
+        id: String,
+        /// Input message for the skill
+        #[arg(short, long)]
+        input: String,
+        /// Additional context (JSON)
+        #[arg(short, long)]
+        context: Option<String>,
+    },
     /// Create a new skill template
     Init {
         /// Skill name
@@ -175,6 +186,34 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
         }
         SkillCommands::Init { name, path, template } => {
             init_skill_template(name, path.as_deref(), template).await?;
+        }
+        SkillCommands::Run { id, input, context } => {
+            let url = format!("{}/api/v1/skills/{}/run", DAEMON_URL, id);
+            let body = serde_json::json!({
+                "input": input,
+                "context": context.as_ref().and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok()),
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Skill '{}' executed successfully", id);
+                        if let Some(result) = body.get("result").and_then(|r| r.as_str()) {
+                            println!("\n{}", result);
+                        }
+                        if let Some(usage) = body.get("usage") {
+                            println!("\nUsage: {}", usage);
+                        }
+                    } else {
+                        eprintln!("Failed to run skill ({}): {}", status, body);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
         }
     }
     Ok(())

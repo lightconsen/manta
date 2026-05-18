@@ -27,6 +27,7 @@ mod provider;
 mod security;
 mod session;
 mod setup;
+mod memory;
 mod skill;
 mod team;
 
@@ -41,9 +42,10 @@ pub use device::DeviceCommands;
 pub use entity::EntityCommands;
 pub use export::ExportCommands;
 pub use mcp::McpCommands;
+pub use memory::MemoryCommands;
 pub use plugin::PluginCommands;
 pub use provider::ProviderCommands;
-pub use security::{PairingCommands, SecurityCommands};
+pub use security::{GateCommands, PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
 pub use setup::SetupCommands;
 pub use skill::SkillCommands;
@@ -191,6 +193,12 @@ pub enum Commands {
         /// MCP subcommand
         #[command(subcommand)]
         command: McpCommands,
+    },
+    /// Vector memory management (search, add)
+    Memory {
+        /// Memory subcommand
+        #[command(subcommand)]
+        command: MemoryCommands,
     },
     /// Security audit, DM pairing, and access control
     Security {
@@ -352,6 +360,7 @@ impl Cli {
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
+            Commands::Memory { command } => memory::run_memory_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
             Commands::Setup { command } => setup::run_setup_command(command).await,
