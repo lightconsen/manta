@@ -1,11 +1,13 @@
 export function TypingIndicator() {
   return (
-    <div className="message assistant">
-      <div className="avatar">🤖</div>
-      <div className="content typing">
-        <span></span>
-        <span></span>
-        <span></span>
+    <div className="typing-row">
+      <div className="typing-avatar">AI</div>
+      <div className="typing-bubble">
+        <div className="typing-dots">
+          <span />
+          <span />
+          <span />
+        </div>
       </div>
     </div>
   );
