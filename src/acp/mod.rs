@@ -1132,12 +1132,17 @@ impl AcpControlPlane {
             ThreadBinding::Parent => format!("thread-{}", parent_id),
             ThreadBinding::Thread(id) => id.clone(),
             ThreadBinding::Auto => {
-                // Check if parent has a thread
-                let subagents = self.subagents.read().await;
-                if let Some(parent) = subagents.get(parent_id) {
-                    parent.thread_id.clone()
+                // Auto mode: reuse parent thread if it already exists in the active
+                // thread registry; otherwise create a fresh thread.
+                let threads = self.threads.read().await;
+                let candidate = format!("thread-{}", parent_id);
+                if threads.contains_key(&candidate) || threads.contains_key(parent_id) {
+                    threads
+                        .get(parent_id)
+                        .map(|t| t.id.clone())
+                        .unwrap_or_else(|| candidate.clone())
                 } else {
-                    format!("thread-{}", parent_id)
+                    format!("thread-{}", Uuid::new_v4())
                 }
             }
         }
@@ -1525,10 +1530,33 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_thread_id_auto() {
         let acp = AcpControlPlane::new();
-        let id = acp
+
+        // Auto without existing thread -> creates fresh UUID thread
+        let id1 = acp
             .resolve_thread_id(&ThreadBinding::Auto, "parent-1")
             .await;
-        assert!(id.contains("parent-1"));
+        assert!(id1.starts_with("thread-"));
+        assert_ne!(id1, "thread-parent-1");
+
+        // Register a thread for parent-1
+        {
+            let mut threads = acp.threads.write().await;
+            threads.insert(
+                "thread-parent-1".to_string(),
+                ThreadContext {
+                    id: "thread-parent-1".to_string(),
+                    active_subagent: None,
+                    queue: vec![],
+                    created_at: chrono::Utc::now(),
+                },
+            );
+        }
+
+        // Auto with existing thread -> reuses it
+        let id2 = acp
+            .resolve_thread_id(&ThreadBinding::Auto, "parent-1")
+            .await;
+        assert_eq!(id2, "thread-parent-1");
     }
 
     #[tokio::test]

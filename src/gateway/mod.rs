@@ -5001,11 +5001,10 @@ async fn web_terminal_chat_handler(
     Json(body): Json<WebTerminalChatRequest>,
 ) -> impl IntoResponse {
     let message_id = uuid::Uuid::new_v4().to_string();
+    let user_id = body.user_id.unwrap_or_else(|| "web_user".to_string());
     let conversation_id = body
         .conversation_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let user_id = body.user_id.unwrap_or_else(|| "web_user".to_string());
+        .unwrap_or_else(|| AgentRouter::derive_session_key("web", &user_id));
 
     // Access control check
     if let Err(reason) = state

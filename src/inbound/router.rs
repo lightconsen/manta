@@ -261,11 +261,19 @@ impl AgentRouter {
         Ok(())
     }
 
+    /// Derive a stable session key from channel and user_id.
+    ///
+    /// OpenClaw-style normalization: `{channel}:{user_id}`
+    pub fn derive_session_key(channel: &str, user_id: &str) -> String {
+        format!("{}:{}", channel, user_id)
+    }
+
     /// Route an incoming message to an agent.
     ///
     /// Resolution order:
     /// 1. Explicit `@agent_name` mention in message content
-    /// 2. Existing session binding
+    /// 2. Existing session binding (by conversation_id)
+    /// 2b. Existing session binding (by derived `{channel}:{user_id}` key)
     /// 3. Channel-specific default
     /// 4. Workspace-specific default
     /// 5. Global default agent
@@ -287,7 +295,7 @@ impl AgentRouter {
             };
         }
 
-        // 2. Check existing session binding
+        // 2. Check existing session binding (by conversation_id)
         {
             let bindings = self.session_bindings.read().await;
             if let Some((agent_id, workspace_id)) = bindings.get(&session_id) {
@@ -297,6 +305,31 @@ impl AgentRouter {
                     workspace_id: workspace_id.clone(),
                     created_binding: false,
                 };
+            }
+        }
+
+        // 2b. Check existing session binding by derived `{channel}:{user_id}` key
+        let channel_name = match &message.provenance {
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.as_str()),
+            _ => None,
+        };
+        let user_id = message.user_id.0.as_str();
+
+        if let Some(ch) = channel_name {
+            let derived_key = Self::derive_session_key(ch, user_id);
+            if derived_key != session_id {
+                let bindings = self.session_bindings.read().await;
+                if let Some((agent_id, workspace_id)) = bindings.get(&derived_key) {
+                    debug!(
+                        "Session {} resolved via derived key {} to agent {}",
+                        session_id, derived_key, agent_id
+                    );
+                    return RouteResult {
+                        agent_id: agent_id.clone(),
+                        workspace_id: workspace_id.clone(),
+                        created_binding: false,
+                    };
+                }
             }
         }
 

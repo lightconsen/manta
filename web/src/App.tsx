@@ -75,11 +75,8 @@ function App() {
     }
   }, []);
 
-  // Initialize SSE connection with stored conversation ID
+  // Initialize SSE connection
   useEffect(() => {
-    // Try to get stored conversation ID from localStorage
-    const storedConversationId = localStorage.getItem('manta_conversation_id');
-
     sseManagerRef.current = new SSEManager({
       onMessage: handleMessage,
       onStateChange: setConnectionState,
@@ -89,25 +86,17 @@ function App() {
       onConversationId: (id) => {
         setConversationId(id);
         sseManagerRef.current?.setConversationId(id);
-        localStorage.setItem('manta_conversation_id', id);
         fetchSessions();
       },
     });
 
-    // Connect with stored conversation ID if available
-    sseManagerRef.current.connect(storedConversationId || undefined);
-    if (storedConversationId) {
-      sseManagerRef.current.setConversationId(storedConversationId);
-      setConversationId(storedConversationId);
-      fetchHistory(storedConversationId);
-    }
-
+    sseManagerRef.current.connect();
     fetchSessions();
 
     return () => {
       sseManagerRef.current?.disconnect();
     };
-  }, [fetchHistory, fetchSessions]);
+  }, [fetchSessions]);
 
   const handleMessage = useCallback((data: MessageData) => {
     // Handle new GatewayEvent format with event_type field
@@ -180,7 +169,6 @@ function App() {
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           sseManagerRef.current?.setConversationId(data.conversation_id);
-          localStorage.setItem('manta_conversation_id', data.conversation_id);
         }
         break;
       case 'history':
@@ -196,7 +184,6 @@ function App() {
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           sseManagerRef.current?.setConversationId(data.conversation_id);
-          localStorage.setItem('manta_conversation_id', data.conversation_id);
         }
         break;
       case 'message':
@@ -267,7 +254,6 @@ function App() {
     const newId = crypto.randomUUID();
     setConversationId(newId);
     sseManagerRef.current?.setConversationId(newId);
-    localStorage.setItem('manta_conversation_id', newId);
     setMessages([]);
     // Reconnect SSE with new conversation
     sseManagerRef.current?.disconnect();
@@ -282,7 +268,6 @@ function App() {
   const handleSelectSession = useCallback((sessionId: string) => {
     setConversationId(sessionId);
     sseManagerRef.current?.setConversationId(sessionId);
-    localStorage.setItem('manta_conversation_id', sessionId);
     setMessages([]);
     fetchHistory(sessionId);
     // Reconnect SSE with selected conversation

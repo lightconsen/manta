@@ -19,13 +19,37 @@ use crate::channels::IncomingMessage;
 pub use crate::acp::ThreadBinding;
 
 /// Compute the thread ID for a given binding mode within a session.
-pub fn get_thread_id(binding: &ThreadBinding, parent_thread: &str) -> String {
+///
+/// `active_threads` is an optional set of thread IDs already in use within the
+/// session. When `ThreadBinding::Auto` is chosen and `active_threads` is
+/// provided, the parent thread is reused only if it already exists in the set;
+/// otherwise a fresh thread is created.
+pub fn get_thread_id(
+    binding: &ThreadBinding,
+    parent_thread: &str,
+    active_threads: Option<&std::collections::HashSet<String>>,
+) -> String {
     match binding {
         ThreadBinding::New => format!("thread-{}", Uuid::new_v4()),
         ThreadBinding::Parent => parent_thread.to_string(),
         ThreadBinding::Thread(id) => id.clone(),
-        ThreadBinding::Auto => format!("shared-{}", parent_thread),
+        ThreadBinding::Auto => {
+            if let Some(threads) = active_threads {
+                if threads.contains(parent_thread) {
+                    parent_thread.to_string()
+                } else {
+                    format!("thread-{}", Uuid::new_v4())
+                }
+            } else {
+                format!("shared-{}", parent_thread)
+            }
+        }
     }
+}
+
+/// Backward-compatible wrapper for [`get_thread_id`] without active-thread tracking.
+pub fn get_thread_id_legacy(binding: &ThreadBinding, parent_thread: &str) -> String {
+    get_thread_id(binding, parent_thread, None)
 }
 
 /// Agent instance within a session
@@ -65,14 +89,15 @@ pub enum AgentInstanceStatus {
 }
 
 impl SessionAgent {
-    /// Create a new session agent
-    pub fn new(
+    /// Create a new session agent with optional active-thread tracking for Auto binding.
+    pub fn new_with_threads(
         id: String,
         personality: AgentPersonality,
         binding: ThreadBinding,
         parent_thread: &str,
+        active_threads: Option<&std::collections::HashSet<String>>,
     ) -> Self {
-        let thread_id = get_thread_id(&binding, parent_thread);
+        let thread_id = get_thread_id(&binding, parent_thread, active_threads);
 
         Self {
             id,
@@ -84,6 +109,16 @@ impl SessionAgent {
             spawned_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
         }
+    }
+
+    /// Create a new session agent (backward-compatible wrapper).
+    pub fn new(
+        id: String,
+        personality: AgentPersonality,
+        binding: ThreadBinding,
+        parent_thread: &str,
+    ) -> Self {
+        Self::new_with_threads(id, personality, binding, parent_thread, None)
     }
 
     /// Mark agent as ready
@@ -206,8 +241,20 @@ impl MultiAgentSession {
             agent_id, self.id, binding
         );
 
-        let agent =
-            SessionAgent::new(agent_id.clone(), personality, binding, &self.primary_thread_id);
+        // Build set of active thread IDs for Auto binding resolution
+        let active_threads: std::collections::HashSet<String> = self
+            .agents
+            .values()
+            .map(|a| a.thread_id.clone())
+            .collect();
+
+        let agent = SessionAgent::new_with_threads(
+            agent_id.clone(),
+            personality,
+            binding,
+            &self.primary_thread_id,
+            Some(&active_threads),
+        );
 
         self.agents.insert(agent_id.clone(), agent);
         self.last_activity = std::time::Instant::now();
@@ -520,18 +567,28 @@ mod tests {
     fn test_thread_binding_get_thread_id() {
         let parent = "parent-thread";
 
-        let isolated = get_thread_id(&ThreadBinding::New, parent);
+        let isolated = get_thread_id(&ThreadBinding::New, parent, None);
         assert!(isolated.starts_with("thread-"));
         assert_ne!(isolated, parent);
 
-        let parent_binding = get_thread_id(&ThreadBinding::Parent, parent);
+        let parent_binding = get_thread_id(&ThreadBinding::Parent, parent, None);
         assert_eq!(parent_binding, parent);
 
-        let existing = get_thread_id(&ThreadBinding::Thread("custom".to_string()), parent);
+        let existing = get_thread_id(&ThreadBinding::Thread("custom".to_string()), parent, None);
         assert_eq!(existing, "custom");
 
-        let shared = get_thread_id(&ThreadBinding::Auto, parent);
+        let shared = get_thread_id(&ThreadBinding::Auto, parent, None);
         assert_eq!(shared, format!("shared-{}", parent));
+
+        // Auto with active_threads containing parent -> reuses parent
+        let mut active = std::collections::HashSet::new();
+        active.insert(parent.to_string());
+        let auto_reuse = get_thread_id(&ThreadBinding::Auto, parent, Some(&active));
+        assert_eq!(auto_reuse, parent);
+
+        // Auto with active_threads not containing parent -> creates new
+        let auto_new = get_thread_id(&ThreadBinding::Auto, parent, Some(&std::collections::HashSet::new()));
+        assert!(auto_new.starts_with("thread-"));
     }
 
     #[test]
