@@ -13,6 +13,7 @@ pub mod hybrid;
 pub mod manager;
 pub mod personality;
 pub mod pipeline;
+pub mod soul;
 pub mod session_search;
 pub mod sqlite;
 pub mod vector;
@@ -33,7 +34,8 @@ pub use hybrid::{
     MmrConfig, TemporalDecayConfig,
 };
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
-pub use personality::{MemoryType, PersonalityMemory};
+pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
+pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use pipeline::{
     EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
     PipelineEmbeddingProvider,

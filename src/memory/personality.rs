@@ -289,6 +289,14 @@ impl PersonalityMemory {
         self.read_with_cache(&path).await
     }
 
+    /// Read and parse SOUL.md as a structured config file.
+    ///
+    /// Supports optional YAML frontmatter with `SoulConfig` fields.
+    pub async fn read_soul(&self) -> crate::Result<crate::memory::soul::SoulFile> {
+        let raw = self.read(MemoryType::Soul).await?;
+        crate::memory::soul::SoulFile::parse(&raw)
+    }
+
     /// Write memory content, applying head/tail truncation if over the per-file cap.
     pub async fn write(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         // Apply head/tail truncation (preserves beginning + end of large files).
@@ -688,9 +696,24 @@ This is a starting point. Add your own conventions, style, and rules as you figu
             self.write(MemoryType::Agents, default_agents).await?;
         }
 
-        // SOUL.md - Core personality (OpenClaw-style)
+        // SOUL.md - Core personality (OpenClaw-style with structured frontmatter)
         if !self.exists(MemoryType::Soul).await {
-            let default_soul = r#"# SOUL.md - Who You Are
+            let default_soul = r#"---
+name: Manta
+persona: Helpful AI assistant running locally on your machine
+voice: concise, direct, no filler words
+emoji: "🦑"
+behavior:
+  proactive: true
+  ask_before_destructive: true
+  group_chat_mode: smart
+preferences:
+  language: en-US
+  code_style: rust
+  format: markdown
+---
+
+# SOUL.md - Who You Are
 
 _You're not a chatbot. You're becoming someone._
 

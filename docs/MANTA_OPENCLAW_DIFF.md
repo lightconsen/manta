@@ -8,6 +8,10 @@
 | **Primary Focus** | Multi-channel AI gateway with extensible agent runtime | Personal AI assistant with rich UI integration |
 | **Architecture** | Modular Rust crates with async/await | Plugin-based TypeScript with ESM |
 | **Channels** | 9 (Telegram, Discord, Slack, WhatsApp, QQ, Lark/Feishu, Signal, iMessage, WebChat) | 20+ (including Signal, iMessage, WebChat, etc.) |
+| **TaskFlow** | ✅ Checkpoint/resume/retry | ❌ |
+| **Skills Ecosystem** | ✅ Semver + dependency graph + chaining | ❌ |
+| **Cost-Aware Routing** | ✅ Auto model switch by task type | ❌ |
+| **Browser CDP** | ✅ Cookies, PDF, perf, mobile, network | Basic |
 | **Deployment** | Single binary, daemon mode | Node.js app, gateway daemon + CLI |
 
 ---
@@ -512,8 +516,8 @@ commandGating: CommandGatingConfig
 | **Discord** | ✅ | ✅ |
 | **Slack** | ✅ | ✅ |
 | **WhatsApp** | ✅ | ✅ |
-| **Signal** | ❌ | ✅ |
-| **iMessage** | ❌ | ✅ |
+| **Signal** | ✅ signal-cli | ✅ |
+| **iMessage** | ✅ BlueBubbles | ✅ |
 | **WebChat** | ✅ WebSocket interface | Full UI |
 | **DM Pairing** | ✅ `PairingStore` with code approval | ✅ |
 | **Allowlists** | Basic | Advanced |
@@ -527,6 +531,12 @@ commandGating: CommandGatingConfig
 | **Tailscale** | ✅ | ❌ |
 | **Single Binary** | ✅ | ❌ |
 | **Cross-Platform** | ✅ | macOS focused |
+| **TaskFlow Durable Execution** | ✅ Checkpoint/resume/retry | ❌ |
+| **Skills Dependency Graph** | ✅ Semantic versioning + topological resolution | ❌ |
+| **Skill Chaining** | ✅ `SkillChain` with deps-first ordering | ❌ |
+| **Cost-Aware Routing** | ✅ `TaskClassifier` + `ModelCost` auto-switch | ❌ |
+| **Config-as-Code** | ✅ YAML frontmatter in SOUL.md | Markdown frontmatter |
+| **Browser CDP Depth** | ✅ Cookies, PDF, perf, mobile, network | Basic |
 
 ---
 
@@ -534,12 +544,15 @@ commandGating: CommandGatingConfig
 
 | Metric | Manta | OpenClaw |
 |--------|-------|----------|
-| **Total Lines** | ~15,000 | ~100,000+ |
-| **Source Files** | ~50 | ~2,000+ |
+| **Total Lines** | ~18,000 | ~100,000+ |
+| **Source Files** | ~65 | ~2,000+ |
 | **Agent System** | ~1,500 lines | ~20,000 lines |
 | **Gateway** | ~1,200 lines | ~15,000 lines |
 | **Channels** | ~800 lines | ~30,000 lines |
 | **Memory** | ~500 lines | ~10,000 lines |
+| **TaskFlow** | ~1,200 lines | ❌ |
+| **Skills Ecosystem** | ~800 lines | ❌ |
+| **Browser CDP** | ~600 lines | ~2,000 lines |
 
 ---
 
@@ -551,6 +564,10 @@ commandGating: CommandGatingConfig
 - Extensible architecture (traits, feature flags)
 - Modern async patterns (Tokio, Axum)
 - **OpenClaw-aligned skeleton** with full inbound/outbound pipeline DAG
+- **TaskFlow durable execution** — checkpoint/resume/retry with SQLite persistence
+- **Skills ecosystem** — semantic versioning, dependency graphs, skill chaining
+- **Cost-aware routing** — automatic model selection by task type and budget
+- **Deep browser automation** — CDP-level control (cookies, perf, mobile, network)
 
 **OpenClaw** is a comprehensive TypeScript AI assistant platform with:
 - Rich UI integration (Canvas, WebChat, mobile apps)
@@ -559,7 +576,7 @@ commandGating: CommandGatingConfig
 - Extensive plugin ecosystem
 - macOS/iOS ecosystem integration
 
-Manta excels at being a lightweight, reliable gateway with modern Rust patterns and now matches OpenClaw's core pipeline architecture. OpenClaw excels at being a full-featured personal assistant with rich UI, voice, and mobile capabilities.
+Manta excels at being a lightweight, reliable gateway with modern Rust patterns, now matches OpenClaw's core pipeline architecture, and surpasses it in execution durability (TaskFlow), cost optimization, and browser automation depth. OpenClaw excels at being a full-featured personal assistant with rich UI, voice, and mobile capabilities.
 
 ---
 
@@ -795,7 +812,85 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 
 ---
 
-### 14.14 Session Management
+### 14.14 TaskFlow Durable Execution
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Checkpoint/Resume** | ❌ Not implemented | ✅ `TaskFlowEngine` with SQLite persistence |
+| **State Machine** | ❌ | ✅ `TaskFlowState`: Idle/Running/Paused/Failed/Completed/Recovering |
+| **Retry Logic** | ❌ | ✅ Configurable max retries + delay + auto-resume |
+| **SQLite Store** | ❌ | ✅ `CheckpointStore` with schema versioning |
+| **Pruning** | ❌ | ✅ Keep latest N checkpoints per flow |
+| **Plan Validation** | ❌ | ✅ Resumes only if plan JSON matches |
+| **Age-based Expiry** | ❌ | ✅ `max_checkpoint_age_secs` (default 24h) |
+
+**Manta unique advantage**: Full durable execution with crash recovery. OpenClaw has no equivalent.
+
+---
+
+### 14.15 Skills Ecosystem (ClawHub Alignment)
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Semantic Versioning** | ❌ | ✅ `Version` (major.minor.patch) + `VersionReq` with `^~>=<=>*<` operators |
+| **Dependency Parsing** | ❌ | ✅ `DependencySpec::parse("skill-name: ^1.0.0")` |
+| **Dependency Graph** | ❌ | ✅ `DependencyGraph` with DFS cycle detection + Kahn's topological sort |
+| **Skill Chaining** | ❌ | ✅ `SkillChain::to_combined_prompt()` merges deps + root + chained skills |
+| **Dependency Checking** | ❌ | ✅ `check_dependencies()` returns missing/optional/conflict resolution |
+| **Frontmatter Fields** | Basic | ✅ `depends_on`, `provides`, `chain` in `SkillFrontmatter` |
+
+**Manta unique advantage**: Full dependency resolution and skill chaining. OpenClaw skills are standalone.
+
+---
+
+### 14.16 Cost-Aware Multi-Model Routing
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Task Classification** | ❌ | ✅ `TaskClassifier` — rule-based keyword classifier (code/writing/analysis) |
+| **Cost Estimation** | ❌ | ✅ `ModelCost` per-model pricing with token-based cost estimation |
+| **Auto-Switching** | ❌ | ✅ `CostAwareRouter` selects cheapest capable model for task type |
+| **Budget Tracking** | ❌ | ✅ Daily cost limit + per-request cost prediction |
+| **Quality Tiers** | ❌ | ✅ `QualityTier::Fast` / `Standard` / `Premium` mapping |
+
+**Manta unique advantage**: Automatic model selection by cost/quality tradeoff. OpenClaw uses fixed model per request.
+
+---
+
+### 14.17 Browser Automation Depth
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **CDP Integration** | Basic Chrome control | ✅ `chromiumoxide` with full CDP access |
+| **Cookie Management** | ❌ | ✅ `CookieJar` with get/set/delete/export |
+| **PDF Generation** | ✅ `pdf-tool.ts` | ✅ `PdfTool` (markdown→PDF via headless Chrome) |
+| **Performance Metrics** | ❌ | ✅ `PerformanceMetrics` (DOMContentLoaded, FCP, LCP, TTFB) |
+| **Mobile Emulation** | ❌ | ✅ `MobileEmulation` (viewport, touch, user-agent) |
+| **Network Log** | ❌ | ✅ `NetworkLog` intercepts requests/responses |
+| **Screenshot** | ✅ | ✅ Full page + element + mobile viewport |
+| **Form Filling** | ✅ | ✅ Input, select, checkbox, submit |
+
+**Manta advantage**: Deeper CDP features (cookies, perf, mobile, network). OpenClaw has basic browser control.
+
+---
+
+### 14.18 Config-as-Code
+
+| Dimension | OpenClaw | Manta |
+|---|---|---|
+| **Agent Config Files** | SOUL.md, IDENTITY.md, BOOTSTRAP.md | ✅ SOUL.md, IDENTITY.md, BOOTSTRAP.md, AGENTS.md, TOOLS.md |
+| **Structured Config** | Markdown frontmatter | ✅ YAML frontmatter in SOUL.md (`SoulConfig` with `name`, `persona`, `voice`, `behavior`, `preferences`) |
+| **Hot Reload** | ✅ `config-reload.ts` | ✅ `HotReloadManager` with typed change events |
+| **Workspace State** | Basic | ✅ `WorkspaceManager` + `WorkspaceState` tracking |
+| **Runtime API** | CLI only | ✅ REST API for config updates |
+| **Frontmatter Parser** | Basic | ✅ `SoulFile::parse()` with `---` YAML block extraction |
+| **Prompt Integration** | Text append | ✅ Structured `Agent Profile` fragment + body merged into system prompt |
+
+**Status**: ✅ Aligned. Manta SOUL.md now supports structured YAML frontmatter (`SoulConfig`) with `name`, `persona`, `voice`, `emoji`, `behavior` (proactive, ask_before_destructive, group_chat_mode), and `preferences` (language, code_style, format). The structured config is converted to a formatted `Agent Profile` section and injected into the system prompt alongside the free-form markdown body.
+
+---
+
+### 14.19 Session Management
 
 | Dimension | OpenClaw | Manta |
 |---|---|---|
@@ -828,8 +923,12 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 | **SSE** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Fully implemented |
 | **Cron** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Manta more production-grade |
 | **Security** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Feature parity |
-| **Plugin** | ⭐⭐⭐⭐⭐ | ⭐ | Far from mature |
+| **Plugin** | ⭐⭐⭐⭐⭐ | ⭐ | WASM runtime exists but ecosystem immature |
 | **Session Mgmt** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | UI integration gap; core modules implemented |
+| **Config-as-Code** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Aligned — YAML frontmatter SOUL.md with structured fields |
+| **TaskFlow** | ❌ | ⭐⭐⭐⭐⭐ | Manta unique — durable execution with checkpoint/resume |
+| **Skills Ecosystem** | ❌ | ⭐⭐⭐⭐⭐ | Manta unique — semver deps + chaining |
+| **Cost-Aware Routing** | ❌ | ⭐⭐⭐⭐⭐ | Manta unique — auto model switch by task type |
 
 ---
 
@@ -843,6 +942,10 @@ Manta excels at being a lightweight, reliable gateway with modern Rust patterns 
 6. **Tailscale** — Built-in remote access (OpenClaw lacks this)
 7. **Task Planner** — LLM-based natural language task decomposition
 8. **Runtime Provider API** — Hot switch providers via REST (OpenClaw only CLI)
+9. **TaskFlow Durable Execution** — Checkpoint/resume/retry with SQLite persistence (OpenClaw lacks this)
+10. **Skills Ecosystem** — Semantic versioning, dependency graph resolution, skill chaining (OpenClaw lacks this)
+11. **Cost-Aware Routing** — Auto-switch models by task type for cost optimization (OpenClaw lacks this)
+12. **Browser CDP Depth** — Cookies, performance metrics, mobile emulation, network interception (OpenClaw basic)
 
 ## 17. OpenClaw's Core Advantages
 

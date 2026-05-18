@@ -391,7 +391,11 @@ impl AgentConfig {
         }
     }
 
-    /// Get the full system prompt including personality memory and skills
+    /// Get the full system prompt including personality memory and skills.
+    ///
+    /// Reads SOUL.md with structured YAML frontmatter support. If frontmatter
+    /// is present, a structured "Agent Profile" section is injected before
+    /// the free-form body.
     pub async fn full_system_prompt_with_personality(&self) -> String {
         let base_prompt = self.full_system_prompt();
 
@@ -401,12 +405,41 @@ impl AgentConfig {
                 // Initialize default files if they don't exist
                 let _ = memory.initialize_defaults().await;
 
-                let personality = memory.format_for_prompt().await.unwrap_or_default();
-                if personality.is_empty() {
-                    base_prompt
-                } else {
-                    format!("{}\n{}", base_prompt, personality)
+                // Try structured SOUL.md first
+                let soul_enhanced = match memory.read_soul().await {
+                    Ok(soul_file) if soul_file.has_frontmatter => {
+                        // Structured frontmatter: inject profile fragment + body
+                        let profile = soul_file.config.to_prompt_fragment();
+                        let body = soul_file.body;
+                        if !body.is_empty() {
+                            if profile.is_empty() {
+                                format!("\n### Soul\n{}\n", body)
+                            } else {
+                                format!("{}\n### Soul\n{}\n", profile, body)
+                            }
+                        } else {
+                            profile
+                        }
+                    }
+                    _ => {
+                        // Fallback: raw text without frontmatter
+                        memory.read(crate::memory::MemoryType::Soul).await.unwrap_or_default()
+                    }
+                };
+
+                let other_personality = memory
+                    .format_for_prompt_with_context(crate::memory::MemoryContext::Primary)
+                    .await
+                    .unwrap_or_default();
+
+                let mut parts = vec![base_prompt];
+                if !soul_enhanced.is_empty() {
+                    parts.push(soul_enhanced);
                 }
+                if !other_personality.is_empty() {
+                    parts.push(other_personality);
+                }
+                parts.join("\n")
             }
             Err(_) => base_prompt,
         }
