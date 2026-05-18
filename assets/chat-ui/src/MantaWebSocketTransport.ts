@@ -1,9 +1,3 @@
-import type {
-  ChatModelAdapter,
-  ChatModelRunResult,
-  ThreadMessage,
-} from "@assistant-ui/react";
-
 export interface WsRequest {
   id: string;
   method: string;
@@ -16,38 +10,45 @@ export interface WsEvent {
   seq?: number;
 }
 
+export type EventCallback = (evt: WsEvent) => void;
+
 /**
- * Custom ChatModelAdapter that speaks the Manta WebSocket-native protocol.
+ * Manta WebSocket-native protocol client.
  *
  * 1. Opens a WebSocket to /ws
  * 2. Sends connect handshake on open
- * 3. Maps assistant-ui message stream to chat.send + chat.delta/chat.final
+ * 3. Provides send() and event streaming for chat
  */
-export class MantaWebSocketTransport implements ChatModelAdapter {
+export class MantaWebSocketTransport {
   private ws: WebSocket | null = null;
   private reqId = 0;
-  private connected = false;
   private sessionId: string;
-  private eventQueue: WsEvent[] = [];
-  private eventWaiters: Array<(evt: WsEvent | null) => void> = [];
   private reconnectDelay = 800;
   private readonly reconnectCap = 15000;
   private readonly reconnectMultiplier = 1.7;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private deviceId: string;
   private subscribedSessions: string[] = [];
+  private listeners: Set<EventCallback> = new Set();
 
   constructor() {
-    // Device ID persists across sessions
     this.deviceId = localStorage.getItem("manta_device_id") || this.generateId();
     localStorage.setItem("manta_device_id", this.deviceId);
 
-    // Session key follows protocol.md 7.3: web:{device_id}
     const storedSession = localStorage.getItem("manta_session");
     this.sessionId = storedSession || `web:${this.deviceId}`;
     localStorage.setItem("manta_session", this.sessionId);
 
     this.connect();
+  }
+
+  onEvent(callback: EventCallback): () => void {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  }
+
+  getSessionId(): string {
+    return this.sessionId;
   }
 
   private generateId(): string {
@@ -78,8 +79,6 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "res" && msg.ok && msg.payload?.protocol_version) {
-          this.connected = true;
-          // Re-subscribe to previous sessions after reconnect
           if (this.subscribedSessions.length > 0) {
             this.sendRequest("sessions.subscribe", {
               session_ids: this.subscribedSessions,
@@ -88,19 +87,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
         }
         if (msg.type === "event") {
           const evt = msg as WsEvent;
-          // Track auto-created sessions
           if (evt.event === "session.created") {
             const sid = evt.payload?.session_id as string;
             if (sid && !this.subscribedSessions.includes(sid)) {
               this.subscribedSessions.push(sid);
             }
           }
-          if (this.eventWaiters.length > 0) {
-            const waiter = this.eventWaiters.shift()!;
-            waiter(evt);
-          } else {
-            this.eventQueue.push(evt);
-          }
+          this.listeners.forEach((cb) => cb(evt));
         }
       } catch {
         /* ignore malformed */
@@ -108,12 +101,10 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     };
 
     this.ws.onclose = () => {
-      this.connected = false;
       this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
-      this.connected = false;
       this.scheduleReconnect();
     };
   }
@@ -137,7 +128,6 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return id;
   }
 
-  /** Create a new session via the protocol (protocol.md 7.2: CreateThread) */
   createSession(): string {
     const newSessionId = `web:${this.deviceId}`;
     this.sessionId = newSessionId;
@@ -149,7 +139,6 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return this.sessionId;
   }
 
-  /** Switch to a different session ID */
   switchSession(sessionId: string): void {
     this.sessionId = sessionId;
     localStorage.setItem("manta_session", this.sessionId);
@@ -161,112 +150,11 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async *run(options: {
-    messages: ThreadMessage[];
-    abortSignal: AbortSignal;
-  }): AsyncGenerator<ChatModelRunResult> {
-    const { messages, abortSignal } = options;
-    const last = messages[messages.length - 1];
-    if (!last || last.role !== "user") return;
-
-    const text = last.content
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("");
-
+  sendMessage(text: string): void {
     this.sendRequest("chat.send", {
       session_id: this.sessionId,
       message: text,
     });
-
-    let buffer = "";
-    let aborted = false;
-
-    try {
-      while (true) {
-        const evt = await this.nextEvent(abortSignal);
-        if (!evt) {
-          aborted = true;
-          break;
-        }
-
-        switch (evt.event) {
-          case "chat.delta": {
-            const delta = (evt.payload?.content as string) || "";
-            buffer += delta;
-            yield { content: [{ type: "text" as const, text: buffer }] };
-            break;
-          }
-          case "chat.final": {
-            buffer = (evt.payload?.response as string) || buffer;
-            yield { content: [{ type: "text" as const, text: buffer }] };
-            return;
-          }
-          case "chat.error": {
-            throw new Error((evt.payload?.message as string) || "Chat error");
-          }
-          case "agent.thinking":
-          case "tool.calling":
-          case "tool.result": {
-            // Assistant-UI shows these as status/tool-call UI elements
-            yield {
-              content: [{ type: "text" as const, text: buffer }],
-              metadata: {
-                thinking:
-                  evt.event === "agent.thinking"
-                    ? ((evt.payload?.content as string) ?? "")
-                    : undefined,
-                toolCall:
-                  evt.event === "tool.calling"
-                    ? {
-                        name: (evt.payload?.tool_name as string) ?? "",
-                        args: (evt.payload?.arguments as Record<string, unknown>) ?? {},
-                      }
-                    : undefined,
-              },
-            };
-            break;
-          }
-        }
-      }
-    } finally {
-      // protocol.md 7.2: CancelRun -> chat.abort
-      if (aborted) {
-        this.sendRequest("chat.abort", {
-          session_id: this.sessionId,
-        });
-      }
-    }
   }
 
-  private nextEvent(abortSignal: AbortSignal): Promise<WsEvent | null> {
-    return new Promise((resolve) => {
-      if (this.eventQueue.length > 0) {
-        resolve(this.eventQueue.shift()!);
-        return;
-      }
-
-      const waiter = (evt: WsEvent | null) => {
-        cleanup();
-        resolve(evt);
-      };
-      this.eventWaiters.push(waiter);
-
-      const onAbort = () => {
-        cleanup();
-        resolve(null);
-      };
-
-      const cleanup = () => {
-        abortSignal.removeEventListener("abort", onAbort);
-        const idx = this.eventWaiters.indexOf(waiter);
-        if (idx >= 0) this.eventWaiters.splice(idx, 1);
-      };
-
-      if (abortSignal.aborted) {
-        onAbort();
-        return;
-      }
-      abortSignal.addEventListener("abort", onAbort);
-    });
-  }
 }
