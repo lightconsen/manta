@@ -1301,7 +1301,13 @@ impl Gateway {
             cron_scheduler: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
-            command_gate: Arc::new(crate::tools::command_gate::CommandGate::new()),
+            command_gate: {
+                let gate = crate::tools::command_gate::CommandGate::new();
+                // Web terminal and API users need User level for slash commands
+                gate.set_user_level("web_user", crate::tools::command_gate::UserLevel::User);
+                gate.set_user_level("api_user", crate::tools::command_gate::UserLevel::User);
+                Arc::new(gate)
+            },
             mention_gate: {
                 let gate = crate::security::mention_gate::MentionGate::new(
                     config.security.mention_gating.policy,
@@ -1372,6 +1378,11 @@ impl Gateway {
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
         });
+
+        // Initialize audit table (SQLite-backed persistent audit log)
+        if let Err(e) = state.audit_log.init().await {
+            warn!("Failed to initialize persistent audit log: {}", e);
+        }
 
         // Dynamically register OpenClaw-compatible tools that need GatewayState
         state
@@ -1871,6 +1882,7 @@ impl Gateway {
             // Session messaging with provider override
             .route("/api/v1/sessions/:id/messages", post(send_message_handler))
             // Conversation history
+            .route("/api/v1/conversations", get(list_conversations_handler))
             .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
             .route("/api/v1/conversations/last", get(get_last_conversation_handler))
             // Status and diagnostics
@@ -2039,11 +2051,24 @@ impl Gateway {
                     cors = cors.allow_credentials(true);
                 }
                 // Allow configured origins
-                for origin in &config.security.cors.allowed_origins {
-                    if origin == "*" {
-                        cors = cors.allow_origin(tower_http::cors::Any);
-                    } else if let Ok(header_value) = origin.parse() {
-                        cors = cors.allow_origin([header_value]);
+                // When allow_credentials is true, wildcard (*) is invalid CORS
+                // per the Fetch spec. In that case we mirror the request origin
+                // instead, which achieves the same effect for local development.
+                let has_wildcard = config
+                    .security
+                    .cors
+                    .allowed_origins
+                    .iter()
+                    .any(|o| o == "*");
+                if has_wildcard && config.security.cors.allow_credentials {
+                    cors = cors.allow_origin(tower_http::cors::AllowOrigin::mirror_request());
+                } else {
+                    for origin in &config.security.cors.allowed_origins {
+                        if origin == "*" {
+                            cors = cors.allow_origin(tower_http::cors::Any);
+                        } else if let Ok(header_value) = origin.parse() {
+                            cors = cors.allow_origin([header_value]);
+                        }
                     }
                 }
                 // Allow configured methods
@@ -5170,6 +5195,43 @@ async fn get_last_conversation_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": format!("Failed to get last conversation: {}", e)
+                })),
+            )
+        }
+    }
+}
+
+/// List all conversations for a user
+async fn list_conversations_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let user_id = params
+        .get("user_id")
+        .cloned()
+        .unwrap_or_else(|| "web_user".to_string());
+
+    let storage = state.storage.read().await;
+
+    match storage.get_user_conversations(&user_id, 100).await {
+        Ok(conversation_ids) => {
+            let conversations: Vec<serde_json::Value> = conversation_ids
+                .into_iter()
+                .map(|id| serde_json::json!({"id": id}))
+                .collect();
+
+            let resp = serde_json::json!({
+                "conversations": conversations,
+                "user_id": user_id,
+            });
+            (StatusCode::OK, Json(resp))
+        }
+        Err(e) => {
+            error!("Failed to list conversations: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to list conversations: {}", e)
                 })),
             )
         }

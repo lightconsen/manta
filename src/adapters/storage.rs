@@ -91,6 +91,16 @@ pub trait Storage: Send + Sync {
     async fn get_last_conversation(&self, _user_id: &str) -> Result<Option<String>, StorageError> {
         Ok(None)
     }
+
+    /// Get list of conversations for a user
+    /// Default implementation returns empty (for stores that don't support chat history)
+    async fn get_user_conversations(
+        &self,
+        _user_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<String>, StorageError> {
+        Ok(Vec::new())
+    }
 }
 
 /// In-memory storage implementation
@@ -641,6 +651,18 @@ impl Storage for SqliteStorage {
     async fn get_last_conversation(&self, user_id: &str) -> Result<Option<String>, StorageError> {
         // Delegate to ChatHistoryStore implementation
         ChatHistoryStore::get_last_conversation(self, user_id)
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    /// Override to provide actual conversation list from SQLite
+    async fn get_user_conversations(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, StorageError> {
+        // Delegate to ChatHistoryStore implementation
+        ChatHistoryStore::get_user_conversations(self, user_id, limit)
             .await
             .map_err(|e| StorageError::Backend(e.to_string()))
     }

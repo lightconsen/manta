@@ -301,8 +301,11 @@ impl Channel for TelegramChannel {
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
-            // Spawn the update dispatcher with captured message sender
-            tokio::spawn(async move {
+            // Spawn the Telegram update dispatcher.
+            // If teloxide panics on network errors, the JoinHandle resolves to
+            // an error which we log and gracefully return from — the panic is
+            // never propagated to the rest of the daemon.
+            let dispatcher_handle = tokio::spawn(async move {
                 let handler = dptree::entry().branch(Update::filter_message().endpoint(
                     move |bot: Bot, msg: Message| {
                         let tx = message_tx.clone();
@@ -329,10 +332,33 @@ impl Channel for TelegramChannel {
 
             info!("Telegram channel started, waiting for shutdown signal...");
 
-            // Wait for shutdown signal
-            shutdown_notify.notified().await;
+            // Use Option so tokio::select! can borrow the handle in both branches.
+            let mut handle = Some(dispatcher_handle);
+            tokio::select! {
+                _ = shutdown_notify.notified() => {
+                    if let Some(h) = handle.take() {
+                        h.abort();
+                    }
+                    info!("Telegram channel shutting down (stop requested)");
+                }
+                result = async { handle.take().unwrap().await } => {
+                    match result {
+                        Ok(_) => warn!("Telegram dispatcher exited unexpectedly"),
+                        Err(e) if e.is_panic() => {
+                            warn!(
+                                "Telegram dispatcher panicked, channel stopped. \
+                                 Consider checking network connectivity: {}",
+                                e
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Telegram dispatcher cancelled: {}", e);
+                        }
+                    }
+                }
+            }
 
-            info!("Telegram channel shutting down");
+            running.store(false, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
 

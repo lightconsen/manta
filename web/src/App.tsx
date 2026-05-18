@@ -9,12 +9,18 @@ import { formatContent, escapeHtml } from './utils/format';
 import { MessageType, MessageData, ConnectionState } from './types';
 import './styles.css';
 
+interface Session {
+  id: string;
+  label: string;
+}
+
 function App() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.Connecting);
   const [version, setVersion] = useState('v0.1.0');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const terminalRef = useRef<HTMLDivElement>(null);
   const sseManagerRef = useRef<SSEManager | null>(null);
 
@@ -48,6 +54,27 @@ function App() {
     }
   }, []);
 
+  // Fetch user's conversation list
+  const fetchSessions = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/conversations?user_id=web_user');
+      if (!response.ok) {
+        console.error('Failed to fetch sessions:', response.statusText);
+        return;
+      }
+      const data = await response.json();
+      if (data.conversations && Array.isArray(data.conversations)) {
+        const loadedSessions: Session[] = data.conversations.map((c: any, index: number) => ({
+          id: c.id,
+          label: c.id.slice(0, 8) || `Session ${index + 1}`,
+        }));
+        setSessions(loadedSessions);
+      }
+    } catch (err) {
+      console.error('Error fetching sessions:', err);
+    }
+  }, []);
+
   // Initialize SSE connection with stored conversation ID
   useEffect(() => {
     // Try to get stored conversation ID from localStorage
@@ -63,6 +90,7 @@ function App() {
         setConversationId(id);
         sseManagerRef.current?.setConversationId(id);
         localStorage.setItem('manta_conversation_id', id);
+        fetchSessions();
       },
     });
 
@@ -71,14 +99,15 @@ function App() {
     if (storedConversationId) {
       sseManagerRef.current.setConversationId(storedConversationId);
       setConversationId(storedConversationId);
-      // Fetch history for the stored conversation
       fetchHistory(storedConversationId);
     }
+
+    fetchSessions();
 
     return () => {
       sseManagerRef.current?.disconnect();
     };
-  }, [fetchHistory]);
+  }, [fetchHistory, fetchSessions]);
 
   const handleMessage = useCallback((data: MessageData) => {
     // Handle new GatewayEvent format with event_type field
@@ -106,7 +135,7 @@ function App() {
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
           role: 'tool_call',
-          content: `🔧 Using tool: ${toolName}...`,
+          content: `Using tool: ${toolName}...`,
           tool: toolName,
           arguments: data.ToolCalling?.arguments || data.arguments,
           timestamp: Date.now(),
@@ -117,7 +146,7 @@ function App() {
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
           role: 'tool_result',
-          content: `✓ Tool ${resultToolName} completed`,
+          content: `Tool ${resultToolName} completed`,
           tool: resultToolName,
           result: data.ToolResult?.result || data.result,
           timestamp: Date.now(),
@@ -195,7 +224,7 @@ function App() {
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
           role: 'tool_call',
-          content: `🔧 Using tool: ${data.tool}`,
+          content: `Using tool: ${data.tool}`,
           tool: data.tool,
           arguments: data.arguments,
           timestamp: Date.now(),
@@ -234,36 +263,91 @@ function App() {
     }
   }, []);
 
+  const handleNewSession = useCallback(() => {
+    const newId = crypto.randomUUID();
+    setConversationId(newId);
+    sseManagerRef.current?.setConversationId(newId);
+    localStorage.setItem('manta_conversation_id', newId);
+    setMessages([]);
+    // Reconnect SSE with new conversation
+    sseManagerRef.current?.disconnect();
+    sseManagerRef.current?.connect(newId);
+    // Add to sessions list
+    setSessions((prev) => {
+      if (prev.some((s) => s.id === newId)) return prev;
+      return [{ id: newId, label: newId.slice(0, 8) }, ...prev];
+    });
+  }, []);
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    setConversationId(sessionId);
+    sseManagerRef.current?.setConversationId(sessionId);
+    localStorage.setItem('manta_conversation_id', sessionId);
+    setMessages([]);
+    fetchHistory(sessionId);
+    // Reconnect SSE with selected conversation
+    sseManagerRef.current?.disconnect();
+    sseManagerRef.current?.connect(sessionId);
+  }, [fetchHistory]);
+
   const handleSettingsClick = useCallback(() => {
     setMessages((prev) => [...prev, {
       id: Date.now().toString(),
       role: 'system',
-      content: 'Settings panel coming soon! 🚧',
+      content: 'Settings panel coming soon!',
       timestamp: Date.now(),
     }]);
   }, []);
 
   return (
-    <>
-      <Header
-        logo={<MantaLogo />}
-        connectionState={connectionState}
-        version={version}
-        onSettingsClick={handleSettingsClick}
-      />
+    <div className="app-container">
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <button className="new-session-btn" onClick={handleNewSession}>
+            + New Session
+          </button>
+        </div>
+        <div className="session-list">
+          {sessions.length === 0 && (
+            <div className="session-empty">No sessions yet</div>
+          )}
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              className={`session-item ${session.id === conversationId ? 'active' : ''}`}
+              onClick={() => handleSelectSession(session.id)}
+              title={session.id}
+            >
+              <span className="session-icon">#</span>
+              <span className="session-label">{session.label}</span>
+            </button>
+          ))}
+        </div>
+      </aside>
 
-      <div className="terminal" ref={terminalRef}>
-        {messages.map((msg) => (
-          <Message key={msg.id} message={msg} />
-        ))}
-        {isTyping && <TypingIndicator />}
+      {/* Main content */}
+      <div className="main-content">
+        <Header
+          logo={<MantaLogo />}
+          connectionState={connectionState}
+          version={version}
+          onSettingsClick={handleSettingsClick}
+        />
+
+        <div className="terminal" ref={terminalRef}>
+          {messages.map((msg) => (
+            <Message key={msg.id} message={msg} />
+          ))}
+          {isTyping && <TypingIndicator />}
+        </div>
+
+        <InputArea
+          onSendMessage={handleSendMessage}
+          disabled={connectionState !== ConnectionState.Connected}
+        />
       </div>
-
-      <InputArea
-        onSendMessage={handleSendMessage}
-        disabled={connectionState !== ConnectionState.Connected}
-      />
-    </>
+    </div>
   );
 }
 
