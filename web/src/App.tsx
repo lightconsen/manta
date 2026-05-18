@@ -325,22 +325,10 @@ function App() {
 
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-        {/* Top: Logo + controls */}
+        {/* Top: Logo */}
         <div className="sidebar-header">
           <div className="sidebar-logo">
             <MantaLogo />
-          </div>
-          <div className="sidebar-toolbar">
-            <span className="version">{version}</span>
-            <div className="status">
-              <span className={`status-dot ${isDisconnected ? 'disconnected' : ''}`} />
-            </div>
-            <button className="toolbar-btn" onClick={toggleTheme} title="切换主题">
-              {theme === 'dark' ? '☀' : '☾'}
-            </button>
-            <button className="toolbar-btn" onClick={handleSettingsClick} title="设置">
-              ⚙
-            </button>
           </div>
         </div>
 
@@ -363,6 +351,20 @@ function App() {
           {/* New session text button at bottom of list */}
           <button className="new-session-text-btn" onClick={handleNewSession}>
             + New Session
+          </button>
+        </div>
+
+        {/* Bottom: Toolbar */}
+        <div className="sidebar-footer">
+          <span className="version">{version}</span>
+          <div className="status">
+            <span className={`status-dot ${isDisconnected ? 'disconnected' : ''}`} />
+          </div>
+          <button className="toolbar-btn" onClick={toggleTheme} title="切换主题">
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
+          <button className="toolbar-btn" onClick={handleSettingsClick} title="设置">
+            ⚙
           </button>
         </div>
       </aside>
