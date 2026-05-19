@@ -1110,12 +1110,16 @@ impl ToolRegistry {
         call: &FunctionCall,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let args: Value = serde_json::from_str(&call.arguments).map_err(|e| {
-            crate::error::MantaError::Validation(format!(
-                "Invalid arguments for tool {}: {}",
-                call.name, e
-            ))
-        })?;
+        let args: Value = if call.arguments.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&call.arguments).map_err(|e| {
+                crate::error::MantaError::Validation(format!(
+                    "Invalid arguments for tool {}: {}",
+                    call.name, e
+                ))
+            })?
+        };
 
         // Try static tools first
         if let Some(tool) = self.get(&call.name) {
