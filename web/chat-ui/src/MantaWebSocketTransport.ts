@@ -444,9 +444,6 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       message: text,
     });
 
-    // Show "Thinking..." placeholder immediately while waiting for first event
-    yield { content: [makeReasoningPart("")] };
-
     const parts: (
       | TextMessagePart
       | ReasoningMessagePart
@@ -467,6 +464,11 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     };
     this.messages = [...this.messages, aiMsg];
     this.messagesListeners.forEach((cb) => cb(this.messages));
+
+    // Show "Thinking..." placeholder immediately while waiting for first event
+    aiMsg.parts = [{ type: "reasoning", text: "" }];
+    this.messagesListeners.forEach((cb) => cb(this.messages));
+    yield { content: [makeReasoningPart("")] };
 
     try {
       while (true) {
