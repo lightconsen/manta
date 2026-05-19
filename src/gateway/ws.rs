@@ -692,15 +692,33 @@ async fn handle_sessions_list(
 async fn handle_sessions_create(
     req: &WsRequest,
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     let cg = conn.read().await;
-    let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws");
-    let user = cg.user_id.as_ref().map(|u| u.0.as_str()).unwrap_or("anonymous");
-    let session_id = format!("{}:{}", channel, user);
+    let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws").to_string();
+    let user = cg.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "anonymous".to_string());
     drop(cg);
 
-    // TODO: create session in session manager
+    #[derive(Debug, Deserialize)]
+    struct CreateParams {
+        #[serde(default)]
+        session_id: Option<String>,
+    }
+
+    let params: CreateParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let session_id = params
+        .session_id
+        .unwrap_or_else(|| format!("{}:{}", channel, user));
+
+    {
+        let mut mgr = state.session_manager.write().await;
+        mgr.create_session(session_id.clone());
+    }
+
     WsResponse::ok(&req.id, serde_json::json!({
         "session_id": session_id,
         "status": "created",

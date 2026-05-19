@@ -8,7 +8,7 @@ interface ToolCallPartProps {
 }
 
 export function ToolCallPart({ toolName, args, result, isError }: ToolCallPartProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   const statusColor = isError
     ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
@@ -37,20 +37,28 @@ export function ToolCallPart({ toolName, args, result, isError }: ToolCallPartPr
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         <span className="font-mono">{toolName}</span>
-        <span className="ml-auto text-[10px] opacity-70">{statusText}</span>
+        <span className="ml-auto flex items-center gap-1.5 text-[10px] opacity-70">
+          {result === undefined && !isError && (
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+            </span>
+          )}
+          {statusText}
+        </span>
       </button>
       {expanded && (
         <div className="px-3 py-2 text-xs border-t border-inherit border-opacity-50">
           <div className="mb-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Arguments</div>
-            <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto font-mono text-[11px]">
+            <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
               {JSON.stringify(args, null, 2)}
             </pre>
           </div>
           {result !== undefined && (
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
-              <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto font-mono text-[11px]">
+              <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
                 {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
               </pre>
             </div>

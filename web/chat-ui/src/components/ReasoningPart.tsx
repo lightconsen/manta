@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 
+function BrainIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" />
+      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" />
+    </svg>
+  );
+}
+
 export function ReasoningPart({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(true);
   const [displayedText, setDisplayedText] = useState("");
@@ -20,12 +29,10 @@ export function ReasoningPart({ text }: { text: string }) {
       return;
     }
 
-    // Cancel previous done timer
     if (doneTimerRef.current) {
       clearTimeout(doneTimerRef.current);
     }
 
-    // If we've caught up to target, start done timer
     if (displayedText.length >= text.length) {
       doneTimerRef.current = setTimeout(() => {
         setDone(true);
@@ -70,12 +77,15 @@ export function ReasoningPart({ text }: { text: string }) {
   // ── Waiting state ───────────────────────────────────────────────
   if (isWaiting) {
     return (
-      <div className="flex items-center gap-2 my-1 text-xs text-gray-400 dark:text-neutral-500">
-        <span className="relative flex h-3 w-3">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-gray-300 dark:bg-neutral-600 opacity-75" />
-          <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-400 dark:bg-neutral-500" />
+      <div className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-800/30">
+        <span className="relative flex items-center justify-center h-4 w-4">
+          {/* Pulse ring — grows from small to large */}
+          <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-violet-400 dark:bg-violet-600 opacity-70" />
+          {/* Center dot */}
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500 dark:bg-violet-400" />
         </span>
-        <span>Thinking</span>
+        <BrainIcon className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400" />
+        <span className="text-xs text-violet-600 dark:text-violet-300 font-medium">Thinking...</span>
       </div>
     );
   }
@@ -85,13 +95,14 @@ export function ReasoningPart({ text }: { text: string }) {
     return (
       <button
         onClick={() => setExpanded(true)}
-        className="flex items-center gap-1.5 my-1 text-[11px] text-gray-400 dark:text-neutral-500 hover:text-gray-600 dark:hover:text-neutral-400 transition"
+        className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg border border-violet-100 dark:border-violet-800/30 bg-violet-50/50 dark:bg-violet-950/10 text-xs text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition"
       >
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        <BrainIcon className="w-3.5 h-3.5" />
+        <span className="font-medium">Thinking</span>
+        <span className="text-violet-300 dark:text-violet-600">({text.length} chars)</span>
+        <svg className="w-3 h-3 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-        <span>Thought process</span>
-        <span className="text-gray-300 dark:text-neutral-600">({text.length} chars)</span>
       </button>
     );
   }
@@ -100,39 +111,37 @@ export function ReasoningPart({ text }: { text: string }) {
   const isTyping = displayedText.length < text.length && !done;
 
   return (
-    <div className="my-1.5 rounded-md border border-gray-200 dark:border-neutral-700 bg-gray-50/50 dark:bg-neutral-800/30 overflow-hidden">
+    <div className="my-2 rounded-xl border border-violet-100 dark:border-violet-800/30 bg-gradient-to-br from-violet-50/80 to-indigo-50/40 dark:from-violet-950/20 dark:to-indigo-950/10 overflow-hidden shadow-sm">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-gray-500 dark:text-neutral-400 hover:bg-gray-100/50 dark:hover:bg-neutral-700/30 transition"
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-violet-600 dark:text-violet-300 hover:bg-violet-100/40 dark:hover:bg-violet-900/20 transition"
       >
-        <svg
-          className={`w-3 h-3 transition-transform ${expanded ? "rotate-90" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-        <span>Thought process</span>
+        <BrainIcon className="w-3.5 h-3.5" />
+        <span>Thinking</span>
         {isTyping && (
-          <span className="ml-auto inline-flex gap-0.5">
-            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-neutral-500 animate-bounce [animation-delay:0ms]" />
-            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-neutral-500 animate-bounce [animation-delay:120ms]" />
-            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-neutral-500 animate-bounce [animation-delay:240ms]" />
+          <span className="ml-auto inline-flex gap-0.5 items-center">
+            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:0ms]" />
+            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:120ms]" />
+            <span className="w-1 h-1 rounded-full bg-violet-400 dark:bg-violet-500 animate-bounce [animation-delay:240ms]" />
           </span>
         )}
         {!isTyping && done && (
-          <span className="ml-auto text-gray-300 dark:text-neutral-600">done</span>
+          <span className="ml-auto flex items-center gap-1 text-violet-400 dark:text-violet-500">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            done
+          </span>
         )}
       </button>
 
       {/* Content */}
       {expanded && (
-        <div className="px-3 py-2 text-[11px] text-gray-600 dark:text-neutral-400 font-mono whitespace-pre-wrap leading-relaxed border-t border-gray-200 dark:border-neutral-700 max-h-64 overflow-y-auto">
+        <div className="px-3.5 py-2.5 text-[11px] text-violet-700 dark:text-violet-300 font-mono whitespace-pre-wrap leading-relaxed border-t border-violet-100/50 dark:border-violet-800/20 max-h-48 overflow-y-auto">
           {displayedText}
           {isTyping && (
-            <span className="inline-block w-1.5 h-3.5 ml-0.5 align-text-bottom bg-gray-400 dark:bg-neutral-500 animate-pulse" />
+            <span className="inline-block w-1.5 h-3.5 ml-0.5 align-text-bottom bg-violet-500 dark:bg-violet-400 animate-pulse rounded-sm" />
           )}
         </div>
       )}

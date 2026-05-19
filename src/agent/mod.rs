@@ -1884,8 +1884,18 @@ impl Agent {
             // Accumulate tool calls from stream
             if let Some(ref calls) = chunk.tool_calls {
                 for call in calls {
-                    // Merge partial tool calls by id
-                    if let Some(existing) = accumulated_tool_calls.iter_mut().find(|c| c.id == call.id) {
+                    // Merge partial tool calls by index (streaming deltas use index as key)
+                    let key = call.index.unwrap_or(0);
+                    if let Some(existing) = accumulated_tool_calls.iter_mut().find(|c| {
+                        c.index == Some(key) || (c.index.is_none() && c.id == call.id)
+                    }) {
+                        // Fill in id/type/name from first chunk if they were empty
+                        if existing.id.is_empty() && !call.id.is_empty() {
+                            existing.id = call.id.clone();
+                        }
+                        if existing.call_type.is_empty() && !call.call_type.is_empty() {
+                            existing.call_type = call.call_type.clone();
+                        }
                         existing.function.name.push_str(&call.function.name);
                         existing.function.arguments.push_str(&call.function.arguments);
                     } else {
@@ -2462,7 +2472,7 @@ impl Agent {
         }
 
         // Extract URLs/links
-        let url_re = Regex::new(r#"https?://[^\s)\]\>'"`]+"#).expect("valid url regex");
+        let url_re = Regex::new(r#"https?://[^\s)\]>'"`]+"#).expect("valid url regex");
         for (idx, cap) in url_re.captures_iter(content).enumerate() {
             let url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
             if url.len() < 10 {

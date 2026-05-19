@@ -150,6 +150,9 @@ pub struct ToolCall {
     pub call_type: String,
     /// The function to call
     pub function: FunctionCall,
+    /// Streaming index (position in the tool_calls array); set only during streaming deltas
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
 }
 
 /// A function call within a tool call

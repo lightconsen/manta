@@ -20,16 +20,36 @@ function LogoIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
-      viewBox="0 0 24 24"
+      viewBox="0 0 100 80"
       fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
     >
-      <path d="M12 2L2 7l10 5 10-5-10-5z" />
-      <path d="M2 17l10 5 10-5" />
-      <path d="M2 12l10 5 10-5" />
+      {/* Manta ray silhouette */}
+      <path
+        d="M50 8
+           C50 8, 38 0, 28 8
+           C18 16, 8 24, 2 36
+           C-2 44, 2 52, 10 48
+           C18 44, 22 40, 26 36
+           C30 32, 34 28, 38 30
+           C42 32, 44 38, 44 46
+           C44 54, 42 64, 40 72
+           C38 76, 42 78, 44 74
+           C46 66, 48 56, 50 50
+           C52 56, 54 66, 56 74
+           C58 78, 62 76, 60 72
+           C58 64, 56 54, 56 46
+           C56 38, 58 32, 62 30
+           C66 28, 70 32, 74 36
+           C78 40, 82 44, 90 48
+           C98 52, 102 44, 98 36
+           C92 24, 82 16, 72 8
+           C62 0, 50 8, 50 8Z"
+        fill="currentColor"
+      />
+      {/* Eyes */}
+      <circle cx="38" cy="18" r="2" fill="white" />
+      <circle cx="62" cy="18" r="2" fill="white" />
     </svg>
   );
 }
@@ -133,7 +153,7 @@ function Sidebar({
       {/* Top: Logo + Name + Collapse */}
       <div className="h-14 flex items-center justify-between px-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
-          <LogoIcon className="w-6 h-6 text-blue-600 shrink-0" />
+          <LogoIcon className="w-6 h-6 text-emerald-500 shrink-0" />
           {!collapsed && (
             <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
               Manta
@@ -228,48 +248,81 @@ function Sidebar({
   );
 }
 
+/* ── Avatar ── */
+function Avatar({ role }: { role: string }) {
+  if (role === "user") {
+    return (
+      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[11px] font-bold shrink-0">
+        U
+      </div>
+    );
+  }
+  return (
+    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0">
+      <LogoIcon className="w-3.5 h-3.5" />
+    </div>
+  );
+}
+
 /* ── Chat Content ── */
 function ChatContent() {
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-4">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto">
         <ThreadPrimitive.Messages>
           {({ message }) => (
             <div
-              className={`flex ${
-                message.role === "user" ? "justify-end" : "justify-start"
+              className={`py-4 px-4 sm:px-6 ${
+                message.role === "user"
+                  ? "bg-white dark:bg-neutral-900"
+                  : "bg-gray-50/60 dark:bg-neutral-800/30"
               }`}
             >
               <div
-                className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                  message.role === "user"
-                    ? "bg-blue-600 text-white rounded-br-md"
-                    : "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-gray-100 rounded-bl-md"
+                className={`max-w-3xl mx-auto flex gap-3 ${
+                  message.role === "user" ? "flex-row-reverse" : "flex-row"
                 }`}
               >
-                {message.role === "user" ? (
-                  <p>
-                    {message.content
-                      .map((c) =>
-                        c.type === "text" ? c.text : ""
-                      )
-                      .join("")}
-                  </p>
-                ) : (
-                  <MessagePrimitive.Root asChild>
-                    <div>
-                      <MessagePrimitive.Content
-                        components={{
-                          Text: TextPart,
-                          Reasoning: ReasoningPart,
-                          tools: {
-                            Fallback: ToolCallPart,
-                          },
-                        }}
-                      />
-                    </div>
-                  </MessagePrimitive.Root>
-                )}
+                <Avatar role={message.role} />
+                <div className={`flex-1 min-w-0 ${message.role === "user" ? "text-right" : ""}`}>
+                  {/* Name label */}
+                  <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+                    {message.role === "user" ? "You" : "Manta"}
+                  </div>
+
+                  {/* Message bubble */}
+                  <div
+                    className={`inline-block text-left rounded-2xl px-4 py-2.5 ${
+                      message.role === "user"
+                        ? "bg-blue-600 text-white rounded-br-md"
+                        : "bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700"
+                    }`}
+                  >
+                    {message.role === "user" ? (
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {message.content
+                          .map((c) =>
+                            c.type === "text" ? c.text : ""
+                          )
+                          .join("")}
+                      </p>
+                    ) : (
+                      <MessagePrimitive.Root asChild>
+                        <div>
+                          <MessagePrimitive.Content
+                            components={{
+                              Text: TextPart,
+                              Reasoning: ReasoningPart,
+                              tools: {
+                                Fallback: ToolCallPart,
+                              },
+                            }}
+                          />
+                        </div>
+                      </MessagePrimitive.Root>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -277,21 +330,71 @@ function ChatContent() {
 
         <AuiIf condition={(s) => s.thread.isEmpty}>
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 dark:text-neutral-500 text-sm">
-              Start a conversation with Manta
-            </p>
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-emerald-500/20">
+                <LogoIcon className="w-6 h-6" />
+              </div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                Manta
+              </h2>
+              <p className="text-gray-400 dark:text-neutral-500 text-sm">
+                Start a conversation
+              </p>
+            </div>
           </div>
         </AuiIf>
       </ThreadPrimitive.Viewport>
 
-      <div className="border-t border-gray-200 dark:border-neutral-700 px-4 py-3 shrink-0">
+      <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
         <ComposerPrimitive.Root className="flex items-end gap-2 max-w-3xl mx-auto">
+          {/* Attachment buttons */}
+          <div className="flex items-center gap-1 shrink-0 pb-1">
+            <button
+              type="button"
+              title="Voice input"
+              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
+              onClick={() => alert('Voice input coming soon')}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Upload image"
+              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
+              onClick={() => alert('Image upload coming soon')}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Upload file"
+              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
+              onClick={() => alert('File upload coming soon')}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+          </div>
+
           <ComposerPrimitive.Input
-            className="flex-1 resize-none rounded-xl border border-gray-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition min-h-[44px] max-h-[120px]"
-            placeholder="Type a message..."
+            className="flex-1 resize-none rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500/50 transition min-h-[44px] max-h-[120px]"
+            placeholder="Message Manta..."
           />
-          <ComposerPrimitive.Send className="shrink-0 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-neutral-700 text-white text-sm font-medium transition">
-            Send
+          <ComposerPrimitive.Send className="shrink-0 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white text-sm font-medium transition shadow-sm">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
           </ComposerPrimitive.Send>
         </ComposerPrimitive.Root>
       </div>

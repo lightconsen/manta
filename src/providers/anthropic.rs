@@ -266,6 +266,7 @@ impl AnthropicProvider {
                             name: name.clone(),
                             arguments: input.to_string(),
                         },
+                        index: None,
                     });
                 }
                 _ => {}

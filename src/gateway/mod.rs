@@ -14,7 +14,7 @@
 
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
-    http::StatusCode,
+    http::{header, StatusCode},
     middleware::{from_fn, from_fn_with_state, Next},
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -1996,6 +1996,7 @@ impl Gateway {
         // SPA frontend routes (serve built React app from web/dist/)
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
+            .route("/favicon.svg", get(favicon_handler))
             .nest_service("/assets", tower_http::services::ServeDir::new("web/dist/assets"));
 
         // Merge all routers and apply global CORS
@@ -3669,6 +3670,19 @@ async fn web_terminal_html_handler() -> Html<String> {
             "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
         ));
     Html(html.replace("{VERSION}", crate::VERSION))
+}
+
+/// Favicon handler — serves the manta ray SVG favicon
+async fn favicon_handler() -> impl IntoResponse {
+    let svg = tokio::fs::read_to_string("web/dist/favicon.svg")
+        .await
+        .unwrap_or_else(|_| {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80"><path d="M50 8C50 8 38 0 28 8C18 16 8 24 2 36C-2 44 2 52 10 48C18 44 22 40 26 36C30 32 34 28 38 30C42 32 44 38 44 46C44 54 42 64 40 72C38 76 42 78 44 74C46 66 48 56 50 50C52 56 54 66 56 74C58 78 62 76 60 72C58 64 56 54 56 46C56 38 58 32 62 30C66 28 70 32 74 36C78 40 82 44 90 48C98 52 102 44 98 36C92 24 82 16 72 8C62 0 50 8 50 8Z" fill="#10b981"/><circle cx="38" cy="18" r="2" fill="white"/><circle cx="62" cy="18" r="2" fill="white"/></svg>"##.to_string()
+        });
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml")],
+        svg,
+    )
 }
 
 /// Admin redirect handler — admin UI moved to CLI

@@ -154,6 +154,7 @@ impl OpenAiProvider {
                             name: tc.function.name,
                             arguments: tc.function.arguments,
                         },
+                        index: None,
                     })
                     .collect()
             }),
@@ -570,19 +571,27 @@ impl OpenAiStream {
                     let content = choice.delta.content.clone();
                     let reasoning_content = choice.delta.reasoning_content.clone();
 
-                    // Convert tool calls
+                    // Convert tool calls — preserve partial deltas (streaming chunks may
+                    // have only index + arguments without id/call_type/name)
                     let tool_calls = choice.delta.tool_calls.as_ref().map(|calls| {
                         calls
                             .iter()
-                            .filter_map(|tc| {
-                                Some(ToolCall {
-                                    id: tc.id.clone()?,
-                                    call_type: tc.call_type.clone()?,
+                            .map(|tc| {
+                                ToolCall {
+                                    id: tc.id.clone().unwrap_or_default(),
+                                    call_type: tc.call_type.clone().unwrap_or_default(),
                                     function: super::FunctionCall {
-                                        name: tc.function.as_ref()?.name.clone()?,
-                                        arguments: tc.function.as_ref()?.arguments.clone()?,
+                                        name: tc.function
+                                            .as_ref()
+                                            .and_then(|f| f.name.clone())
+                                            .unwrap_or_default(),
+                                        arguments: tc.function
+                                            .as_ref()
+                                            .and_then(|f| f.arguments.clone())
+                                            .unwrap_or_default(),
                                     },
-                                })
+                                    index: Some(tc.index),
+                                }
                             })
                             .collect()
                     });
@@ -813,6 +822,7 @@ mod tests {
                     name: "test_tool".to_string(),
                     arguments: "{\"x\": 1}".to_string(),
                 },
+                index: None,
             }]),
             tool_call_id: None,
             metadata: None,
