@@ -15,15 +15,15 @@ fi
 
 echo "🚀 Starting Manta build..."
 
-# Build web terminal
-echo "📦 Building web terminal..."
-cd web
-pnpm run build
-cd ..
+# Build web frontend
+echo "📦 Building web frontend..."
+cd web/chat-ui
+pnpm build
+cd ../..
 
 if [ "$FRONT_ONLY" = true ]; then
   echo "✅ Frontend build complete!"
-  echo "📦 Web bundle: ./assets/web_terminal.html"
+  echo "📦 Web bundle: ./web/dist/"
   exit 0
 fi
 
