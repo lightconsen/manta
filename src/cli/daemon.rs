@@ -16,7 +16,6 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        web_port: 18081,
         pid_file: crate::dirs::manta_dir().join("manta.pid"),
     };
     let daemon = DaemonManager::new(daemon_config)?;
@@ -82,14 +81,12 @@ pub async fn run_assistant_process(_config_path: &PathBuf) -> Result<()> {
 pub async fn run_start_daemon(
     host: &str,
     port: u16,
-    web_port: u16,
     foreground: bool,
     _config: &crate::config::Config,
 ) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: host.to_string(),
         port,
-        web_port,
         pid_file: crate::dirs::manta_dir().join("manta.pid"),
     };
 
@@ -109,7 +106,6 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        web_port: 18081,
         pid_file: crate::dirs::manta_dir().join("manta.pid"),
     };
 
@@ -127,7 +123,6 @@ pub async fn run_daemon_status() -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        web_port: 18081,
         pid_file: crate::dirs::manta_dir().join("manta.pid"),
     };
 

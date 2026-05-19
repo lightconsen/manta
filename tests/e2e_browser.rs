@@ -280,12 +280,12 @@ async fn web_terminal_root_returns_html_with_expected_elements() {
         "Should return valid HTML document"
     );
     assert!(
-        html.contains("settings-btn") || html.contains("settings"),
-        "Should contain settings UI element"
+        html.contains("id=\"root\"") || html.contains("messages"),
+        "Should contain root mount point or fallback messages container"
     );
     assert!(
-        html.contains("version") || html.contains("Manta"),
-        "Should contain version or branding info"
+        html.contains("Manta") || html.contains("manta"),
+        "Should contain Manta branding"
     );
 }
 

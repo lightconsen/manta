@@ -101,12 +101,6 @@ pub enum Commands {
         #[arg(short, long)]
         message: Option<String>,
     },
-    /// Start web terminal interface
-    Web {
-        /// Port to listen on
-        #[arg(short, long, default_value = "18081")]
-        port: u16,
-    },
     /// Run as an assistant process (internal use)
     AssistantRun {
         /// Configuration file path
@@ -161,12 +155,9 @@ pub enum Commands {
         /// Host to bind to
         #[arg(short, long, default_value = "127.0.0.1")]
         host: String,
-        /// API port to listen on
+        /// Port for gateway API, WebSocket, and SPA
         #[arg(short, long, default_value = "18080")]
         port: u16,
-        /// Web terminal port
-        #[arg(short = 'w', long, default_value = "18081")]
-        web_port: u16,
         /// Run in foreground (don't detach)
         #[arg(long)]
         foreground: bool,
@@ -339,7 +330,6 @@ impl Cli {
             Commands::Chat { conversation, message } => {
                 chat::run_chat(config, conversation.clone(), message.clone()).await
             }
-            Commands::Web { port } => chat::run_web(config, *port).await,
             Commands::AssistantRun { config: config_path } => {
                 daemon::run_assistant_process(config_path).await
             }
@@ -353,9 +343,8 @@ impl Cli {
             Commands::Start {
                 host,
                 port,
-                web_port,
                 foreground,
-            } => daemon::run_start_daemon(host, *port, *web_port, *foreground, config).await,
+            } => daemon::run_start_daemon(host, *port, *foreground, config).await,
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
@@ -454,15 +443,6 @@ mod tests {
                 assert!(follow);
             }
             _ => panic!("expected Logs command"),
-        }
-    }
-
-    #[test]
-    fn parse_web_command_with_port() {
-        let cli = Cli::try_parse_from(["manta", "web", "--port", "3000"]).unwrap();
-        match cli.command {
-            Commands::Web { port } => assert_eq!(port, 3000),
-            _ => panic!("expected Web command"),
         }
     }
 

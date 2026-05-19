@@ -646,16 +646,19 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_html_contains_theme_toggle() {
+    fn test_terminal_html_contains_root_mount() {
         let html = terminal_html();
-        assert!(html.contains("theme-toggle"), "HTML should contain theme toggle button");
+        assert!(html.contains("id=\"root\""), "HTML should contain root mount point");
     }
 
     #[test]
-    fn test_terminal_html_contains_messages_area() {
+    fn test_terminal_html_contains_script_or_fallback() {
         let html = terminal_html();
-        assert!(html.contains("messages"), "HTML should contain messages container");
-        assert!(html.contains("input"), "HTML should contain input textarea");
+        // Built SPA has script tag, fallback chat.html has content
+        assert!(
+            html.contains("script") || html.contains("messages"),
+            "HTML should contain script tag or fallback content"
+        );
     }
 
     #[test]

@@ -15,7 +15,6 @@ fn gateway_config_default_values() {
 
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 18080);
-    assert_eq!(config.web_port, 18081);
     assert!(!config.tailscale_enabled);
     assert!(config.tailscale_domain.is_none());
     assert!(config.channels.is_empty());
@@ -31,7 +30,6 @@ fn gateway_config_serializes_to_json() {
 
     assert!(json.get("host").is_some(), "missing 'host' field");
     assert!(json.get("port").is_some(), "missing 'port' field");
-    assert!(json.get("web_port").is_some(), "missing 'web_port' field");
     assert!(json.get("channels").is_some(), "missing 'channels' field");
     assert!(json.get("model").is_some(), "missing 'model' field");
     assert!(json.get("security").is_some(), "missing 'security' field");

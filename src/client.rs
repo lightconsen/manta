@@ -152,12 +152,12 @@ impl DaemonClient {
         }
     }
 
-    /// Create a new client with custom web port (for WebSocket)
-    pub fn with_web_port(host: &str, port: u16, web_port: u16) -> Self {
+    /// Create a new client connecting to the unified gateway port
+    pub fn with_ws(host: &str, port: u16) -> Self {
         Self {
             client: Client::new(),
             base_url: format!("http://{}:{}", host, port),
-            ws_url: format!("ws://{}:{}/ws", host, web_port),
+            ws_url: format!("ws://{}:{}/ws", host, port),
         }
     }
 
@@ -270,7 +270,7 @@ impl DaemonClient {
 
     /// Get default client using standard daemon address
     pub fn default_client() -> Self {
-        Self::with_web_port("127.0.0.1", 18080, 18081)
+        Self::with_ws("127.0.0.1", 18080)
     }
 
     // ==================== ADMIN API METHODS ====================
@@ -530,17 +530,17 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_client_with_web_port() {
-        let client = DaemonClient::with_web_port("127.0.0.1", 18080, 18081);
+    fn test_daemon_client_with_ws() {
+        let client = DaemonClient::with_ws("127.0.0.1", 18080);
         assert_eq!(client.base_url, "http://127.0.0.1:18080");
-        assert_eq!(client.ws_url, "ws://127.0.0.1:18081/ws");
+        assert_eq!(client.ws_url, "ws://127.0.0.1:18080/ws");
     }
 
     #[test]
     fn test_daemon_client_default_client() {
         let client = DaemonClient::default_client();
         assert_eq!(client.base_url, "http://127.0.0.1:18080");
-        assert_eq!(client.ws_url, "ws://127.0.0.1:18081/ws");
+        assert_eq!(client.ws_url, "ws://127.0.0.1:18080/ws");
     }
 
     #[test]

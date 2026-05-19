@@ -62,10 +62,8 @@ pub mod ws;
 pub struct GatewayConfig {
     /// Host to bind to
     pub host: String,
-    /// Port for gateway control plane
+    /// Port for gateway control plane (serves API + WebSocket + SPA)
     pub port: u16,
-    /// Port for web terminal
-    pub web_port: u16,
     /// Enable Tailscale remote access
     pub tailscale_enabled: bool,
     /// Tailscale funnel domain (if using)
@@ -437,7 +435,6 @@ impl Default for GatewayConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 18080,
-            web_port: 18081,
             tailscale_enabled: false,
             tailscale_domain: None,
             default_agent: AgentConfig::default(),
@@ -1839,9 +1836,6 @@ impl Gateway {
         // Start gateway-level self-repair watchdog (60 s interval)
         tokio::spawn(run_repair_loop(self.state.clone()));
 
-        // Start web terminal server
-        tokio::spawn(Self::start_web_terminal(self.config.web_port, self.state.clone()));
-
         // Run the server
         axum::serve(listener, app).await.map_err(|e| {
             crate::error::MantaError::ExternalService {
@@ -1993,8 +1987,14 @@ impl Gateway {
             }
         };
 
+        // SPA frontend routes (serve built React app from assets/chat/)
+        let frontend_router = Router::new()
+            .route("/", get(web_terminal_html_handler))
+            .nest_service("/assets", tower_http::services::ServeDir::new("assets/chat/assets"));
+
         // Merge all routers and apply global CORS
-        public_router
+        frontend_router
+            .merge(public_router)
             .merge(auth_router)
             .merge(admin_router)
             .layer(cors_layer)
@@ -3232,38 +3232,6 @@ impl Gateway {
                 "Tailscale feature not compiled in. Install with: cargo build --features tailscale"
             );
         }
-
-        Ok(())
-    }
-
-    /// Start web terminal server
-    async fn start_web_terminal(port: u16, state: Arc<GatewayState>) -> crate::Result<()> {
-        info!("Web terminal starting on port {}", port);
-
-        // Build web terminal router with state
-        let app = Router::new()
-            .route("/", get(web_terminal_html_handler))
-            .route("/ws", get(ws::ws_handler))
-            .route("/api/v1/conversations", get(list_conversations_handler))
-            .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
-            .route("/api/v1/conversations/last", get(get_last_conversation_handler))
-            .with_state(state);
-
-        let addr = format!("127.0.0.1:{}", port);
-        let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: "Failed to bind web terminal".to_string(),
-                cause: Some(Box::new(e)),
-            }
-        })?;
-
-        info!("Web Terminal available at http://{}", addr);
-
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app).await {
-                error!("Web terminal server error: {}", e);
-            }
-        });
 
         Ok(())
     }

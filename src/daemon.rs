@@ -11,10 +11,8 @@ use tracing::warn;
 pub struct DaemonConfig {
     /// Host to bind to
     pub host: String,
-    /// API port to listen on
+    /// Port for gateway API, WebSocket, and SPA
     pub port: u16,
-    /// Web terminal port
-    pub web_port: u16,
     /// Path to PID file
     pub pid_file: PathBuf,
 }
@@ -67,8 +65,6 @@ impl DaemonManager {
             .arg(&self.config.host)
             .arg("--port")
             .arg(self.config.port.to_string())
-            .arg("--web-port")
-            .arg(self.config.web_port.to_string())
             .arg("--foreground")
             .stdin(std::process::Stdio::null())
             .stdout(
@@ -87,10 +83,8 @@ impl DaemonManager {
 
         println!("✅ Manta daemon started (PID: {})", pid);
         println!("   Host: {}", self.config.host);
-        println!("   API Port: {}", self.config.port);
-        println!("   Web Port: {}", self.config.web_port);
-        println!("   API: http://{}:{}", self.config.host, self.config.port);
-        println!("   Web: http://{}:{}", self.config.host, self.config.web_port);
+        println!("   Port: {}", self.config.port);
+        println!("   URL: http://{}:{}", self.config.host, self.config.port);
         println!("   Logs: {:?}", log_path);
 
         Ok(())
@@ -112,7 +106,6 @@ impl DaemonManager {
                             // Override with daemon config for host/port
                             config.host = self.config.host.clone();
                             config.port = self.config.port;
-                            config.web_port = self.config.web_port;
                             println!("📄 Loaded Gateway config from {:?}", config_path);
                             println!("   Channels configured: {}", config.channels.len());
                             for (name, ch) in &config.channels {
@@ -139,7 +132,6 @@ impl DaemonManager {
         // Apply environment overrides
         gateway_config.host = self.config.host.clone();
         gateway_config.port = self.config.port;
-        gateway_config.web_port = self.config.web_port;
         gateway_config.model =
             std::env::var("MANTA_MODEL").unwrap_or_else(|_| gateway_config.model.clone());
         gateway_config.model_provider = std::env::var("MANTA_MODEL_PROVIDER")
@@ -273,8 +265,7 @@ impl DaemonManager {
         let gateway = Gateway::new(gateway_config.clone(), Some(config_path.clone())).await?;
 
         println!("✅ Gateway ready");
-        println!("   API: http://{}:{}", gateway_config.host, gateway_config.port);
-        println!("   Web: http://{}:{}", gateway_config.host, gateway_config.web_port);
+        println!("   URL: http://{}:{}", gateway_config.host, gateway_config.port);
 
         gateway.start().await
     }
@@ -384,10 +375,8 @@ impl DaemonManager {
                     println!("✅ Manta daemon is running");
                     println!("   PID: {}", pid);
                     println!("   Host: {}", self.config.host);
-                    println!("   API Port: {}", self.config.port);
-                    println!("   Web Port: {}", self.config.web_port);
-                    println!("   API: http://{}:{}", self.config.host, self.config.port);
-                    println!("   Web: http://{}:{}", self.config.host, self.config.web_port);
+                    println!("   Port: {}", self.config.port);
+                    println!("   URL: http://{}:{}", self.config.host, self.config.port);
                     println!("   PID file: {:?}", self.config.pid_file);
                 } else {
                     println!("⚠️ Daemon is not running (stale PID file)");
@@ -485,12 +474,10 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file: PathBuf::from("/tmp/manta.pid"),
         };
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
-        assert_eq!(config.web_port, 8081);
         assert_eq!(config.pid_file, PathBuf::from("/tmp/manta.pid"));
     }
 
@@ -499,7 +486,6 @@ mod tests {
         let config = DaemonConfig {
             host: "0.0.0.0".to_string(),
             port: 3000,
-            web_port: 3001,
             pid_file: PathBuf::from("/tmp/manta-test.pid"),
         };
         let manager = DaemonManager::new(config.clone());
@@ -517,7 +503,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file: pid_file.clone(),
         };
         let manager = DaemonManager::new(config).unwrap();
@@ -539,7 +524,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file,
         };
         let manager = DaemonManager::new(config).unwrap();
@@ -558,7 +542,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file,
         };
         let manager = DaemonManager::new(config).unwrap();
@@ -575,7 +558,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file: pid_file.clone(),
         };
         let manager = DaemonManager::new(config).unwrap();
@@ -592,7 +574,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file: PathBuf::from("/tmp/manta.pid"),
         };
         let manager = DaemonManager::new(config).unwrap();
@@ -606,7 +587,6 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            web_port: 8081,
             pid_file: PathBuf::from("/tmp/manta.pid"),
         };
         let manager = DaemonManager::new(config).unwrap();
