@@ -36,10 +36,15 @@ config.yaml
 config.json
 !config.example.yaml
 
-# Web (Node.js/pnpm)
-web/node_modules/
-web/dist/
-web/.vite/
+# Node.js / pnpm
+node_modules/
+
+# Root-level workspace artifacts (not the actual project)
+/pnpm-lock.yaml
+/package.json
+
+# Chat UI source dependencies
+assets/chat-ui/node_modules/
 
 # Local development scripts with sensitive data
 start-local-*.sh
