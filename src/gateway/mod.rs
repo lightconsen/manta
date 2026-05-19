@@ -1987,10 +1987,10 @@ impl Gateway {
             }
         };
 
-        // SPA frontend routes (serve built React app from web/chat/)
+        // SPA frontend routes (serve built React app from web/dist/)
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
-            .nest_service("/assets", tower_http::services::ServeDir::new("web/chat/assets"));
+            .nest_service("/assets", tower_http::services::ServeDir::new("web/dist/assets"));
 
         // Merge all routers and apply global CORS
         frontend_router
@@ -3643,12 +3643,12 @@ impl Gateway {
 
 /// HTML handler for the web chat UI
 ///
-/// Serves the built React app from `web/chat/index.html`.
+/// Serves the built React app from `web/dist/index.html`.
 async fn web_terminal_html_handler() -> Html<String> {
-    let html = tokio::fs::read_to_string("web/chat/index.html")
+    let html = tokio::fs::read_to_string("web/dist/index.html")
         .await
         .unwrap_or_else(|_| format!(
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui && pnpm build</p>"
+            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
         ));
     Html(html.replace("{VERSION}", crate::VERSION))
 }

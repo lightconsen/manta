@@ -618,13 +618,13 @@ async fn web_terminal_chat_daemon_handler(
     }
 }
 
-/// HTML/CSS/JS for the terminal interface (loaded from web/chat/index.html)
+/// HTML/CSS/JS for the terminal interface (loaded from web/dist/index.html)
 fn terminal_html() -> String {
     let version = env!("CARGO_PKG_VERSION");
-    match std::fs::read_to_string("web/chat/index.html") {
+    match std::fs::read_to_string("web/dist/index.html") {
         Ok(html) => html.replace("{VERSION}", version),
         Err(_) => format!(
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui && pnpm build</p>"
+            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
         ),
     }
 }
