@@ -3641,25 +3641,21 @@ impl Gateway {
     }
 }
 
-/// HTML handler for web terminal
+/// HTML handler for the web chat UI
 ///
-/// Serves the built assistant-ui app from `web/chat/index.html` if available,
-/// otherwise falls back to the standalone `web/chat.html`.
+/// Serves the built React app from `web/chat/index.html`.
 async fn web_terminal_html_handler() -> Html<String> {
-    let built_path = std::path::Path::new("web/chat/index.html");
-    let html = if built_path.exists() {
-        tokio::fs::read_to_string(built_path)
-            .await
-            .unwrap_or_else(|_| include_str!("../../web/chat.html").to_string())
-    } else {
-        include_str!("../../web/chat.html").to_string()
-    };
+    let html = tokio::fs::read_to_string("web/chat/index.html")
+        .await
+        .unwrap_or_else(|_| format!(
+            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui && pnpm build</p>"
+        ));
     Html(html.replace("{VERSION}", crate::VERSION))
 }
 
 /// Admin redirect handler — admin UI moved to CLI
 async fn admin_redirect_handler() -> Html<&'static str> {
-    Html(include_str!("../../web/admin_redirect.html"))
+    Html("<h1>Admin UI Moved</h1><p>Administration is now available via CLI: <code>manta admin</code></p>")
 }
 
 /// Create default tool registry with all built-in tools
