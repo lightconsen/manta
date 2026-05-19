@@ -385,8 +385,11 @@ async fn handle_chat_socket(mut socket: axum::extract::ws::WebSocket, state: App
                                             "result": result
                                         })
                                     }
-                                    crate::agent::ProgressEvent::Generating => {
+                                    crate::agent::ProgressEvent::Generating { .. } => {
                                         serde_json::json!({"type": "progress", "status": "generating"})
+                                    }
+                                    crate::agent::ProgressEvent::ContentDelta { .. } => {
+                                        serde_json::json!({"type": "progress", "status": "streaming"})
                                     }
                                     crate::agent::ProgressEvent::Completed { .. } => {
                                         serde_json::json!({"type": "progress", "status": "completed"})

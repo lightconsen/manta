@@ -276,6 +276,7 @@ impl AnthropicProvider {
             message: Message {
                 role: Role::Assistant,
                 content: text_content,
+                reasoning_content: None,
                 name: None,
                 tool_calls: if tool_calls.is_empty() {
                     None
@@ -318,6 +319,7 @@ impl AnthropicProvider {
                 if data == "[DONE]" {
                     chunks.push(CompletionChunk {
                         content: None,
+                        reasoning_content: None,
                         tool_calls: None,
                         is_done: true,
                         usage: None,
@@ -335,6 +337,7 @@ impl AnthropicProvider {
                                         current_text.push_str(&text);
                                         chunks.push(CompletionChunk {
                                             content: Some(text),
+                                            reasoning_content: None,
                                             tool_calls: None,
                                             is_done: false,
                                             usage: None,
@@ -345,6 +348,7 @@ impl AnthropicProvider {
                             "message_stop" => {
                                 chunks.push(CompletionChunk {
                                     content: None,
+                                    reasoning_content: None,
                                     tool_calls: None,
                                     is_done: true,
                                     usage: None,

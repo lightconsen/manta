@@ -45,6 +45,7 @@ node_modules/
 
 # Chat UI source dependencies
 web/chat-ui/node_modules/
+web/dist/
 
 # Local development scripts with sensitive data
 start-local-*.sh

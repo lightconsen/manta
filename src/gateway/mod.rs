@@ -945,6 +945,12 @@ pub enum GatewayEvent {
         agent_id: String,
         content: Option<String>,
     },
+    /// Streaming text content delta (for real-time typing effect)
+    ContentDelta {
+        session_id: String,
+        agent_id: String,
+        delta: String,
+    },
 }
 
 /// Agent status
@@ -3144,11 +3150,23 @@ impl Gateway {
                             status: AgentStatus::Processing { session_id: sid.clone() },
                         });
                     }
-                    crate::agent::ProgressEvent::Generating => {
-                        let _ = tx.send(GatewayEvent::Thinking {
+                    crate::agent::ProgressEvent::Generating { content } => {
+                        // Only emit thinking events when there's actual content
+                        if let Some(ref thinking) = content {
+                            if !thinking.is_empty() {
+                                let _ = tx.send(GatewayEvent::Thinking {
+                                    session_id: sid.clone(),
+                                    agent_id: aid.clone(),
+                                    content: Some(thinking.clone()),
+                                });
+                            }
+                        }
+                    }
+                    crate::agent::ProgressEvent::ContentDelta { text } => {
+                        let _ = tx.send(GatewayEvent::ContentDelta {
                             session_id: sid.clone(),
                             agent_id: aid.clone(),
-                            content: None,
+                            delta: text,
                         });
                     }
                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
@@ -4461,12 +4479,23 @@ async fn create_agent_handler(
                                             status: AgentStatus::Processing { session_id: sid.clone() },
                                         });
                                     }
-                                    crate::agent::ProgressEvent::Generating => {
-                                        // Send thinking indicator
-                                        let _ = state.event_tx.send(GatewayEvent::Thinking {
+                                    crate::agent::ProgressEvent::Generating { content } => {
+                                        // Only emit thinking events when there's actual content
+                                        if let Some(ref thinking) = content {
+                                            if !thinking.is_empty() {
+                                                let _ = state.event_tx.send(GatewayEvent::Thinking {
+                                                    session_id: sid.clone(),
+                                                    agent_id: aid.clone(),
+                                                    content: Some(thinking.clone()),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    crate::agent::ProgressEvent::ContentDelta { text } => {
+                                        let _ = state.event_tx.send(GatewayEvent::ContentDelta {
                                             session_id: sid.clone(),
                                             agent_id: aid.clone(),
-                                            content: None,
+                                            delta: text,
                                         });
                                     }
                                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
@@ -8300,6 +8329,7 @@ async fn web_terminal_events_handler(
                     let event_type = match &evt {
                         GatewayEvent::AgentResponse { .. } => "agent_response",
                         GatewayEvent::Thinking { .. } => "thinking",
+                        GatewayEvent::ContentDelta { .. } => "content_delta",
                         GatewayEvent::ToolCalling { .. } => "tool_calling",
                         GatewayEvent::ToolResult { .. } => "tool_result",
                         GatewayEvent::AgentStatus { .. } => "agent_status",

@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio_stream::StreamExt;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Progress events during message processing
@@ -23,8 +24,10 @@ pub enum ProgressEvent {
     ToolCalling { name: String, arguments: String },
     /// Tool execution completed
     ToolResult { name: String, result: String },
-    /// LLM is generating response
-    Generating,
+    /// LLM is generating reasoning/thinking content
+    Generating { content: Option<String> },
+    /// LLM is streaming text content delta
+    ContentDelta { text: String },
     /// Completed with final response
     Completed { response: String },
     /// Error occurred
@@ -1688,6 +1691,7 @@ impl Agent {
                 message: Message {
                     role: Role::Assistant,
                     content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -1762,6 +1766,7 @@ impl Agent {
             context.add_message(Message {
                 role: Role::Tool,
                 content: result.content,
+                reasoning_content: None,
                 name: None,
                 tool_calls: None,
                 tool_call_id: Some(result.tool_call_id),
@@ -1778,6 +1783,7 @@ impl Agent {
                         message: Message {
                             role: Role::Assistant,
                             content: format!("Execution halted: {}", reason),
+                            reasoning_content: None,
                             name: None,
                             tool_calls: None,
                             tool_call_id: None,
@@ -1814,7 +1820,7 @@ impl Agent {
             messages,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
-            stream: false,
+            stream: true,
             ..Default::default()
         };
 
@@ -1840,25 +1846,100 @@ impl Agent {
             }
         }
 
-        // Notify generating
-        (progress_cb)(ProgressEvent::Generating).await;
+        // Notify generating (starting)
+        (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
-        // Get completion
-        let response = self.provider.complete(request).await?;
+        // Get streaming completion
+        let mut stream = self.provider.stream(request).await?;
 
-        // Record token usage in cost guard
-        if let Some(ref guard) = self.cost_guard {
-            if let Some(ref usage) = response.usage {
-                guard.record_usage(
-                    usage.prompt_tokens as u64,
-                    usage.completion_tokens as u64,
-                    response.model.as_str(),
-                );
+        let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
+        let mut accumulated_tool_calls: Vec<ToolCall> = Vec::new();
+        let mut finish_reason: Option<String> = None;
+        let mut usage: Option<crate::providers::Usage> = None;
+
+        while let Some(chunk) = stream.next().await {
+            // Emit reasoning delta
+            if let Some(ref reasoning_delta) = chunk.reasoning_content {
+                if !reasoning_delta.is_empty() {
+                    accumulated_reasoning.push_str(reasoning_delta);
+                    (progress_cb)(ProgressEvent::Generating {
+                        content: Some(reasoning_delta.clone()),
+                    })
+                    .await;
+                }
+            }
+
+            // Emit text delta
+            if let Some(ref text_delta) = chunk.content {
+                if !text_delta.is_empty() {
+                    accumulated_text.push_str(text_delta);
+                    (progress_cb)(ProgressEvent::ContentDelta {
+                        text: text_delta.clone(),
+                    })
+                    .await;
+                }
+            }
+
+            // Accumulate tool calls from stream
+            if let Some(ref calls) = chunk.tool_calls {
+                for call in calls {
+                    // Merge partial tool calls by id
+                    if let Some(existing) = accumulated_tool_calls.iter_mut().find(|c| c.id == call.id) {
+                        existing.function.name.push_str(&call.function.name);
+                        existing.function.arguments.push_str(&call.function.arguments);
+                    } else {
+                        accumulated_tool_calls.push(call.clone());
+                    }
+                }
+            }
+
+            if chunk.is_done {
+                finish_reason = Some("stop".to_string());
+                usage = chunk.usage;
+                break;
             }
         }
 
+        // Build the final message
+        let final_message = Message {
+            role: Role::Assistant,
+            content: accumulated_text.clone(),
+            reasoning_content: if accumulated_reasoning.is_empty() {
+                None
+            } else {
+                Some(accumulated_reasoning.clone())
+            },
+            name: None,
+            tool_calls: if accumulated_tool_calls.is_empty() {
+                None
+            } else {
+                Some(accumulated_tool_calls.clone())
+            },
+            tool_call_id: None,
+            metadata: None,
+        };
+
+        let response = crate::providers::CompletionResponse {
+            message: final_message,
+            usage,
+            model: self.model.clone().unwrap_or_else(|| self.provider.default_model().to_string()),
+            finish_reason,
+        };
+
+        // Record token usage in cost guard (approximate from accumulated text if no usage provided)
+        if let Some(ref guard) = self.cost_guard {
+            let prompt_tokens = context.to_messages().iter().map(|m| m.content.len() / 4).sum::<usize>() as u64;
+            let completion_tokens = (accumulated_text.len() + accumulated_reasoning.len()) as u64 / 4;
+            guard.record_usage(
+                prompt_tokens,
+                completion_tokens,
+                response.model.as_str(),
+            );
+        }
+
         // Handle tool calls if present
-        if let Some(tool_calls) = &response.message.tool_calls {
+        if let Some(ref tool_calls) = response.message.tool_calls {
             if !tool_calls.is_empty() {
                 debug!("Processing {} tool calls with progress", tool_calls.len());
                 return self
@@ -1895,6 +1976,7 @@ impl Agent {
                 message: Message {
                     role: Role::Assistant,
                     content: format!("I've reached the maximum number of tool calls ({}) for this request. The task may be too complex or the tools may not be providing the expected results. Please try a more specific request or break the task into smaller steps.", Context::DEFAULT_MAX_TOOL_ITERATIONS),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -2001,6 +2083,7 @@ impl Agent {
             context.add_message(Message {
                 role: Role::Tool,
                 content: result.content,
+                reasoning_content: None,
                 name: None,
                 tool_calls: None,
                 tool_call_id: Some(result.tool_call_id),
@@ -2023,6 +2106,7 @@ impl Agent {
                         message: Message {
                             role: Role::Assistant,
                             content: format!("Execution halted: {}", reason),
+                            reasoning_content: None,
                             name: None,
                             tool_calls: None,
                             tool_call_id: None,
@@ -2378,7 +2462,7 @@ impl Agent {
         }
 
         // Extract URLs/links
-        let url_re = Regex::new(r#"https?://[^\s\)\]\>'"`]+"#).expect("valid url regex");
+        let url_re = Regex::new(r#"https?://[^\s)\]\>'"`]+"#).expect("valid url regex");
         for (idx, cap) in url_re.captures_iter(content).enumerate() {
             let url = cap.get(0).map(|m| m.as_str()).unwrap_or("");
             if url.len() < 10 {

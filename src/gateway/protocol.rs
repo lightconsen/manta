@@ -317,18 +317,10 @@ impl ProtocolConnection {
 /// Convert a GatewayEvent to a WsEvent name + payload
 pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::Value)> {
     match event {
-        GatewayEvent::AgentResponse { session_id, agent_id, content, channel, conversation_id, usage } => {
-            Some((
-                "chat.delta".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "content": content,
-                    "channel": channel,
-                    "conversation_id": conversation_id,
-                    "usage": usage,
-                }),
-            ))
+        GatewayEvent::AgentResponse { .. } => {
+            // Suppressed: non-streaming responses emit chat.final via Completed,
+            // so emitting chat.delta here would duplicate the full content.
+            None
         }
         GatewayEvent::Thinking { session_id, agent_id, content } => {
             Some((
@@ -337,6 +329,16 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                     "session_id": session_id,
                     "agent_id": agent_id,
                     "content": content,
+                }),
+            ))
+        }
+        GatewayEvent::ContentDelta { session_id, agent_id, delta } => {
+            Some((
+                "chat.delta".to_string(),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "content": delta,
                 }),
             ))
         }

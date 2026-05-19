@@ -106,6 +106,7 @@ impl OpenAiProvider {
             }
             .to_string(),
             content: Some(msg.content.clone()),
+            reasoning_content: msg.reasoning_content.clone(),
             name: msg.name.clone(),
             tool_calls: msg.tool_calls.as_ref().map(|calls| {
                 calls
@@ -141,6 +142,7 @@ impl OpenAiProvider {
                 _ => Role::User,
             },
             content: choice.message.content.unwrap_or_default(),
+            reasoning_content: choice.message.reasoning_content,
             name: choice.message.name,
             tool_calls: choice.message.tool_calls.map(|calls| {
                 calls
@@ -389,6 +391,9 @@ struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Reasoning / thinking content returned by some models (e.g. Qwen)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -469,6 +474,7 @@ struct OpenAiStreamChoice {
 struct OpenAiDelta {
     role: Option<String>,
     content: Option<String>,
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<OpenAiStreamToolCall>>,
 }
 
@@ -518,6 +524,7 @@ impl OpenAiStream {
             if data == "[DONE]" {
                 return Some(CompletionChunk {
                     content: None,
+                    reasoning_content: None,
                     tool_calls: None,
                     is_done: true,
                     usage: None,
@@ -528,6 +535,7 @@ impl OpenAiStream {
             if let Ok(response) = serde_json::from_str::<OpenAiStreamResponse>(data) {
                 if let Some(choice) = response.choices.first() {
                     let content = choice.delta.content.clone();
+                    let reasoning_content = choice.delta.reasoning_content.clone();
 
                     // Convert tool calls
                     let tool_calls = choice.delta.tool_calls.as_ref().map(|calls| {
@@ -550,6 +558,7 @@ impl OpenAiStream {
 
                     return Some(CompletionChunk {
                         content,
+                        reasoning_content,
                         tool_calls,
                         is_done,
                         usage: None, // Usage not typically sent in stream chunks

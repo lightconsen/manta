@@ -20,6 +20,8 @@ export interface WsEvent {
 }
 
 export type EventCallback = (evt: WsEvent) => void;
+export type NetworkStatus = "connected" | "disconnected" | "connecting";
+export type StatusCallback = (status: NetworkStatus) => void;
 
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
@@ -63,6 +65,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private deviceId: string;
   private subscribedSessions: string[] = [];
   private listeners: Set<EventCallback> = new Set();
+  private statusListeners: Set<StatusCallback> = new Set();
+  private responseWaiters = new Map<
+    string,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
+  private currentStatus: NetworkStatus = "connecting";
 
   constructor() {
     this.deviceId =
@@ -81,8 +89,20 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return () => this.listeners.delete(callback);
   }
 
+  onStatusChange(callback: StatusCallback): () => void {
+    this.statusListeners.add(callback);
+    callback(this.currentStatus);
+    return () => this.statusListeners.delete(callback);
+  }
+
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  private setStatus(status: NetworkStatus) {
+    if (this.currentStatus === status) return;
+    this.currentStatus = status;
+    this.statusListeners.forEach((cb) => cb(status));
   }
 
   private generateId(): string {
@@ -95,6 +115,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       this.reconnectTimer = null;
     }
 
+    this.setStatus("connecting");
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws`;
     this.ws = new WebSocket(url);
@@ -112,15 +133,26 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     this.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (
-          msg.type === "res" &&
-          msg.ok &&
-          msg.payload?.protocol_version
-        ) {
-          if (this.subscribedSessions.length > 0) {
-            this.sendRequest("sessions.subscribe", {
-              session_ids: this.subscribedSessions,
-            });
+        if (msg.type === "res") {
+          // Resolve response waiters
+          const waiter = this.responseWaiters.get(msg.id);
+          if (waiter) {
+            this.responseWaiters.delete(msg.id);
+            if (msg.ok) {
+              waiter.resolve(msg.payload);
+            } else {
+              waiter.reject(
+                new Error(msg.error?.message || "Request failed")
+              );
+            }
+          }
+          if (msg.ok && msg.payload?.protocol_version) {
+            this.setStatus("connected");
+            if (this.subscribedSessions.length > 0) {
+              this.sendRequest("sessions.subscribe", {
+                session_ids: this.subscribedSessions,
+              });
+            }
           }
         }
         if (msg.type === "event") {
@@ -145,10 +177,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     };
 
     this.ws.onclose = () => {
+      this.setStatus("disconnected");
       this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
+      this.setStatus("disconnected");
       this.scheduleReconnect();
     };
   }
@@ -176,14 +210,91 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   }
 
   createSession(): string {
-    const newSessionId = `web:${this.deviceId}`;
+    const newSessionId = `web:${this.deviceId}_${Date.now()}`;
     this.sessionId = newSessionId;
     localStorage.setItem("manta_session", this.sessionId);
     this.subscribedSessions = [];
     this.sendRequest("sessions.create", {
       session_id: this.sessionId,
     });
+    // Persist session in local list
+    const sessions = this.getLocalSessions();
+    if (!sessions.includes(newSessionId)) {
+      sessions.unshift(newSessionId);
+      localStorage.setItem("manta_sessions", JSON.stringify(sessions));
+    }
     return this.sessionId;
+  }
+
+  getLocalSessions(): string[] {
+    try {
+      return JSON.parse(localStorage.getItem("manta_sessions") || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  async listSessions(): Promise<Array<{ id: string; label?: string }>> {
+    const local = this.getLocalSessions();
+    if (this.currentStatus !== "connected") {
+      return local.map((id) => ({ id, label: this.sessionLabel(id) }));
+    }
+    try {
+      const payload = (await this.sendRequestAndWait("sessions.list", {})) as
+        | { sessions?: Array<{ session_id: string; name?: string }> }
+        | undefined;
+      const remote = payload?.sessions || [];
+      const merged = new Map<string, string>();
+      for (const s of remote) {
+        merged.set(s.session_id, s.name || this.sessionLabel(s.session_id));
+      }
+      for (const id of local) {
+        if (!merged.has(id)) merged.set(id, this.sessionLabel(id));
+      }
+      return Array.from(merged.entries()).map(([id, label]) => ({
+        id,
+        label,
+      }));
+    } catch {
+      return local.map((id) => ({ id, label: this.sessionLabel(id) }));
+    }
+  }
+
+  private sessionLabel(id: string): string {
+    const parts = id.split("_");
+    const last = parts[parts.length - 1];
+    if (/^\d+$/.test(last)) {
+      const d = new Date(parseInt(last));
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+    }
+    return id.slice(0, 20);
+  }
+
+  private sendRequestAndWait(
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const id = this.sendRequest(method, params);
+      if (!id) {
+        reject(new Error("WebSocket not connected"));
+        return;
+      }
+      this.responseWaiters.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (this.responseWaiters.has(id)) {
+          this.responseWaiters.delete(id);
+          reject(new Error("Request timeout"));
+        }
+      }, 5000);
+    });
   }
 
   switchSession(sessionId: string): void {
@@ -214,6 +325,9 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       session_id: this.sessionId,
       message: text,
     });
+
+    // Show "Thinking..." placeholder immediately while waiting for first event
+    yield { content: [makeReasoningPart("")] };
 
     const parts: (
       | TextMessagePart

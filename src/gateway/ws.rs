@@ -17,6 +17,7 @@ use axum::{
     },
     response::IntoResponse,
 };
+use futures_util::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -96,9 +97,12 @@ async fn handle_websocket(
     // Command channel for cross-task communication
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(256);
 
-    // Shared socket for both tasks
-    let socket = Arc::new(tokio::sync::Mutex::new(socket));
-    let socket_recv = socket.clone();
+    // Split socket into sender/receiver so recv().await doesn't block sends.
+    // WebSocket implements Stream + Sink; StreamExt::split yields independent halves.
+    let (mut ws_sender, mut ws_receiver): (
+        SplitSink<WebSocket, Message>,
+        SplitStream<WebSocket>,
+    ) = StreamExt::split(socket);
     let conn_send = conn.clone();
 
     // ── Send Task: pushes events and responses to client ─────────────────────
@@ -138,8 +142,7 @@ async fn handle_websocket(
                         };
                         let ws_event = WsEvent::new(event_name, payload, seq);
                         if let Ok(text) = serde_json::to_string(&ws_event) {
-                            let mut sock = socket.lock().await;
-                            if sock.send(Message::Text(text)).await.is_err() {
+                            if ws_sender.send(Message::Text(text)).await.is_err() {
                                 break;
                             }
                         }
@@ -148,8 +151,7 @@ async fn handle_websocket(
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
                         WsCommand::SendResponse(text) | WsCommand::SendEvent(text) => {
-                            let mut sock = socket.lock().await;
-                            if sock.send(Message::Text(text)).await.is_err() {
+                            if ws_sender.send(Message::Text(text)).await.is_err() {
                                 break;
                             }
                         }
@@ -180,10 +182,7 @@ async fn handle_websocket(
     let recv_task = tokio::spawn(async move {
         // Phase 1: Wait for connect handshake
         let handshake_ok = loop {
-            let msg = {
-                let mut sock = socket_recv.lock().await;
-                sock.recv().await
-            };
+            let msg = ws_receiver.next().await;
 
             match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -240,10 +239,7 @@ async fn handle_websocket(
 
         // Phase 2: Normal operation loop
         loop {
-            let msg = {
-                let mut sock = socket_recv.lock().await;
-                sock.recv().await
-            };
+            let msg = ws_receiver.next().await;
 
             match msg {
                 Some(Ok(Message::Close(_))) => break,

@@ -39,6 +39,9 @@ pub struct Message {
     pub role: Role,
     /// The content of the message
     pub content: String,
+    /// Optional reasoning / thinking content (e.g. from reasoning models)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     /// Optional name (for tool calls or multi-user scenarios)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -59,6 +62,7 @@ impl Message {
         Self {
             role: Role::System,
             content: content.into(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -71,6 +75,7 @@ impl Message {
         Self {
             role: Role::User,
             content: content.into(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -90,6 +95,7 @@ impl Message {
         Self {
             role: Role::Assistant,
             content: content.into(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -102,6 +108,7 @@ impl Message {
         Self {
             role: Role::Tool,
             content: content.into(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
@@ -195,6 +202,8 @@ impl ToolResult {
 pub struct CompletionChunk {
     /// The content delta for this chunk
     pub content: Option<String>,
+    /// Reasoning / thinking content delta for this chunk
+    pub reasoning_content: Option<String>,
     /// Tool calls being streamed
     pub tool_calls: Option<Vec<ToolCall>>,
     /// Whether this is the final chunk
@@ -527,6 +536,7 @@ mod tests {
     fn test_completion_chunk() {
         let chunk = CompletionChunk {
             content: Some("hi".to_string()),
+            reasoning_content: None,
             tool_calls: None,
             is_done: false,
             usage: None,

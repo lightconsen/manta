@@ -320,6 +320,7 @@ impl ContextCompressor {
         Message {
             role: Role::System,
             content,
+            reasoning_content: None,
             name: Some("summary".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -411,6 +412,7 @@ impl ContextCompressor {
                         mid.len(),
                         summary_text
                     ),
+                    reasoning_content: None,
                     name: Some("compaction_summary".to_string()),
                     tool_calls: None,
                     tool_call_id: None,
