@@ -11,6 +11,8 @@ import {
   type ChatMessage,
 } from "./MantaWebSocketTransport";
 import { MarkdownMessage } from "./components/MarkdownMessage";
+import { ReasoningPart } from "./components/ReasoningPart";
+import { ToolCallPart } from "./components/ToolCallPart";
 
 /* ── Icons ── */
 function LogoIcon({ className }: { className?: string }) {
@@ -264,37 +266,69 @@ function Avatar({ role }: { role: string }) {
 /* ── Message Bubble ── */
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
-  return (
-    <div
-      className={`py-4 px-4 sm:px-6 ${
-        isUser ? "bg-white dark:bg-neutral-900" : "bg-gray-50/60 dark:bg-neutral-800/30"
-      }`}
-    >
-      <div
-        className={`max-w-3xl mx-auto flex gap-3 ${
-          isUser ? "flex-row-reverse" : "flex-row"
-        }`}
-      >
-        <Avatar role={message.role} />
-        <div className={`flex-1 min-w-0 ${isUser ? "text-right" : ""}`}>
-          <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
-            {isUser ? "You" : "Manta"}
-          </div>
-          <div
-            className={`inline-block text-left rounded-2xl px-4 py-2.5 ${
-              isUser
-                ? "bg-blue-600 text-white rounded-br-md"
-                : "bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700"
-            }`}
-          >
-            {isUser ? (
+
+  if (isUser) {
+    return (
+      <div className="py-4 px-4 sm:px-6 bg-white dark:bg-neutral-900">
+        <div className="max-w-3xl mx-auto flex gap-3 flex-row-reverse">
+          <Avatar role="user" />
+          <div className="flex-1 min-w-0 text-right">
+            <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+              You
+            </div>
+            <div className="inline-block text-left rounded-2xl px-4 py-2.5 bg-blue-600 text-white rounded-br-md">
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 {message.content}
               </p>
-            ) : (
-              <MarkdownMessage text={message.content} />
-            )}
+            </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Assistant message – render parts (reasoning, tool calls, text)
+  const hasParts = message.parts && message.parts.length > 0;
+
+  return (
+    <div className="py-4 px-4 sm:px-6 bg-gray-50/60 dark:bg-neutral-800/30">
+      <div className="max-w-3xl mx-auto flex gap-3 flex-row">
+        <Avatar role="assistant" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+            Manta
+          </div>
+          {hasParts ? (
+            <div className="space-y-1">
+              {message.parts!.map((part, i) => {
+                if (part.type === "reasoning") {
+                  return <ReasoningPart key={i} text={part.text || ""} />;
+                }
+                if (part.type === "tool-call") {
+                  return (
+                    <ToolCallPart
+                      key={i}
+                      toolName={part.toolName || "tool"}
+                      args={part.args || {}}
+                      result={part.result}
+                    />
+                  );
+                }
+                if (part.type === "text") {
+                  return (
+                    <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700">
+                      <MarkdownMessage text={part.text || ""} />
+                    </div>
+                  );
+                }
+                return null;
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700">
+              <MarkdownMessage text={message.content} />
+            </div>
+          )}
         </div>
       </div>
     </div>

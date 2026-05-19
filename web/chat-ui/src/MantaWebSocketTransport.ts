@@ -30,11 +30,19 @@ export interface HistoryMessage {
   timestamp: number;
 }
 
+export interface ChatMessagePart {
+  type: string;
+  text?: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  parts?: Array<{ type: string; text?: string }>;
+  parts?: ChatMessagePart[];
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
@@ -61,6 +69,21 @@ function makeToolCallPart(
     argsText: JSON.stringify(args),
     result,
   } as ToolCallMessagePart;
+}
+
+/** Convert assistant-ui part to ChatMessagePart preserving tool call metadata. */
+function toChatPart(
+  p: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart
+): ChatMessagePart {
+  if (p.type === "tool-call") {
+    return {
+      type: p.type,
+      toolName: p.toolName,
+      args: p.args,
+      result: p.result,
+    };
+  }
+  return { type: p.type, text: (p as any).text || "" };
 }
 
 /**
@@ -470,10 +493,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.push(...newParts);
             // Update in-memory AI message
             aiMsg.content = currentText;
-            aiMsg.parts = newParts.map((p) => ({
-              type: p.type,
-              text: (p as any).text || "",
-            }));
+            aiMsg.parts = newParts.map(toChatPart);
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -494,10 +514,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.length = 0;
             parts.push(...newParts);
             aiMsg.content = currentText;
-            aiMsg.parts = newParts.map((p) => ({
-              type: p.type,
-              text: (p as any).text || "",
-            }));
+            aiMsg.parts = newParts.map(toChatPart);
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -522,10 +539,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.length = 0;
             parts.push(...newParts);
             aiMsg.content = currentText;
-            aiMsg.parts = newParts.map((p) => ({
-              type: p.type,
-              text: (p as any).text || "",
-            }));
+            aiMsg.parts = newParts.map(toChatPart);
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -559,10 +573,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.length = 0;
             parts.push(...newParts);
             aiMsg.content = currentText;
-            aiMsg.parts = newParts.map((p) => ({
-              type: p.type,
-              text: (p as any).text || "",
-            }));
+            aiMsg.parts = newParts.map(toChatPart);
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
