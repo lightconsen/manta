@@ -44,7 +44,7 @@ node_modules/
 /package.json
 
 # Chat UI source dependencies
-assets/chat-ui/node_modules/
+web/chat-ui/node_modules/
 
 # Local development scripts with sensitive data
 start-local-*.sh

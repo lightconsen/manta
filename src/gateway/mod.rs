@@ -1987,10 +1987,10 @@ impl Gateway {
             }
         };
 
-        // SPA frontend routes (serve built React app from assets/chat/)
+        // SPA frontend routes (serve built React app from web/chat/)
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
-            .nest_service("/assets", tower_http::services::ServeDir::new("assets/chat/assets"));
+            .nest_service("/assets", tower_http::services::ServeDir::new("web/chat/assets"));
 
         // Merge all routers and apply global CORS
         frontend_router
@@ -3643,23 +3643,23 @@ impl Gateway {
 
 /// HTML handler for web terminal
 ///
-/// Serves the built assistant-ui app from `assets/chat/index.html` if available,
-/// otherwise falls back to the standalone `assets/chat.html`.
+/// Serves the built assistant-ui app from `web/chat/index.html` if available,
+/// otherwise falls back to the standalone `web/chat.html`.
 async fn web_terminal_html_handler() -> Html<String> {
-    let built_path = std::path::Path::new("assets/chat/index.html");
+    let built_path = std::path::Path::new("web/chat/index.html");
     let html = if built_path.exists() {
         tokio::fs::read_to_string(built_path)
             .await
-            .unwrap_or_else(|_| include_str!("../../assets/chat.html").to_string())
+            .unwrap_or_else(|_| include_str!("../../web/chat.html").to_string())
     } else {
-        include_str!("../../assets/chat.html").to_string()
+        include_str!("../../web/chat.html").to_string()
     };
     Html(html.replace("{VERSION}", crate::VERSION))
 }
 
 /// Admin redirect handler — admin UI moved to CLI
 async fn admin_redirect_handler() -> Html<&'static str> {
-    Html(include_str!("../../assets/admin_redirect.html"))
+    Html(include_str!("../../web/admin_redirect.html"))
 }
 
 /// Create default tool registry with all built-in tools

@@ -618,14 +618,14 @@ async fn web_terminal_chat_daemon_handler(
     }
 }
 
-/// HTML/CSS/JS for the terminal interface (loaded from assets/web_terminal.html)
+/// HTML/CSS/JS for the terminal interface (loaded from web/chat/index.html)
 fn terminal_html() -> String {
     let version = env!("CARGO_PKG_VERSION");
-    let built_path = std::path::Path::new("assets/chat/index.html");
+    let built_path = std::path::Path::new("web/chat/index.html");
     let html = if built_path.exists() {
-        std::fs::read_to_string(built_path).unwrap_or_else(|_| include_str!("../assets/chat.html").to_string())
+        std::fs::read_to_string(built_path).unwrap_or_else(|_| include_str!("../web/chat.html").to_string())
     } else {
-        include_str!("../assets/chat.html").to_string()
+        include_str!("../web/chat.html").to_string()
     };
     html.replace("{VERSION}", version)
 }
