@@ -769,6 +769,7 @@ mod tests {
         let msg = Message {
             role: Role::System,
             content: "You are helpful".to_string(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -784,6 +785,7 @@ mod tests {
         let msg = Message {
             role: Role::Tool,
             content: "result".to_string(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: Some("call_123".to_string()),
@@ -800,6 +802,7 @@ mod tests {
         let msg = Message {
             role: Role::User,
             content: "Hello".to_string(),
+            reasoning_content: None,
             name: Some("alice".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -814,6 +817,7 @@ mod tests {
         let msg = Message {
             role: Role::Assistant,
             content: "".to_string(),
+            reasoning_content: None,
             name: None,
             tool_calls: Some(vec![ToolCall {
                 id: "call_1".to_string(),
@@ -850,6 +854,7 @@ mod tests {
                 message: OpenAiMessage {
                     role: "user".to_string(),
                     content: Some("Hello".to_string()),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -878,6 +883,7 @@ mod tests {
                 message: OpenAiMessage {
                     role: "tool".to_string(),
                     content: Some("result".to_string()),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: Some("call_1".to_string()),
@@ -906,6 +912,7 @@ mod tests {
                 message: OpenAiMessage {
                     role: "assistant".to_string(),
                     content: Some("".to_string()),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: Some(vec![OpenAiToolCall {
                         id: "call_1".to_string(),
@@ -942,6 +949,7 @@ mod tests {
                 message: OpenAiMessage {
                     role: "assistant".to_string(),
                     content: Some("Hi".to_string()),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -989,6 +997,7 @@ mod tests {
                 message: OpenAiMessage {
                     role: "assistant".to_string(),
                     content: None,
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -1087,6 +1096,7 @@ mod tests {
             messages: vec![OpenAiMessage {
                 role: "user".to_string(),
                 content: Some("Hello".to_string()),
+                reasoning_content: None,
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,

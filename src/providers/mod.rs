@@ -466,6 +466,7 @@ mod tests {
                 name: "read_file".to_string(),
                 arguments: "{}".to_string(),
             },
+            index: None,
         }];
         let msg = Message::assistant("Using tool").with_tool_calls(calls.clone());
         assert_eq!(msg.tool_calls.as_ref().unwrap()[0].id, "c1");
@@ -498,6 +499,7 @@ mod tests {
                 name: "grep".to_string(),
                 arguments: "{\"pattern\": \"foo\"}".to_string(),
             },
+            index: None,
         };
         assert_eq!(tc.id, "tc1");
         assert_eq!(tc.function.name, "grep");

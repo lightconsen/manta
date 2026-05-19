@@ -489,6 +489,7 @@ mod tests {
             .map(|i| Message {
                 role: if i == 0 { Role::System } else { Role::User },
                 content: format!("Message {} with some content", i),
+                reasoning_content: None,
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
@@ -501,6 +502,7 @@ mod tests {
         Message {
             role,
             content: content.into(),
+            reasoning_content: None,
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -847,6 +849,7 @@ mod tests {
                 message: Message {
                     role: Role::Assistant,
                     content: self.response.clone().unwrap_or_default(),
+                    reasoning_content: None,
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,

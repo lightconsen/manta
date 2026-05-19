@@ -128,6 +128,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         )),
         agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
         session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
+        session_store: None,
         mcp_manager: Arc::new(McpManager::new()),
         config_path: None,
         runtime_settings: Arc::new(RwLock::new(HashMap::new())),
