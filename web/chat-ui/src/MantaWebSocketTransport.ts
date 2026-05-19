@@ -23,6 +23,22 @@ export type EventCallback = (evt: WsEvent) => void;
 export type NetworkStatus = "connected" | "disconnected" | "connecting";
 export type StatusCallback = (status: NetworkStatus) => void;
 
+export interface HistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  parts?: Array<{ type: string; text?: string }>;
+}
+
+export type MessagesCallback = (messages: ChatMessage[]) => void;
+
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
 }
@@ -71,6 +87,8 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
   private currentStatus: NetworkStatus = "connecting";
+  private messages: ChatMessage[] = [];
+  private messagesListeners: Set<MessagesCallback> = new Set();
 
   constructor() {
     this.deviceId =
@@ -308,6 +326,73 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /* ── Session history (localStorage) ── */
+  private historyKey(sessionId: string): string {
+    return `manta_history_${sessionId}`;
+  }
+
+  saveMessage(sessionId: string, role: "user" | "assistant", content: string): void {
+    const key = this.historyKey(sessionId);
+    const history: HistoryMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
+    history.push({
+      id: `${sessionId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      role,
+      content,
+      timestamp: Date.now(),
+    });
+    // Keep last 200 messages
+    if (history.length > 200) history.splice(0, history.length - 200);
+    localStorage.setItem(key, JSON.stringify(history));
+  }
+
+  getHistory(sessionId: string): HistoryMessage[] {
+    try {
+      return JSON.parse(localStorage.getItem(this.historyKey(sessionId)) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  async loadHistory(sessionId: string): Promise<HistoryMessage[]> {
+    try {
+      const res = await this.sendRequestAndWait("chat.history", {
+        session_id: sessionId,
+        limit: 200,
+      }) as { messages?: Array<{ id: string; role: string; content: string; timestamp: number }> } | undefined;
+      const msgs = res?.messages || [];
+      // Convert backend timestamp (seconds) to ms for HistoryMessage
+      return msgs.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        timestamp: m.timestamp >= 1e12 ? m.timestamp : m.timestamp * 1000,
+      }));
+    } catch {
+      // Fallback to localStorage
+      return this.getHistory(sessionId);
+    }
+  }
+
+  clearHistory(sessionId: string): void {
+    localStorage.removeItem(this.historyKey(sessionId));
+  }
+
+  /* ── In-memory message state for UI ── */
+  getMessages(): ChatMessage[] {
+    return this.messages;
+  }
+
+  setMessages(msgs: ChatMessage[]): void {
+    this.messages = msgs;
+    this.messagesListeners.forEach((cb) => cb(msgs));
+  }
+
+  onMessagesChange(callback: MessagesCallback): () => void {
+    this.messagesListeners.add(callback);
+    callback(this.messages);
+    return () => this.messagesListeners.delete(callback);
+  }
+
   async *run(
     options: ChatModelRunOptions
   ): AsyncGenerator<ChatModelRunResult, void> {
@@ -320,6 +405,16 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     const text = last.content
       .map((c) => (c.type === "text" ? c.text : ""))
       .join("");
+
+    // Save user message to history
+    this.saveMessage(this.sessionId, "user", text);
+    const userMsg: ChatMessage = {
+      id: `u_${Date.now()}`,
+      role: "user",
+      content: text,
+    };
+    this.messages = [...this.messages, userMsg];
+    this.messagesListeners.forEach((cb) => cb(this.messages));
 
     this.sendRequest("chat.send", {
       session_id: this.sessionId,
@@ -338,6 +433,17 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     let currentReasoning = "";
     let toolCalls = new Map<string, ToolCallMessagePart>();
     let aborted = false;
+    let aiMsgId = `a_${Date.now()}`;
+
+    // Add empty AI message for streaming updates
+    const aiMsg: ChatMessage = {
+      id: aiMsgId,
+      role: "assistant",
+      content: "",
+      parts: [],
+    };
+    this.messages = [...this.messages, aiMsg];
+    this.messagesListeners.forEach((cb) => cb(this.messages));
 
     try {
       while (true) {
@@ -362,6 +468,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             newParts.push(makeTextPart(currentText));
             parts.length = 0;
             parts.push(...newParts);
+            // Update in-memory AI message
+            aiMsg.content = currentText;
+            aiMsg.parts = newParts.map((p) => ({
+              type: p.type,
+              text: (p as any).text || "",
+            }));
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
           }
@@ -380,6 +493,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             }
             parts.length = 0;
             parts.push(...newParts);
+            aiMsg.content = currentText;
+            aiMsg.parts = newParts.map((p) => ({
+              type: p.type,
+              text: (p as any).text || "",
+            }));
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
           }
@@ -402,6 +521,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             }
             parts.length = 0;
             parts.push(...newParts);
+            aiMsg.content = currentText;
+            aiMsg.parts = newParts.map((p) => ({
+              type: p.type,
+              text: (p as any).text || "",
+            }));
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
           }
@@ -433,6 +558,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             }
             parts.length = 0;
             parts.push(...newParts);
+            aiMsg.content = currentText;
+            aiMsg.parts = newParts.map((p) => ({
+              type: p.type,
+              text: (p as any).text || "",
+            }));
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
           }
@@ -448,6 +579,14 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
               finalParts.push(t);
             }
             finalParts.push(makeTextPart(currentText));
+            // Save final AI message to history
+            this.saveMessage(this.sessionId, "assistant", currentText);
+            aiMsg.content = currentText;
+            aiMsg.parts = finalParts.map((p) => ({
+              type: p.type,
+              text: (p as any).text || "",
+            }));
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: finalParts, status: { type: "complete", reason: "stop" } };
             return;
           }

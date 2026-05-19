@@ -584,6 +584,17 @@ async fn handle_chat_send(
         let cg = conn.read().await;
         cg.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "anonymous".to_string())
     };
+
+    // Save user message to session history
+    {
+        let mgr = state.session_manager.read().await;
+        if let Some(session_arc) = mgr.get_session(&session_id) {
+            if let Ok(mut session) = session_arc.lock() {
+                session.add_message("user", &params.message);
+            }
+        }
+    }
+
     let incoming = crate::channels::IncomingMessage::new(
         user_id.clone(),
         session_id.clone(),
@@ -631,7 +642,7 @@ async fn handle_chat_send(
 async fn handle_chat_history(
     req: &WsRequest,
     _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
     #[allow(dead_code)]
@@ -648,10 +659,34 @@ async fn handle_chat_history(
         Err(res) => return res,
     };
 
-    // TODO: integrate with session search / memory manager for real history
+    let messages = {
+        let mgr = state.session_manager.read().await;
+        match mgr.get_session(&params.session_id) {
+            Some(session_arc) => {
+                match session_arc.lock() {
+                    Ok(session) => {
+                        let history = session.get_history();
+                        let limit = params.limit.min(history.len());
+                        history[history.len().saturating_sub(limit)..]
+                            .iter()
+                            .map(|m| serde_json::json!({
+                                "id": m.id,
+                                "role": m.role,
+                                "content": m.content,
+                                "timestamp": m.timestamp,
+                            }))
+                            .collect::<Vec<_>>()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            }
+            None => Vec::new(),
+        }
+    };
+
     WsResponse::ok(&req.id, serde_json::json!({
         "session_id": params.session_id,
-        "messages": [],
+        "messages": messages,
     }))
 }
 

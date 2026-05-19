@@ -3211,6 +3211,15 @@ impl Gateway {
             .await
         {
             Ok(outgoing) => {
+                // Save assistant response to session history
+                {
+                    let mgr = state.session_manager.read().await;
+                    if let Some(session_arc) = mgr.get_session(session_id) {
+                        if let Ok(mut session) = session_arc.lock() {
+                            session.add_message("assistant", &outgoing.content);
+                        }
+                    }
+                }
                 let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                     session_id: session_id.to_string(),
                     agent_id: agent_id.to_string(),

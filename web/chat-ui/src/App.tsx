@@ -3,17 +3,14 @@ import {
   AssistantRuntimeProvider,
   ThreadPrimitive,
   ComposerPrimitive,
-  MessagePrimitive,
   useLocalRuntime,
-  AuiIf,
 } from "@assistant-ui/react";
 import {
   MantaWebSocketTransport,
   type NetworkStatus,
+  type ChatMessage,
 } from "./MantaWebSocketTransport";
-import { TextPart } from "./components/TextPart";
-import { ReasoningPart } from "./components/ReasoningPart";
-import { ToolCallPart } from "./components/ToolCallPart";
+import { MarkdownMessage } from "./components/MarkdownMessage";
 
 /* ── Icons ── */
 function LogoIcon({ className }: { className?: string }) {
@@ -264,71 +261,52 @@ function Avatar({ role }: { role: string }) {
   );
 }
 
+/* ── Message Bubble ── */
+function MessageBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
+  return (
+    <div
+      className={`py-4 px-4 sm:px-6 ${
+        isUser ? "bg-white dark:bg-neutral-900" : "bg-gray-50/60 dark:bg-neutral-800/30"
+      }`}
+    >
+      <div
+        className={`max-w-3xl mx-auto flex gap-3 ${
+          isUser ? "flex-row-reverse" : "flex-row"
+        }`}
+      >
+        <Avatar role={message.role} />
+        <div className={`flex-1 min-w-0 ${isUser ? "text-right" : ""}`}>
+          <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
+            {isUser ? "You" : "Manta"}
+          </div>
+          <div
+            className={`inline-block text-left rounded-2xl px-4 py-2.5 ${
+              isUser
+                ? "bg-blue-600 text-white rounded-br-md"
+                : "bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700"
+            }`}
+          >
+            {isUser ? (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {message.content}
+              </p>
+            ) : (
+              <MarkdownMessage text={message.content} />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Chat Content ── */
-function ChatContent() {
+function ChatContent({ messages }: { messages: ChatMessage[] }) {
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto">
-        <ThreadPrimitive.Messages>
-          {({ message }) => (
-            <div
-              className={`py-4 px-4 sm:px-6 ${
-                message.role === "user"
-                  ? "bg-white dark:bg-neutral-900"
-                  : "bg-gray-50/60 dark:bg-neutral-800/30"
-              }`}
-            >
-              <div
-                className={`max-w-3xl mx-auto flex gap-3 ${
-                  message.role === "user" ? "flex-row-reverse" : "flex-row"
-                }`}
-              >
-                <Avatar role={message.role} />
-                <div className={`flex-1 min-w-0 ${message.role === "user" ? "text-right" : ""}`}>
-                  {/* Name label */}
-                  <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
-                    {message.role === "user" ? "You" : "Manta"}
-                  </div>
-
-                  {/* Message bubble */}
-                  <div
-                    className={`inline-block text-left rounded-2xl px-4 py-2.5 ${
-                      message.role === "user"
-                        ? "bg-blue-600 text-white rounded-br-md"
-                        : "bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700"
-                    }`}
-                  >
-                    {message.role === "user" ? (
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {message.content
-                          .map((c) =>
-                            c.type === "text" ? c.text : ""
-                          )
-                          .join("")}
-                      </p>
-                    ) : (
-                      <MessagePrimitive.Root asChild>
-                        <div>
-                          <MessagePrimitive.Content
-                            components={{
-                              Text: TextPart,
-                              Reasoning: ReasoningPart,
-                              tools: {
-                                Fallback: ToolCallPart,
-                              },
-                            }}
-                          />
-                        </div>
-                      </MessagePrimitive.Root>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </ThreadPrimitive.Messages>
-
-        <AuiIf condition={(s) => s.thread.isEmpty}>
+        {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-emerald-500/20">
@@ -342,7 +320,10 @@ function ChatContent() {
               </p>
             </div>
           </div>
-        </AuiIf>
+        )}
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
       </ThreadPrimitive.Viewport>
 
       <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
@@ -405,10 +386,34 @@ function ChatContent() {
 /* ── App ── */
 function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
   const runtime = useLocalRuntime(transport);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    transport.loadHistory(transport.getSessionId()).then((history) => {
+      if (cancelled) return;
+      const initialMessages: ChatMessage[] = history.map((h) => ({
+        id: h.id,
+        role: h.role,
+        content: h.content,
+      }));
+      transport.setMessages(initialMessages);
+      setMessages(initialMessages);
+    });
+
+    // Subscribe to message changes
+    const unsub = transport.onMessagesChange((msgs) => {
+      setMessages([...msgs]);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [transport]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatContent />
+      <ChatContent messages={messages} />
     </AssistantRuntimeProvider>
   );
 }
@@ -472,13 +477,22 @@ function ChatApp() {
 
   const handleNewSession = useCallback(() => {
     transport.createSession();
+    transport.setMessages([]);
     setSessionKey((k) => k + 1);
     setTimeout(refreshSessions, 500);
   }, [transport, refreshSessions]);
 
   const handleSwitchSession = useCallback(
-    (id: string) => {
+    async (id: string) => {
       transport.switchSession(id);
+      // Load history for the new session from backend
+      const history = await transport.loadHistory(id);
+      const initialMessages: ChatMessage[] = history.map((h) => ({
+        id: h.id,
+        role: h.role,
+        content: h.content,
+      }));
+      transport.setMessages(initialMessages);
       setSessionKey((k) => k + 1);
     },
     [transport]
