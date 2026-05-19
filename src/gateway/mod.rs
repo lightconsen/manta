@@ -588,6 +588,8 @@ pub struct GatewayState {
     pub agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
     /// Multi-agent session manager (OpenClaw-style)
     pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
+    /// SQLite-backed session store for persistent chat history
+    pub session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
     /// MCP manager for server connections (shared with McpConnectionTool)
     pub mcp_manager: Arc<McpManager>,
     /// Path to the config file (for runtime persistence)
@@ -1354,6 +1356,20 @@ impl Gateway {
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
             session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
+            session_store: if let Some(ref pool) = sqlite_pool {
+                match crate::agent::session_store::SessionStore::from_pool(pool.clone()).await {
+                    Ok(store) => {
+                        info!("SessionStore initialized for persistent chat history");
+                        Some(Arc::new(store))
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize SessionStore: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            },
             mcp_manager: mcp_manager.clone(),
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
             approval_queue,
@@ -3211,14 +3227,9 @@ impl Gateway {
             .await
         {
             Ok(outgoing) => {
-                // Save assistant response to session history
-                {
-                    let mgr = state.session_manager.read().await;
-                    if let Some(session_arc) = mgr.get_session(session_id) {
-                        if let Ok(mut session) = session_arc.lock() {
-                            session.add_message("assistant", &outgoing.content);
-                        }
-                    }
+                // Save assistant response to persistent session history
+                if let Some(ref store) = state.session_store {
+                    let _ = store.append_message(session_id, "assistant", &outgoing.content, None).await;
                 }
                 let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                     session_id: session_id.to_string(),

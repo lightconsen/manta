@@ -585,14 +585,9 @@ async fn handle_chat_send(
         cg.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "anonymous".to_string())
     };
 
-    // Save user message to session history
-    {
-        let mgr = state.session_manager.read().await;
-        if let Some(session_arc) = mgr.get_session(&session_id) {
-            if let Ok(mut session) = session_arc.lock() {
-                session.add_message("user", &params.message);
-            }
-        }
+    // Save user message to persistent session history
+    if let Some(ref store) = state.session_store {
+        let _ = store.append_message(&session_id, "user", &params.message, None).await;
     }
 
     let incoming = crate::channels::IncomingMessage::new(
@@ -659,29 +654,21 @@ async fn handle_chat_history(
         Err(res) => return res,
     };
 
-    let messages = {
-        let mgr = state.session_manager.read().await;
-        match mgr.get_session(&params.session_id) {
-            Some(session_arc) => {
-                match session_arc.lock() {
-                    Ok(session) => {
-                        let history = session.get_history();
-                        let limit = params.limit.min(history.len());
-                        history[history.len().saturating_sub(limit)..]
-                            .iter()
-                            .map(|m| serde_json::json!({
-                                "id": m.id,
-                                "role": m.role,
-                                "content": m.content,
-                                "timestamp": m.timestamp,
-                            }))
-                            .collect::<Vec<_>>()
-                    }
-                    Err(_) => Vec::new(),
-                }
-            }
-            None => Vec::new(),
+    let messages = if let Some(ref store) = state.session_store {
+        match store.get_messages(&params.session_id, params.limit as i64, None).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(id, role, content, dt)| serde_json::json!({
+                    "id": format!("msg_{}", id),
+                    "role": role,
+                    "content": content,
+                    "timestamp": dt.timestamp(),
+                }))
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
         }
+    } else {
+        Vec::new()
     };
 
     WsResponse::ok(&req.id, serde_json::json!({

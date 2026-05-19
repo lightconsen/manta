@@ -150,15 +150,6 @@ impl SessionAgent {
     }
 }
 
-/// A message in the session history
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SessionChatMessage {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub timestamp: u64,
-}
-
 /// Multi-agent session for orchestrating multiple agents
 #[derive(Debug)]
 pub struct MultiAgentSession {
@@ -176,8 +167,6 @@ pub struct MultiAgentSession {
     pub last_activity: std::time::Instant,
     /// Message channel for routing
     message_tx: mpsc::Sender<SessionMessage>,
-    /// Message history for this session
-    message_history: Vec<SessionChatMessage>,
 }
 
 /// Message within a session
@@ -230,7 +219,6 @@ impl MultiAgentSession {
             created_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
             message_tx,
-            message_history: Vec::new(),
         };
 
         (session, message_rx)
@@ -366,26 +354,6 @@ impl MultiAgentSession {
         self.agents
             .values()
             .find(|a| a.is_active && a.status == AgentInstanceStatus::Ready)
-    }
-
-    /// Add a message to the session history
-    pub fn add_message(&mut self, role: &str, content: &str) {
-        let msg = SessionChatMessage {
-            id: format!("msg_{}_{}", self.id, self.message_history.len()),
-            role: role.to_string(),
-            content: content.to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        };
-        self.message_history.push(msg);
-        self.last_activity = std::time::Instant::now();
-    }
-
-    /// Get the session message history
-    pub fn get_history(&self) -> &[SessionChatMessage] {
-        &self.message_history
     }
 
     /// Check if session has timed out (no activity)

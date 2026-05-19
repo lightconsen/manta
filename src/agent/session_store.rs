@@ -83,7 +83,7 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// Create a new session store
+    /// Create a new session store from a database URL.
     #[instrument(skip(database_url))]
     pub async fn new(database_url: &str) -> Result<Self> {
         info!("Initializing SQLite session store");
@@ -101,6 +101,11 @@ impl SessionStore {
                 details: e.to_string(),
             })?;
 
+        Self::from_pool(pool).await
+    }
+
+    /// Create a session store from an existing connection pool.
+    pub async fn from_pool(pool: Pool<Sqlite>) -> Result<Self> {
         let store = Self {
             pool,
             cache: Arc::new(RwLock::new(lru::LruCache::new(
@@ -111,7 +116,7 @@ impl SessionStore {
         store.optimize().await?;
         store.init_schema().await?;
 
-        info!("SQLite session store initialized");
+        info!("SQLite session store initialized from pool");
         Ok(store)
     }
 
@@ -477,7 +482,7 @@ impl SessionStore {
         Ok(sessions)
     }
 
-    /// Append a message to session history
+    /// Append a message to session history. Returns the inserted row id.
     #[instrument(skip(self, content))]
     pub async fn append_message(
         &self,
@@ -485,10 +490,10 @@ impl SessionStore {
         role: &str,
         content: &str,
         metadata_json: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             INSERT INTO session_messages (session_id, role, content, created_at, metadata)
             VALUES (?, ?, ?, ?, ?)
@@ -516,25 +521,26 @@ impl SessionStore {
         .await
         .ok();
 
-        Ok(())
+        Ok(result.last_insert_rowid())
     }
 
-    /// Get messages for a session
+    /// Get messages for a session, ordered oldest first.
+    /// Returns `(id, role, content, created_at)`.
     #[instrument(skip(self))]
     pub async fn get_messages(
         &self,
         session_id: &str,
         limit: i64,
         before: Option<DateTime<Utc>>,
-    ) -> Result<Vec<(String, String, DateTime<Utc>)>> {
+    ) -> Result<Vec<(i64, String, String, DateTime<Utc>)>> {
         let before_ts = before.map(|dt| dt.timestamp_millis()).unwrap_or(i64::MAX);
 
         let rows = sqlx::query(
             r#"
-            SELECT role, content, created_at
+            SELECT id, role, content, created_at
             FROM session_messages
             WHERE session_id = ? AND created_at < ?
-            ORDER BY created_at DESC
+            ORDER BY created_at ASC
             LIMIT ?
             "#,
         )
@@ -548,14 +554,15 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
-        let messages: Vec<(String, String, DateTime<Utc>)> = rows
+        let messages = rows
             .into_iter()
             .map(|row| {
+                let id: i64 = row.get("id");
                 let role: String = row.get("role");
                 let content: String = row.get("content");
                 let ts: i64 = row.get("created_at");
                 let dt = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
-                (role, content, dt)
+                (id, role, content, dt)
             })
             .collect();
 
@@ -954,8 +961,8 @@ mod tests {
             .expect("Failed to get messages");
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].0, "assistant"); // Most recent first
-        assert_eq!(messages[1].0, "user");
+        assert_eq!(messages[0].1, "user"); // Oldest first
+        assert_eq!(messages[1].1, "assistant");
     }
 
     #[tokio::test]
