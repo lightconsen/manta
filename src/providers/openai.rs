@@ -330,29 +330,62 @@ impl Provider for OpenAiProvider {
             stop: request.stop,
         };
 
-        let response = self
-            .client
-            .post(self.url("/chat/completions"))
-            .headers(self.headers())
-            .json(&body)
-            .send()
-            .await
-            .map_err(crate::error::MantaError::Http)?;
+        let request_url = self.url("/chat/completions");
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            error!("OpenAI API error: {} - {}", status, text);
-            return Err(crate::error::MantaError::ExternalService {
-                source: format!("OpenAI API error {}: {}", status, text),
-                cause: None,
-            });
+        // Retry logic for transient errors (same as complete())
+        let mut retries = 0;
+        let max_retries = 3;
+
+        loop {
+            match self
+                .client
+                .post(&request_url)
+                .headers(self.headers())
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        let text = response.text().await.unwrap_or_default();
+                        error!("OpenAI API error: {} - {}", status, text);
+                        return Err(crate::error::MantaError::ExternalService {
+                            source: format!("OpenAI API error {}: {}", status, text),
+                            cause: None,
+                        });
+                    }
+
+                    let stream = response.bytes_stream();
+                    let openai_stream = OpenAiStream::new(stream);
+                    return Ok(Box::pin(openai_stream));
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
+
+                    let is_retryable = error_msg.contains("connection closed")
+                        || error_msg.contains("timeout")
+                        || error_msg.contains("reset")
+                        || error_msg.contains("broken pipe")
+                        || error_msg.contains("Connection reset")
+                        || error_msg.contains("unexpected EOF");
+
+                    if is_retryable && retries < max_retries {
+                        retries += 1;
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        warn!(
+                            "Retryable stream error, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+
+                    return Err(crate::error::MantaError::Http(e));
+                }
+            }
         }
-
-        let stream = response.bytes_stream();
-        let openai_stream = OpenAiStream::new(stream);
-
-        Ok(Box::pin(openai_stream))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
