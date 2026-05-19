@@ -153,7 +153,7 @@ pub enum Commands {
     /// Start the Manta daemon (background server)
     Start {
         /// Host to bind to
-        #[arg(short, long, default_value = "127.0.0.1")]
+        #[arg(long, default_value = "127.0.0.1")]
         host: String,
         /// Port for gateway API, WebSocket, and SPA
         #[arg(short, long, default_value = "18080")]
