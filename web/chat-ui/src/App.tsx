@@ -424,15 +424,23 @@ function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
 
   useEffect(() => {
     let cancelled = false;
-    transport.loadHistory(transport.getSessionId()).then((history) => {
-      if (cancelled) return;
-      const initialMessages: ChatMessage[] = history.map((h) => ({
-        id: h.id,
-        role: h.role,
-        content: h.content,
-      }));
-      transport.setMessages(initialMessages);
-      setMessages(initialMessages);
+    const doLoad = async () => {
+      try {
+        const history = await transport.loadHistory(transport.getSessionId());
+        if (cancelled) return;
+        transport.setMessages(history);
+        setMessages(history);
+      } catch {
+        /* ignore — will retry when connected */
+      }
+    };
+    doLoad();
+
+    // Retry loading history when connection is established
+    const unsubStatus = transport.onStatusChange((status) => {
+      if (status === "connected" && transport.getMessages().length === 0) {
+        doLoad();
+      }
     });
 
     // Subscribe to message changes
@@ -442,6 +450,7 @@ function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
     return () => {
       cancelled = true;
       unsub();
+      unsubStatus();
     };
   }, [transport]);
 
@@ -521,12 +530,7 @@ function ChatApp() {
       transport.switchSession(id);
       // Load history for the new session from backend
       const history = await transport.loadHistory(id);
-      const initialMessages: ChatMessage[] = history.map((h) => ({
-        id: h.id,
-        role: h.role,
-        content: h.content,
-      }));
-      transport.setMessages(initialMessages);
+      transport.setMessages(history);
       setSessionKey((k) => k + 1);
     },
     [transport]

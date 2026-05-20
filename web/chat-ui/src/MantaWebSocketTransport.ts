@@ -23,13 +23,6 @@ export type EventCallback = (evt: WsEvent) => void;
 export type NetworkStatus = "connected" | "disconnected" | "connecting";
 export type StatusCallback = (status: NetworkStatus) => void;
 
-export interface HistoryMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: number;
-}
-
 export interface ChatMessagePart {
   type: string;
   text?: string;
@@ -43,6 +36,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   parts?: ChatMessagePart[];
+  timestamp?: number;
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
@@ -318,6 +312,25 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return id.slice(0, 20);
   }
 
+  private waitForConnected(timeout = 8000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.currentStatus === "connected") {
+        resolve();
+        return;
+      }
+      const unsub = this.onStatusChange((status) => {
+        if (status === "connected") {
+          unsub();
+          resolve();
+        }
+      });
+      setTimeout(() => {
+        unsub();
+        reject(new Error("WebSocket connection timeout"));
+      }, timeout);
+    });
+  }
+
   private sendRequestAndWait(
     method: string,
     params?: Record<string, unknown>
@@ -354,21 +367,19 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return `manta_history_${sessionId}`;
   }
 
-  saveMessage(sessionId: string, role: "user" | "assistant", content: string): void {
-    const key = this.historyKey(sessionId);
-    const history: HistoryMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
+  saveMessage(msg: ChatMessage): void {
+    const key = this.historyKey(this.sessionId);
+    const history: ChatMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
     history.push({
-      id: `${sessionId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      role,
-      content,
-      timestamp: Date.now(),
+      ...msg,
+      timestamp: msg.timestamp ?? Date.now(),
     });
     // Keep last 200 messages
     if (history.length > 200) history.splice(0, history.length - 200);
     localStorage.setItem(key, JSON.stringify(history));
   }
 
-  getHistory(sessionId: string): HistoryMessage[] {
+  getHistory(sessionId: string): ChatMessage[] {
     try {
       return JSON.parse(localStorage.getItem(this.historyKey(sessionId)) || "[]");
     } catch {
@@ -376,22 +387,57 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     }
   }
 
-  async loadHistory(sessionId: string): Promise<HistoryMessage[]> {
+  async loadHistory(sessionId: string): Promise<ChatMessage[]> {
     try {
+      // Wait for WebSocket to connect before requesting history
+      // so we get the full backend data (reasoning + tool_calls)
+      // instead of falling back to the text-only localStorage copy.
+      await this.waitForConnected(8000);
       const res = await this.sendRequestAndWait("chat.history", {
         session_id: sessionId,
         limit: 200,
-      }) as { messages?: Array<{ id: string; role: string; content: string; timestamp: number }> } | undefined;
+      }) as { messages?: Array<{
+        id: string;
+        role: string;
+        content: string;
+        reasoning_content?: string;
+        tool_calls?: Array<{ id: string; call_type: string; function: { name: string; arguments: string } }>;
+        timestamp: number;
+      }> } | undefined;
       const msgs = res?.messages || [];
-      // Convert backend timestamp (seconds) to ms for HistoryMessage
-      return msgs.map((m) => ({
-        id: m.id,
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        timestamp: m.timestamp >= 1e12 ? m.timestamp : m.timestamp * 1000,
-      }));
+      return msgs.map((m) => {
+        const parts: ChatMessagePart[] = [];
+        // Build parts: reasoning → tool calls → text
+        if (m.reasoning_content) {
+          parts.push({ type: "reasoning", text: m.reasoning_content });
+        }
+        if (m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            let args: Record<string, unknown> = {};
+            try {
+              args = JSON.parse(tc.function.arguments);
+            } catch {
+              args = { raw: tc.function.arguments };
+            }
+            parts.push({
+              type: "tool-call",
+              toolName: tc.function.name,
+              args,
+            });
+          }
+        }
+        if (m.content) {
+          parts.push({ type: "text", text: m.content });
+        }
+        return {
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          parts: parts.length > 0 ? parts : undefined,
+        };
+      });
     } catch {
-      // Fallback to localStorage
+      // Fallback to localStorage (already stores full ChatMessage with parts)
       return this.getHistory(sessionId);
     }
   }
@@ -429,13 +475,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       .map((c) => (c.type === "text" ? c.text : ""))
       .join("");
 
-    // Save user message to history
-    this.saveMessage(this.sessionId, "user", text);
     const userMsg: ChatMessage = {
       id: `u_${Date.now()}`,
       role: "user",
       content: text,
     };
+    // Save user message to history
+    this.saveMessage(userMsg);
     this.messages = [...this.messages, userMsg];
     this.messagesListeners.forEach((cb) => cb(this.messages));
 
@@ -480,7 +526,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
         switch (evt.event) {
           case "chat.delta": {
-            const delta = (evt.payload?.content as string) || "";
+            const delta = (evt.payload?.delta as string) || (evt.payload?.content as string) || "";
             currentText += delta;
             // Rebuild parts: reasoning (if any) + text + tool calls
             const newParts: typeof parts = [];
@@ -523,8 +569,17 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           }
           case "tool.calling": {
             const toolName = (evt.payload?.tool_name as string) || "tool";
-            const toolArgs =
-              (evt.payload?.arguments as Record<string, unknown>) || {};
+            const rawArgs = evt.payload?.arguments;
+            let toolArgs: Record<string, unknown> = {};
+            if (typeof rawArgs === "string") {
+              try {
+                toolArgs = JSON.parse(rawArgs) as Record<string, unknown>;
+              } catch {
+                toolArgs = { raw: rawArgs };
+              }
+            } else if (rawArgs && typeof rawArgs === "object") {
+              toolArgs = rawArgs as Record<string, unknown>;
+            }
             const toolCallId = `tc_${toolCalls.size}_${Date.now()}`;
             const tc = makeToolCallPart(toolCallId, toolName, toolArgs);
             toolCalls.set(toolCallId, tc);
@@ -592,13 +647,10 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
               finalParts.push(t);
             }
             finalParts.push(makeTextPart(currentText));
-            // Save final AI message to history
-            this.saveMessage(this.sessionId, "assistant", currentText);
+            // Save final AI message to history with full parts
+            this.saveMessage({ ...aiMsg });
             aiMsg.content = currentText;
-            aiMsg.parts = finalParts.map((p) => ({
-              type: p.type,
-              text: (p as any).text || "",
-            }));
+            aiMsg.parts = finalParts.map(toChatPart);
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: finalParts, status: { type: "complete", reason: "stop" } };
             return;
