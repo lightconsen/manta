@@ -95,6 +95,10 @@ impl Tool for CronTool {
                 "description": {
                     "type": "string",
                     "description": "Optional job description"
+                },
+                "silent": {
+                    "type": "boolean",
+                    "description": "If true, execution results are logged but not pushed to the frontend"
                 }
             }),
             vec!["action"],
@@ -167,6 +171,16 @@ impl Tool for CronTool {
 
                 let job_id = uuid::Uuid::new_v4().to_string();
 
+                let silent = args.get("silent").and_then(|v| v.as_bool()).unwrap_or(false);
+                let delivery = if silent {
+                    DeliveryMode::None
+                } else {
+                    DeliveryMode::Announce {
+                        channel: "system".to_string(),
+                        to: "*".to_string(),
+                    }
+                };
+
                 // Create the job with shell execution target and announce delivery
                 let job = CronJob::new(
                     job_id.clone(),
@@ -174,10 +188,7 @@ impl Tool for CronTool {
                     schedule,
                     ExecutionTarget::Shell { command: command.to_string() },
                 )
-                .with_delivery(DeliveryMode::Announce {
-                    channel: "web_terminal".to_string(),
-                    to: "*".to_string(),
-                });
+                .with_delivery(delivery);
 
                 // Add job to scheduler
                 let guard = scheduler.lock().await;

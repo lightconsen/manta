@@ -425,15 +425,12 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 }),
             ))
         }
-        GatewayEvent::CronAnnounce { channel, to, message } => {
-            Some((
-                "cron.announce".to_string(),
-                serde_json::json!({
-                    "channel": channel,
-                    "to": to,
-                    "message": message,
-                }),
-            ))
+        GatewayEvent::CronAnnounce { channel: _, to: _, message } => {
+            // message is a JSON string produced by CronScheduler; try to parse it
+            let payload = serde_json::from_str(message).unwrap_or_else(|_| {
+                serde_json::json!({ "message": message })
+            });
+            Some(("cron.completed".to_string(), payload))
         }
         GatewayEvent::RepairAction { kind, target_id, description, restart_count } => {
             Some((

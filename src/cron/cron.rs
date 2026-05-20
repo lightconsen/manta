@@ -750,22 +750,20 @@ impl CronScheduler {
                 j.state.last_run_at = Some(completed_at);
                 j.state.run_count += 1;
 
-                match &result {
+                // Build structured delivery payload for both success and error
+                let delivery_payload = match &result {
                     Ok(output) => {
                         j.state.last_error = None;
                         j.state.consecutive_errors = 0;
                         info!("Job '{}' completed successfully", j.name);
 
-                        // Deliver result if configured
-                        if !matches!(j.delivery, DeliveryMode::None) {
-                            if let Err(e) =
-                                Self::deliver_result(&j.delivery, output, announce_tx).await
-                            {
-                                warn!("Delivery failed for job '{}': {}", j.name, e);
-                            }
-                        }
-                        // Success - update next run normally
-                        j.update_next_run(completed_at);
+                        serde_json::json!({
+                            "job_name": j.name,
+                            "job_id": j.id,
+                            "status": "ok",
+                            "output": output.trim(),
+                            "run_at": completed_at.to_rfc3339(),
+                        })
                     }
                     Err(e) => {
                         let error_msg = format!("{}", e);
@@ -773,7 +771,31 @@ impl CronScheduler {
                         j.state.consecutive_errors += 1;
                         error!("Job '{}' failed: {}", j.name, error_msg);
 
-                        // Check if we should retry
+                        serde_json::json!({
+                            "job_name": j.name,
+                            "job_id": j.id,
+                            "status": "error",
+                            "error": error_msg,
+                            "run_at": completed_at.to_rfc3339(),
+                        })
+                    }
+                };
+
+                // Deliver result if configured
+                if !matches!(j.delivery, DeliveryMode::None) {
+                    let message = serde_json::to_string(&delivery_payload)
+                        .unwrap_or_else(|_| delivery_payload.to_string());
+                    if let Err(e) =
+                        Self::deliver_result(&j.delivery, &message, announce_tx).await
+                    {
+                        warn!("Delivery failed for job '{}': {}", j.name, e);
+                    }
+                }
+
+                // Update next run (or schedule retry on error)
+                match &result {
+                    Ok(_) => j.update_next_run(completed_at),
+                    Err(_) => {
                         if j.state.consecutive_errors <= j.retry.max_retries {
                             let delay = j.retry.delay_for_attempt(j.state.consecutive_errors);
                             let retry_at = completed_at
@@ -782,7 +804,6 @@ impl CronScheduler {
                             warn!("Scheduling retry for job '{}' at {:?}", j.name, retry_at);
                             j.state.next_run_at = Some(retry_at);
                         } else {
-                            // Max retries exceeded - update next run normally
                             j.update_next_run(completed_at);
                         }
                     }
