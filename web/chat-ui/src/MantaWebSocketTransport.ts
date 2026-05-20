@@ -7,6 +7,12 @@ import type {
   ToolCallMessagePart,
 } from "@assistant-ui/react";
 
+import {
+  parseCommand,
+  findCommand,
+  LOCAL_COMMANDS,
+} from "./slash-commands";
+
 export interface WsRequest {
   id: string;
   method: string;
@@ -485,6 +491,91 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     this.saveMessage(userMsg);
     this.messages = [...this.messages, userMsg];
     this.messagesListeners.forEach((cb) => cb(this.messages));
+
+    // ── Slash command interception ──
+    const parsed = parseCommand(text);
+    if (parsed) {
+      const cmd = findCommand(parsed.command);
+      if (cmd) {
+        // Local commands: handled client-side without RPC
+        if (LOCAL_COMMANDS.has(parsed.command)) {
+          if (parsed.command === "new") {
+            this.createSession();
+            this.setMessages([]);
+            yield {
+              content: [makeTextPart("New session started.")],
+              status: { type: "complete", reason: "stop" },
+            };
+            return;
+          }
+          if (parsed.command === "clear") {
+            this.clearHistory(this.sessionId);
+            this.setMessages([]);
+            yield {
+              content: [makeTextPart("History cleared.")],
+              status: { type: "complete", reason: "stop" },
+            };
+            return;
+          }
+        }
+
+        // Remote commands: send via RPC and yield response as assistant message
+        try {
+          await this.waitForConnected(5000);
+          const result = (await this.sendRequestAndWait("commands.execute", {
+            command: parsed.command,
+            args: parsed.args,
+            session_id: this.sessionId,
+          })) as { text?: string } | undefined;
+
+          const responseText = result?.text ?? "Command executed.";
+          const assistantMsg: ChatMessage = {
+            id: `a_${Date.now()}`,
+            role: "assistant",
+            content: responseText,
+          };
+          this.saveMessage(assistantMsg);
+          this.messages = [...this.messages, assistantMsg];
+          this.messagesListeners.forEach((cb) => cb(this.messages));
+          yield {
+            content: [makeTextPart(responseText)],
+            status: { type: "complete", reason: "stop" },
+          };
+          return;
+        } catch (err) {
+          const errorText = `Command error: ${err instanceof Error ? err.message : String(err)}`;
+          const assistantMsg: ChatMessage = {
+            id: `a_${Date.now()}`,
+            role: "assistant",
+            content: errorText,
+          };
+          this.saveMessage(assistantMsg);
+          this.messages = [...this.messages, assistantMsg];
+          this.messagesListeners.forEach((cb) => cb(this.messages));
+          yield {
+            content: [makeTextPart(errorText)],
+            status: { type: "complete", reason: "stop" },
+          };
+          return;
+        }
+      }
+
+      // Unrecognized command: show error
+      const errorText = `Unknown command: /${parsed.command}`;
+      const assistantMsg: ChatMessage = {
+        id: `a_${Date.now()}`,
+        role: "assistant",
+        content: errorText,
+      };
+      this.saveMessage(assistantMsg);
+      this.messages = [...this.messages, assistantMsg];
+      this.messagesListeners.forEach((cb) => cb(this.messages));
+      yield {
+        content: [makeTextPart(errorText)],
+        status: { type: "complete", reason: "stop" },
+      };
+      return;
+    }
 
     this.sendRequest("chat.send", {
       session_id: this.sessionId,

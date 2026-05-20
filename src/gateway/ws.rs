@@ -321,6 +321,10 @@ async fn dispatch_method(
         "agents.get" => handle_agents_get(req, state).await,
         "health" => handle_health(req, state).await,
         "system.presence" => handle_system_presence(req).await,
+        "commands.list" => WsResponse::ok(&req.id, crate::gateway::commands::handle_commands_list()),
+        "commands.execute" => {
+            crate::gateway::commands::handle_commands_execute(req, conn, state).await
+        }
         // Legacy commands (still supported during migration)
         "subscribe" => handle_legacy_subscribe(req, conn, cmd_tx).await,
         "unsubscribe" => handle_legacy_unsubscribe(req, conn, cmd_tx).await,

@@ -49,6 +49,7 @@ use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
 pub mod auth;
+pub mod commands;
 pub mod hooks;
 pub mod middleware;
 pub mod protocol;
