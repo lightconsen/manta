@@ -66,8 +66,10 @@ impl Tool for CronTool {
 
     fn description(&self) -> &str {
         "Schedule and manage recurring tasks using cron expressions. \
-         Can create, list, enable, disable, and remove scheduled jobs. \
-         Jobs run automatically in the background according to their schedule. \
+         Actions: create (add a job), list (show all jobs with status), enable/disable, remove, run (trigger now). \
+         The 'list' action returns each job's Status field: 'active' (enabled, waiting for next run), \
+         'running' (currently executing), 'disabled' (paused), or 'error' (failed, retry scheduled). \
+         Use 'list' to answer questions like 'are there any cron jobs running?'. \
          Cron format: 'minute hour day month weekday' (e.g., '0 * * * *' = hourly, '*/5 * * * *' = every 5 minutes)"
     }
 
@@ -217,9 +219,31 @@ impl Tool for CronTool {
                 output.push('\n');
 
                 for job in jobs.iter() {
-                    let status = if job.enabled { "✅" } else { "❌" };
-                    output.push_str(&format!("\n{} {}\n", status, job.name));
+                    // Compute explicit status for LLM clarity
+                    let status = if !job.enabled {
+                        "disabled"
+                    } else if job.state.running_at_ms.is_some() {
+                        "running"
+                    } else if job.state.consecutive_errors > job.retry.max_retries {
+                        "error"
+                    } else if job.state.consecutive_errors > 0 {
+                        "warning"
+                    } else {
+                        "active"
+                    };
+
+                    let icon = match status {
+                        "disabled" => "⏸️",
+                        "running" => "🔄",
+                        "error" => "❌",
+                        "warning" => "⚠️",
+                        _ => "✅",
+                    };
+
+                    output.push_str(&format!("\n{} {}\n", icon, job.name));
+                    output.push_str(&format!("   Status: {}\n", status));
                     output.push_str(&format!("   ID: {}\n", job.id));
+
                     match &job.schedule {
                         Schedule::Cron { expression, .. } => {
                             output.push_str(&format!("   Schedule: {}\n", expression));
@@ -231,6 +255,7 @@ impl Tool for CronTool {
                             output.push_str(&format!("   Schedule: every {:?}\n", interval));
                         }
                     }
+
                     match &job.target {
                         ExecutionTarget::Shell { command } => {
                             output.push_str(&format!("   Command: {}\n", command));
@@ -246,7 +271,15 @@ impl Tool for CronTool {
                             ));
                         }
                     }
+
                     output.push_str(&format!("   Run count: {}\n", job.state.run_count));
+
+                    if status == "error" || status == "warning" {
+                        if let Some(ref err) = job.state.last_error {
+                            output.push_str(&format!("   Last error: {}\n", err));
+                        }
+                    }
+
                     if let Some(last) = job.state.last_run_at {
                         output.push_str(&format!("   Last run: {}\n", last.to_rfc3339()));
                     }
