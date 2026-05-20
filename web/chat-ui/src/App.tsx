@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
   AssistantRuntimeProvider,
   ThreadPrimitive,
@@ -10,6 +10,11 @@ import {
   type NetworkStatus,
   type ChatMessage,
 } from "./MantaWebSocketTransport";
+import {
+  getCommandCompletions,
+  type CommandDef,
+  type CommandCategory,
+} from "./slash-commands";
 import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ReasoningPart } from "./components/ReasoningPart";
 import { ToolCallPart } from "./components/ToolCallPart";
@@ -335,8 +340,147 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+/* ── Command Palette ── */
+function categoryIcon(category: CommandCategory): string {
+  const map: Record<CommandCategory, string> = {
+    session: "🗂️",
+    model: "🧠",
+    status: "ℹ️",
+    agents: "🤖",
+    tools: "🛠️",
+    admin: "🔒",
+  };
+  return map[category];
+}
+
+function CommandPalette({
+  commands,
+  selectedIndex,
+  onSelect,
+}: {
+  commands: CommandDef[];
+  selectedIndex: number;
+  onSelect: (cmd: CommandDef) => void;
+}) {
+  if (commands.length === 0) return null;
+  return (
+    <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-neutral-800 rounded-xl shadow-xl border border-gray-200 dark:border-neutral-700 overflow-hidden z-50">
+      <div className="max-h-64 overflow-y-auto">
+        {commands.map((cmd, i) => (
+          <button
+            key={cmd.key}
+            type="button"
+            onClick={() => onSelect(cmd)}
+            onMouseEnter={() => {}}
+            className={`w-full text-left px-3 py-2 flex items-center gap-3 transition ${
+              i === selectedIndex
+                ? "bg-emerald-50 dark:bg-emerald-900/20"
+                : "hover:bg-gray-50 dark:hover:bg-neutral-700/50"
+            }`}
+          >
+            <span className="text-base w-5 text-center shrink-0">
+              {categoryIcon(cmd.category)}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  /{cmd.name}
+                </span>
+                {cmd.args && (
+                  <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono">
+                    {cmd.args}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-neutral-400 truncate">
+                {cmd.description}
+              </div>
+            </div>
+            {cmd.local && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium shrink-0">
+                local
+              </span>
+            )}
+            {cmd.requires_admin && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-medium shrink-0">
+                admin
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div className="px-3 py-1.5 border-t border-gray-100 dark:border-neutral-700 text-[10px] text-gray-400 dark:text-neutral-500 flex items-center gap-3">
+        <span>↑↓ to navigate</span>
+        <span>↵ to select</span>
+        <span>esc to close</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Chat Content ── */
 function ChatContent({ messages }: { messages: ChatMessage[] }) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteIndex, setPaletteIndex] = useState(0);
+  const [paletteCommands, setPaletteCommands] = useState<CommandDef[]>([]);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    const handleInput = () => {
+      const val = el.value;
+      if (val.startsWith("/")) {
+        const filter = val.slice(1).split(" ")[0] || "";
+        const cmds = getCommandCompletions(filter);
+        setPaletteCommands(cmds);
+        setPaletteOpen(cmds.length > 0);
+        setPaletteIndex(0);
+      } else {
+        setPaletteOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!paletteOpen) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setPaletteIndex((i) => Math.min(i + 1, paletteCommands.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setPaletteIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const cmd = paletteCommands[paletteIndex];
+        if (cmd) {
+          el.value = `/${cmd.name} `;
+          el.focus();
+          setPaletteOpen(false);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      } else if (e.key === "Escape") {
+        setPaletteOpen(false);
+      }
+    };
+
+    el.addEventListener("input", handleInput);
+    el.addEventListener("keydown", handleKeyDown);
+    return () => {
+      el.removeEventListener("input", handleInput);
+      el.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [paletteOpen, paletteCommands.length, paletteIndex]);
+
+  const handleSelectCommand = useCallback((cmd: CommandDef) => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.value = `/${cmd.name} `;
+    el.focus();
+    setPaletteOpen(false);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, []);
+
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto">
@@ -401,10 +545,20 @@ function ChatContent({ messages }: { messages: ChatMessage[] }) {
             </button>
           </div>
 
-          <ComposerPrimitive.Input
-            className="flex-1 resize-none rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500/50 transition min-h-[44px] max-h-[120px]"
-            placeholder="Message Manta..."
-          />
+          <div className="relative flex-1">
+            {paletteOpen && (
+              <CommandPalette
+                commands={paletteCommands}
+                selectedIndex={paletteIndex}
+                onSelect={handleSelectCommand}
+              />
+            )}
+            <ComposerPrimitive.Input
+              ref={inputRef}
+              className="w-full resize-none rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500/50 transition min-h-[44px] max-h-[120px]"
+              placeholder="Message Manta..."
+            />
+          </div>
           <ComposerPrimitive.Send className="shrink-0 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white text-sm font-medium transition shadow-sm">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" />

@@ -8,7 +8,7 @@ use crate::gateway::GatewayState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // ── Command Definitions ───────────────────────────────────────────────────────
 
@@ -299,6 +299,8 @@ pub async fn handle_commands_execute(
         "tools" => handle_tools(req, state, &params.args).await,
         "usage" => handle_usage(req, state).await,
         "compact" => handle_compact(req, conn, state, &params.args).await,
+        "subagents" => handle_subagents(req, conn, state, &params.args).await,
+        "skill" => handle_skill(req, state, &params.args).await,
         "bash" => handle_bash(req, &params.args).await,
         _ => WsResponse::err(
             &req.id,
@@ -373,39 +375,46 @@ async fn handle_whoami(
 async fn handle_stop(
     req: &WsRequest,
     conn: &Arc<RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
-    // Delegate to chat.abort logic
-    // We need to find the session_id for this connection
     let session_id = conn.read().await.subscriptions.first().cloned();
 
     if let Some(sid) = session_id {
-        // We can't easily call handle_chat_abort here because it's private in ws.rs.
-        // TODO: properly wire through ACP abort when that API is exposed.
-        warn!("Command /stop requested for session {} — forwarding to chat.abort not yet wired", sid);
+        state.acp.cancel(sid.clone()).await;
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": format!("⏹️ Stop signal sent for session `{}`.", sid) }),
+        );
     }
 
     WsResponse::ok(
         &req.id,
-        serde_json::json!({ "text": "⏹️ Stop requested. Abort signal sent if a run was active." }),
+        serde_json::json!({ "text": "⏹️ No active session to stop." }),
     )
 }
 
 async fn handle_reset(
     req: &WsRequest,
     conn: &Arc<RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     let session_id = conn.read().await.subscriptions.first().cloned();
 
     if let Some(sid) = session_id {
-        // Same limitation as handle_stop — sessions.reset handler is in ws.rs
-        warn!("Command /reset requested for session {}", sid);
+        {
+            let mut mgr = state.session_manager.write().await;
+            mgr.terminate_session(&sid);
+            mgr.create_session(sid.clone());
+        }
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": format!("🔄 Session `{}` reset.", sid) }),
+        );
     }
 
     WsResponse::ok(
         &req.id,
-        serde_json::json!({ "text": "🔄 Reset requested. Session will be reset." }),
+        serde_json::json!({ "text": "🔄 No active session to reset." }),
     )
 }
 
@@ -482,6 +491,92 @@ async fn handle_bash(req: &WsRequest, args: &str) -> WsResponse {
         &req.id,
         serde_json::json!({ "text": format!("💻 Bash execution of `{}` not yet implemented.", trimmed) }),
     )
+}
+
+async fn handle_subagents(
+    req: &WsRequest,
+    conn: &Arc<RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> WsResponse {
+    let trimmed = args.trim();
+    if trimmed.is_empty() || trimmed == "list" {
+        let session_id = conn.read().await.subscriptions.first().cloned();
+        if let Some(sid) = session_id {
+            if let Some(status) = state.acp.get_status(sid.clone()).await {
+                let text = format!(
+                    "🤖 **Subagents for `{}`**\n\n\
+                    Runtime state: `{:?}`\n\
+                    Mode: `{:?}`\n\
+                    Iteration: {}/{}\n\
+                    Queue depth: {}",
+                    sid,
+                    status.runtime_state,
+                    status.mode,
+                    status.current_iteration,
+                    status.max_iterations,
+                    status.queue_depth,
+                );
+                return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
+            }
+        }
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "🤖 No active session." }),
+        );
+    }
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "text": format!("🤖 Subagent command '{}' not yet implemented.", trimmed) }),
+    )
+}
+
+async fn handle_skill(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> WsResponse {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        let mgr = state.skills_manager.read().await;
+        let skills = mgr.prefilter_skills("", 50).await;
+        let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
+        let text = format!(
+            "🎯 **Skills** ({} total): {}",
+            names.len(),
+            names.join(", ")
+        );
+        return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
+    }
+
+    let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+    let name = parts[0];
+    let _input = parts.get(1).unwrap_or(&"");
+
+    let mgr = state.skills_manager.read().await;
+    match mgr.get_skill(name).await {
+        Some(skill) => {
+            let text = format!(
+                "🎯 **Skill: {}**\n\n\
+                Version: {}\n\
+                Description: {}\n\
+                Enabled: {}\n\
+                Eligible: {}",
+                skill.name,
+                skill.version,
+                skill.description,
+                skill.enabled,
+                skill.is_eligible,
+            );
+            WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
+        }
+        None => WsResponse::err(
+            &req.id,
+            "SKILL_NOT_FOUND",
+            format!("Skill '{}' not found.", name),
+        ),
+    }
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
