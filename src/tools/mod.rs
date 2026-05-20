@@ -82,6 +82,12 @@ pub struct ToolContext {
     /// When `Community`, privileged (write/exec) tools are excluded from
     /// `get_available()`.
     pub skill_trust: SkillTrust,
+    /// Root directory for file operations (workspace boundary).
+    /// All relative paths are resolved against this directory.
+    pub workspace_root: std::path::PathBuf,
+    /// When true, file operations are restricted to `workspace_root`.
+    /// Attempts to read/write outside the workspace are rejected.
+    pub workspace_only: bool,
 }
 
 impl Default for ToolContext {
@@ -101,6 +107,8 @@ impl Default for ToolContext {
             fd_limit: None,
             process_limit: None,
             skill_trust: SkillTrust::Trusted,
+            workspace_root: crate::dirs::workspace_data_dir(),
+            workspace_only: false,
         }
     }
 }
@@ -113,6 +121,18 @@ impl ToolContext {
             conversation_id: conversation_id.into(),
             ..Default::default()
         }
+    }
+
+    /// Set the workspace root directory
+    pub fn with_workspace_root(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.workspace_root = path.into();
+        self
+    }
+
+    /// Set workspace-only mode (restrict file ops to workspace_root)
+    pub fn with_workspace_only(mut self, enabled: bool) -> Self {
+        self.workspace_only = enabled;
+        self
     }
 
     /// Set the minimum skill trust level (controls which tools are exposed).
@@ -278,6 +298,28 @@ impl ToolContext {
 
     /// Check if a path is allowed
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
+        // ── workspace boundary check (OpenClaw-style) ──────────────────────
+        if self.workspace_only {
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.workspace_root.join(path)
+            };
+            let resolved_canon = resolved.canonicalize().ok();
+            let root_canon = self.workspace_root.canonicalize().ok();
+
+            let within = if let (Some(ref rc), Some(ref wc)) = (resolved_canon, root_canon) {
+                rc.starts_with(wc)
+            } else {
+                resolved.starts_with(&self.workspace_root)
+            };
+
+            if !within {
+                return false;
+            }
+        }
+
+        // ── allowlist check ────────────────────────────────────────────────
         if self.allowed_paths.is_empty() {
             return true;
         }
@@ -295,6 +337,35 @@ impl ToolContext {
             // Fallback to raw path comparison for non-existent paths
             path_raw.starts_with(allowed)
         })
+    }
+
+    /// Resolve a path relative to the workspace root.
+    ///
+    /// * Absolute paths are returned as-is (but still subject to `is_path_allowed`).
+    /// * Relative paths are joined with `workspace_root`.
+    /// * `~` is expanded to the user's home directory.
+    pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
+        // Expand tilde
+        let expanded = if let Some(path_str) = path.to_str() {
+            if path_str.starts_with("~/") || path_str == "~" {
+                if let Some(home) = dirs::home_dir() {
+                    let rest = &path_str[1..];
+                    home.join(rest.trim_start_matches('/'))
+                } else {
+                    path.to_path_buf()
+                }
+            } else {
+                path.to_path_buf()
+            }
+        } else {
+            path.to_path_buf()
+        };
+
+        if expanded.is_absolute() {
+            expanded
+        } else {
+            self.workspace_root.join(expanded)
+        }
     }
 
     /// Check if a command is allowed

@@ -85,12 +85,7 @@ impl Tool for ImageTool {
             }
         };
 
-        let path = std::path::PathBuf::from(&args.path);
-        let path = if path.is_absolute() {
-            path
-        } else {
-            context.working_directory.join(path)
-        };
+        let path = context.resolve_path(std::path::Path::new(&args.path));
 
         if !path.exists() {
             return Ok(ToolExecutionResult {
@@ -373,10 +368,10 @@ impl Tool for ImageGenerateTool {
                 if let Some(url) = image_url {
                     // Download the image
                     let output_path = if let Some(out) = args.output {
-                        std::path::PathBuf::from(out)
+                        context.resolve_path(std::path::Path::new(&out))
                     } else {
                         context
-                            .working_directory
+                            .workspace_root
                             .join(format!("generated_image_{}.png", uuid::Uuid::new_v4()))
                     };
 

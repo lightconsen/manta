@@ -149,6 +149,8 @@ impl AgentPersonality {
             skills_prompt: None,
             max_turns: None,
             compaction_model: None,
+            workspace_dir: None,
+            workspace_only: false,
         }
     }
 
@@ -314,6 +316,15 @@ impl AgentRegistry {
             match AgentPersonality::load(&path).await {
                 Ok(personality) => {
                     if personality.is_valid {
+                        // Ensure agent subdirectories exist (workspace/, data/)
+                        let agent_id = &personality.id;
+                        let workspace_dir = dirs::agent_workspace_dir(agent_id);
+                        let data_dir = dirs::agent_data_dir(agent_id);
+                        for dir in [&workspace_dir, &data_dir] {
+                            if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                                warn!("Failed to create agent directory {:?}: {}", dir, e);
+                            }
+                        }
                         self.personalities
                             .insert(personality.id.clone(), personality);
                         count += 1;

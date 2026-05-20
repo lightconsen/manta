@@ -281,6 +281,8 @@ mod tests {
             fd_limit: None,
             process_limit: None,
             skill_trust: crate::tools::SkillTrust::Trusted,
+            workspace_root: PathBuf::from("/tmp"),
+            workspace_only: false,
         }
     }
 

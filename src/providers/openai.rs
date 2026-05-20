@@ -837,6 +837,7 @@ mod tests {
                     arguments: "{\"x\": 1}".to_string(),
                 },
                 index: None,
+                result: None,
             }]),
             tool_call_id: None,
             metadata: None,

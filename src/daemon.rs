@@ -96,8 +96,83 @@ impl DaemonManager {
 
         use crate::gateway::{Gateway, GatewayConfig};
 
+        // ── Auto-initialize ~/.manta directory and manta.toml ──────────────
+        let manta_dir = crate::dirs::manta_dir();
+        let config_path = manta_dir.join("manta.toml");
+
+        if !manta_dir.exists() {
+            println!("📁 Creating Manta directory at {:?}...", manta_dir);
+            tokio::fs::create_dir_all(&manta_dir).await.map_err(|e| {
+                crate::error::MantaError::Io(e)
+            })?;
+        }
+
+        if !config_path.exists() {
+            println!("📄 Creating default manta.toml at {:?}...", config_path);
+            let default_config = r#"# Manta Configuration
+# Auto-generated on first start
+
+[server]
+host = "127.0.0.1"
+port = 18080
+
+[security]
+enabled = true
+auth_required = false
+pairing_required = false
+auth_mode = "none"
+shared_token = ""
+security_headers = true
+
+[security.rate_limit]
+enabled = true
+capacity = 100
+refill_rate = 10
+
+[model]
+model = "claude-3-sonnet-20240229"
+model_provider = "anthropic"
+
+[storage]
+storage_type = "sqlite"
+connection = ""
+
+[acp]
+enabled = true
+max_subagents = 10
+default_timeout_seconds = 300
+
+[cron]
+enabled = true
+check_interval_seconds = 60
+
+[plugins]
+enabled = true
+auto_load = true
+
+[hot_reload]
+enabled = true
+watch_config = true
+watch_agents = true
+watch_plugins = true
+debounce_seconds = 2
+
+[cost_guard]
+daily_limit_cents = 0
+hourly_action_limit = 0
+
+# Workspace settings (restrict file operations to this directory)
+# When workspace_dir is not set, it defaults to ~/.manta/workspace
+# workspace_dir = "~/projects"
+workspace_only = true
+"#;
+            tokio::fs::write(&config_path, default_config).await.map_err(|e| {
+                crate::error::MantaError::Io(e)
+            })?;
+            println!("✅ Default config created. Edit {:?} to customize.", config_path);
+        }
+
         // Try to load existing Gateway config from manta.toml
-        let config_path = crate::dirs::manta_dir().join("manta.toml");
         let mut gateway_config = if config_path.exists() {
             match tokio::fs::read_to_string(&config_path).await {
                 Ok(content) => {

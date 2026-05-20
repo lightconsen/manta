@@ -109,14 +109,14 @@ impl Tool for ShellTool {
         // Get working directory
         let working_dir = args["working_dir"]
             .as_str()
-            .map(std::path::PathBuf::from)
+            .map(|p| context.resolve_path(std::path::Path::new(p)))
             .or_else(|| self.default_cwd.clone())
-            .unwrap_or_else(|| context.working_directory.clone());
+            .unwrap_or_else(|| context.workspace_root.clone());
 
         // Validate working directory
         if !context.is_path_allowed(&working_dir) {
             return Ok(ToolExecutionResult::error(format!(
-                "Working directory '{}' is not in the allowlist",
+                "Working directory '{}' is outside the workspace or not in the allowlist",
                 working_dir.display()
             )));
         }

@@ -77,6 +77,7 @@ fn message_tool_calls_serializes_to_expected_shape() {
             arguments: "{\"command\":\"ls\"}".to_string(),
         },
         index: None,
+        result: None,
     };
     let msg = Message::assistant("I'll run that for you.").with_tool_calls(vec![tool_call]);
 
@@ -129,6 +130,7 @@ fn tool_call_serializes_to_expected_shape() {
             arguments: "{\"path\":\"/etc/passwd\"}".to_string(),
         },
         index: None,
+        result: None,
     };
 
     let json = serde_json::to_value(&call).unwrap();
@@ -149,6 +151,7 @@ fn tool_call_roundtrips_through_json() {
             arguments: "{\"query\":\"rust async\"}".to_string(),
         },
         index: None,
+        result: None,
     };
 
     let json = serde_json::to_string(&original).unwrap();

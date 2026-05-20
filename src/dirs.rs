@@ -7,12 +7,17 @@
 //! ├── logs/            # Log files (daemon.log)
 //! ├── skills/          # User-installed skills
 //! ├── agents/          # Agent configurations
+//! │   └── {agent-id}/
+//! │       ├── personality.toml  # Agent configuration
+//! │       ├── workspace/        # Agent-specific workspace (AI file ops)
+//! │       └── data/             # Agent runtime data (sessions, state)
 //! ├── cron/            # Cron job data
 //! ├── todos/           # Task persistence
-//! ├── workspace/       # Workspace-level data (SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
+//! ├── workspace/       # Default workspace for AI file operations
+//! │                    # (also holds SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
 //! └── memory/          # Legacy directory (deprecated, kept for backward compatibility)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 /// Base directory name
@@ -66,6 +71,41 @@ pub fn skills_dir() -> PathBuf {
 /// Get the agents directory (~/.manta/agents)
 pub fn agents_dir() -> PathBuf {
     manta_dir().join("agents")
+}
+
+/// Get a specific agent's base directory (~/.manta/agents/{id})
+pub fn agent_dir(agent_id: &str) -> PathBuf {
+    agents_dir().join(agent_id)
+}
+
+/// Get a specific agent's workspace directory (~/.manta/agents/{id}/workspace)
+pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
+    agent_dir(agent_id).join("workspace")
+}
+
+/// Get a specific agent's data directory (~/.manta/agents/{id}/data)
+pub fn agent_data_dir(agent_id: &str) -> PathBuf {
+    agent_dir(agent_id).join("data")
+}
+
+/// Resolve a path, expanding `~` to the user's home directory.
+///
+/// If the path starts with `~` or `~/`, it is expanded using the home directory.
+/// Otherwise, the path is returned unchanged.
+pub fn resolve_tilde(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if let Some(path_str) = path.to_str() {
+        if path_str.starts_with("~/") {
+            if let Some(home) = home_dir() {
+                return home.join(&path_str[2..]);
+            }
+        } else if path_str == "~" {
+            if let Some(home) = home_dir() {
+                return home;
+            }
+        }
+    }
+    path.to_path_buf()
 }
 
 /// Get the cron directory (~/.manta/cron)
@@ -405,5 +445,45 @@ mod tests {
     fn test_is_initialized() {
         // Just verify it doesn't panic
         let _ = is_initialized();
+    }
+
+    #[test]
+    fn test_resolve_tilde_home() {
+        let home = home_dir().unwrap();
+        assert_eq!(resolve_tilde("~"), home);
+    }
+
+    #[test]
+    fn test_resolve_tilde_home_subdir() {
+        let home = home_dir().unwrap();
+        assert_eq!(resolve_tilde("~/projects"), home.join("projects"));
+    }
+
+    #[test]
+    fn test_resolve_tilde_no_tilde() {
+        let path = "/usr/local/bin";
+        assert_eq!(resolve_tilde(path), PathBuf::from(path));
+    }
+
+    #[test]
+    fn test_agent_dir() {
+        let base = agents_dir();
+        assert_eq!(agent_dir("my-agent"), base.join("my-agent"));
+    }
+
+    #[test]
+    fn test_agent_workspace_dir() {
+        assert_eq!(
+            agent_workspace_dir("my-agent"),
+            agents_dir().join("my-agent").join("workspace")
+        );
+    }
+
+    #[test]
+    fn test_agent_data_dir() {
+        assert_eq!(
+            agent_data_dir("my-agent"),
+            agents_dir().join("my-agent").join("data")
+        );
     }
 }

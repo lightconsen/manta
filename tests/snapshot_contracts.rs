@@ -41,6 +41,7 @@ fn snapshot_assistant_message_with_tool_calls() {
             arguments: "{\"command\":\"ls\"}".to_string(),
         },
         index: None,
+        result: None,
     }]);
     assert_json_snapshot!(msg, @r###"
     {

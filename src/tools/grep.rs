@@ -6,7 +6,7 @@ use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -294,16 +294,16 @@ Supports regex patterns and can search recursively through directories."#
             crate::error::MantaError::Validation(format!("Invalid regex pattern: {}", e))
         })?;
 
-        let path_str = args["path"]
+        let path = args["path"]
             .as_str()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| context.working_directory.clone());
+            .map(|p| context.resolve_path(std::path::Path::new(p)))
+            .unwrap_or_else(|| context.workspace_root.clone());
 
         // Validate path
-        if !context.is_path_allowed(&path_str) {
+        if !context.is_path_allowed(&path) {
             return Ok(ToolExecutionResult::error(format!(
-                "Path '{}' is not in the allowlist",
-                path_str.display()
+                "Path '{}' is outside the workspace or not in the allowlist",
+                path.display()
             )));
         }
 
@@ -315,18 +315,18 @@ Supports regex patterns and can search recursively through directories."#
             .min(MAX_CONTEXT_LINES);
         let output_format = args["format"].as_str().unwrap_or("pretty");
 
-        info!("Searching for '{}' in '{}'", pattern_str, path_str.display());
+        info!("Searching for '{}' in '{}'", pattern_str, path.display());
 
         // Perform search
-        let matches = if path_str.is_file() {
-            self.search_file(&pattern, &path_str, context_lines).await?
-        } else if path_str.is_dir() {
-            self.search_directory(&pattern, &path_str, include_pattern, context_lines)
+        let matches = if path.is_file() {
+            self.search_file(&pattern, &path, context_lines).await?
+        } else if path.is_dir() {
+            self.search_directory(&pattern, &path, include_pattern, context_lines)
                 .await?
         } else {
             return Ok(ToolExecutionResult::error(format!(
                 "Path '{}' does not exist",
-                path_str.display()
+                path.display()
             )));
         };
 
@@ -355,6 +355,7 @@ Supports regex patterns and can search recursively through directories."#
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_grep_tool_creation() {

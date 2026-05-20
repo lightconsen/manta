@@ -5,6 +5,7 @@
 use super::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use serde_json::Value;
+#[cfg(test)]
 use std::path::PathBuf;
 use tokio::fs as tokio_fs;
 use tokio::io::AsyncWriteExt;
@@ -12,17 +13,6 @@ use tracing::{debug, info, warn};
 
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
-
-/// Expand tilde (~) to home directory
-fn expand_home(path: &str) -> PathBuf {
-    if path.starts_with("~/") || path == "~" {
-        if let Some(home) = dirs::home_dir() {
-            let rest = &path[1..]; // Remove the leading ~
-            return home.join(rest.trim_start_matches('/'));
-        }
-    }
-    PathBuf::from(path)
-}
 
 /// File read tool
 #[derive(Debug, Default)]
@@ -92,12 +82,12 @@ impl Tool for FileReadTool {
             crate::error::MantaError::Validation("Missing 'path' argument".to_string())
         })?;
 
-        let path = expand_home(path_str);
+        let path = context.resolve_path(std::path::Path::new(path_str));
 
-        // Validate path is within allowed directories
+        // Validate path is within allowed directories / workspace
         if !context.is_path_allowed(&path) {
             return Ok(ToolExecutionResult::error(format!(
-                "Path '{}' is not in the allowlist",
+                "Path '{}' is outside the workspace or not in the allowlist",
                 path.display()
             )));
         }
@@ -226,12 +216,12 @@ impl Tool for FileWriteTool {
             crate::error::MantaError::Validation("Missing 'content' argument".to_string())
         })?;
 
-        let path = expand_home(path_str);
+        let path = context.resolve_path(std::path::Path::new(path_str));
 
-        // Validate path is within allowed directories
+        // Validate path is within allowed directories / workspace
         if !context.is_path_allowed(&path) {
             return Ok(ToolExecutionResult::error(format!(
-                "Path '{}' is not in the allowlist",
+                "Path '{}' is outside the workspace or not in the allowlist",
                 path.display()
             )));
         }
@@ -331,12 +321,12 @@ impl Tool for FileEditTool {
             crate::error::MantaError::Validation("Missing 'new_string' argument".to_string())
         })?;
 
-        let path = expand_home(path_str);
+        let path = context.resolve_path(std::path::Path::new(path_str));
 
-        // Validate path
+        // Validate path is within allowed directories / workspace
         if !context.is_path_allowed(&path) {
             return Ok(ToolExecutionResult::error(format!(
-                "Path '{}' is not in the allowlist",
+                "Path '{}' is outside the workspace or not in the allowlist",
                 path.display()
             )));
         }
@@ -430,12 +420,12 @@ impl Tool for GlobTool {
 
         let base_path = args["path"]
             .as_str()
-            .map(expand_home)
-            .unwrap_or_else(|| context.working_directory.clone());
+            .map(|p| context.resolve_path(std::path::Path::new(p)))
+            .unwrap_or_else(|| context.workspace_root.clone());
 
         if !context.is_path_allowed(&base_path) {
             return Ok(ToolExecutionResult::error(format!(
-                "Path '{}' is not in the allowlist",
+                "Path '{}' is outside the workspace or not in the allowlist",
                 base_path.display()
             )));
         }
@@ -477,6 +467,7 @@ impl Tool for GlobTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_file_read_tool() {
@@ -508,7 +499,7 @@ mod tests {
 
         // Write
         let write_tool = FileWriteTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
 
         let write_args = serde_json::json!({
             "path": test_file.to_string_lossy(),
@@ -533,16 +524,29 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_home_tilde() {
+    fn test_resolve_path_tilde() {
+        let ctx = ToolContext::new("u", "c");
         let home = dirs::home_dir().unwrap();
-        assert_eq!(expand_home("~/test"), home.join("test"));
-        assert_eq!(expand_home("~"), home);
+        assert_eq!(ctx.resolve_path(Path::new("~/test")), home.join("test"));
+        assert_eq!(ctx.resolve_path(Path::new("~")), home);
     }
 
     #[test]
-    fn test_expand_home_no_tilde() {
-        assert_eq!(expand_home("/tmp/test"), PathBuf::from("/tmp/test"));
-        assert_eq!(expand_home("relative/path"), PathBuf::from("relative/path"));
+    fn test_resolve_path_relative_to_workspace() {
+        let ctx = ToolContext::new("u", "c").with_workspace_root("/tmp/workspace");
+        assert_eq!(
+            ctx.resolve_path(Path::new("src/main.rs")),
+            PathBuf::from("/tmp/workspace/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        let ctx = ToolContext::new("u", "c").with_workspace_root("/tmp/workspace");
+        assert_eq!(
+            ctx.resolve_path(Path::new("/etc/passwd")),
+            PathBuf::from("/etc/passwd")
+        );
     }
 
     #[test]
@@ -589,7 +593,7 @@ mod tests {
     async fn test_file_read_is_directory() {
         let temp_dir = std::env::temp_dir();
         let tool = FileReadTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({"path": temp_dir.to_string_lossy()});
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
@@ -606,7 +610,7 @@ mod tests {
             .unwrap();
 
         let tool = FileReadTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({"path": test_file.to_string_lossy()});
         let result = tool.execute(args, &context).await.unwrap();
         assert!(result.success);
@@ -623,7 +627,7 @@ mod tests {
         tokio_fs::write(&test_file, "abcdefghij").await.unwrap();
 
         let tool = FileReadTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "path": test_file.to_string_lossy(),
             "limit": 5
@@ -679,7 +683,7 @@ mod tests {
         tokio_fs::write(&test_file, "original").await.unwrap();
 
         let tool = FileWriteTool::new().without_backup();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "path": test_file.to_string_lossy(),
             "content": "updated"
@@ -703,7 +707,7 @@ mod tests {
         let test_file = parent.join("nested/file.txt");
 
         let tool = FileWriteTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "path": test_file.to_string_lossy(),
             "content": "nested content"
@@ -771,7 +775,7 @@ mod tests {
         tokio_fs::write(&test_file, "hello world").await.unwrap();
 
         let tool = FileEditTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "path": test_file.to_string_lossy(),
             "old_string": "not present",
@@ -796,7 +800,7 @@ mod tests {
         tokio_fs::write(&test_file, "foo bar foo").await.unwrap();
 
         let tool = FileEditTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "path": test_file.to_string_lossy(),
             "old_string": "foo",
@@ -860,7 +864,7 @@ mod tests {
         tokio_fs::write(&test_file, "test").await.unwrap();
 
         let tool = GlobTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "pattern": "manta_glob_*.txt"
         });
@@ -875,7 +879,7 @@ mod tests {
     async fn test_glob_no_matches() {
         let temp_dir = std::env::temp_dir();
         let tool = GlobTool::new();
-        let context = ToolContext::new("user", "conv1").with_working_dir(&temp_dir);
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
             "pattern": "no_such_file_*.xyz"
         });

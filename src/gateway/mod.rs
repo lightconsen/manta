@@ -108,6 +108,14 @@ pub struct GatewayConfig {
     /// Live spend and action-rate guard for LLM calls.
     #[serde(default)]
     pub cost_guard: CostGuardConfig,
+    /// Workspace directory for file operations.
+    /// All relative paths are resolved against this directory.
+    /// When `workspace_only` is true, file operations are restricted to this directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_dir: Option<std::path::PathBuf>,
+    /// When true, restrict file operations to `workspace_dir`.
+    #[serde(default)]
+    pub workspace_only: bool,
 }
 
 fn default_model() -> String {
@@ -451,6 +459,8 @@ impl Default for GatewayConfig {
             model_provider: default_model_provider(),
             mcp: McpSettings::default(),
             cost_guard: CostGuardConfig::default(),
+            workspace_dir: None,
+            workspace_only: false,
         }
     }
 }
@@ -1137,7 +1147,12 @@ impl Gateway {
 
         // Configure ACP default agent builder (needs provider + tools, which are now ready)
         if let Ok(default_provider) = model_router.create_default_provider().await {
-            let default_agent_config = config.default_agent.clone();
+            let mut default_agent_config = config.default_agent.clone();
+            default_agent_config.workspace_dir = config
+                .workspace_dir
+                .as_ref()
+                .map(|d| crate::dirs::resolve_tilde(d));
+            default_agent_config.workspace_only = config.workspace_only;
             let default_tools = tool_registry.clone();
             let provider_clone = default_provider.clone();
             acp.set_agent_builder(move || {

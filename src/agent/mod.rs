@@ -325,6 +325,14 @@ pub struct AgentConfig {
     /// When set, the oldest user+assistant pairs are dropped once this limit is
     /// exceeded.  `None` disables turn-based limiting (default).
     pub max_turns: Option<usize>,
+    /// Workspace directory for file operations.
+    /// When set, all relative paths are resolved against this directory.
+    /// When `workspace_only` is true, file operations are restricted to this directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_dir: Option<std::path::PathBuf>,
+    /// When true, restrict file operations to `workspace_dir`.
+    #[serde(default)]
+    pub workspace_only: bool,
     /// Model to use for LLM-powered context compaction.
     ///
     /// When `None`, the agent's primary model is used.  Set to a cheaper/faster
@@ -381,6 +389,8 @@ The current time is provided in the context. When asked about time-sensitive inf
             skills_prompt: None,
             max_turns: None,
             compaction_model: None,
+            workspace_dir: None,
+            workspace_only: false,
         }
     }
 }
@@ -391,6 +401,18 @@ impl AgentConfig {
         match &self.skills_prompt {
             Some(skills) => format!("{}\n\n## Skills\n\n{}", self.system_prompt, skills),
             None => self.system_prompt.clone(),
+        }
+    }
+
+    /// Resolve the effective workspace directory for this agent.
+    ///
+    /// Resolution order:
+    /// 1. `workspace_dir` config value (with `~` expanded)
+    /// 2. `~/.manta/workspace` (default)
+    pub fn resolve_workspace_dir(&self) -> std::path::PathBuf {
+        match &self.workspace_dir {
+            Some(dir) => crate::dirs::resolve_tilde(dir),
+            None => crate::dirs::workspace_data_dir(),
         }
     }
 
@@ -556,6 +578,18 @@ impl Agent {
             0 => crate::tools::SkillTrust::Community,
             _ => crate::tools::SkillTrust::Trusted,
         }
+    }
+
+    /// Build a ToolContext pre-configured with workspace settings from agent config.
+    fn build_tool_context(
+        &self,
+        user_id: impl Into<String>,
+        conversation_id: impl Into<String>,
+    ) -> ToolContext {
+        ToolContext::new(user_id, conversation_id)
+            .with_skill_trust(self.current_skill_trust())
+            .with_workspace_root(self.config.resolve_workspace_dir())
+            .with_workspace_only(self.config.workspace_only)
     }
 
     /// Attach a `SessionStore` for turn persistence.
@@ -729,8 +763,7 @@ impl Agent {
         drop(active_plans);
 
         // Get available tools
-        let tool_context = crate::tools::ToolContext::new(user_id, conversation_id)
-            .with_skill_trust(self.current_skill_trust());
+        let tool_context = self.build_tool_context(user_id, conversation_id);
         let tool_defs = self.tools.get_available(&tool_context);
         prompt_ctx.available_tools = tool_defs;
 
@@ -1621,8 +1654,7 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context =
-            ToolContext::new("user", context.id()).with_skill_trust(self.current_skill_trust());
+        let tool_context = self.build_tool_context("user", context.id());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -1718,8 +1750,8 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools concurrently (up to limit)
-        let tool_context = ToolContext::new("user", context.id())
-            .with_skill_trust(self.current_skill_trust())
+        let tool_context = self
+            .build_tool_context("user", context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
@@ -1821,8 +1853,7 @@ impl Agent {
         let messages = context.to_messages();
 
         // Get available tools
-        let tool_context =
-            ToolContext::new("user", context.id()).with_skill_trust(self.current_skill_trust());
+        let tool_context = self.build_tool_context("user", context.id());
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
@@ -2013,8 +2044,8 @@ impl Agent {
         context.add_message(original_response.message.clone());
 
         // Execute tools with progress
-        let tool_context = ToolContext::new("user", context.id())
-            .with_skill_trust(self.current_skill_trust())
+        let tool_context = self
+            .build_tool_context("user", context.id())
             .with_timeout(std::time::Duration::from_secs(30));
 
         let mut results = Vec::new();
@@ -2677,6 +2708,7 @@ impl AgentBuilder {
 mod tests {
     use super::*;
     use crate::providers::{CompletionResponse, CompletionStream};
+    use std::path::PathBuf;
 
     // ── Mock Provider ─────────────────────────────────────────────────────────
 
@@ -2800,6 +2832,8 @@ mod tests {
             skills_prompt: Some("skills".to_string()),
             max_turns: Some(10),
             compaction_model: Some("claude-haiku".to_string()),
+            workspace_dir: None,
+            workspace_only: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AgentConfig = serde_json::from_str(&json).unwrap();
@@ -3051,5 +3085,31 @@ mod tests {
         );
         let last = agent.get_last_conversation("user1").await.unwrap();
         assert!(last.is_none());
+    }
+
+    // ── Workspace Dir Resolution ──────────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_workspace_dir_explicit() {
+        let mut config = AgentConfig::default();
+        config.workspace_dir = Some(PathBuf::from("/tmp/workspace"));
+        assert_eq!(config.resolve_workspace_dir(), PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_dir_with_tilde() {
+        let mut config = AgentConfig::default();
+        config.workspace_dir = Some(PathBuf::from("~/projects"));
+        let resolved = config.resolve_workspace_dir();
+        assert!(!resolved.to_string_lossy().contains("~"));
+        assert!(resolved.to_string_lossy().contains("projects"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_dir_default_fallback() {
+        let config = AgentConfig::default();
+        let resolved = config.resolve_workspace_dir();
+        assert!(resolved.to_string_lossy().contains(".manta"));
+        assert!(resolved.to_string_lossy().contains("workspace"));
     }
 }

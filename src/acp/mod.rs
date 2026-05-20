@@ -931,6 +931,8 @@ impl AcpControlPlane {
             skills_prompt: None,
             max_turns: None,
             compaction_model: None,
+            workspace_dir: None,
+            workspace_only: false,
         };
 
         // Create the agent
