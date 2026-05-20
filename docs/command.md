@@ -220,3 +220,24 @@ The command system is backed by two WebSocket RPC methods:
 - **`commands.execute`** — dispatches a command and returns the result
 
 Both require `SCOPE_READ` (list) and `SCOPE_WRITE` (execute) respectively. Admin commands additionally require `SCOPE_ADMIN`.
+
+---
+
+## Unimplemented Commands — Difficulty Ranking
+
+The following commands are stubs (📝) or placeholders (⏳). Ordered from easiest to hardest to fully implement.
+
+| # | Command | Difficulty | What's Needed |
+|---|---|---|---|
+| 1 | `/reasoning` | **Easy** | Filter `reasoning_content` from responses before sending to client based on `runtime_settings["reasoning.visibility"]`. Frontend already handles display. |
+| 2 | `/usage` | **Easy** | Hook into existing token counting in `agent/mod.rs` (already calculates `completion_tokens`), aggregate per-session, and write to `runtime_settings["usage.tokens"]` / `"usage.calls"`. |
+| 3 | `/restart` | **Easy–Medium** | Send a signal to the main process or exit with a special code that the launcher wrapper restarts. Could also use `tokio::process::Command` to re-spawn self. |
+| 4 | `/think` | **Medium** | Thread `runtime_settings["think.level"]` through to agent configuration. The agent already supports `thinking` options; map the setting to the provider's thinking parameter (e.g. Anthropic's `thinking.type` and `thinking.budget_tokens`). |
+| 5 | `/trace` | **Medium** | Add conditional trace logging in `PluginManager` or plugin runtime that checks `runtime_settings["trace.enabled"]` before emitting trace events. |
+| 6 | `/verbose` | **Medium** | Modify agent output formatting or tool result rendering based on `runtime_settings["verbose.mode"]`. May need to pass a flag through `AgentHandle` or `RunOptions`. |
+| 7 | `/session` | **Medium** | Hook `runtime_settings["session.idle"]` / `"session.max-age"]` into `SessionManager::cleanup_timed_out()`. Requires a background task that periodically checks and terminates stale sessions. |
+| 8 | `/btw` | **Medium** | Create a one-shot agent query path that bypasses session state. Can reuse `ModelRouter` directly without going through `chat.send` / session transcript. |
+| 9 | `/fast` | **Hard** | Integrate with `ModelRouter` to dynamically switch to a faster/cheaper model when `runtime_settings["fast.mode"]` is true. Requires cost-aware routing and fallback logic. |
+| 10 | `/context` | **Hard** | Expose the agent's context builder internals (system prompt, history, tools, memory injections). Requires introspecting `Context` / `TurnManager` at runtime. |
+| 11 | `/queue` | **Hard** | Modify ACP serial queue behavior (steer vs interrupt vs followup) based on `runtime_settings["queue.mode"]`. Requires architectural changes to `AcpControlPlane` queue dispatch. |
+| 12 | `/compact` | **Hardest** | Implement real context compaction: summarize or truncate transcript, inject summary as system prompt, and manage token budget. The `compaction.rs` module exists but is not yet wired into the command handler.
