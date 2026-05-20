@@ -1643,6 +1643,8 @@ impl Gateway {
             info!("Initializing advanced cron scheduler...");
             use crate::cron::cron::{AnnounceDelivery, CronScheduler};
             let (cron_scheduler, command_rx) = CronScheduler::new();
+            let cron_scheduler = cron_scheduler
+                .with_store_path(crate::dirs::cron_dir().join("jobs.json"));
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
             // Wire up announce delivery → SSE broadcast
