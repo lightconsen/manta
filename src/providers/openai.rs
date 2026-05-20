@@ -47,7 +47,6 @@ impl OpenAiProvider {
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180)) // Increased to 3 minutes
-            .http1_only() // Force HTTP/1.1 to match curl behavior
             .tcp_keepalive(Some(Duration::from_secs(30))) // Keep connection alive
             .pool_idle_timeout(Duration::from_secs(300)) // Keep connections in pool longer
             .pool_max_idle_per_host(10) // Allow more idle connections
@@ -92,6 +91,15 @@ impl OpenAiProvider {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, format!("Bearer {}", self.api_key).parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        headers
+    }
+
+    /// Build headers for streaming SSE requests
+    fn stream_headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {}", self.api_key).parse().unwrap());
+        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert("Accept", "text/event-stream".parse().unwrap());
         headers
     }
 
@@ -341,7 +349,7 @@ impl Provider for OpenAiProvider {
             match self
                 .client
                 .post(&request_url)
-                .headers(self.headers())
+                .headers(self.stream_headers())
                 .json(&body)
                 .send()
                 .await

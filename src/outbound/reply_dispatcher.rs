@@ -121,6 +121,8 @@ mod tests {
         OutgoingMessage {
             conversation_id: ConversationId::new("test"),
             content: content.into(),
+            reasoning_content: None,
+            tool_calls: None,
             formatted_content: None,
             attachments: vec![],
             reply_to: None,

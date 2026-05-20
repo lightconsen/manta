@@ -3229,7 +3229,18 @@ impl Gateway {
             Ok(outgoing) => {
                 // Save assistant response to persistent session history
                 if let Some(ref store) = state.session_store {
-                    let _ = store.append_message(session_id, "assistant", &outgoing.content, None).await;
+                    let reasoning = outgoing.reasoning_content.as_deref();
+                    let tool_calls_json = outgoing.tool_calls.as_ref().map(|calls| {
+                        serde_json::to_string(calls).unwrap_or_default()
+                    });
+                    let _ = store.append_message(
+                        session_id,
+                        "assistant",
+                        &outgoing.content,
+                        None,
+                        reasoning,
+                        tool_calls_json.as_deref(),
+                    ).await;
                 }
                 let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                     session_id: session_id.to_string(),

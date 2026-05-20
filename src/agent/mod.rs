@@ -1486,11 +1486,22 @@ impl Agent {
         })
         .await;
 
-        // Create outgoing message
-        let outgoing = OutgoingMessage::new(
+        // Create outgoing message with full metadata
+        let mut outgoing = OutgoingMessage::new(
             crate::channels::ConversationId(conversation_id),
             response_content,
         );
+        if let Some(ref reasoning) = response.message.reasoning_content {
+            if !reasoning.is_empty() {
+                outgoing.reasoning_content = Some(reasoning.clone());
+            }
+        }
+        if let Some(ref calls) = response.message.tool_calls {
+            if !calls.is_empty() {
+                outgoing.tool_calls = Some(calls.clone());
+            }
+        }
+        outgoing.usage = response.usage;
 
         Ok(outgoing)
     }

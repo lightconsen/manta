@@ -129,6 +129,8 @@ impl OutboundPipeline for DefaultOutboundPipeline {
         let outbound_msg = crate::channels::OutgoingMessage {
             conversation_id: crate::channels::ConversationId::new(&ctx.session_id),
             content: ctx.raw_output,
+            reasoning_content: None,
+            tool_calls: None,
             formatted_content: None,
             attachments: vec![],
             reply_to: None,

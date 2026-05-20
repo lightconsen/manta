@@ -587,7 +587,7 @@ async fn handle_chat_send(
 
     // Save user message to persistent session history
     if let Some(ref store) = state.session_store {
-        let _ = store.append_message(&session_id, "user", &params.message, None).await;
+        let _ = store.append_message(&session_id, "user", &params.message, None, None, None).await;
     }
 
     let incoming = crate::channels::IncomingMessage::new(
@@ -658,12 +658,18 @@ async fn handle_chat_history(
         match store.get_messages(&params.session_id, params.limit as i64, None).await {
             Ok(rows) => rows
                 .into_iter()
-                .map(|(id, role, content, dt)| serde_json::json!({
-                    "id": format!("msg_{}", id),
-                    "role": role,
-                    "content": content,
-                    "timestamp": dt.timestamp(),
-                }))
+                .map(|(id, role, content, reasoning, tool_calls_json, dt)| {
+                    let tool_calls: Option<serde_json::Value> = tool_calls_json
+                        .and_then(|json| serde_json::from_str(&json).ok());
+                    serde_json::json!({
+                        "id": format!("msg_{}", id),
+                        "role": role,
+                        "content": content,
+                        "reasoning_content": reasoning,
+                        "tool_calls": tool_calls,
+                        "timestamp": dt.timestamp(),
+                    })
+                })
                 .collect::<Vec<_>>(),
             Err(_) => Vec::new(),
         }

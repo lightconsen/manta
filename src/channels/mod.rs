@@ -317,6 +317,10 @@ pub struct OutgoingMessage {
     pub conversation_id: ConversationId,
     /// The content to send
     pub content: String,
+    /// Optional reasoning / thinking content (from reasoning models)
+    pub reasoning_content: Option<String>,
+    /// Optional tool calls made by the assistant
+    pub tool_calls: Option<Vec<crate::providers::ToolCall>>,
     /// Optional formatted content (for rich formatting)
     pub formatted_content: Option<FormattedContent>,
     /// Optional attachments
@@ -335,12 +339,26 @@ impl OutgoingMessage {
         Self {
             conversation_id,
             content: content.into(),
+            reasoning_content: None,
+            tool_calls: None,
             formatted_content: None,
             attachments: Vec::new(),
             reply_to: None,
             options: MessageOptions::default(),
             usage: None,
         }
+    }
+
+    /// Add reasoning content
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning_content = Some(reasoning.into());
+        self
+    }
+
+    /// Add tool calls
+    pub fn with_tool_calls(mut self, calls: Vec<crate::providers::ToolCall>) -> Self {
+        self.tool_calls = Some(calls);
+        self
     }
 
     /// Add token usage information

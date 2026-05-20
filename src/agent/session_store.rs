@@ -189,6 +189,8 @@ impl SessionStore {
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                reasoning_content TEXT,
+                tool_calls_json TEXT,
                 created_at INTEGER NOT NULL,
                 metadata TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -288,6 +290,33 @@ impl SessionStore {
                     details: e.to_string(),
                 })?;
             debug!("Migrated session_messages: added thread_id, turn_index, turn_state columns");
+        }
+
+        // Migrate: add reasoning_content and tool_calls_json columns if missing
+        let has_reasoning: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name='reasoning_content'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+
+        if !has_reasoning {
+            sqlx::query("ALTER TABLE session_messages ADD COLUMN reasoning_content TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| MantaError::Storage {
+                    context: "Failed to add reasoning_content column".to_string(),
+                    details: e.to_string(),
+                })?;
+            sqlx::query("ALTER TABLE session_messages ADD COLUMN tool_calls_json TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| MantaError::Storage {
+                    context: "Failed to add tool_calls_json column".to_string(),
+                    details: e.to_string(),
+                })?;
+            debug!("Migrated session_messages: added reasoning_content, tool_calls_json columns");
         }
 
         sqlx::query(
@@ -490,18 +519,22 @@ impl SessionStore {
         role: &str,
         content: &str,
         metadata_json: Option<&str>,
+        reasoning_content: Option<&str>,
+        tool_calls_json: Option<&str>,
     ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
         let result = sqlx::query(
             r#"
-            INSERT INTO session_messages (session_id, role, content, created_at, metadata)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO session_messages (session_id, role, content, reasoning_content, tool_calls_json, created_at, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session_id)
         .bind(role)
         .bind(content)
+        .bind(reasoning_content)
+        .bind(tool_calls_json)
         .bind(now)
         .bind(metadata_json)
         .execute(&self.pool)
@@ -525,19 +558,19 @@ impl SessionStore {
     }
 
     /// Get messages for a session, ordered oldest first.
-    /// Returns `(id, role, content, created_at)`.
+    /// Returns `(id, role, content, reasoning_content, tool_calls_json, created_at)`.
     #[instrument(skip(self))]
     pub async fn get_messages(
         &self,
         session_id: &str,
         limit: i64,
         before: Option<DateTime<Utc>>,
-    ) -> Result<Vec<(i64, String, String, DateTime<Utc>)>> {
+    ) -> Result<Vec<(i64, String, String, Option<String>, Option<String>, DateTime<Utc>)>> {
         let before_ts = before.map(|dt| dt.timestamp_millis()).unwrap_or(i64::MAX);
 
         let rows = sqlx::query(
             r#"
-            SELECT id, role, content, created_at
+            SELECT id, role, content, reasoning_content, tool_calls_json, created_at
             FROM session_messages
             WHERE session_id = ? AND created_at < ?
             ORDER BY created_at ASC
@@ -560,9 +593,11 @@ impl SessionStore {
                 let id: i64 = row.get("id");
                 let role: String = row.get("role");
                 let content: String = row.get("content");
+                let reasoning: Option<String> = row.get("reasoning_content");
+                let tool_calls: Option<String> = row.get("tool_calls_json");
                 let ts: i64 = row.get("created_at");
                 let dt = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
-                (id, role, content, dt)
+                (id, role, content, reasoning, tool_calls, dt)
             })
             .collect();
 
@@ -945,12 +980,12 @@ mod tests {
 
         // Append messages
         store
-            .append_message("msg-test", "user", "Hello", None)
+            .append_message("msg-test", "user", "Hello", None, None, None)
             .await
             .expect("Failed to append message");
 
         store
-            .append_message("msg-test", "assistant", "Hi there!", None)
+            .append_message("msg-test", "assistant", "Hi there!", None, None, None)
             .await
             .expect("Failed to append message");
 
@@ -962,7 +997,9 @@ mod tests {
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].1, "user"); // Oldest first
+        assert_eq!(messages[0].2, "Hello");
         assert_eq!(messages[1].1, "assistant");
+        assert_eq!(messages[1].2, "Hi there!");
     }
 
     #[tokio::test]
@@ -1025,7 +1062,7 @@ mod tests {
         let meta = SessionMetadata::new("stats-test", "main", "cli", "local");
         store.save_session("stats-test", &meta, "{}").await.unwrap();
         store
-            .append_message("stats-test", "user", "hi", None)
+            .append_message("stats-test", "user", "hi", None, None, None)
             .await
             .unwrap();
 
@@ -1153,7 +1190,7 @@ mod tests {
 
         for i in 0..5 {
             store
-                .append_message("limit-test", "user", &format!("msg{}", i), None)
+                .append_message("limit-test", "user", &format!("msg{}", i), None, None, None)
                 .await
                 .unwrap();
         }

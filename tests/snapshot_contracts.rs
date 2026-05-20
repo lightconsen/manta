@@ -40,6 +40,7 @@ fn snapshot_assistant_message_with_tool_calls() {
             name: "shell".to_string(),
             arguments: "{\"command\":\"ls\"}".to_string(),
         },
+        index: None,
     }]);
     assert_json_snapshot!(msg, @r###"
     {
