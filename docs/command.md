@@ -20,19 +20,27 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | `standard` | Shown by default |
 | `power` | Hidden unless explicitly requested |
 
+### Implementation Status
+
+| Icon | Meaning |
+|---|---|
+| ✅ | **Implemented** — calls real backend APIs |
+| 📝 | **Stub** — reads/writes `runtime_settings`, but downstream does not yet consume the value |
+| ⏳ | **Placeholder** — returns a message, no actual logic yet |
+
 ---
 
 ## Session Commands
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/new` | `[model]` | Start a new session | yes | no |
-| `/reset` | `[soft\|hard]` | Reset the current session | no | no |
-| `/stop` | — | Abort the current run | no | no |
-| `/compact` | `[instructions]` | Flush transcript to disk and compact context | no | no |
-| `/export-session` | `[path]` | Export session transcript as HTML | no | no |
-| `/clear` | — | Clear chat history (client-side) | yes | no |
-| `/session` | `idle\|max-age <duration\|off>` | Manage session timeout settings | no | no |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/new` | `[model]` | Start a new session | yes | no | ✅ |
+| `/reset` | `[soft\|hard]` | Reset the current session | no | no | ✅ |
+| `/stop` | — | Abort the current run | no | no | ✅ |
+| `/compact` | `[instructions]` | Flush transcript to disk and compact context | no | no | ⏳ |
+| `/export-session` | `[path]` | Export session transcript as HTML | no | no | ✅ |
+| `/clear` | — | Clear chat history (client-side) | yes | no | ✅ |
+| `/session` | `idle\|max-age <duration\|off>` | Manage session timeout settings | no | no | 📝 |
 
 ### Examples
 
@@ -50,15 +58,15 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 
 ## Model / Directive Commands
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/model` | `[name\|#\|status]` | Show or switch the active model | no | no |
-| `/think` | `<level>` | Set thinking level (`off`, `minimal`, `low`, `medium`, `high`) | no | no |
-| `/verbose` | `on\|off\|full` | Toggle verbose output | no | no |
-| `/trace` | `on\|off` | Toggle plugin trace | no | no |
-| `/fast` | `[on\|off\|status]` | Show or set fast mode | no | no |
-| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility | no | no |
-| `/queue` | `<mode>` | Set queue behavior (e.g. `steer`, `interrupt`, `followup`) | no | no |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/model` | `[name\|#\|status]` | Show or switch the active model | no | no | ✅ |
+| `/think` | `<level>` | Set thinking level (`off`, `minimal`, `low`, `medium`, `high`) | no | no | 📝 |
+| `/verbose` | `on\|off\|full` | Toggle verbose output | no | no | 📝 |
+| `/trace` | `on\|off` | Toggle plugin trace | no | no | 📝 |
+| `/fast` | `[on\|off\|status]` | Show or set fast mode | no | no | 📝 |
+| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility | no | no | 📝 |
+| `/queue` | `<mode>` | Set queue behavior (e.g. `steer`, `interrupt`, `followup`) | no | no | 📝 |
 
 ### Examples
 
@@ -76,15 +84,15 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 
 ## Status / Query Commands
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/help` | — | Show help summary | no | no |
-| `/commands` | — | Show full command catalog | no | no |
-| `/status` | — | Show gateway runtime status | no | no |
-| `/tools` | `[compact\|verbose]` | Show available tools | no | no |
-| `/whoami` | — | Show your sender ID and scopes | no | no |
-| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics | no | no |
-| `/context` | `[list\|detail\|json]` | Show context assembly info | no | no |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/help` | — | Show help summary | no | no | ✅ |
+| `/commands` | — | Show full command catalog | no | no | ✅ |
+| `/status` | — | Show gateway runtime status | no | no | ✅ |
+| `/tools` | `[compact\|verbose]` | Show available tools | no | no | ✅ |
+| `/whoami` | — | Show your sender ID and scopes | no | no | ✅ |
+| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics | no | no | 📝 |
+| `/context` | `[list\|detail\|json]` | Show context assembly info | no | no | 📝 |
 
 ### Examples
 
@@ -101,15 +109,15 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 
 ## Subagents / ACP Commands
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/subagents` | `list\|kill\|log\|info\|send\|steer\|spawn` | Manage sub-agents | no | no |
-| `/acp` | `spawn\|cancel\|steer\|close\|sessions\|status\|...` | Manage ACP sessions | no | no |
-| `/kill` | `<id\|#\|all>` | Abort sub-agent runs | no | no |
-| `/steer` | `<id> <message>` | Send steering message to a sub-agent | no | no |
-| `/tell` | `<id> <message>` | Alias for `/steer` | no | no |
-| `/focus` | `<target>` | Bind thread to a session target (agent) | no | no |
-| `/unfocus` | — | Remove thread binding | no | no |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/subagents` | `list\|kill\|log\|info\|send\|steer\|spawn` | Manage sub-agents | no | no | ✅ |
+| `/acp` | `spawn\|cancel\|steer\|close\|sessions\|status\|...` | Manage ACP sessions | no | no | ✅ |
+| `/kill` | `<id\|#\|all>` | Abort sub-agent runs | no | no | ✅ |
+| `/steer` | `<id> <message>` | Send steering message to a sub-agent | no | no | ✅ |
+| `/tell` | `<id> <message>` | Alias for `/steer` | no | no | ✅ |
+| `/focus` | `<target>` | Bind thread to a session target (agent) | no | no | ✅ |
+| `/unfocus` | — | Remove thread binding | no | no | ✅ |
 
 ### Examples
 
@@ -127,12 +135,12 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 
 ## Skills / Approval Commands
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/skill` | `<name> [input]` | Run a skill by name | no | no |
-| `/allowlist` | `[list\|add\|remove] ...` | Manage command gate user levels | no | no |
-| `/approve` | `<id> <decision>` | Resolve an approval prompt | no | no |
-| `/btw` | `<question>` | Side question without changing context | no | no |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/skill` | `<name> [input]` | Run a skill by name | no | no | ✅ |
+| `/allowlist` | `[list\|add\|remove] ...` | Manage command gate user levels | no | no | ✅ |
+| `/approve` | `<id> <decision>` | Resolve an approval prompt | no | no | ✅ |
+| `/btw` | `<question>` | Side question without changing context | no | no | ⏳ |
 
 ### Examples
 
@@ -148,14 +156,14 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 
 ## Admin Commands (Owner-Only)
 
-| Command | Args | Description | Local | Admin |
-|---|---|---|---|---|
-| `/config` | `show\|get\|set\|unset` | Read or write runtime config | no | **yes** |
-| `/plugins` | `list\|install\|enable\|disable` | Inspect or toggle plugins | no | **yes** |
-| `/mcp` | `show\|get\|set\|unset` | Manage MCP server connections | no | **yes** |
-| `/debug` | `show\|set\|unset\|reset` | Runtime debug overrides | no | **yes** |
-| `/restart` | — | Restart the gateway | no | **yes** |
-| `/bash` | `<command>` | Run a host shell command | no | **yes** |
+| Command | Args | Description | Local | Admin | Status |
+|---|---|---|---|---|---|
+| `/config` | `show\|get\|set\|unset` | Read or write runtime config | no | **yes** | ✅ |
+| `/plugins` | `list\|install\|enable\|disable` | Inspect or toggle plugins | no | **yes** | ✅ |
+| `/mcp` | `show\|get\|set\|unset` | Manage MCP server connections | no | **yes** | ✅ |
+| `/debug` | `show\|set\|unset\|reset` | Runtime debug overrides | no | **yes** | ✅ |
+| `/restart` | — | Restart the gateway | no | **yes** | ⏳ |
+| `/bash` | `<command>` | Run a host shell command | no | **yes** | ✅ |
 
 ### Examples
 
