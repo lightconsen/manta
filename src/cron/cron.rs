@@ -610,7 +610,7 @@ impl CronScheduler {
         info!("Running {} due cron jobs", due_job_ids.len());
 
         for job_id in due_job_ids {
-            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx).await;
+            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx, false).await;
         }
     }
 
@@ -670,7 +670,7 @@ impl CronScheduler {
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
-                Self::execute_job(jobs, &id, agent, store_path, announce_tx).await;
+                Self::execute_job(jobs, &id, agent, store_path, announce_tx, true).await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -691,12 +691,16 @@ impl CronScheduler {
     }
 
     /// Execute a job
+    ///
+    /// When `force` is true, the job runs regardless of `should_run` / `next_run_at`.
+    /// Used by manual trigger (`Trigger` command). Timer-driven execution passes `false`.
     async fn execute_job(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         job_id: &str,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+        force: bool,
     ) {
         let job = {
             let mut jobs_lock = jobs.write().await;
@@ -708,9 +712,9 @@ impl CronScheduler {
                 }
             };
 
-            // Check if should run
+            // Check if should run (skip when forced)
             let now = Utc::now();
-            if !job.should_run(now) {
+            if !force && !job.should_run(now) {
                 return;
             }
 
@@ -1388,5 +1392,80 @@ mod tests {
         let (tx, _rx) = oneshot::channel();
         let get = CronCommand::GetJob("id".to_string(), tx);
         assert!(matches!(get, CronCommand::GetJob(s, _) if s == "id"));
+    }
+
+    #[tokio::test]
+    async fn test_say_hi_every_2_min_job() {
+        let cron_dir = crate::dirs::cron_dir();
+        let store_path = cron_dir.join("test-say-hi.json");
+        let runs_path = cron_dir.join("test-say-hi.runs.jsonl");
+
+        // Clean up any previous test artifacts
+        let _ = tokio::fs::remove_file(&store_path).await;
+        let _ = tokio::fs::remove_file(&runs_path).await;
+
+        // Create and start scheduler
+        let (mut scheduler, command_rx) = CronScheduler::new();
+        scheduler.store_path = Some(store_path.clone());
+        scheduler.start(command_rx).await.unwrap();
+
+        // Create the "say-hi-every-2-min" job
+        let job = CronJob::new(
+            "say-hi-001",
+            "say-hi-every-2-min",
+            Schedule::Cron {
+                expression: "*/2 * * * *".to_string(),
+                timezone: None,
+                stagger_ms: None,
+            },
+            ExecutionTarget::Shell {
+                command: "echo 'hi from cron'".to_string(),
+            },
+        )
+        .with_delivery(DeliveryMode::None);
+
+        scheduler.add_job(job).await.unwrap();
+
+        // Verify job is in scheduler
+        let jobs = scheduler.list_jobs().await;
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name, "say-hi-every-2-min");
+        assert_eq!(jobs[0].id, "say-hi-001");
+        assert!(matches!(jobs[0].target, ExecutionTarget::Shell { ref command } if command == "echo 'hi from cron'"));
+
+        // Verify persistence file written
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(store_path.exists(), "jobs store file should exist");
+
+        let store_content = tokio::fs::read_to_string(&store_path).await.unwrap();
+        assert!(store_content.contains("say-hi-every-2-min"));
+        assert!(store_content.contains("*/2 * * * *"));
+
+        // Trigger immediate execution
+        scheduler.trigger_job("say-hi-001").await.unwrap();
+
+        // Wait for execution to complete
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        // Verify run log
+        assert!(runs_path.exists(), "runs log file should exist after execution");
+        let runs_content = tokio::fs::read_to_string(&runs_path).await.unwrap();
+        assert!(
+            !runs_content.is_empty(),
+            "runs log should contain at least one entry"
+        );
+        assert!(runs_content.contains("say-hi-001"), "run log should reference job id");
+
+        // Verify job state updated
+        let jobs_after = scheduler.list_jobs().await;
+        assert_eq!(jobs_after[0].state.run_count, 1);
+        assert!(jobs_after[0].state.last_run_at.is_some());
+        assert!(jobs_after[0].state.last_error.is_none());
+
+        // Cleanup
+        let _ = tokio::fs::remove_file(&store_path).await;
+        let _ = tokio::fs::remove_file(&runs_path).await;
+
+        scheduler.shutdown().await.unwrap();
     }
 }
