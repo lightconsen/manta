@@ -509,11 +509,31 @@ function ChatApp() {
     return () => clearInterval(interval);
   }, [refreshSessions]);
 
-  // Listen for new sessions
+  // Listen for new sessions and cron results
   useEffect(() => {
     return transport.onEvent((evt) => {
       if (evt.event === "session.created") {
         refreshSessions();
+      }
+      if (evt.event === "cron.completed") {
+        const p = evt.payload as Record<string, string> | undefined;
+        if (!p) return;
+        const jobName = p.job_name || "cron job";
+        const status = p.status || "ok";
+        const output = p.output || "";
+        const runAt = p.run_at || "";
+        const icon = status === "ok" ? "✅" : "❌";
+        const text = `${icon} **${jobName}**\n\n${output}\n\n_Executed at ${runAt}_`;
+        const msg: import("./MantaWebSocketTransport").ChatMessage = {
+          id: `cron_${Date.now()}`,
+          role: "assistant",
+          content: text,
+          parts: [{ type: "text", text }],
+          timestamp: Date.now(),
+        };
+        transport.saveMessage(msg);
+        const updated = [...transport.getMessages(), msg];
+        transport.setMessages(updated);
       }
     });
   }, [transport, refreshSessions]);
