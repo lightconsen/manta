@@ -2099,6 +2099,12 @@ impl Agent {
             results.push(result);
         }
 
+        // Build a map of tool_call_id -> result content for history persistence
+        let tool_result_map: std::collections::HashMap<String, String> = results
+            .iter()
+            .map(|r| (r.tool_call_id.clone(), r.content.clone()))
+            .collect();
+
         // Add tool results to context
         for result in results {
             context.add_message(Message {
@@ -2142,7 +2148,34 @@ impl Agent {
         }
 
         // Get final response with progress
-        Box::pin(self.get_completion_with_progress(context, progress_cb)).await
+        let mut final_response = Box::pin(self.get_completion_with_progress(context, progress_cb)).await?;
+
+        // Preserve tool calls from the original assistant message so that
+        // downstream consumers (session_store, etc.) can see what tools were invoked.
+        if let Some(ref original_calls) = original_response.message.tool_calls {
+            match final_response.message.tool_calls {
+                None => final_response.message.tool_calls = Some(original_calls.clone()),
+                Some(ref mut existing) => {
+                    let mut merged = original_calls.clone();
+                    merged.append(existing);
+                    final_response.message.tool_calls = Some(merged);
+                }
+            }
+        }
+
+        // Attach execution results to the preserved tool calls so that history
+        // replay can show "Done" instead of "Running".
+        if let Some(ref mut calls) = final_response.message.tool_calls {
+            for call in calls.iter_mut() {
+                if call.result.is_none() {
+                    if let Some(result_content) = tool_result_map.get(&call.id) {
+                        call.result = Some(result_content.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(final_response)
     }
 
     /// Start the agent (for background processing if needed)

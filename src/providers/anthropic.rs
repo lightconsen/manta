@@ -267,6 +267,7 @@ impl AnthropicProvider {
                             arguments: input.to_string(),
                         },
                         index: None,
+                        result: None,
                     });
                 }
                 _ => {}

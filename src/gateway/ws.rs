@@ -587,7 +587,9 @@ async fn handle_chat_send(
 
     // Save user message to persistent session history
     if let Some(ref store) = state.session_store {
-        let _ = store.append_message(&session_id, "user", &params.message, None, None, None).await;
+        if let Err(e) = store.append_message(&session_id, "user", &params.message, None, None, None).await {
+            tracing::warn!("Failed to save user message to session history: {}", e);
+        }
     }
 
     let incoming = crate::channels::IncomingMessage::new(

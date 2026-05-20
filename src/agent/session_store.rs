@@ -524,6 +524,20 @@ impl SessionStore {
     ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
+        // Auto-create session row if it doesn't exist (foreign key requirement)
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
+            VALUES (?, '', '', '', ?, ?, 1, '{}', 0)
+            "#,
+        )
+        .bind(session_id)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .ok();
+
         let result = sqlx::query(
             r#"
             INSERT INTO session_messages (session_id, role, content, reasoning_content, tool_calls_json, created_at, metadata)

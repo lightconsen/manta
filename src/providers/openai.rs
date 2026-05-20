@@ -163,6 +163,7 @@ impl OpenAiProvider {
                             arguments: tc.function.arguments,
                         },
                         index: None,
+                        result: None,
                     })
                     .collect()
             }),
@@ -598,6 +599,7 @@ impl OpenAiStream {
                                             .and_then(|f| f.arguments.clone())
                                             .unwrap_or_default(),
                                     },
+                                    result: None,
                                     index: Some(tc.index),
                                 }
                             })

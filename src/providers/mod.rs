@@ -153,6 +153,9 @@ pub struct ToolCall {
     /// Streaming index (position in the tool_calls array); set only during streaming deltas
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
+    /// Tool execution result (populated after execution, persisted for history replay)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
 }
 
 /// A function call within a tool call

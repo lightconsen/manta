@@ -401,7 +401,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
         role: string;
         content: string;
         reasoning_content?: string;
-        tool_calls?: Array<{ id: string; call_type: string; function: { name: string; arguments: string } }>;
+        tool_calls?: Array<{ id: string; call_type: string; function: { name: string; arguments: string }; result?: string }>;
         timestamp: number;
       }> } | undefined;
       const msgs = res?.messages || [];
@@ -423,6 +423,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
               type: "tool-call",
               toolName: tc.function.name,
               args,
+              result: tc.result,
             });
           }
         }
