@@ -21,6 +21,7 @@ pub use manifest::{
 pub use runtime::{PluginInstance, PluginRuntime};
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -35,6 +36,7 @@ pub struct PluginManager {
     plugins_dir: PathBuf,
     auto_load: bool,
     tool_registry: RwLock<Option<Arc<ToolRegistry>>>,
+    trace_enabled: Arc<AtomicBool>,
 }
 
 impl PluginManager {
@@ -52,6 +54,7 @@ impl PluginManager {
             plugins_dir,
             auto_load: true,
             tool_registry: RwLock::new(None),
+            trace_enabled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -130,6 +133,12 @@ impl PluginManager {
         Ok(reloaded_id)
     }
 
+    /// Enable or disable plugin trace logging.
+    pub fn set_trace_enabled(&self, enabled: bool) {
+        self.trace_enabled
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Register a plugin's tools into the `ToolRegistry`.
     async fn register_plugin_tools(&self, plugin: &PluginInstance) {
         let tool_registry = self.tool_registry.read().await;
@@ -139,6 +148,7 @@ impl PluginManager {
                     plugin.id().to_string(),
                     tool,
                     self.runtime.clone(),
+                    self.trace_enabled.clone(),
                 ));
                 registry.register_dynamic(wrapper);
                 info!("Registered plugin tool '{}' from plugin '{}'", tool.name, plugin.id());
@@ -474,16 +484,23 @@ pub struct PluginToolWrapper {
     description: String,
     parameters: serde_json::Value,
     runtime: Arc<PluginRuntime>,
+    trace_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PluginToolWrapper {
-    pub fn new(plugin_id: String, tool: &PluginTool, runtime: Arc<PluginRuntime>) -> Self {
+    pub fn new(
+        plugin_id: String,
+        tool: &PluginTool,
+        runtime: Arc<PluginRuntime>,
+        trace_enabled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
         Self {
             plugin_id,
             tool_name: tool.name.clone(),
             description: tool.description.clone(),
             parameters: tool.parameters.clone(),
             runtime,
+            trace_enabled,
         }
     }
 }
@@ -509,10 +526,33 @@ impl Tool for PluginToolWrapper {
     ) -> crate::Result<ToolExecutionResult> {
         let start = std::time::Instant::now();
 
+        if self
+            .trace_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            debug!(
+                "[trace] Plugin tool '{}' from '{}' called with args: {}",
+                self.tool_name, self.plugin_id, args
+            );
+        }
+
         let result = self
             .runtime
             .call_tool(&self.plugin_id, &self.tool_name, args)
             .await;
+
+        if self
+            .trace_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            debug!(
+                "[trace] Plugin tool '{}' from '{}' result: {:?} (elapsed: {:?})",
+                self.tool_name,
+                self.plugin_id,
+                result.is_ok(),
+                start.elapsed()
+            );
+        }
 
         match result {
             Ok(output) => Ok(ToolExecutionResult {

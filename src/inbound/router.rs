@@ -310,7 +310,9 @@ impl AgentRouter {
 
         // 2b. Check existing session binding by derived `{channel}:{user_id}` key
         let channel_name = match &message.provenance {
-            crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.as_str()),
+            crate::channels::InputProvenance::ExternalUser { channel, .. } => {
+                Some(channel.as_str())
+            }
             _ => None,
         };
         let user_id = message.user_id.0.as_str();

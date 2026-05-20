@@ -68,10 +68,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                     }
                     match format {
                         OutputFormat::Json => {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&json).unwrap_or_default()
-                            );
+                            println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
                         }
                         OutputFormat::Yaml | OutputFormat::Plain => {
                             let results = json.get("results").and_then(|r| r.as_array());
@@ -79,7 +76,11 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                                 if results.is_empty() {
                                     println!("No results found.");
                                 } else {
-                                    println!("Search results for '{}' ({} found):", query, results.len());
+                                    println!(
+                                        "Search results for '{}' ({} found):",
+                                        query,
+                                        results.len()
+                                    );
                                     println!();
                                     for (i, r) in results.iter().enumerate() {
                                         println!(
@@ -89,7 +90,8 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                                                 .and_then(|c| c.as_str())
                                                 .unwrap_or("(no content)")
                                         );
-                                        if let Some(score) = r.get("score").and_then(|s| s.as_f64()) {
+                                        if let Some(score) = r.get("score").and_then(|s| s.as_f64())
+                                        {
                                             println!("   Score: {:.4}", score);
                                         }
                                         println!();
@@ -103,16 +105,11 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                                 if results.is_empty() {
                                     println!("No results found.");
                                 } else {
-                                    println!(
-                                        "{:<4} {:<10} {}",
-                                        "#", "Score", "Content"
-                                    );
+                                    println!("{:<4} {:<10} {}", "#", "Score", "Content");
                                     println!("{}", "-".repeat(80));
                                     for (i, r) in results.iter().enumerate() {
-                                        let score = r
-                                            .get("score")
-                                            .and_then(|s| s.as_f64())
-                                            .unwrap_or(0.0);
+                                        let score =
+                                            r.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
                                         let content = r
                                             .get("content")
                                             .and_then(|c| c.as_str())
@@ -120,12 +117,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                                             .chars()
                                             .take(60)
                                             .collect::<String>();
-                                        println!(
-                                            "{:<4} {:<10.4} {}",
-                                            i + 1,
-                                            score,
-                                            content
-                                        );
+                                        println!("{:<4} {:<10.4} {}", i + 1, score, content);
                                     }
                                 }
                             }
@@ -140,11 +132,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
             Ok(())
         }
 
-        MemoryCommands::Add {
-            content,
-            collection,
-            metadata,
-        } => {
+        MemoryCommands::Add { content, collection, metadata } => {
             let url = format!("{}/api/v1/memory/add", DAEMON_URL);
             let body = serde_json::json!({
                 "content": content,

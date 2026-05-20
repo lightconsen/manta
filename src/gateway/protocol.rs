@@ -206,7 +206,13 @@ pub const SCOPE_ADMIN: &str = "admin";
 pub const SCOPE_PAIRING: &str = "pairing";
 
 /// All available scopes
-pub const ALL_SCOPES: &[&str] = &[SCOPE_CHAT, SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, SCOPE_PAIRING];
+pub const ALL_SCOPES: &[&str] = &[
+    SCOPE_CHAT,
+    SCOPE_READ,
+    SCOPE_WRITE,
+    SCOPE_ADMIN,
+    SCOPE_PAIRING,
+];
 
 /// Default scopes granted when none are explicitly requested
 pub const DEFAULT_SCOPES: &[&str] = &[SCOPE_CHAT, SCOPE_READ];
@@ -217,8 +223,12 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
         "chat.history" | "sessions.list" | "agents.list" | "agents.get" | "health"
         | "system.presence" | "commands.list" => Some(SCOPE_READ),
-        "sessions.create" | "sessions.delete" | "sessions.reset" | "sessions.subscribe"
-        | "sessions.unsubscribe" | "commands.execute" => Some(SCOPE_WRITE),
+        "sessions.create"
+        | "sessions.delete"
+        | "sessions.reset"
+        | "sessions.subscribe"
+        | "sessions.unsubscribe"
+        | "commands.execute" => Some(SCOPE_WRITE),
         "connect" | "ping" => None, // No scope required
         _ => {
             // Admin scope required for unknown methods (default-deny)
@@ -322,147 +332,146 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
             // so emitting chat.delta here would duplicate the full content.
             None
         }
-        GatewayEvent::Thinking { session_id, agent_id, content } => {
-            Some((
-                "agent.thinking".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "content": content,
-                }),
-            ))
-        }
-        GatewayEvent::ContentDelta { session_id, agent_id, delta } => {
-            Some((
-                "chat.delta".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "content": delta,
-                }),
-            ))
-        }
-        GatewayEvent::ToolCalling { session_id, agent_id, tool_name, arguments } => {
-            Some((
-                "tool.calling".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                }),
-            ))
-        }
-        GatewayEvent::ToolResult { session_id, agent_id, tool_name, result } => {
-            Some((
-                "tool.result".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "tool_name": tool_name,
-                    "result": result,
-                }),
-            ))
-        }
-        GatewayEvent::Completed { session_id, agent_id, response } => {
-            Some((
-                "chat.final".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "response": response,
-                }),
-            ))
-        }
-        GatewayEvent::ProcessingError { session_id, agent_id, message } => {
-            Some((
-                "chat.error".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "message": message,
-                }),
-            ))
-        }
-        GatewayEvent::MessageReceived { channel, user_id, content, timestamp } => {
-            Some((
-                "message.received".to_string(),
-                serde_json::json!({
-                    "channel": channel,
-                    "user_id": user_id,
-                    "content": content,
-                    "timestamp": timestamp,
-                }),
-            ))
-        }
-        GatewayEvent::AgentStatus { agent_id, status } => {
-            Some((
-                "agent.status".to_string(),
-                serde_json::json!({
-                    "agent_id": agent_id,
-                    "status": format!("{:?}", status),
-                }),
-            ))
-        }
-        GatewayEvent::ChannelStatus { channel, connected } => {
-            Some((
-                "channel.status".to_string(),
-                serde_json::json!({
-                    "channel": channel,
-                    "connected": connected,
-                }),
-            ))
-        }
-        GatewayEvent::ApprovalRequired { approval_id, tool_name, requested_by, risk_level, message } => {
-            Some((
-                "approval.required".to_string(),
-                serde_json::json!({
-                    "approval_id": approval_id,
-                    "tool_name": tool_name,
-                    "requested_by": requested_by,
-                    "risk_level": format!("{:?}", risk_level),
-                    "message": message,
-                }),
-            ))
-        }
+        GatewayEvent::Thinking { session_id, agent_id, content } => Some((
+            "agent.thinking".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "content": content,
+            }),
+        )),
+        GatewayEvent::ContentDelta { session_id, agent_id, delta } => Some((
+            "chat.delta".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "content": delta,
+            }),
+        )),
+        GatewayEvent::ToolCalling {
+            session_id,
+            agent_id,
+            tool_name,
+            arguments,
+        } => Some((
+            "tool.calling".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+            }),
+        )),
+        GatewayEvent::ToolResult {
+            session_id,
+            agent_id,
+            tool_name,
+            result,
+        } => Some((
+            "tool.result".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "result": result,
+            }),
+        )),
+        GatewayEvent::Completed { session_id, agent_id, response } => Some((
+            "chat.final".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "response": response,
+            }),
+        )),
+        GatewayEvent::ProcessingError { session_id, agent_id, message } => Some((
+            "chat.error".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "message": message,
+            }),
+        )),
+        GatewayEvent::MessageReceived {
+            channel,
+            user_id,
+            content,
+            timestamp,
+        } => Some((
+            "message.received".to_string(),
+            serde_json::json!({
+                "channel": channel,
+                "user_id": user_id,
+                "content": content,
+                "timestamp": timestamp,
+            }),
+        )),
+        GatewayEvent::AgentStatus { agent_id, status } => Some((
+            "agent.status".to_string(),
+            serde_json::json!({
+                "agent_id": agent_id,
+                "status": format!("{:?}", status),
+            }),
+        )),
+        GatewayEvent::ChannelStatus { channel, connected } => Some((
+            "channel.status".to_string(),
+            serde_json::json!({
+                "channel": channel,
+                "connected": connected,
+            }),
+        )),
+        GatewayEvent::ApprovalRequired {
+            approval_id,
+            tool_name,
+            requested_by,
+            risk_level,
+            message,
+        } => Some((
+            "approval.required".to_string(),
+            serde_json::json!({
+                "approval_id": approval_id,
+                "tool_name": tool_name,
+                "requested_by": requested_by,
+                "risk_level": format!("{:?}", risk_level),
+                "message": message,
+            }),
+        )),
         GatewayEvent::CronAnnounce { channel: _, to: _, message } => {
             // message is a JSON string produced by CronScheduler; try to parse it
-            let payload = serde_json::from_str(message).unwrap_or_else(|_| {
-                serde_json::json!({ "message": message })
-            });
+            let payload = serde_json::from_str(message)
+                .unwrap_or_else(|_| serde_json::json!({ "message": message }));
             Some(("cron.completed".to_string(), payload))
         }
-        GatewayEvent::RepairAction { kind, target_id, description, restart_count } => {
-            Some((
-                "repair.action".to_string(),
-                serde_json::json!({
-                    "kind": kind,
-                    "target_id": target_id,
-                    "description": description,
-                    "restart_count": restart_count,
-                }),
-            ))
-        }
-        GatewayEvent::DevicePairRequested { device_id, code, display_name } => {
-            Some((
-                "device.pair.requested".to_string(),
-                serde_json::json!({
-                    "device_id": device_id,
-                    "code": code,
-                    "display_name": display_name,
-                }),
-            ))
-        }
-        GatewayEvent::SessionCreated { session_id, agent_id, user_id } => {
-            Some((
-                "session.created".to_string(),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "agent_id": agent_id,
-                    "user_id": user_id,
-                }),
-            ))
-        }
+        GatewayEvent::RepairAction {
+            kind,
+            target_id,
+            description,
+            restart_count,
+        } => Some((
+            "repair.action".to_string(),
+            serde_json::json!({
+                "kind": kind,
+                "target_id": target_id,
+                "description": description,
+                "restart_count": restart_count,
+            }),
+        )),
+        GatewayEvent::DevicePairRequested { device_id, code, display_name } => Some((
+            "device.pair.requested".to_string(),
+            serde_json::json!({
+                "device_id": device_id,
+                "code": code,
+                "display_name": display_name,
+            }),
+        )),
+        GatewayEvent::SessionCreated { session_id, agent_id, user_id } => Some((
+            "session.created".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "user_id": user_id,
+            }),
+        )),
     }
 }
 

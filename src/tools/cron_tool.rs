@@ -173,7 +173,10 @@ impl Tool for CronTool {
 
                 let job_id = uuid::Uuid::new_v4().to_string();
 
-                let silent = args.get("silent").and_then(|v| v.as_bool()).unwrap_or(false);
+                let silent = args
+                    .get("silent")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let delivery = if silent {
                     DeliveryMode::None
                 } else {

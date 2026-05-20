@@ -114,7 +114,9 @@ impl TaskFlowEngine {
             };
 
             // Execute with retry logic
-            let result = self.execute_with_retry(task, &context, executor.clone()).await;
+            let result = self
+                .execute_with_retry(task, &context, executor.clone())
+                .await;
 
             match result {
                 TaskResult { success: true, output, .. } => {
@@ -131,7 +133,11 @@ impl TaskFlowEngine {
                         }
                     }
                 }
-                TaskResult { success: false, error: Some(err), .. } => {
+                TaskResult {
+                    success: false,
+                    error: Some(err),
+                    ..
+                } => {
                     checkpoint.record_failure(&err);
                     checkpoint.increment_retry();
 
@@ -140,8 +146,10 @@ impl TaskFlowEngine {
                     self.store.save(&save_cp).await?;
                     checkpoint = save_cp;
 
-                    error!("Task {} failed: {}. Retry {}/{}",
-                        task.id, err, checkpoint.retry_count, self.config.max_retries);
+                    error!(
+                        "Task {} failed: {}. Retry {}/{}",
+                        task.id, err, checkpoint.retry_count, self.config.max_retries
+                    );
 
                     if checkpoint.max_retries_exceeded(self.config.max_retries) {
                         return Err(crate::error::MantaError::Validation(format!(
@@ -152,10 +160,13 @@ impl TaskFlowEngine {
 
                     // Wait before retry
                     tokio::time::sleep(std::time::Duration::from_secs(
-                        self.config.retry_delay_secs
-                    )).await;
+                        self.config.retry_delay_secs,
+                    ))
+                    .await;
                 }
-                TaskResult { success: false, error: None, .. } => {
+                TaskResult {
+                    success: false, error: None, ..
+                } => {
                     checkpoint.record_failure("Unknown error");
                     let save_cp = checkpoint.successor();
                     self.store.save(&save_cp).await?;
@@ -213,11 +224,7 @@ impl TaskFlowEngine {
     }
 
     /// Create an initial checkpoint from a plan
-    fn create_initial_checkpoint(
-        &self,
-        flow_id: &str,
-        plan: &TaskPlan,
-    ) -> TaskFlowCheckpoint {
+    fn create_initial_checkpoint(&self, flow_id: &str, plan: &TaskPlan) -> TaskFlowCheckpoint {
         let mut cp = TaskFlowCheckpoint::new(flow_id, &plan.goal);
         cp.plan_json = serde_json::to_string(plan).unwrap_or_default();
         cp
@@ -417,7 +424,10 @@ mod tests {
         let executor = Arc::new(TestExecutor::new());
 
         // First run completes
-        engine.run("flow-resume", &plan, executor.clone()).await.unwrap();
+        engine
+            .run("flow-resume", &plan, executor.clone())
+            .await
+            .unwrap();
 
         // Second run with same flow_id should resume and immediately complete
         let result = engine.run("flow-resume", &plan, executor).await.unwrap();
@@ -432,7 +442,11 @@ mod tests {
 
         engine.run("flow-sum", &plan, executor).await.unwrap();
 
-        let summary = engine.get_summary("flow-sum", Some(&plan)).await.unwrap().unwrap();
+        let summary = engine
+            .get_summary("flow-sum", Some(&plan))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary.state, TaskFlowState::Completed);
         assert_eq!(summary.completed_tasks, 2);
         assert_eq!(summary.total_tasks, 2);

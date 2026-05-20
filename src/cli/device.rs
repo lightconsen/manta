@@ -47,9 +47,7 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                                     "{:<20} {:<15} {}",
                                     dev.get("id").and_then(|c| c.as_str()).unwrap_or("-"),
                                     dev.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
-                                    dev.get("paired_at")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-"),
+                                    dev.get("paired_at").and_then(|c| c.as_str()).unwrap_or("-"),
                                 );
                             }
                         }

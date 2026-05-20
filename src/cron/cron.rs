@@ -785,9 +785,7 @@ impl CronScheduler {
                 if !matches!(j.delivery, DeliveryMode::None) {
                     let message = serde_json::to_string(&delivery_payload)
                         .unwrap_or_else(|_| delivery_payload.to_string());
-                    if let Err(e) =
-                        Self::deliver_result(&j.delivery, &message, announce_tx).await
-                    {
+                    if let Err(e) = Self::deliver_result(&j.delivery, &message, announce_tx).await {
                         warn!("Delivery failed for job '{}': {}", j.name, e);
                     }
                 }
@@ -1452,7 +1450,9 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "say-hi-every-2-min");
         assert_eq!(jobs[0].id, "say-hi-001");
-        assert!(matches!(jobs[0].target, ExecutionTarget::Shell { ref command } if command == "echo 'hi from cron'"));
+        assert!(
+            matches!(jobs[0].target, ExecutionTarget::Shell { ref command } if command == "echo 'hi from cron'")
+        );
 
         // Verify persistence file written
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1471,10 +1471,7 @@ mod tests {
         // Verify run log
         assert!(runs_path.exists(), "runs log file should exist after execution");
         let runs_content = tokio::fs::read_to_string(&runs_path).await.unwrap();
-        assert!(
-            !runs_content.is_empty(),
-            "runs log should contain at least one entry"
-        );
+        assert!(!runs_content.is_empty(), "runs log should contain at least one entry");
         assert!(runs_content.contains("say-hi-001"), "run log should reference job id");
 
         // Verify job state updated

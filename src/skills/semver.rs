@@ -40,24 +40,15 @@ impl FromStr for Version {
             )));
         }
 
-        let major = parts[0]
-            .parse::<u64>()
-            .map_err(|_| crate::error::MantaError::Validation(format!(
-                "Invalid major version in '{}'",
-                s
-            )))?;
-        let minor = parts[1]
-            .parse::<u64>()
-            .map_err(|_| crate::error::MantaError::Validation(format!(
-                "Invalid minor version in '{}'",
-                s
-            )))?;
-        let patch = parts[2]
-            .parse::<u64>()
-            .map_err(|_| crate::error::MantaError::Validation(format!(
-                "Invalid patch version in '{}'",
-                s
-            )))?;
+        let major = parts[0].parse::<u64>().map_err(|_| {
+            crate::error::MantaError::Validation(format!("Invalid major version in '{}'", s))
+        })?;
+        let minor = parts[1].parse::<u64>().map_err(|_| {
+            crate::error::MantaError::Validation(format!("Invalid minor version in '{}'", s))
+        })?;
+        let patch = parts[2].parse::<u64>().map_err(|_| {
+            crate::error::MantaError::Validation(format!("Invalid patch version in '{}'", s))
+        })?;
 
         Ok(Self { major, minor, patch })
     }
@@ -78,14 +69,14 @@ pub struct VersionReq {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
-    Exact,      // =1.0.0 or 1.0.0
-    Caret,      // ^1.0.0
-    Tilde,      // ~1.2.0
-    Gte,        // >=1.0.0
-    Lte,        // <=1.0.0
-    Gt,         // >1.0.0
-    Lt,         // <1.0.0
-    Wildcard,   // * or 1.x
+    Exact,    // =1.0.0 or 1.0.0
+    Caret,    // ^1.0.0
+    Tilde,    // ~1.2.0
+    Gte,      // >=1.0.0
+    Lte,      // <=1.0.0
+    Gt,       // >1.0.0
+    Lt,       // <1.0.0
+    Wildcard, // * or 1.x
 }
 
 impl VersionReq {
@@ -113,8 +104,7 @@ impl VersionReq {
                             && version.patch >= self.version.patch
                     }
                 } else {
-                    version.major == self.version.major
-                        && (*version >= self.version)
+                    version.major == self.version.major && (*version >= self.version)
                 }
             }
             Op::Tilde => {

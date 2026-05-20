@@ -60,10 +60,7 @@ pub async fn run_audit_command(command: &AuditCommands) -> Result<()> {
                                         .get("event_type")
                                         .and_then(|c| c.as_str())
                                         .unwrap_or("-"),
-                                    entry
-                                        .get("user_id")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-"),
+                                    entry.get("user_id").and_then(|c| c.as_str()).unwrap_or("-"),
                                     entry
                                         .get("details")
                                         .and_then(|c| c.as_str())

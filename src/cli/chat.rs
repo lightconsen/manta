@@ -88,4 +88,3 @@ async fn send_message(client: &reqwest::Client, session_id: &str, message: &str)
     }
     Ok(())
 }
-

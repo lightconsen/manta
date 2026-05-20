@@ -13,8 +13,8 @@ pub mod hybrid;
 pub mod manager;
 pub mod personality;
 pub mod pipeline;
-pub mod soul;
 pub mod session_search;
+pub mod soul;
 pub mod sqlite;
 pub mod vector;
 pub mod workspace_state;
@@ -35,12 +35,12 @@ pub use hybrid::{
 };
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
-pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use pipeline::{
     EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
     PipelineEmbeddingProvider,
 };
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
+pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use sqlite::SqliteMemoryStore;
 pub use vector::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,

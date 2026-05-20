@@ -389,6 +389,7 @@ impl ContextCompressor {
             tools: None,
             stream: false,
             stop: None,
+            extra: None,
         };
 
         match provider.complete(req).await {

@@ -150,7 +150,10 @@ impl AuthManager {
             Some(s) => s,
             None => {
                 let users = self.users.read().await;
-                users.get(&user_id).map(|u| u.scopes.clone()).unwrap_or_default()
+                users
+                    .get(&user_id)
+                    .map(|u| u.scopes.clone())
+                    .unwrap_or_default()
             }
         };
 
@@ -185,7 +188,9 @@ impl AuthManager {
         if session.scopes.contains(&"admin".to_string()) {
             return true;
         }
-        required.iter().all(|req| session.scopes.contains(&req.to_string()))
+        required
+            .iter()
+            .all(|req| session.scopes.contains(&req.to_string()))
     }
 
     /// Validate a session token
@@ -807,7 +812,10 @@ mod tests {
         auth.register_user(user.clone()).await.unwrap();
         assert!(auth.user_exists(&user.id).await);
 
-        let session = auth.create_session(user.id.clone(), 24, None).await.unwrap();
+        let session = auth
+            .create_session(user.id.clone(), 24, None)
+            .await
+            .unwrap();
         assert!(auth.validate_session(&session.token).await.is_some());
     }
 }

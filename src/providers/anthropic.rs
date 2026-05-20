@@ -519,6 +519,7 @@ impl Provider for AnthropicProvider {
             stream: false,
             tools: None,
             stop: None,
+            extra: None,
         };
 
         match self.complete(request).await {

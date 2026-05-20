@@ -17,7 +17,10 @@ use axum::{
     },
     response::IntoResponse,
 };
-use futures_util::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
+use futures_util::{
+    stream::{SplitSink, SplitStream},
+    SinkExt, StreamExt,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -68,9 +71,7 @@ pub async fn ws_handler(
         config.security.auth_mode.clone()
     };
 
-    ws.on_upgrade(move |socket| {
-        handle_websocket(socket, state, query, auth_mode)
-    })
+    ws.on_upgrade(move |socket| handle_websocket(socket, state, query, auth_mode))
 }
 
 // ── Main WebSocket Loop ───────────────────────────────────────────────────────
@@ -99,10 +100,8 @@ async fn handle_websocket(
 
     // Split socket into sender/receiver so recv().await doesn't block sends.
     // WebSocket implements Stream + Sink; StreamExt::split yields independent halves.
-    let (mut ws_sender, mut ws_receiver): (
-        SplitSink<WebSocket, Message>,
-        SplitStream<WebSocket>,
-    ) = StreamExt::split(socket);
+    let (mut ws_sender, mut ws_receiver): (SplitSink<WebSocket, Message>, SplitStream<WebSocket>) =
+        StreamExt::split(socket);
     let conn_send = conn.clone();
 
     // ── Send Task: pushes events and responses to client ─────────────────────
@@ -192,9 +191,8 @@ async fn handle_websocket(
                     match serde_json::from_str::<WsRequest>(&text) {
                         Ok(req) => {
                             if req.method == "connect" {
-                                let res = handle_connect(
-                                    &req, &conn, &state, &auth_mode, &cmd_tx
-                                ).await;
+                                let res =
+                                    handle_connect(&req, &conn, &state, &auth_mode, &cmd_tx).await;
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
                                 let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
 
@@ -211,7 +209,7 @@ async fn handle_websocket(
                                 let res = WsResponse::err(
                                     req.id,
                                     "INVALID_REQUEST",
-                                    "First message must be connect"
+                                    "First message must be connect",
                                 );
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
                                 let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
@@ -253,9 +251,7 @@ async fn handle_websocket(
 
                     match serde_json::from_str::<WsRequest>(&text) {
                         Ok(req) => {
-                            let res = dispatch_method(
-                                &req, &conn, &state, &cmd_tx
-                            ).await;
+                            let res = dispatch_method(&req, &conn, &state, &cmd_tx).await;
                             let res_text = serde_json::to_string(&res).unwrap_or_default();
                             let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
                         }
@@ -302,8 +298,9 @@ async fn dispatch_method(
 
     match req.method.as_str() {
         "ping" => handle_ping(req),
-        "connect" => WsResponse::err(&req.id, "INVALID_REQUEST", "connect can only be sent as first message"
-        ),
+        "connect" => {
+            WsResponse::err(&req.id, "INVALID_REQUEST", "connect can only be sent as first message")
+        }
         "chat.send" => handle_chat_send(req, conn, state).await,
         "chat.history" => handle_chat_history(req, conn, state).await,
         "chat.abort" => handle_chat_abort(req, conn, state).await,
@@ -311,17 +308,15 @@ async fn dispatch_method(
         "sessions.create" => handle_sessions_create(req, conn, state).await,
         "sessions.delete" => handle_sessions_delete(req, conn, state).await,
         "sessions.reset" => handle_sessions_reset(req, conn, state).await,
-        "sessions.subscribe" => {
-            handle_sessions_subscribe(req, conn, cmd_tx).await
-        }
-        "sessions.unsubscribe" => {
-            handle_sessions_unsubscribe(req, conn, cmd_tx).await
-        }
+        "sessions.subscribe" => handle_sessions_subscribe(req, conn, cmd_tx).await,
+        "sessions.unsubscribe" => handle_sessions_unsubscribe(req, conn, cmd_tx).await,
         "agents.list" => handle_agents_list(req, state).await,
         "agents.get" => handle_agents_get(req, state).await,
         "health" => handle_health(req, state).await,
         "system.presence" => handle_system_presence(req).await,
-        "commands.list" => WsResponse::ok(&req.id, crate::gateway::commands::handle_commands_list()),
+        "commands.list" => {
+            WsResponse::ok(&req.id, crate::gateway::commands::handle_commands_list())
+        }
         "commands.execute" => {
             crate::gateway::commands::handle_commands_execute(req, conn, state).await
         }
@@ -359,7 +354,8 @@ async fn handle_connect(
     };
 
     // Protocol version check
-    if params.protocol_version < PROTOCOL_VERSION_MIN || params.protocol_version > PROTOCOL_VERSION {
+    if params.protocol_version < PROTOCOL_VERSION_MIN || params.protocol_version > PROTOCOL_VERSION
+    {
         return error_version_mismatch(&req.id);
     }
 
@@ -367,7 +363,10 @@ async fn handle_connect(
     let (user_id, granted_scopes) = match auth_mode {
         crate::gateway::protocol::AuthMode::None => {
             // No auth required, grant default scopes
-            (Some(UserId::new("anonymous")), DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect())
+            (
+                Some(UserId::new("anonymous")),
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+            )
         }
         crate::gateway::protocol::AuthMode::Token => {
             resolve_token_auth(req, state, &params, conn).await
@@ -377,7 +376,10 @@ async fn handle_connect(
         }
         crate::gateway::protocol::AuthMode::Tailscale => {
             // Tailscale auth is handled at the network layer
-            (Some(UserId::new("tailscale")), DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect())
+            (
+                Some(UserId::new("tailscale")),
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+            )
         }
     };
 
@@ -403,9 +405,15 @@ async fn finalize_hello_ok(
 
     let channel = {
         let cg = conn.read().await;
-        cg.client.as_ref().map(|c| c.id.clone()).unwrap_or_else(|| "ws".to_string())
+        cg.client
+            .as_ref()
+            .map(|c| c.id.clone())
+            .unwrap_or_else(|| "ws".to_string())
     };
-    let user_str = user_id.as_ref().map(|u| u.0.as_str()).unwrap_or("anonymous");
+    let user_str = user_id
+        .as_ref()
+        .map(|u| u.0.as_str())
+        .unwrap_or("anonymous");
     let session_key = format!("{}:{}", channel, user_str);
 
     let payload = HelloOkPayload {
@@ -425,10 +433,7 @@ async fn finalize_hello_ok(
     };
 
     let scopes = conn.read().await.scopes.clone();
-    info!(
-        "[{}] Handshake complete: user={:?} scopes={:?}",
-        conn_id, user_id, scopes
-    );
+    info!("[{}] Handshake complete: user={:?} scopes={:?}", conn_id, user_id, scopes);
 
     WsResponse::ok(&req.id, payload)
 }
@@ -439,11 +444,7 @@ async fn resolve_token_auth(
     params: &ConnectParams,
     _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
 ) -> (Option<UserId>, Vec<String>) {
-    let token = params
-        .auth
-        .as_ref()
-        .and_then(|a| a.token.as_ref())
-        .cloned();
+    let token = params.auth.as_ref().and_then(|a| a.token.as_ref()).cloned();
 
     if let Some(token_str) = token {
         if let Some(session) = state.auth_manager.validate_session(&token_str).await {
@@ -493,7 +494,8 @@ async fn handle_device_auth(
             } else {
                 params.scopes.clone()
             };
-            return finalize_hello_ok(req, conn, params, Some(UserId::new(&device_id)), scopes).await;
+            return finalize_hello_ok(req, conn, params, Some(UserId::new(&device_id)), scopes)
+                .await;
         }
     }
 
@@ -508,11 +510,7 @@ async fn handle_device_auth(
     // 3. Request pairing access
     let result = state
         .device_pairing_store
-        .request_access(
-            &device.id,
-            None,
-            device.public_key.as_deref(),
-        )
+        .request_access(&device.id, None, device.public_key.as_deref())
         .await;
 
     match result {
@@ -537,12 +535,10 @@ async fn handle_device_auth(
                 format!("Device pairing required. Use 'manta device approve {}' to approve.", code),
             )
         }
-        DeviceAccessResult::AlreadyPending { code } => {
-            error_invalid_request(
-                &req.id,
-                format!("Device pairing pending. Code: {}. Wait for admin approval.", code),
-            )
-        }
+        DeviceAccessResult::AlreadyPending { code } => error_invalid_request(
+            &req.id,
+            format!("Device pairing pending. Code: {}. Wait for admin approval.", code),
+        ),
         DeviceAccessResult::RateLimited => error_rate_limited(&req.id),
     }
 }
@@ -579,32 +575,39 @@ async fn handle_chat_send(
     } else {
         let cg = conn.read().await;
         let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws");
-        let user = cg.user_id.as_ref().map(|u| u.0.as_str()).unwrap_or("anonymous");
+        let user = cg
+            .user_id
+            .as_ref()
+            .map(|u| u.0.as_str())
+            .unwrap_or("anonymous");
         (format!("{}:{}", channel, user), true)
     };
 
     // Build IncomingMessage
     let user_id = {
         let cg = conn.read().await;
-        cg.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "anonymous".to_string())
+        cg.user_id
+            .as_ref()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "anonymous".to_string())
     };
 
     // Save user message to persistent session history
     if let Some(ref store) = state.session_store {
-        if let Err(e) = store.append_message(&session_id, "user", &params.message, None, None, None).await {
+        if let Err(e) = store
+            .append_message(&session_id, "user", &params.message, None, None, None)
+            .await
+        {
             tracing::warn!("Failed to save user message to session history: {}", e);
         }
     }
 
-    let incoming = crate::channels::IncomingMessage::new(
-        user_id.clone(),
-        session_id.clone(),
-        params.message,
-    )
-    .with_provenance(crate::channels::InputProvenance::ExternalUser {
-        channel: "web".to_string(),
-        is_direct: true,
-    });
+    let incoming =
+        crate::channels::IncomingMessage::new(user_id.clone(), session_id.clone(), params.message)
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: "web".to_string(),
+                is_direct: true,
+            });
 
     // Route through inbound pipeline
     match state.inbound_pipeline.process(incoming).await {
@@ -618,25 +621,31 @@ async fn handle_chat_send(
 
             // Notify clients if this is a newly derived session
             if is_new_session {
-                let _ = state.event_tx.send(crate::gateway::GatewayEvent::SessionCreated {
-                    session_id: session_id.clone(),
-                    agent_id: routed.agent_id.clone(),
-                    user_id: user_id.clone(),
-                });
+                let _ = state
+                    .event_tx
+                    .send(crate::gateway::GatewayEvent::SessionCreated {
+                        session_id: session_id.clone(),
+                        agent_id: routed.agent_id.clone(),
+                        user_id: user_id.clone(),
+                    });
             }
 
-            WsResponse::ok(&req.id, serde_json::json!({
-                "status": "accepted",
-                "session_id": session_id,
-                "agent_id": routed.agent_id,
-            }))
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "status": "accepted",
+                    "session_id": session_id,
+                    "agent_id": routed.agent_id,
+                }),
+            )
         }
-        None => {
-            WsResponse::ok(&req.id, serde_json::json!({
+        None => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
                 "status": "queued",
                 "session_id": session_id,
-            }))
-        }
+            }),
+        ),
     }
 }
 
@@ -653,7 +662,9 @@ async fn handle_chat_history(
         limit: usize,
     }
 
-    fn default_limit() -> usize { 50 }
+    fn default_limit() -> usize {
+        50
+    }
 
     let params: HistoryParams = match parse_params(req) {
         Ok(p) => p,
@@ -661,12 +672,15 @@ async fn handle_chat_history(
     };
 
     let messages = if let Some(ref store) = state.session_store {
-        match store.get_messages(&params.session_id, params.limit as i64, None).await {
+        match store
+            .get_messages(&params.session_id, params.limit as i64, None)
+            .await
+        {
             Ok(rows) => rows
                 .into_iter()
                 .map(|(id, role, content, reasoning, tool_calls_json, dt)| {
-                    let tool_calls: Option<serde_json::Value> = tool_calls_json
-                        .and_then(|json| serde_json::from_str(&json).ok());
+                    let tool_calls: Option<serde_json::Value> =
+                        tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
                     serde_json::json!({
                         "id": format!("msg_{}", id),
                         "role": role,
@@ -683,10 +697,13 @@ async fn handle_chat_history(
         Vec::new()
     };
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "session_id": params.session_id,
-        "messages": messages,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "messages": messages,
+        }),
+    )
 }
 
 async fn handle_chat_abort(
@@ -705,16 +722,16 @@ async fn handle_chat_abort(
     };
 
     // TODO: implement abort via ACP
-    WsResponse::ok(&req.id, serde_json::json!({
-        "status": "abort_requested",
-        "session_id": params.session_id,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "abort_requested",
+            "session_id": params.session_id,
+        }),
+    )
 }
 
-async fn handle_sessions_list(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
+async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let sessions = {
         let mgr = state.session_manager.read().await;
         mgr.list_sessions()
@@ -729,8 +746,17 @@ async fn handle_sessions_create(
     state: &Arc<GatewayState>,
 ) -> WsResponse {
     let cg = conn.read().await;
-    let channel = cg.client.as_ref().map(|c| c.id.as_str()).unwrap_or("ws").to_string();
-    let user = cg.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "anonymous".to_string());
+    let channel = cg
+        .client
+        .as_ref()
+        .map(|c| c.id.as_str())
+        .unwrap_or("ws")
+        .to_string();
+    let user = cg
+        .user_id
+        .as_ref()
+        .map(|u| u.0.clone())
+        .unwrap_or_else(|| "anonymous".to_string());
     drop(cg);
 
     #[derive(Debug, Deserialize)]
@@ -753,10 +779,13 @@ async fn handle_sessions_create(
         mgr.create_session(session_id.clone());
     }
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "session_id": session_id,
-        "status": "created",
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": session_id,
+            "status": "created",
+        }),
+    )
 }
 
 async fn handle_sessions_delete(
@@ -817,11 +846,16 @@ async fn handle_sessions_subscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx.send(WsCommand::Subscribe(params.session_ids.clone())).await;
+    let _ = cmd_tx
+        .send(WsCommand::Subscribe(params.session_ids.clone()))
+        .await;
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "subscribed": params.session_ids,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "subscribed": params.session_ids,
+        }),
+    )
 }
 
 async fn handle_sessions_unsubscribe(
@@ -839,17 +873,19 @@ async fn handle_sessions_unsubscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx.send(WsCommand::Unsubscribe(params.session_ids.clone())).await;
+    let _ = cmd_tx
+        .send(WsCommand::Unsubscribe(params.session_ids.clone()))
+        .await;
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "unsubscribed": params.session_ids,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "unsubscribed": params.session_ids,
+        }),
+    )
 }
 
-async fn handle_agents_list(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
+async fn handle_agents_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let agents = {
         let agents = state.agents.read().await;
         agents.keys().cloned().collect::<Vec<_>>()
@@ -858,10 +894,7 @@ async fn handle_agents_list(
     WsResponse::ok(&req.id, serde_json::json!({ "agents": agents }))
 }
 
-async fn handle_agents_get(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
+async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct GetParams {
         agent_id: String,
@@ -878,33 +911,34 @@ async fn handle_agents_get(
     };
 
     match agent {
-        Some(handle) => WsResponse::ok(&req.id, serde_json::json!({
-            "agent_id": params.agent_id,
-            "busy": handle.busy,
-        })),
+        Some(handle) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "agent_id": params.agent_id,
+                "busy": handle.busy,
+            }),
+        ),
         None => error_agent_not_found(&req.id),
     }
 }
 
-async fn handle_health(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
+async fn handle_health(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let agent_count = {
         let agents = state.agents.read().await;
         agents.len()
     };
 
-    WsResponse::ok(&req.id, serde_json::json!({
-        "status": "healthy",
-        "agents": agent_count,
-        "protocol_version": PROTOCOL_VERSION,
-    }))
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "healthy",
+            "agents": agent_count,
+            "protocol_version": PROTOCOL_VERSION,
+        }),
+    )
 }
 
-async fn handle_system_presence(
-    req: &WsRequest,
-) -> WsResponse {
+async fn handle_system_presence(req: &WsRequest) -> WsResponse {
     // Simplified presence info
     WsResponse::ok(
         &req.id,
@@ -951,7 +985,9 @@ async fn handle_legacy_unsubscribe(
         Err(res) => return res,
     };
 
-    let _ = cmd_tx.send(WsCommand::Unsubscribe(params.session_ids)).await;
+    let _ = cmd_tx
+        .send(WsCommand::Unsubscribe(params.session_ids))
+        .await;
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
@@ -962,12 +998,9 @@ fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, Ws
     match &req.params {
         Some(p) => match serde_json::from_value::<T>(p.clone()) {
             Ok(v) => Ok(v),
-            Err(e) => Err(error_invalid_request(
-                &req.id, format!("Invalid params: {}", e)
-            )),
+            Err(e) => Err(error_invalid_request(&req.id, format!("Invalid params: {}", e))),
         },
-        None => Err(error_invalid_request(&req.id, "Missing params"
-        )),
+        None => Err(error_invalid_request(&req.id, "Missing params")),
     }
 }
 

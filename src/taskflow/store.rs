@@ -113,12 +113,12 @@ impl CheckpointStore {
             checkpoint.id, checkpoint.flow_id, checkpoint.sequence
         );
 
-        let completed_json = serde_json::to_string(&checkpoint.completed_tasks)
-            .unwrap_or_else(|_| "[]".to_string());
-        let outputs_json = serde_json::to_string(&checkpoint.task_outputs)
-            .unwrap_or_else(|_| "{}".to_string());
-        let vars_json = serde_json::to_string(&checkpoint.variables)
-            .unwrap_or_else(|_| "{}".to_string());
+        let completed_json =
+            serde_json::to_string(&checkpoint.completed_tasks).unwrap_or_else(|_| "[]".to_string());
+        let outputs_json =
+            serde_json::to_string(&checkpoint.task_outputs).unwrap_or_else(|_| "{}".to_string());
+        let vars_json =
+            serde_json::to_string(&checkpoint.variables).unwrap_or_else(|_| "{}".to_string());
 
         sqlx::query(
             r#"
@@ -220,10 +220,7 @@ impl CheckpointStore {
     }
 
     /// List all checkpoints for a flow
-    pub async fn list_checkpoints(
-        &self,
-        flow_id: &str,
-    ) -> crate::Result<Vec<TaskFlowCheckpoint>> {
+    pub async fn list_checkpoints(&self, flow_id: &str) -> crate::Result<Vec<TaskFlowCheckpoint>> {
         let rows = sqlx::query(
             r#"
             SELECT id, flow_id, state, current_task_index, completed_tasks,
@@ -297,12 +294,12 @@ impl CheckpointStore {
         &self,
         row: sqlx::sqlite::SqliteRow,
     ) -> crate::Result<TaskFlowCheckpoint> {
-        let state_str: String = row.try_get("state").map_err(|e| {
-            crate::error::MantaError::Storage {
-                context: "Failed to read state column".to_string(),
-                details: e.to_string(),
-            }
-        })?;
+        let state_str: String =
+            row.try_get("state")
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to read state column".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let state = match state_str.as_str() {
             "idle" => TaskFlowState::Idle,
@@ -314,12 +311,12 @@ impl CheckpointStore {
             _ => TaskFlowState::Idle,
         };
 
-        let created_at_str: String = row.try_get("created_at").map_err(|e| {
-            crate::error::MantaError::Storage {
-                context: "Failed to read created_at column".to_string(),
-                details: e.to_string(),
-            }
-        })?;
+        let created_at_str: String =
+            row.try_get("created_at")
+                .map_err(|e| crate::error::MantaError::Storage {
+                    context: "Failed to read created_at column".to_string(),
+                    details: e.to_string(),
+                })?;
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map_err(|e| crate::error::MantaError::Storage {
@@ -328,17 +325,26 @@ impl CheckpointStore {
             })?
             .with_timezone(&chrono::Utc);
 
-        let completed_tasks: Vec<String> =
-            serde_json::from_str(row.try_get::<String, _>("completed_tasks").unwrap_or_default().as_str())
-                .unwrap_or_default();
+        let completed_tasks: Vec<String> = serde_json::from_str(
+            row.try_get::<String, _>("completed_tasks")
+                .unwrap_or_default()
+                .as_str(),
+        )
+        .unwrap_or_default();
 
-        let task_outputs: std::collections::HashMap<String, String> =
-            serde_json::from_str(row.try_get::<String, _>("task_outputs").unwrap_or_default().as_str())
-                .unwrap_or_default();
+        let task_outputs: std::collections::HashMap<String, String> = serde_json::from_str(
+            row.try_get::<String, _>("task_outputs")
+                .unwrap_or_default()
+                .as_str(),
+        )
+        .unwrap_or_default();
 
-        let variables: std::collections::HashMap<String, String> =
-            serde_json::from_str(row.try_get::<String, _>("variables").unwrap_or_default().as_str())
-                .unwrap_or_default();
+        let variables: std::collections::HashMap<String, String> = serde_json::from_str(
+            row.try_get::<String, _>("variables")
+                .unwrap_or_default()
+                .as_str(),
+        )
+        .unwrap_or_default();
 
         Ok(TaskFlowCheckpoint {
             id: row.try_get("id").unwrap_or_default(),

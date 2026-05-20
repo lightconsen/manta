@@ -100,9 +100,7 @@ impl DevicePairingStore {
         {
             let auth = self.authorized.read().await;
             if let Some(dev) = auth.get(device_id) {
-                return DeviceAccessResult::Authorized {
-                    token: dev.token.clone(),
-                };
+                return DeviceAccessResult::Authorized { token: dev.token.clone() };
             }
         }
 
@@ -113,9 +111,7 @@ impl DevicePairingStore {
                 let pending = self.pending.read().await;
                 if let Some(req) = pending.get(code) {
                     if req.is_valid() {
-                        return DeviceAccessResult::AlreadyPending {
-                            code: code.clone(),
-                        };
+                        return DeviceAccessResult::AlreadyPending { code: code.clone() };
                     }
                 }
             }
@@ -142,20 +138,13 @@ impl DevicePairingStore {
             index.insert(device_id.to_string(), code.clone());
         }
 
-        info!(
-            "Device pairing request created: device_id={} code={}",
-            device_id, code
-        );
+        info!("Device pairing request created: device_id={} code={}", device_id, code);
 
         DeviceAccessResult::PairingRequired { code }
     }
 
     /// Approve a pending device by code. Returns the device token on success.
-    pub async fn approve(
-        &self,
-        code: &str,
-        approved_by: Option<&str>,
-    ) -> Option<String> {
+    pub async fn approve(&self, code: &str, approved_by: Option<&str>) -> Option<String> {
         let req = {
             let mut pending = self.pending.write().await;
             pending.remove(code)?
@@ -233,7 +222,7 @@ impl DevicePairingStore {
 
     fn generate_code() -> String {
         use rand::Rng;
-        const CHARSET: &[ u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         let mut rng = rand::thread_rng();
         (0..5)
             .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
@@ -271,9 +260,7 @@ mod tests {
 
         // Now authorized
         let result3 = store.request_access("dev_1", None, None).await;
-        assert!(
-            matches!(result3, DeviceAccessResult::Authorized { token: ref t } if t == &token)
-        );
+        assert!(matches!(result3, DeviceAccessResult::Authorized { token: ref t } if t == &token));
 
         // Validate token
         let validated = store.validate_token(&token).await;
@@ -281,8 +268,9 @@ mod tests {
 
         // Revoke
         assert!(store.revoke("dev_1").await);
-        assert!(
-            matches!(store.request_access("dev_1", None, None).await, DeviceAccessResult::PairingRequired { .. })
-        );
+        assert!(matches!(
+            store.request_access("dev_1", None, None).await,
+            DeviceAccessResult::PairingRequired { .. }
+        ));
     }
 }

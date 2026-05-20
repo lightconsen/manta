@@ -246,6 +246,8 @@ pub struct CompletionRequest {
     pub model: Option<String>,
     /// Stop sequences
     pub stop: Option<Vec<String>>,
+    /// Provider-specific extra parameters (e.g. thinking, top_p, etc.)
+    pub extra: Option<serde_json::Value>,
 }
 
 impl Default for CompletionRequest {
@@ -258,6 +260,7 @@ impl Default for CompletionRequest {
             stream: false,
             model: None,
             stop: None,
+            extra: None,
         }
     }
 }

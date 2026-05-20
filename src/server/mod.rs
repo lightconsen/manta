@@ -585,7 +585,6 @@ async fn update_entity(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

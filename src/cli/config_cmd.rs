@@ -132,7 +132,9 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
         .lines()
         .map(|line| {
             let trimmed = line.trim();
-            if trimmed.starts_with(&format!("{} =", key)) || trimmed.starts_with(&format!("{}=", key)) {
+            if trimmed.starts_with(&format!("{} =", key))
+                || trimmed.starts_with(&format!("{}=", key))
+            {
                 updated = true;
                 format!("{} = \"{}\"", key, value)
             } else {

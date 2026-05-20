@@ -96,11 +96,7 @@ impl TaskFlowCheckpoint {
     }
 
     /// Mark current task as complete and advance
-    pub fn complete_task(
-        &mut self,
-        task_id: impl Into<String>,
-        output: impl Into<String>,
-    ) {
+    pub fn complete_task(&mut self, task_id: impl Into<String>, output: impl Into<String>) {
         let id = task_id.into();
         self.completed_tasks.push(id.clone());
         self.task_outputs.insert(id, output.into());
@@ -125,8 +121,7 @@ impl TaskFlowCheckpoint {
     }
 
     /// Set a shared variable
-    pub fn set_variable(
-        &mut self, key: impl Into<String>, value: impl Into<String>) {
+    pub fn set_variable(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.variables.insert(key.into(), value.into());
     }
 
@@ -197,11 +192,21 @@ impl Default for TaskFlowConfig {
     }
 }
 
-fn default_max_retries() -> u32 { 3 }
-fn default_retry_delay_secs() -> u64 { 5 }
-fn default_checkpoint_after_each_task() -> bool { true }
-fn default_auto_resume() -> bool { true }
-fn default_max_checkpoint_age_secs() -> u64 { 86400 } // 24 hours
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_retry_delay_secs() -> u64 {
+    5
+}
+fn default_checkpoint_after_each_task() -> bool {
+    true
+}
+fn default_auto_resume() -> bool {
+    true
+}
+fn default_max_checkpoint_age_secs() -> u64 {
+    86400
+} // 24 hours
 
 /// Summary of a TaskFlow execution
 #[derive(Debug, Clone, Serialize, Deserialize)]

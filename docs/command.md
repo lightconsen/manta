@@ -37,10 +37,10 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | `/new` | `[model]` | Start a new session | yes | no | ✅ |
 | `/reset` | `[soft\|hard]` | Reset the current session | no | no | ✅ |
 | `/stop` | — | Abort the current run | no | no | ✅ |
-| `/compact` | `[instructions]` | Flush transcript to disk and compact context | no | no | ⏳ |
+| `/compact` | `[instructions]` | Flush transcript to disk and compact context | no | no | ✅ |
 | `/export-session` | `[path]` | Export session transcript as HTML | no | no | ✅ |
 | `/clear` | — | Clear chat history (client-side) | yes | no | ✅ |
-| `/session` | `idle\|max-age <duration\|off>` | Manage session timeout settings | no | no | 📝 |
+| `/session` | `idle\|max-age <duration\|off>` | Manage session timeout settings | no | no | ✅ |
 
 ### Examples
 
@@ -61,12 +61,12 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | Command | Args | Description | Local | Admin | Status |
 |---|---|---|---|---|---|
 | `/model` | `[name\|#\|status]` | Show or switch the active model | no | no | ✅ |
-| `/think` | `<level>` | Set thinking level (`off`, `minimal`, `low`, `medium`, `high`) | no | no | 📝 |
-| `/verbose` | `on\|off\|full` | Toggle verbose output | no | no | 📝 |
-| `/trace` | `on\|off` | Toggle plugin trace | no | no | 📝 |
-| `/fast` | `[on\|off\|status]` | Show or set fast mode | no | no | 📝 |
-| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility | no | no | 📝 |
-| `/queue` | `<mode>` | Set queue behavior (e.g. `steer`, `interrupt`, `followup`) | no | no | 📝 |
+| `/think` | `<level>` | Set thinking level (`off`, `minimal`, `low`, `medium`, `high`) | no | no | ✅ |
+| `/verbose` | `on\|off\|full` | Toggle verbose output | no | no | ✅ |
+| `/trace` | `on\|off` | Toggle plugin trace | no | no | ✅ |
+| `/fast` | `[on\|off\|status]` | Show or set fast mode | no | no | ✅ |
+| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility | no | no | ✅ |
+| `/queue` | `<mode>` | Set queue behavior (e.g. `steer`, `interrupt`, `followup`) | no | no | ✅ |
 
 ### Examples
 
@@ -91,8 +91,8 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | `/status` | — | Show gateway runtime status | no | no | ✅ |
 | `/tools` | `[compact\|verbose]` | Show available tools | no | no | ✅ |
 | `/whoami` | — | Show your sender ID and scopes | no | no | ✅ |
-| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics | no | no | 📝 |
-| `/context` | `[list\|detail\|json]` | Show context assembly info | no | no | 📝 |
+| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics | no | no | ✅ |
+| `/context` | `[list\|detail\|json]` | Show context assembly info | no | no | ✅ |
 
 ### Examples
 
@@ -140,7 +140,7 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | `/skill` | `<name> [input]` | Run a skill by name | no | no | ✅ |
 | `/allowlist` | `[list\|add\|remove] ...` | Manage command gate user levels | no | no | ✅ |
 | `/approve` | `<id> <decision>` | Resolve an approval prompt | no | no | ✅ |
-| `/btw` | `<question>` | Side question without changing context | no | no | ⏳ |
+| `/btw` | `<question>` | Side question without changing context | no | no | ✅ |
 
 ### Examples
 
@@ -162,7 +162,7 @@ Commands are exposed via `commands.list` and executed via `commands.execute` ove
 | `/plugins` | `list\|install\|enable\|disable` | Inspect or toggle plugins | no | **yes** | ✅ |
 | `/mcp` | `show\|get\|set\|unset` | Manage MCP server connections | no | **yes** | ✅ |
 | `/debug` | `show\|set\|unset\|reset` | Runtime debug overrides | no | **yes** | ✅ |
-| `/restart` | — | Restart the gateway | no | **yes** | ⏳ |
+| `/restart` | — | Restart the gateway | no | **yes** | ✅ |
 | `/bash` | `<command>` | Run a host shell command | no | **yes** | ✅ |
 
 ### Examples
@@ -223,21 +223,17 @@ Both require `SCOPE_READ` (list) and `SCOPE_WRITE` (execute) respectively. Admin
 
 ---
 
-## Unimplemented Commands — Difficulty Ranking
+## Implementation Notes
 
-The following commands are stubs (📝) or placeholders (⏳). Ordered from easiest to hardest to fully implement.
+All built-in slash commands are fully implemented. Below is a summary of the architectural decisions made for the more complex commands.
 
-| # | Command | Difficulty | What's Needed |
-|---|---|---|---|
-| 1 | `/reasoning` | **Easy** | Filter `reasoning_content` from responses before sending to client based on `runtime_settings["reasoning.visibility"]`. Frontend already handles display. |
-| 2 | `/usage` | **Easy** | Hook into existing token counting in `agent/mod.rs` (already calculates `completion_tokens`), aggregate per-session, and write to `runtime_settings["usage.tokens"]` / `"usage.calls"`. |
-| 3 | `/restart` | **Easy–Medium** | Send a signal to the main process or exit with a special code that the launcher wrapper restarts. Could also use `tokio::process::Command` to re-spawn self. |
-| 4 | `/think` | **Medium** | Thread `runtime_settings["think.level"]` through to agent configuration. The agent already supports `thinking` options; map the setting to the provider's thinking parameter (e.g. Anthropic's `thinking.type` and `thinking.budget_tokens`). |
-| 5 | `/trace` | **Medium** | Add conditional trace logging in `PluginManager` or plugin runtime that checks `runtime_settings["trace.enabled"]` before emitting trace events. |
-| 6 | `/verbose` | **Medium** | Modify agent output formatting or tool result rendering based on `runtime_settings["verbose.mode"]`. May need to pass a flag through `AgentHandle` or `RunOptions`. |
-| 7 | `/session` | **Medium** | Hook `runtime_settings["session.idle"]` / `"session.max-age"]` into `SessionManager::cleanup_timed_out()`. Requires a background task that periodically checks and terminates stale sessions. |
-| 8 | `/btw` | **Medium** | Create a one-shot agent query path that bypasses session state. Can reuse `ModelRouter` directly without going through `chat.send` / session transcript. |
-| 9 | `/fast` | **Hard** | Integrate with `ModelRouter` to dynamically switch to a faster/cheaper model when `runtime_settings["fast.mode"]` is true. Requires cost-aware routing and fallback logic. |
-| 10 | `/context` | **Hard** | Expose the agent's context builder internals (system prompt, history, tools, memory injections). Requires introspecting `Context` / `TurnManager` at runtime. |
-| 11 | `/queue` | **Hard** | Modify ACP serial queue behavior (steer vs interrupt vs followup) based on `runtime_settings["queue.mode"]`. Requires architectural changes to `AcpControlPlane` queue dispatch. |
-| 12 | `/compact` | **Hardest** | Implement real context compaction: summarize or truncate transcript, inject summary as system prompt, and manage token budget. The `compaction.rs` module exists but is not yet wired into the command handler.
+| Command | Key Implementation Detail |
+|---|---|
+| `/think` | Maps level (`minimal` → `high`) to `thinking.budget_tokens` and injects via `Agent::set_extra_params()` before each completion. |
+| `/trace` | Uses `PluginManager::set_trace_enabled()` to toggle an `Arc<AtomicBool>` checked by `PluginToolWrapper` at execution time. |
+| `/fast` | Swaps `config.model` to the resolved `fast` alias on `/fast on`, and restores the original model on `/fast off`. |
+| `/queue` | `interrupt` mode calls `acp.cancel(session_id)` in `send_to_agent()` before processing the next message. |
+| `/context` | Resolves the active agent via `AgentRouter::resolve_by_session()`, then calls `Agent::context_info()` to introspect the thread's message count, tokens, and tool iterations. |
+| `/compact` | Resolves the active agent, calls `Agent::compact_context()` (Summarize strategy from `ContextCompressor`), and flushes the transcript to disk. |
+| `/btw` | Bypasses session state entirely by calling `ModelRouter::complete_auto()` directly for a one-shot Q&A. |
+| `/restart` | Spawns a background task that sleeps 1 second then calls `std::process::exit(0)`. |

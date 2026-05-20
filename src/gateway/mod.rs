@@ -1338,7 +1338,9 @@ impl Gateway {
             cron_scheduler: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
-            device_pairing_store: Arc::new(crate::security::device_pairing::DevicePairingStore::new()),
+            device_pairing_store: Arc::new(
+                crate::security::device_pairing::DevicePairingStore::new(),
+            ),
             command_gate: {
                 let gate = crate::tools::command_gate::CommandGate::new();
                 // Web terminal and API users need User level for slash commands
@@ -1644,8 +1646,8 @@ impl Gateway {
             info!("Initializing advanced cron scheduler...");
             use crate::cron::cron::{AnnounceDelivery, CronScheduler};
             let (cron_scheduler, command_rx) = CronScheduler::new();
-            let cron_scheduler = cron_scheduler
-                .with_store_path(crate::dirs::cron_dir().join("jobs.json"));
+            let cron_scheduler =
+                cron_scheduler.with_store_path(crate::dirs::cron_dir().join("jobs.json"));
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
             // Wire up announce delivery → SSE broadcast
@@ -1889,10 +1891,7 @@ impl Gateway {
 
     /// Middleware that logs a deprecation warning for REST API endpoints.
     /// Per protocol.md, these endpoints are deprecated in favor of the WebSocket-native protocol.
-    async fn deprecation_middleware(
-        req: axum::extract::Request,
-        next: Next,
-    ) -> impl IntoResponse {
+    async fn deprecation_middleware(req: axum::extract::Request, next: Next) -> impl IntoResponse {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
         warn!(
@@ -3149,6 +3148,36 @@ impl Gateway {
         };
         drop(agents);
 
+        // Apply thinking config from runtime settings
+        let think_level = {
+            let s = state.runtime_settings.read().await;
+            s.get("think.level")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+        let extra = think_level.and_then(|level| {
+            let budget = match level.as_str() {
+                "minimal" => 1024u32,
+                "low" => 4096u32,
+                "medium" => 16000u32,
+                "high" => 32000u32,
+                _ => return None,
+            };
+            Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
+        });
+        agent_handle.agent.set_extra_params(extra).await;
+
+        // Check queue mode and apply interrupt behavior if needed
+        let queue_mode = {
+            let s = state.runtime_settings.read().await;
+            s.get("queue.mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+        if queue_mode.as_deref() == Some("interrupt") {
+            state.acp.cancel(session_id.to_string()).await;
+        }
+
         let incoming_msg = crate::channels::IncomingMessage::new(
             user_id.to_string(),
             session_id.to_string(),
@@ -3169,15 +3198,30 @@ impl Gateway {
 
         // Build progress callback that forwards events to gateway subscribers
         let event_tx = state.event_tx.clone();
+        let runtime_settings = state.runtime_settings.clone();
         let progress_session = session_id.to_string();
         let progress_agent = agent_id.to_string();
         let progress_channel = channel.to_string();
         let progress_cb: crate::agent::ProgressCallback = Arc::new(move |event| {
             let tx = event_tx.clone();
+            let settings = runtime_settings.clone();
             let sid = progress_session.clone();
             let aid = progress_agent.clone();
             let _ch = progress_channel.clone();
             Box::pin(async move {
+                // Read directive settings
+                let reasoning_vis = {
+                    let s = settings.read().await;
+                    s.get("reasoning.visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                };
+                let verbose_mode = {
+                    let s = settings.read().await;
+                    s.get("verbose.mode")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                };
                 match event {
                     crate::agent::ProgressEvent::Started => {
                         let _ = tx.send(GatewayEvent::AgentStatus {
@@ -3186,6 +3230,10 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::Generating { content } => {
+                        // Skip reasoning events if visibility is off
+                        if reasoning_vis.as_deref() == Some("off") {
+                            return;
+                        }
                         // Only emit thinking events when there's actual content
                         if let Some(ref thinking) = content {
                             if !thinking.is_empty() {
@@ -3205,6 +3253,10 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                        // Skip tool events if verbose is off
+                        if verbose_mode.as_deref() == Some("off") {
+                            return;
+                        }
                         let _ = tx.send(GatewayEvent::ToolCalling {
                             session_id: sid.clone(),
                             agent_id: aid.clone(),
@@ -3213,11 +3265,25 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::ToolResult { name, result } => {
+                        // Skip tool events if verbose is off
+                        if verbose_mode.as_deref() == Some("off") {
+                            return;
+                        }
+                        // In compact verbose mode, truncate long results
+                        let result = if verbose_mode.as_deref() == Some("compact") {
+                            if result.len() > 500 {
+                                format!("{}... (truncated)", &result[..500])
+                            } else {
+                                result
+                            }
+                        } else {
+                            result
+                        };
                         let _ = tx.send(GatewayEvent::ToolResult {
                             session_id: sid.clone(),
                             agent_id: aid.clone(),
                             tool_name: name.clone(),
-                            result: result.clone(),
+                            result,
                         });
                     }
                     crate::agent::ProgressEvent::Completed { response } => {
@@ -3244,21 +3310,63 @@ impl Gateway {
             .execute_session_with_progress(agent_handle.agent.clone(), incoming_msg, progress_cb)
             .await
         {
-            Ok(outgoing) => {
+            Ok(mut outgoing) => {
+                // Apply reasoning visibility filter
+                let reasoning_vis = {
+                    let s = state.runtime_settings.read().await;
+                    s.get("reasoning.visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                };
+                if reasoning_vis.as_deref() == Some("off") {
+                    outgoing.reasoning_content = None;
+                }
+
+                // Accumulate usage statistics
+                if let Some(ref usage) = outgoing.usage {
+                    let mut settings = state.runtime_settings.write().await;
+                    let current_tokens = settings
+                        .get("usage.tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
+                    settings.insert(
+                        "usage.tokens".to_string(),
+                        serde_json::json!(current_tokens + total_tokens),
+                    );
+                    let current_calls = settings
+                        .get("usage.calls")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let tool_calls = outgoing
+                        .tool_calls
+                        .as_ref()
+                        .map(|c| c.len() as u64)
+                        .unwrap_or(0);
+                    settings.insert(
+                        "usage.calls".to_string(),
+                        serde_json::json!(current_calls + tool_calls + 1),
+                    );
+                }
+
                 // Save assistant response to persistent session history
                 if let Some(ref store) = state.session_store {
                     let reasoning = outgoing.reasoning_content.as_deref();
-                    let tool_calls_json = outgoing.tool_calls.as_ref().map(|calls| {
-                        serde_json::to_string(calls).unwrap_or_default()
-                    });
-                    if let Err(e) = store.append_message(
-                        session_id,
-                        "assistant",
-                        &outgoing.content,
-                        None,
-                        reasoning,
-                        tool_calls_json.as_deref(),
-                    ).await {
+                    let tool_calls_json = outgoing
+                        .tool_calls
+                        .as_ref()
+                        .map(|calls| serde_json::to_string(calls).unwrap_or_default());
+                    if let Err(e) = store
+                        .append_message(
+                            session_id,
+                            "assistant",
+                            &outgoing.content,
+                            None,
+                            reasoning,
+                            tool_calls_json.as_deref(),
+                        )
+                        .await
+                    {
                         warn!("Failed to save assistant message to session history: {}", e);
                     }
                 }
@@ -3717,9 +3825,11 @@ impl Gateway {
 async fn web_terminal_html_handler() -> Html<String> {
     let html = tokio::fs::read_to_string("web/dist/index.html")
         .await
-        .unwrap_or_else(|_| format!(
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
-        ));
+        .unwrap_or_else(|_| {
+            format!(
+                "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
+            )
+        });
     Html(html.replace("{VERSION}", crate::VERSION))
 }
 
@@ -3730,10 +3840,7 @@ async fn favicon_handler() -> impl IntoResponse {
         .unwrap_or_else(|_| {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80"><path d="M50 8C50 8 38 0 28 8C18 16 8 24 2 36C-2 44 2 52 10 48C18 44 22 40 26 36C30 32 34 28 38 30C42 32 44 38 44 46C44 54 42 64 40 72C38 76 42 78 44 74C46 66 48 56 50 50C52 56 54 66 56 74C58 78 62 76 60 72C58 64 56 54 56 46C56 38 58 32 62 30C66 28 70 32 74 36C78 40 82 44 90 48C98 52 102 44 98 36C92 24 82 16 72 8C62 0 50 8 50 8Z" fill="#10b981"/><circle cx="38" cy="18" r="2" fill="white"/><circle cx="62" cy="18" r="2" fill="white"/></svg>"##.to_string()
         });
-    (
-        [(header::CONTENT_TYPE, "image/svg+xml")],
-        svg,
-    )
+    ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
 
 /// Admin redirect handler — admin UI moved to CLI
@@ -4537,6 +4644,15 @@ async fn create_agent_handler(
                             let sid = progress_session.clone();
                             let aid = progress_agent.clone();
                             Box::pin(async move {
+                                // Read directive settings
+                                let reasoning_vis = {
+                                    let s = state.runtime_settings.read().await;
+                                    s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                };
+                                let verbose_mode = {
+                                    let s = state.runtime_settings.read().await;
+                                    s.get("verbose.mode").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                };
                                 match event {
                                     crate::agent::ProgressEvent::Started => {
                                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
@@ -4545,6 +4661,9 @@ async fn create_agent_handler(
                                         });
                                     }
                                     crate::agent::ProgressEvent::Generating { content } => {
+                                        if reasoning_vis.as_deref() == Some("off") {
+                                            return;
+                                        }
                                         // Only emit thinking events when there's actual content
                                         if let Some(ref thinking) = content {
                                             if !thinking.is_empty() {
@@ -4564,15 +4683,30 @@ async fn create_agent_handler(
                                         });
                                     }
                                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
+                                        if verbose_mode.as_deref() == Some("off") {
+                                            return;
+                                        }
                                         let _ = state.event_tx.send(GatewayEvent::ToolCalling {
                                             session_id: sid.clone(), agent_id: aid.clone(),
                                             tool_name: name.clone(), arguments: arguments.clone(),
                                         });
                                     }
                                     crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                        if verbose_mode.as_deref() == Some("off") {
+                                            return;
+                                        }
+                                        let result = if verbose_mode.as_deref() == Some("compact") {
+                                            if result.len() > 500 {
+                                                format!("{}... (truncated)", &result[..500])
+                                            } else {
+                                                result
+                                            }
+                                        } else {
+                                            result
+                                        };
                                         let _ = state.event_tx.send(GatewayEvent::ToolResult {
                                             session_id: sid.clone(), agent_id: aid.clone(),
-                                            tool_name: name.clone(), result: result.clone(),
+                                            tool_name: name.clone(), result,
                                         });
                                     }
                                     crate::agent::ProgressEvent::Completed { response } => {
@@ -4593,8 +4727,43 @@ async fn create_agent_handler(
                             })
                         });
 
+                        // Apply thinking config from runtime settings
+                        let think_level = {
+                            let s = state_clone.runtime_settings.read().await;
+                            s.get("think.level").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        };
+                        let extra = think_level.and_then(|level| {
+                            let budget = match level.as_str() {
+                                "minimal" => 1024u32,
+                                "low" => 4096u32,
+                                "medium" => 16000u32,
+                                "high" => 32000u32,
+                                _ => return None,
+                            };
+                            Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
+                        });
+                        agent_clone.set_extra_params(extra).await;
+
                         match agent_clone.process_message_with_progress(incoming_msg, progress_cb).await {
-                            Ok(outgoing) => {
+                            Ok(mut outgoing) => {
+                                // Apply reasoning visibility filter
+                                let reasoning_vis = {
+                                    let s = state_clone.runtime_settings.read().await;
+                                    s.get("reasoning.visibility").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                };
+                                if reasoning_vis.as_deref() == Some("off") {
+                                    outgoing.reasoning_content = None;
+                                }
+                                // Accumulate usage
+                                if let Some(ref usage) = outgoing.usage {
+                                    let mut settings = state_clone.runtime_settings.write().await;
+                                    let current_tokens = settings.get("usage.tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let total_tokens = usage.prompt_tokens as u64 + usage.completion_tokens as u64;
+                                    settings.insert("usage.tokens".to_string(), serde_json::json!(current_tokens + total_tokens));
+                                    let current_calls = settings.get("usage.calls").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let tool_calls = outgoing.tool_calls.as_ref().map(|c| c.len() as u64).unwrap_or(0);
+                                    settings.insert("usage.calls".to_string(), serde_json::json!(current_calls + tool_calls + 1));
+                                }
                                 let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
                                     session_id: session_id.clone(), agent_id: agent_id_clone.clone(),
                                     content: outgoing.content, channel: source_channel.clone(),

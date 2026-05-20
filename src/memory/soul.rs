@@ -158,7 +158,10 @@ fn yaml_to_string(v: &serde_yaml::Value) -> String {
         serde_yaml::Value::String(s) => s.clone(),
         serde_yaml::Value::Number(n) => n.to_string(),
         serde_yaml::Value::Bool(b) => b.to_string(),
-        _ => serde_yaml::to_string(v).unwrap_or_default().trim().to_string(),
+        _ => serde_yaml::to_string(v)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
     }
 }
 

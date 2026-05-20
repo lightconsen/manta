@@ -543,10 +543,7 @@ mod tests {
     #[test]
     fn test_resolve_path_absolute() {
         let ctx = ToolContext::new("u", "c").with_workspace_root("/tmp/workspace");
-        assert_eq!(
-            ctx.resolve_path(Path::new("/etc/passwd")),
-            PathBuf::from("/etc/passwd")
-        );
+        assert_eq!(ctx.resolve_path(Path::new("/etc/passwd")), PathBuf::from("/etc/passwd"));
     }
 
     #[test]

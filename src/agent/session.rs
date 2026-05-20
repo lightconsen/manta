@@ -242,11 +242,8 @@ impl MultiAgentSession {
         );
 
         // Build set of active thread IDs for Auto binding resolution
-        let active_threads: std::collections::HashSet<String> = self
-            .agents
-            .values()
-            .map(|a| a.thread_id.clone())
-            .collect();
+        let active_threads: std::collections::HashSet<String> =
+            self.agents.values().map(|a| a.thread_id.clone()).collect();
 
         let agent = SessionAgent::new_with_threads(
             agent_id.clone(),
@@ -587,7 +584,8 @@ mod tests {
         assert_eq!(auto_reuse, parent);
 
         // Auto with active_threads not containing parent -> creates new
-        let auto_new = get_thread_id(&ThreadBinding::Auto, parent, Some(&std::collections::HashSet::new()));
+        let auto_new =
+            get_thread_id(&ThreadBinding::Auto, parent, Some(&std::collections::HashSet::new()));
         assert!(auto_new.starts_with("thread-"));
     }
 

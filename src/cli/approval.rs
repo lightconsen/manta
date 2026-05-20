@@ -39,18 +39,13 @@ pub async fn run_approval_command(command: &ApprovalCommands) -> Result<()> {
                             println!("No pending approvals.");
                         } else {
                             println!("Pending Tool Approvals:");
-                            println!(
-                                "{:<36} {:<20} {:<15} {}",
-                                "ID", "Tool", "Risk", "Message"
-                            );
+                            println!("{:<36} {:<20} {:<15} {}", "ID", "Tool", "Risk", "Message");
                             println!("{}", "-".repeat(100));
                             for app in approvals {
                                 println!(
                                     "{:<36} {:<20} {:<15} {}",
                                     app.get("id").and_then(|c| c.as_str()).unwrap_or("-"),
-                                    app.get("tool_name")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-"),
+                                    app.get("tool_name").and_then(|c| c.as_str()).unwrap_or("-"),
                                     app.get("risk_level")
                                         .and_then(|c| c.as_str())
                                         .unwrap_or("-"),

@@ -77,9 +77,7 @@ pub enum BrowserAction {
     /// Get network request log via Performance API
     GetNetworkLog,
     /// Set mobile device emulation
-    EmulateMobile {
-        device_name: String,
-    },
+    EmulateMobile { device_name: String },
     /// Set viewport size dynamically
     SetViewport {
         width: u32,
@@ -434,10 +432,17 @@ impl BrowserTool {
                 }
 
                 BrowserAction::SetCookie { name, value, domain, path } => {
-                    let domain_part = domain.as_ref().map(|d| format!("domain={};", d)).unwrap_or_default();
-                    let path_part = path.as_ref().map(|p| format!("path={};", p)).unwrap_or_default();
+                    let domain_part = domain
+                        .as_ref()
+                        .map(|d| format!("domain={};", d))
+                        .unwrap_or_default();
+                    let path_part = path
+                        .as_ref()
+                        .map(|p| format!("path={};", p))
+                        .unwrap_or_default();
                     let cookie_str = format!("{}={};{}{}", name, value, domain_part, path_part);
-                    let script = format!(r#"() => {{ document.cookie = "{}"; return true; }}"#, cookie_str);
+                    let script =
+                        format!(r#"() => {{ document.cookie = "{}"; return true; }}"#, cookie_str);
                     match page.evaluate(&script).await {
                         Ok(_) => Ok(json!({
                             "success": true,
@@ -481,17 +486,39 @@ impl BrowserTool {
                     use chromiumoxide::cdp::browser_protocol::page::PrintToPdfParams;
 
                     let mut params = PrintToPdfParams::default();
-                    if let Some(v) = landscape { params.landscape = Some(v); }
-                    if let Some(v) = display_header_footer { params.display_header_footer = Some(v); }
-                    if let Some(v) = print_background { params.print_background = Some(v); }
-                    if let Some(v) = scale { params.scale = Some(v); }
-                    if let Some(v) = paper_width { params.paper_width = Some(v); }
-                    if let Some(v) = paper_height { params.paper_height = Some(v); }
-                    if let Some(v) = margin_top { params.margin_top = Some(v); }
-                    if let Some(v) = margin_bottom { params.margin_bottom = Some(v); }
-                    if let Some(v) = margin_left { params.margin_left = Some(v); }
-                    if let Some(v) = margin_right { params.margin_right = Some(v); }
-                    if let Some(ref v) = page_ranges { params.page_ranges = Some(v.clone()); }
+                    if let Some(v) = landscape {
+                        params.landscape = Some(v);
+                    }
+                    if let Some(v) = display_header_footer {
+                        params.display_header_footer = Some(v);
+                    }
+                    if let Some(v) = print_background {
+                        params.print_background = Some(v);
+                    }
+                    if let Some(v) = scale {
+                        params.scale = Some(v);
+                    }
+                    if let Some(v) = paper_width {
+                        params.paper_width = Some(v);
+                    }
+                    if let Some(v) = paper_height {
+                        params.paper_height = Some(v);
+                    }
+                    if let Some(v) = margin_top {
+                        params.margin_top = Some(v);
+                    }
+                    if let Some(v) = margin_bottom {
+                        params.margin_bottom = Some(v);
+                    }
+                    if let Some(v) = margin_left {
+                        params.margin_left = Some(v);
+                    }
+                    if let Some(v) = margin_right {
+                        params.margin_right = Some(v);
+                    }
+                    if let Some(ref v) = page_ranges {
+                        params.page_ranges = Some(v.clone());
+                    }
 
                     match page.pdf(Some(params)).await {
                         Ok(data) => {
@@ -582,7 +609,10 @@ impl BrowserTool {
 
                     match page.set_viewport(viewport).await {
                         Ok(_) => {
-                            let ua_script = format!(r#"() => {{ Object.defineProperty(navigator, 'userAgent', {{ value: '{}', configurable: true }}); return true; }}"#, ua);
+                            let ua_script = format!(
+                                r#"() => {{ Object.defineProperty(navigator, 'userAgent', {{ value: '{}', configurable: true }}); return true; }}"#,
+                                ua
+                            );
                             page.evaluate(&ua_script).await.ok();
                             Ok(json!({
                                 "success": true,
@@ -594,7 +624,12 @@ impl BrowserTool {
                     }
                 }
 
-                BrowserAction::SetViewport { width, height, device_scale_factor, mobile } => {
+                BrowserAction::SetViewport {
+                    width,
+                    height,
+                    device_scale_factor,
+                    mobile,
+                } => {
                     let viewport = chromiumoxide::handler::viewport::Viewport {
                         width,
                         height,
@@ -1067,27 +1102,51 @@ mod tests {
     #[test]
     fn test_browser_action_deserialization_new_variants() {
         // Unit variants serialize as {"variant": null}
-        let get_cookies: BrowserAction = serde_json::from_value(json!({"get_cookies": null})).unwrap();
+        let get_cookies: BrowserAction =
+            serde_json::from_value(json!({"get_cookies": null})).unwrap();
         assert!(matches!(get_cookies, BrowserAction::GetCookies));
 
         let set_cookie: BrowserAction = serde_json::from_value(json!({
             "set_cookie": { "name": "foo", "value": "bar", "domain": "example.com" }
-        })).unwrap();
-        assert!(matches!(set_cookie, BrowserAction::SetCookie { ref name, ref value, .. } if name == "foo" && value == "bar"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(set_cookie, BrowserAction::SetCookie { ref name, ref value, .. } if name == "foo" && value == "bar")
+        );
 
         let pdf: BrowserAction = serde_json::from_value(json!({
             "print_to_pdf": { "landscape": true, "scale": 1.2 }
-        })).unwrap();
-        assert!(matches!(pdf, BrowserAction::PrintToPdf { landscape: Some(true), scale: Some(1.2), .. }));
+        }))
+        .unwrap();
+        assert!(matches!(
+            pdf,
+            BrowserAction::PrintToPdf {
+                landscape: Some(true),
+                scale: Some(1.2),
+                ..
+            }
+        ));
 
         let mobile: BrowserAction = serde_json::from_value(json!({
             "emulate_mobile": { "device_name": "pixel_5" }
-        })).unwrap();
-        assert!(matches!(mobile, BrowserAction::EmulateMobile { ref device_name } if device_name == "pixel_5"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(mobile, BrowserAction::EmulateMobile { ref device_name } if device_name == "pixel_5")
+        );
 
         let viewport: BrowserAction = serde_json::from_value(json!({
             "set_viewport": { "width": 800, "height": 600, "mobile": true }
-        })).unwrap();
-        assert!(matches!(viewport, BrowserAction::SetViewport { width: 800, height: 600, mobile: Some(true), .. }));
+        }))
+        .unwrap();
+        assert!(matches!(
+            viewport,
+            BrowserAction::SetViewport {
+                width: 800,
+                height: 600,
+                mobile: Some(true),
+                ..
+            }
+        ));
     }
 }

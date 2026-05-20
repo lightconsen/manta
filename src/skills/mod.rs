@@ -28,7 +28,7 @@ mod storage;
 mod watcher;
 
 pub use config::{SkillConfig, SkillEntryConfig};
-pub use dependencies::{DependencyGraph, DependencySpec, resolve_skill_chain};
+pub use dependencies::{resolve_skill_chain, DependencyGraph, DependencySpec};
 pub use frontmatter::{
     InstallSpec as SkillInstallSpec, OpenClawFrontmatter, SkillFile, SkillFrontmatter,
     SkillTriggerItem,
@@ -930,7 +930,10 @@ impl SkillManager {
                     let spec = format!("{}: {}", dep_name, dep_constraint);
                     dependencies::DependencySpec::parse(&spec)
                         .map_err(|e| {
-                            warn!("Invalid dependency spec '{}' for skill '{}': {}", spec, skill.name, e);
+                            warn!(
+                                "Invalid dependency spec '{}' for skill '{}': {}",
+                                spec, skill.name, e
+                            );
                         })
                         .ok()
                 })
@@ -1034,11 +1037,13 @@ impl SkillManager {
     pub async fn build_execution_chain(&self, name: &str) -> crate::Result<SkillChain> {
         let skills = self.skills.read().await;
 
-        let root_skill = skills.get(name).cloned().ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Skill: {}", name),
-            }
-        })?;
+        let root_skill =
+            skills
+                .get(name)
+                .cloned()
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Skill: {}", name),
+                })?;
 
         let mut chain = Vec::new();
         let mut visited = std::collections::HashSet::new();
@@ -1555,7 +1560,10 @@ Weather skill content.
 "#;
         let file = SkillFile::parse(content, std::path::PathBuf::from("weather/SKILL.md")).unwrap();
         assert_eq!(file.frontmatter.depends_on.len(), 2);
-        assert_eq!(file.frontmatter.depends_on.get("base-utils"), Some(">=1.0.0".to_string()).as_ref());
+        assert_eq!(
+            file.frontmatter.depends_on.get("base-utils"),
+            Some(">=1.0.0".to_string()).as_ref()
+        );
         assert_eq!(file.frontmatter.provides, vec!["forecast", "alerts"]);
         assert_eq!(file.frontmatter.chain, vec!["summarize"]);
     }
@@ -1580,7 +1588,8 @@ Weather skill content.
 
             let mut app = Skill::new("app", "App", "App prompt");
             app.version = "1.0.0".to_string();
-            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            app.depends_on
+                .insert("base".to_string(), ">=1.0.0".to_string());
             skills.insert("app".to_string(), app);
         }
 
@@ -1601,7 +1610,8 @@ Weather skill content.
 
             let mut app = Skill::new("app", "App", "App prompt");
             app.version = "1.0.0".to_string();
-            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            app.depends_on
+                .insert("base".to_string(), ">=1.0.0".to_string());
             skills.insert("app".to_string(), app);
         }
 
@@ -1621,7 +1631,8 @@ Weather skill content.
 
             let mut app = Skill::new("app", "App", "App prompt");
             app.version = "1.0.0".to_string();
-            app.depends_on.insert("base".to_string(), ">=1.0.0".to_string());
+            app.depends_on
+                .insert("base".to_string(), ">=1.0.0".to_string());
             skills.insert("app".to_string(), app);
         }
 
@@ -1638,7 +1649,8 @@ Weather skill content.
             let mut skills = manager.skills.write().await;
             let mut app = Skill::new("app", "App", "App prompt");
             app.version = "1.0.0".to_string();
-            app.depends_on.insert("missing".to_string(), ">=1.0.0".to_string());
+            app.depends_on
+                .insert("missing".to_string(), ">=1.0.0".to_string());
             skills.insert("app".to_string(), app);
         }
 

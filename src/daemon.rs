@@ -102,9 +102,9 @@ impl DaemonManager {
 
         if !manta_dir.exists() {
             println!("📁 Creating Manta directory at {:?}...", manta_dir);
-            tokio::fs::create_dir_all(&manta_dir).await.map_err(|e| {
-                crate::error::MantaError::Io(e)
-            })?;
+            tokio::fs::create_dir_all(&manta_dir)
+                .await
+                .map_err(|e| crate::error::MantaError::Io(e))?;
         }
 
         if !config_path.exists() {
@@ -166,9 +166,9 @@ hourly_action_limit = 0
 # workspace_dir = "~/projects"
 workspace_only = true
 "#;
-            tokio::fs::write(&config_path, default_config).await.map_err(|e| {
-                crate::error::MantaError::Io(e)
-            })?;
+            tokio::fs::write(&config_path, default_config)
+                .await
+                .map_err(|e| crate::error::MantaError::Io(e))?;
             println!("✅ Default config created. Edit {:?} to customize.", config_path);
         }
 

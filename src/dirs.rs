@@ -481,9 +481,6 @@ mod tests {
 
     #[test]
     fn test_agent_data_dir() {
-        assert_eq!(
-            agent_data_dir("my-agent"),
-            agents_dir().join("my-agent").join("data")
-        );
+        assert_eq!(agent_data_dir("my-agent"), agents_dir().join("my-agent").join("data"));
     }
 }

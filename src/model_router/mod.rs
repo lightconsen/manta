@@ -165,7 +165,13 @@ pub enum TaskType {
 
 impl std::fmt::Display for TaskType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", serde_json::to_string(self).unwrap_or_default().trim_matches('"'))
+        write!(
+            f,
+            "{}",
+            serde_json::to_string(self)
+                .unwrap_or_default()
+                .trim_matches('"')
+        )
     }
 }
 
@@ -736,6 +742,7 @@ impl ModelRouter {
             stream: false,
             tools: None,
             stop: None,
+            extra: None,
         };
 
         // Try primary provider, then fallbacks
@@ -830,10 +837,7 @@ impl ModelRouter {
     /// If cost-aware routing is enabled in config, this method classifies the
     /// task type from the messages and routes to the most cost-effective model
     /// alias for that task. Otherwise, it falls back to the default alias.
-    pub async fn complete_auto(
-        &self,
-        messages: Vec<Message>,
-    ) -> crate::Result<CompletionResponse> {
+    pub async fn complete_auto(&self, messages: Vec<Message>) -> crate::Result<CompletionResponse> {
         let config = self.config.read().await;
 
         // Check if cost-aware routing is enabled
@@ -880,7 +884,9 @@ impl ModelRouter {
                     .min_by(|a, b| {
                         let a_total = a.1.input_cost_per_1k + a.1.output_cost_per_1k;
                         let b_total = b.1.input_cost_per_1k + b.1.output_cost_per_1k;
-                        a_total.partial_cmp(&b_total).unwrap_or(std::cmp::Ordering::Equal)
+                        a_total
+                            .partial_cmp(&b_total)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     })
                     .map(|(name, _)| name.clone())
                     .unwrap_or_else(|| cost_aware.default_alias.clone());
@@ -903,10 +909,7 @@ impl ModelRouter {
 
         let alias_name = if let Some(rule) = rule {
             // Check token limit - if exceeded, use fallback (usually larger model)
-            let estimated_tokens: u32 = messages
-                .iter()
-                .map(|m| m.content.len() as u32 / 4)
-                .sum();
+            let estimated_tokens: u32 = messages.iter().map(|m| m.content.len() as u32 / 4).sum();
 
             if let Some(max_tokens) = rule.max_input_tokens {
                 if estimated_tokens > max_tokens {
@@ -1074,6 +1077,7 @@ impl ModelRouter {
                     stream: false,
                     tools: None,
                     stop: None,
+                    extra: None,
                 };
 
                 let start = std::time::Instant::now();
@@ -1188,6 +1192,12 @@ impl ModelRouter {
     pub async fn get_default_model(&self) -> String {
         let config = self.config.read().await;
         config.default_model.clone()
+    }
+
+    /// Resolve an alias to its actual model ID.
+    pub async fn resolve_alias(&self, alias_name: &str) -> Option<String> {
+        let config = self.config.read().await;
+        config.aliases.get(alias_name).map(|a| a.model.clone())
     }
 
     /// List all available providers with their status
@@ -1344,6 +1354,7 @@ impl ModelRouter {
             stream: false,
             tools: None,
             stop: None,
+            extra: None,
         };
 
         let start = std::time::Instant::now();
@@ -1391,6 +1402,7 @@ impl ModelRouter {
             stream: false,
             tools: None,
             stop: None,
+            extra: None,
         };
 
         let start = std::time::Instant::now();
@@ -1924,57 +1936,53 @@ mod tests {
 
     #[test]
     fn task_classifier_detects_coding() {
-        let msgs = vec![
-            crate::providers::Message::user("Write a function to sort an array in Python"),
-        ];
+        let msgs = vec![crate::providers::Message::user(
+            "Write a function to sort an array in Python",
+        )];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Coding);
     }
 
     #[test]
     fn task_classifier_detects_summarization() {
-        let msgs = vec![
-            crate::providers::Message::user("Summarize this article for me"),
-        ];
+        let msgs = vec![crate::providers::Message::user(
+            "Summarize this article for me",
+        )];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Summarization);
     }
 
     #[test]
     fn task_classifier_detects_reasoning() {
-        let msgs = vec![
-            crate::providers::Message::user("Explain why the sky is blue step by step"),
-        ];
+        let msgs = vec![crate::providers::Message::user(
+            "Explain why the sky is blue step by step",
+        )];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Reasoning);
     }
 
     #[test]
     fn task_classifier_defaults_to_chat() {
-        let msgs = vec![
-            crate::providers::Message::user("Hello, how are you today?"),
-        ];
+        let msgs = vec![crate::providers::Message::user("Hello, how are you today?")];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Chat);
     }
 
     #[test]
     fn task_classifier_detects_classification() {
-        let msgs = vec![
-            crate::providers::Message::user("Classify this text as positive or negative"),
-        ];
+        let msgs = vec![crate::providers::Message::user(
+            "Classify this text as positive or negative",
+        )];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Classification);
     }
 
     #[test]
     fn task_classifier_detects_translation() {
-        let msgs = vec![
-            crate::providers::Message::user("Translate this to French"),
-        ];
+        let msgs = vec![crate::providers::Message::user("Translate this to French")];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Translation);
     }
 
     #[test]
     fn task_classifier_detects_extraction() {
-        let msgs = vec![
-            crate::providers::Message::user("Extract all email addresses from this text"),
-        ];
+        let msgs = vec![crate::providers::Message::user(
+            "Extract all email addresses from this text",
+        )];
         assert_eq!(TaskClassifier::classify(&msgs), TaskType::Extraction);
     }
 

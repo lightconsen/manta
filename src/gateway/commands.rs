@@ -113,13 +113,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Session,
         )
         .with_args("[path]"),
-        CommandDef::new(
-            "clear",
-            "clear",
-            "Clear chat history",
-            CommandCategory::Session,
-        )
-        .local(),
+        CommandDef::new("clear", "clear", "Clear chat history", CommandCategory::Session).local(),
         // Model
         CommandDef::new(
             "model",
@@ -128,34 +122,14 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Model,
         )
         .with_args("[name|#|status]"),
-        CommandDef::new(
-            "think",
-            "think",
-            "Set thinking level",
-            CommandCategory::Model,
-        )
-        .with_args("<level>"),
-        CommandDef::new(
-            "verbose",
-            "verbose",
-            "Toggle verbose output",
-            CommandCategory::Model,
-        )
-        .with_args("on|off|full"),
-        CommandDef::new(
-            "fast",
-            "fast",
-            "Show or set fast mode",
-            CommandCategory::Model,
-        )
-        .with_args("[on|off|status]"),
-        CommandDef::new(
-            "trace",
-            "trace",
-            "Toggle plugin trace",
-            CommandCategory::Model,
-        )
-        .with_args("on|off"),
+        CommandDef::new("think", "think", "Set thinking level", CommandCategory::Model)
+            .with_args("<level>"),
+        CommandDef::new("verbose", "verbose", "Toggle verbose output", CommandCategory::Model)
+            .with_args("on|off|full"),
+        CommandDef::new("fast", "fast", "Show or set fast mode", CommandCategory::Model)
+            .with_args("[on|off|status]"),
+        CommandDef::new("trace", "trace", "Toggle plugin trace", CommandCategory::Model)
+            .with_args("on|off"),
         CommandDef::new(
             "reasoning",
             "reasoning",
@@ -163,16 +137,10 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Model,
         )
         .with_args("[on|off|stream]"),
-        CommandDef::new(
-            "queue",
-            "queue",
-            "Set queue behavior",
-            CommandCategory::Model,
-        )
-        .with_args("<mode>"),
+        CommandDef::new("queue", "queue", "Set queue behavior", CommandCategory::Model)
+            .with_args("<mode>"),
         // Status / Query
-        CommandDef::new("help", "help", "Show help summary", CommandCategory::Status)
-            .essential(),
+        CommandDef::new("help", "help", "Show help summary", CommandCategory::Status).essential(),
         CommandDef::new(
             "commands",
             "commands",
@@ -182,27 +150,12 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         .essential(),
         CommandDef::new("status", "status", "Show runtime status", CommandCategory::Status)
             .essential(),
-        CommandDef::new(
-            "tools",
-            "tools",
-            "Show available tools",
-            CommandCategory::Status,
-        )
-        .with_args("[compact|verbose]"),
-        CommandDef::new(
-            "whoami",
-            "whoami",
-            "Show your sender ID",
-            CommandCategory::Status,
-        )
-        .essential(),
-        CommandDef::new(
-            "usage",
-            "usage",
-            "Show usage statistics",
-            CommandCategory::Status,
-        )
-        .with_args("[off|tokens|full|cost]"),
+        CommandDef::new("tools", "tools", "Show available tools", CommandCategory::Status)
+            .with_args("[compact|verbose]"),
+        CommandDef::new("whoami", "whoami", "Show your sender ID", CommandCategory::Status)
+            .essential(),
+        CommandDef::new("usage", "usage", "Show usage statistics", CommandCategory::Status)
+            .with_args("[off|tokens|full|cost]"),
         CommandDef::new(
             "context",
             "context",
@@ -211,49 +164,19 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         )
         .with_args("[list|detail|json]"),
         // Agents / ACP
-        CommandDef::new(
-            "subagents",
-            "subagents",
-            "Manage sub-agents",
-            CommandCategory::Agents,
-        )
-        .with_args("list|kill|log|info|send|steer|spawn"),
-        CommandDef::new(
-            "acp",
-            "acp",
-            "Manage ACP sessions",
-            CommandCategory::Agents,
-        )
-        .with_args("spawn|cancel|steer|close|sessions|status|..."),
+        CommandDef::new("subagents", "subagents", "Manage sub-agents", CommandCategory::Agents)
+            .with_args("list|kill|log|info|send|steer|spawn"),
+        CommandDef::new("acp", "acp", "Manage ACP sessions", CommandCategory::Agents)
+            .with_args("spawn|cancel|steer|close|sessions|status|..."),
         CommandDef::new("kill", "kill", "Abort sub-agent runs", CommandCategory::Agents)
             .with_args("<id|#|all>"),
-        CommandDef::new(
-            "steer",
-            "steer",
-            "Send steering to a sub-agent",
-            CommandCategory::Agents,
-        )
-        .with_args("<id> <message>"),
-        CommandDef::new(
-            "focus",
-            "focus",
-            "Bind thread to session target",
-            CommandCategory::Agents,
-        )
-        .with_args("<target>"),
-        CommandDef::new(
-            "unfocus",
-            "unfocus",
-            "Remove thread binding",
-            CommandCategory::Agents,
-        ),
-        CommandDef::new(
-            "tell",
-            "tell",
-            "Alias for steer",
-            CommandCategory::Agents,
-        )
-        .with_args("<id> <message>"),
+        CommandDef::new("steer", "steer", "Send steering to a sub-agent", CommandCategory::Agents)
+            .with_args("<id> <message>"),
+        CommandDef::new("focus", "focus", "Bind thread to session target", CommandCategory::Agents)
+            .with_args("<target>"),
+        CommandDef::new("unfocus", "unfocus", "Remove thread binding", CommandCategory::Agents),
+        CommandDef::new("tell", "tell", "Alias for steer", CommandCategory::Agents)
+            .with_args("<id> <message>"),
         // Skills / Approval
         CommandDef::new(
             "allowlist",
@@ -277,47 +200,23 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         )
         .with_args("<question>"),
         // Admin (owner-only)
-        CommandDef::new(
-            "config",
-            "config",
-            "Read or write config",
-            CommandCategory::Admin,
-        )
-        .with_args("show|get|set|unset")
-        .admin(),
-        CommandDef::new(
-            "plugins",
-            "plugins",
-            "Inspect or toggle plugins",
-            CommandCategory::Admin,
-        )
-        .with_args("list|install|enable|disable")
-        .admin(),
-        CommandDef::new(
-            "mcp",
-            "mcp",
-            "Manage MCP server connections",
-            CommandCategory::Admin,
-        )
-        .with_args("show|get|set|unset")
-        .admin(),
-        CommandDef::new(
-            "debug",
-            "debug",
-            "Runtime debug overrides",
-            CommandCategory::Admin,
-        )
-        .with_args("show|set|unset|reset")
-        .admin(),
-        CommandDef::new("restart", "restart", "Restart the gateway", CommandCategory::Admin).admin(),
-        CommandDef::new(
-            "bash",
-            "bash",
-            "Run a host shell command",
-            CommandCategory::Admin,
-        )
-        .with_args("<command>")
-        .admin(),
+        CommandDef::new("config", "config", "Read or write config", CommandCategory::Admin)
+            .with_args("show|get|set|unset")
+            .admin(),
+        CommandDef::new("plugins", "plugins", "Inspect or toggle plugins", CommandCategory::Admin)
+            .with_args("list|install|enable|disable")
+            .admin(),
+        CommandDef::new("mcp", "mcp", "Manage MCP server connections", CommandCategory::Admin)
+            .with_args("show|get|set|unset")
+            .admin(),
+        CommandDef::new("debug", "debug", "Runtime debug overrides", CommandCategory::Admin)
+            .with_args("show|set|unset|reset")
+            .admin(),
+        CommandDef::new("restart", "restart", "Restart the gateway", CommandCategory::Admin)
+            .admin(),
+        CommandDef::new("bash", "bash", "Run a host shell command", CommandCategory::Admin)
+            .with_args("<command>")
+            .admin(),
     ]
 }
 
@@ -352,13 +251,20 @@ pub async fn handle_commands_execute(
         Err(res) => return res,
     };
 
-    let normalized = params.command.to_lowercase().trim_start_matches('/').to_string();
+    let normalized = params
+        .command
+        .to_lowercase()
+        .trim_start_matches('/')
+        .to_string();
 
     debug!("Executing command: /{} args='{}'", normalized, params.args);
 
     // Find the command definition
     let commands = built_in_commands();
-    let def = match commands.iter().find(|c| c.key == normalized || c.name == normalized) {
+    let def = match commands
+        .iter()
+        .find(|c| c.key == normalized || c.name == normalized)
+    {
         Some(d) => d.clone(),
         None => {
             return WsResponse::err(
@@ -394,7 +300,7 @@ pub async fn handle_commands_execute(
         "queue" => handle_queue(req, state, &params.args).await,
         "tools" => handle_tools(req, state, &params.args).await,
         "usage" => handle_usage(req, state).await,
-        "context" => handle_context(req, state).await,
+        "context" => handle_context(req, conn, state).await,
         "compact" => handle_compact(req, conn, state, &params.args).await,
         "session" => handle_session(req, conn, state, &params.args).await,
         "export-session" => handle_export_session(req, conn, state, &params.args).await,
@@ -407,7 +313,7 @@ pub async fn handle_commands_execute(
         "skill" => handle_skill(req, state, &params.args).await,
         "allowlist" => handle_allowlist(req, state, &params.args).await,
         "approve" => handle_approve(req, state, &params.args).await,
-        "btw" => handle_btw(req, &params.args).await,
+        "btw" => handle_btw(req, state, &params.args).await,
         "config" => handle_config(req, state, &params.args).await,
         "plugins" => handle_plugins(req, state, &params.args).await,
         "mcp" => handle_mcp(req, state, &params.args).await,
@@ -439,10 +345,7 @@ fn handle_help(req: &WsRequest) -> WsResponse {
         };
         let admin_mark = if c.requires_admin { " [admin]" } else { "" };
         let args = c.args.as_deref().unwrap_or("");
-        lines.push(format!(
-            "{} /{}{} — {}{}",
-            icon, c.name, args, c.description, admin_mark
-        ));
+        lines.push(format!("{} /{}{} — {}{}", icon, c.name, args, c.description, admin_mark));
     }
 
     WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
@@ -463,10 +366,7 @@ async fn handle_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse
     WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
 }
 
-async fn handle_whoami(
-    req: &WsRequest,
-    conn: &Arc<RwLock<ProtocolConnection>>,
-) -> WsResponse {
+async fn handle_whoami(req: &WsRequest, conn: &Arc<RwLock<ProtocolConnection>>) -> WsResponse {
     let guard = conn.read().await;
     let user = guard
         .user_id
@@ -475,11 +375,7 @@ async fn handle_whoami(
         .unwrap_or_else(|| "anonymous".to_string());
     let scopes = &guard.scopes;
 
-    let text = format!(
-        "👤 **Whoami**\n\nUser: `{}`\nScopes: `{}`",
-        user,
-        scopes.join(", ")
-    );
+    let text = format!("👤 **Whoami**\n\nUser: `{}`\nScopes: `{}`", user, scopes.join(", "));
 
     WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
 }
@@ -499,10 +395,7 @@ async fn handle_stop(
         );
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "⏹️ No active session to stop." }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "text": "⏹️ No active session to stop." }))
 }
 
 async fn handle_reset(
@@ -524,10 +417,7 @@ async fn handle_reset(
         );
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "🔄 No active session to reset." }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "text": "🔄 No active session to reset." }))
 }
 
 async fn handle_model(
@@ -558,11 +448,7 @@ async fn handle_model(
     )
 }
 
-async fn handle_tools(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_tools(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let verbose = args.trim() == "verbose";
     let tool_names = state.tool_registry.list();
 
@@ -579,13 +465,16 @@ async fn handle_tools(
     WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
 }
 
-async fn handle_usage(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
+async fn handle_usage(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let settings = state.runtime_settings.read().await;
-    let tokens = settings.get("usage.tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let calls = settings.get("usage.calls").and_then(|v| v.as_u64()).unwrap_or(0);
+    let tokens = settings
+        .get("usage.tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let calls = settings
+        .get("usage.calls")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     let text = format!(
         "📊 **Usage**\n\nEstimated tokens: {}\nTool calls: {}\n\nFull cost tracking not yet implemented.",
@@ -603,33 +492,60 @@ async fn handle_compact(
     let session_id = conn.read().await.subscriptions.first().cloned();
     let instructions = args.trim();
 
-    if let Some(sid) = session_id {
-        // Flush transcript to disk as a compaction step
-        match state.transcript_store.export(&sid, TranscriptFormat::Markdown) {
-            Ok(path) => {
-                let mut text = format!(
-                    "🗜️ **Compacted session `{}`**\n\nTranscript flushed to `{}`.",
-                    sid,
-                    path.display()
-                );
-                if !instructions.is_empty() {
-                    text.push_str(&format!("\nInstructions: {}", instructions));
-                }
-                return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
+    let Some(sid) = session_id else {
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "🗜️ No active session to compact." }),
+        );
+    };
+
+    // Resolve agent for session
+    let route = state.agent_router.resolve_by_session(&sid).await;
+    let agents = state.agents.read().await;
+    let agent_handle = match agents.get(&route.agent_id) {
+        Some(h) => h.clone(),
+        None => {
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": "🗜️ Agent not found for this session." }),
+            );
+        }
+    };
+    drop(agents);
+
+    // Run context compaction via the Summarize strategy
+    let compact_result = agent_handle.agent.compact_context(&sid).await;
+
+    // Flush transcript to disk as a compaction step
+    let export_result = state
+        .transcript_store
+        .export(&sid, TranscriptFormat::Markdown);
+
+    let mut lines = vec![format!("🗜️ **Compacted session `{}`**", sid)];
+
+    match compact_result {
+        Some((before, after)) => {
+            if after < before {
+                lines.push(format!("Messages compressed: {} → {}", before, after));
+            } else {
+                lines.push(format!("Messages: {} (no reduction needed)", before));
             }
-            Err(e) => {
-                return WsResponse::ok(
-                    &req.id,
-                    serde_json::json!({ "text": format!("🗜️ Compaction attempted for `{}`: {}", sid, e) }),
-                );
-            }
+        }
+        None => {
+            lines.push("No context found to compact.".to_string());
         }
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "🗜️ No active session to compact." }),
-    )
+    match export_result {
+        Ok(path) => lines.push(format!("Transcript flushed to `{}`.", path.display())),
+        Err(e) => lines.push(format!("Transcript export failed: {}", e)),
+    }
+
+    if !instructions.is_empty() {
+        lines.push(format!("Instructions: {}", instructions));
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
 }
 
 async fn handle_bash(req: &WsRequest, args: &str) -> WsResponse {
@@ -690,10 +606,7 @@ async fn handle_subagents(
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
             }
         }
-        return WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "text": "🤖 No active session." }),
-        );
+        return WsResponse::ok(&req.id, serde_json::json!({ "text": "🤖 No active session." }));
     }
 
     WsResponse::ok(
@@ -702,21 +615,13 @@ async fn handle_subagents(
     )
 }
 
-async fn handle_skill(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_skill(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() {
         let mgr = state.skills_manager.read().await;
         let skills = mgr.prefilter_skills("", 50).await;
         let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
-        let text = format!(
-            "🎯 **Skills** ({} total): {}",
-            names.len(),
-            names.join(", ")
-        );
+        let text = format!("🎯 **Skills** ({} total): {}", names.len(), names.join(", "));
         return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
     }
 
@@ -733,19 +638,11 @@ async fn handle_skill(
                 Description: {}\n\
                 Enabled: {}\n\
                 Eligible: {}",
-                skill.name,
-                skill.version,
-                skill.description,
-                skill.enabled,
-                skill.is_eligible,
+                skill.name, skill.version, skill.description, skill.enabled, skill.is_eligible,
             );
             WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
         }
-        None => WsResponse::err(
-            &req.id,
-            "SKILL_NOT_FOUND",
-            format!("Skill '{}' not found.", name),
-        ),
+        None => WsResponse::err(&req.id, "SKILL_NOT_FOUND", format!("Skill '{}' not found.", name)),
     }
 }
 
@@ -776,10 +673,7 @@ async fn handle_acp(
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
             }
         }
-        return WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "text": "🤖 No active ACP session." }),
-        );
+        return WsResponse::ok(&req.id, serde_json::json!({ "text": "🤖 No active ACP session." }));
     }
 
     let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
@@ -809,7 +703,10 @@ async fn handle_acp(
                 Some(rest.to_string())
             };
             if let Some(sid) = sid {
-                let _ = state.acp.terminate_session(&AcpSessionId(sid.clone())).await;
+                let _ = state
+                    .acp
+                    .terminate_session(&AcpSessionId(sid.clone()))
+                    .await;
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({ "text": format!("🤖 ACP session `{}` terminated.", sid) }),
@@ -844,8 +741,18 @@ async fn handle_steer(
     }
 
     let incoming = crate::channels::IncomingMessage::new(
-        conn.read().await.user_id.as_ref().map(|u| u.0.clone()).unwrap_or_else(|| "user".to_string()),
-        conn.read().await.subscriptions.first().cloned().unwrap_or_default(),
+        conn.read()
+            .await
+            .user_id
+            .as_ref()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "user".to_string()),
+        conn.read()
+            .await
+            .subscriptions
+            .first()
+            .cloned()
+            .unwrap_or_default(),
         message.to_string(),
     );
 
@@ -895,19 +802,13 @@ async fn handle_kill(
             "AGENT_NOT_FOUND",
             format!("Subagent `{}` not found.", trimmed),
         ),
-        Err(e) => WsResponse::err(
-            &req.id,
-            "KILL_FAILED",
-            format!("Failed to kill `{}`: {}", trimmed, e),
-        ),
+        Err(e) => {
+            WsResponse::err(&req.id, "KILL_FAILED", format!("Failed to kill `{}`: {}", trimmed, e))
+        }
     }
 }
 
-async fn handle_config(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_config(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "show" {
         let cfg = state.config.read().await;
@@ -915,7 +816,14 @@ async fn handle_config(
         let mut lines = vec!["⚙️ **Config**".to_string()];
         lines.push(format!("Model: {} (provider: {})", cfg.model, cfg.model_provider));
         lines.push(format!("Host: {}:{}", cfg.host, cfg.port));
-        lines.push(format!("Tailscale: {}", if cfg.tailscale_enabled { "enabled" } else { "disabled" }));
+        lines.push(format!(
+            "Tailscale: {}",
+            if cfg.tailscale_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ));
         if !settings.is_empty() {
             lines.push("\nRuntime settings:".to_string());
             for (k, v) in settings.iter() {
@@ -947,7 +855,11 @@ async fn handle_config(
             let key = parts.get(1).unwrap_or(&"").trim();
             let val = parts.get(2).unwrap_or(&"").trim();
             if key.is_empty() {
-                return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /config set <key> <value>");
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /config set <key> <value>",
+                );
             }
             let mut settings = state.runtime_settings.write().await;
             let json_val = serde_json::from_str(val).unwrap_or_else(|_| serde_json::json!(val));
@@ -969,27 +881,16 @@ async fn handle_config(
                 serde_json::json!({ "text": format!("⚙️ Removed key '{}'.", key) }),
             )
         }
-        _ => WsResponse::err(
-            &req.id,
-            "INVALID_ARGS",
-            "Usage: /config [show|get|set|unset]",
-        ),
+        _ => WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /config [show|get|set|unset]"),
     }
 }
 
-async fn handle_plugins(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_plugins(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "list" {
         let plugins = state.plugin_manager.list_plugins().await;
         if plugins.is_empty() {
-            return WsResponse::ok(
-                &req.id,
-                serde_json::json!({ "text": "🔌 No plugins loaded." }),
-            );
+            return WsResponse::ok(&req.id, serde_json::json!({ "text": "🔌 No plugins loaded." }));
         }
         let mut lines = vec![format!("🔌 **Plugins** ({} total)", plugins.len())];
         for p in &plugins {
@@ -1042,15 +943,14 @@ async fn handle_plugins(
 
 // ── Model directive handlers ────────────────────────────────────────────────
 
-async fn handle_think(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_think(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let level = args.trim();
     if level.is_empty() {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("think.level").and_then(|v| v.as_str()).unwrap_or("medium");
+        let current = settings
+            .get("think.level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("medium");
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("🧠 Thinking level: {}", current) }),
@@ -1072,15 +972,14 @@ async fn handle_think(
     )
 }
 
-async fn handle_verbose(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_verbose(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let mode = args.trim();
     if mode.is_empty() {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("verbose.mode").and_then(|v| v.as_str()).unwrap_or("off");
+        let current = settings
+            .get("verbose.mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("off");
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("🔊 Verbose mode: {}", current) }),
@@ -1094,21 +993,21 @@ async fn handle_verbose(
     )
 }
 
-async fn handle_trace(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_trace(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let mode = args.trim();
     if mode.is_empty() {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("trace.enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        let current = settings
+            .get("trace.enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("🔍 Plugin trace: {}", if current { "on" } else { "off" }) }),
         );
     }
     let enabled = mode == "on";
+    state.plugin_manager.set_trace_enabled(enabled);
     let mut settings = state.runtime_settings.write().await;
     settings.insert("trace.enabled".to_string(), serde_json::json!(enabled));
     WsResponse::ok(
@@ -1117,15 +1016,14 @@ async fn handle_trace(
     )
 }
 
-async fn handle_fast(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let mode = args.trim();
     if mode.is_empty() || mode == "status" {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("fast.mode").and_then(|v| v.as_bool()).unwrap_or(false);
+        let current = settings
+            .get("fast.mode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("⚡ Fast mode: {}", if current { "on" } else { "off" }) }),
@@ -1133,22 +1031,46 @@ async fn handle_fast(
     }
     let enabled = mode == "on";
     let mut settings = state.runtime_settings.write().await;
-    settings.insert("fast.mode".to_string(), serde_json::json!(enabled));
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": format!("⚡ Fast mode {}.", if enabled { "enabled" } else { "disabled" }) }),
-    )
+
+    if enabled {
+        // Save current model and switch to fast alias
+        let current_model = state.config.read().await.model.clone();
+        settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
+        if let Some(fast_model) = state.model_router.resolve_alias("fast").await {
+            state.config.write().await.model = fast_model.clone();
+            settings.insert("fast.mode".to_string(), serde_json::json!(true));
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "text": format!("⚡ Fast mode enabled. Model switched to '{}'.", fast_model) }),
+            );
+        }
+        settings.insert("fast.mode".to_string(), serde_json::json!(true));
+        WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
+        )
+    } else {
+        // Restore original model
+        let original = settings.get("fast.original_model").and_then(|v| v.as_str());
+        if let Some(orig) = original {
+            state.config.write().await.model = orig.to_string();
+        }
+        settings.insert("fast.mode".to_string(), serde_json::json!(false));
+        WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "⚡ Fast mode disabled. Model restored." }),
+        )
+    }
 }
 
-async fn handle_reasoning(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_reasoning(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let mode = args.trim();
     if mode.is_empty() {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("reasoning.visibility").and_then(|v| v.as_str()).unwrap_or("on");
+        let current = settings
+            .get("reasoning.visibility")
+            .and_then(|v| v.as_str())
+            .unwrap_or("on");
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("💭 Reasoning visibility: {}", current) }),
@@ -1162,18 +1084,25 @@ async fn handle_reasoning(
     )
 }
 
-async fn handle_queue(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_queue(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let mode = args.trim();
     if mode.is_empty() {
         let settings = state.runtime_settings.read().await;
-        let current = settings.get("queue.mode").and_then(|v| v.as_str()).unwrap_or("steer");
+        let current = settings
+            .get("queue.mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("steer");
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("📥 Queue mode: {}", current) }),
+        );
+    }
+    let valid = ["steer", "interrupt", "followup"];
+    if !valid.contains(&mode) {
+        return WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            format!("Valid queue modes: {}", valid.join(", ")),
         );
     }
     let mut settings = state.runtime_settings.write().await;
@@ -1188,20 +1117,71 @@ async fn handle_queue(
 
 async fn handle_context(
     req: &WsRequest,
+    conn: &Arc<RwLock<ProtocolConnection>>,
     state: &Arc<GatewayState>,
 ) -> WsResponse {
-    let settings = state.runtime_settings.read().await;
-    let mut lines = vec!["📜 **Context Assembly**".to_string()];
-    lines.push(format!(
-        "Runtime settings: {} keys",
-        settings.len()
-    ));
-    for (k, v) in settings.iter() {
-        if k.starts_with("context.") || k.starts_with("session.") {
-            lines.push(format!("  {} = {}", k, v));
+    let session_id = conn.read().await.subscriptions.first().cloned();
+
+    let Some(sid) = session_id else {
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "📜 No active session to inspect." }),
+        );
+    };
+
+    // Resolve agent for session
+    let route = state.agent_router.resolve_by_session(&sid).await;
+    let agents = state.agents.read().await;
+    let Some(agent_handle) = agents.get(&route.agent_id) else {
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": "📜 Agent not found for this session." }),
+        );
+    };
+
+    match agent_handle.agent.context_info(&sid).await {
+        Some((msg_count, token_count, max_tokens, sys_len, tool_iters)) => {
+            let settings = state.runtime_settings.read().await;
+            let mut lines = vec![format!("📜 **Context for `{}`**", sid)];
+            lines.push(format!("Messages: {}", msg_count));
+            lines.push(format!("Tokens: {} / {}", token_count, max_tokens));
+            lines.push(format!("System prompt length: {} chars", sys_len));
+            lines.push(format!("Tool iterations: {}", tool_iters));
+            if !settings.is_empty() {
+                lines.push("\nRuntime settings:".to_string());
+                for (k, v) in settings.iter() {
+                    if k.starts_with("context.") || k.starts_with("session.") {
+                        lines.push(format!("  {} = {}", k, v));
+                    }
+                }
+            }
+            WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
         }
+        None => WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "text": format!("📜 No context found for session `{}`.", sid) }),
+        ),
     }
-    WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
+}
+
+fn parse_duration(s: &str) -> Option<std::time::Duration> {
+    let s = s.trim();
+    if s == "off" {
+        return Some(std::time::Duration::from_secs(u64::MAX));
+    }
+    let num_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    if num_end == 0 {
+        return None;
+    }
+    let num: u64 = s[..num_end].parse().ok()?;
+    let unit = &s[num_end..];
+    match unit {
+        "s" | "sec" | "secs" => Some(std::time::Duration::from_secs(num)),
+        "m" | "min" | "mins" => Some(std::time::Duration::from_secs(num * 60)),
+        "h" | "hr" | "hrs" => Some(std::time::Duration::from_secs(num * 3600)),
+        "d" | "day" | "days" => Some(std::time::Duration::from_secs(num * 86400)),
+        _ => None,
+    }
 }
 
 async fn handle_session(
@@ -1212,7 +1192,11 @@ async fn handle_session(
 ) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() {
-        return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /session idle|max-age <duration|off>");
+        return WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            "Usage: /session idle|max-age <duration|off>",
+        );
     }
 
     let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
@@ -1224,25 +1208,37 @@ async fn handle_session(
             if rest.is_empty() {
                 let settings = state.runtime_settings.read().await;
                 let key = format!("session.{}", sub);
-                let current = settings.get(&key).and_then(|v| v.as_str()).unwrap_or("default");
+                let current = settings
+                    .get(&key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
                 return WsResponse::ok(
                     &req.id,
                     serde_json::json!({ "text": format!("⏱️ Session {}: {}", sub, current) }),
                 );
             }
-            let mut settings = state.runtime_settings.write().await;
-            let key = format!("session.{}", sub);
-            settings.insert(key.clone(), serde_json::json!(rest));
-            WsResponse::ok(
-                &req.id,
-                serde_json::json!({ "text": format!("⏱️ Session {} set to '{}'.", sub, rest) }),
-            )
+            match parse_duration(rest) {
+                Some(duration) => {
+                    let mut mgr = state.session_manager.write().await;
+                    mgr.set_timeout(duration);
+                    let mut settings = state.runtime_settings.write().await;
+                    let key = format!("session.{}", sub);
+                    settings.insert(key.clone(), serde_json::json!(rest));
+                    WsResponse::ok(
+                        &req.id,
+                        serde_json::json!({ "text": format!("⏱️ Session {} set to '{}'.", sub, rest) }),
+                    )
+                }
+                None => WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Invalid duration. Use: 30m, 1h, 2d, or off",
+                ),
+            }
         }
-        _ => WsResponse::err(
-            &req.id,
-            "INVALID_ARGS",
-            "Usage: /session idle|max-age <duration|off>",
-        ),
+        _ => {
+            WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /session idle|max-age <duration|off>")
+        }
     }
 }
 
@@ -1258,11 +1254,8 @@ async fn handle_export_session(
     if let Some(sid) = session_id {
         match state.transcript_store.export(&sid, TranscriptFormat::Html) {
             Ok(path) => {
-                let text = format!(
-                    "📄 **Session `{}` exported**\n\nHTML: `{}`",
-                    sid,
-                    path.display()
-                );
+                let text =
+                    format!("📄 **Session `{}` exported**\n\nHTML: `{}`", sid, path.display());
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
             }
             Err(e) => {
@@ -1275,10 +1268,7 @@ async fn handle_export_session(
         }
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "📄 No active session to export." }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "text": "📄 No active session to export." }))
 }
 
 // ── Focus / Binding handlers ──────────────────────────────────────────────────
@@ -1308,10 +1298,7 @@ async fn handle_focus(
         );
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "🎯 No active session to focus." }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "text": "🎯 No active session to focus." }))
 }
 
 async fn handle_unfocus(
@@ -1328,19 +1315,12 @@ async fn handle_unfocus(
         );
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": "🎯 No active session to unfocus." }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "text": "🎯 No active session to unfocus." }))
 }
 
 // ── Allowlist / Approval handlers ─────────────────────────────────────────────
 
-async fn handle_allowlist(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_allowlist(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "list" {
         let levels = state.command_gate.user_levels();
@@ -1365,7 +1345,11 @@ async fn handle_allowlist(
             let user = parts.get(1).unwrap_or(&"").trim();
             let level_str = parts.get(2).unwrap_or(&"user").trim();
             if user.is_empty() {
-                return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /allowlist add <user> [chat|user|admin]");
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /allowlist add <user> [chat|user|admin]",
+                );
             }
             let level = match level_str {
                 "chat" => UserLevel::Chat,
@@ -1389,22 +1373,17 @@ async fn handle_allowlist(
                 serde_json::json!({ "text": format!("🛡️ Cleared level for '{}'.", user) }),
             )
         }
-        _ => WsResponse::err(
-            &req.id,
-            "INVALID_ARGS",
-            "Usage: /allowlist [list|add|remove]",
-        ),
+        _ => WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /allowlist [list|add|remove]"),
     }
 }
 
-async fn handle_approve(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_approve(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "list" {
-        let pending = state.approval_queue.list_pending(ApprovalFilter::default()).await;
+        let pending = state
+            .approval_queue
+            .list_pending(ApprovalFilter::default())
+            .await;
         if pending.is_empty() {
             return WsResponse::ok(
                 &req.id,
@@ -1426,14 +1405,24 @@ async fn handle_approve(
     let decision_str = parts.get(1).unwrap_or(&"").trim();
 
     if id.is_empty() || decision_str.is_empty() {
-        return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /approve <id> approve|deny [reason]");
+        return WsResponse::err(
+            &req.id,
+            "INVALID_ARGS",
+            "Usage: /approve <id> approve|deny [reason]",
+        );
     }
 
     let decision = match decision_str {
         "approve" | "yes" | "y" => ApprovalDecision::Approve,
-        "deny" | "no" | "n" => ApprovalDecision::Deny { reason: "Denied via /approve command.".to_string() },
+        "deny" | "no" | "n" => ApprovalDecision::Deny {
+            reason: "Denied via /approve command.".to_string(),
+        },
         _ => {
-            return WsResponse::err(&req.id, "INVALID_ARGS", "Decision must be 'approve' or 'deny'.");
+            return WsResponse::err(
+                &req.id,
+                "INVALID_ARGS",
+                "Decision must be 'approve' or 'deny'.",
+            );
         }
     };
 
@@ -1451,24 +1440,30 @@ async fn handle_approve(
     }
 }
 
-async fn handle_btw(req: &WsRequest, args: &str) -> WsResponse {
+async fn handle_btw(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let question = args.trim();
     if question.is_empty() {
         return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /btw <question>");
     }
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "text": format!("💡 **Side question**: {}\n\n(This would be answered without changing session context — not yet fully implemented.)", question) }),
-    )
+
+    let messages = vec![crate::providers::Message::user(question)];
+    match state.model_router.complete_auto(messages).await {
+        Ok(response) => {
+            let text = format!(
+                "💡 **Side question** ({}):\n\n{}",
+                response.model, response.message.content
+            );
+            WsResponse::ok(&req.id, serde_json::json!({ "text": text }))
+        }
+        Err(e) => {
+            WsResponse::err(&req.id, "COMPLETION_FAILED", format!("Failed to get response: {}", e))
+        }
+    }
 }
 
 // ── MCP / Debug / Restart handlers ────────────────────────────────────────────
 
-async fn handle_mcp(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_mcp(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "show" {
         let servers = state.mcp_manager.list_servers().await;
@@ -1489,7 +1484,11 @@ async fn handle_mcp(
     match sub {
         "disconnect" => {
             if rest.is_empty() {
-                return WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /mcp disconnect <server_id>");
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_ARGS",
+                    "Usage: /mcp disconnect <server_id>",
+                );
             }
             match state.mcp_manager.disconnect(rest).await {
                 Ok(()) => WsResponse::ok(
@@ -1506,11 +1505,7 @@ async fn handle_mcp(
     }
 }
 
-async fn handle_debug(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-    args: &str,
-) -> WsResponse {
+async fn handle_debug(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> WsResponse {
     let trimmed = args.trim();
     if trimmed.is_empty() || trimmed == "show" {
         let settings = state.runtime_settings.read().await;
@@ -1563,18 +1558,18 @@ async fn handle_debug(
                 serde_json::json!({ "text": "🐛 All runtime overrides cleared." }),
             )
         }
-        _ => WsResponse::err(
-            &req.id,
-            "INVALID_ARGS",
-            "Usage: /debug [show|set|unset|reset]",
-        ),
+        _ => WsResponse::err(&req.id, "INVALID_ARGS", "Usage: /debug [show|set|unset|reset]"),
     }
 }
 
 async fn handle_restart(req: &WsRequest) -> WsResponse {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        std::process::exit(0);
+    });
     WsResponse::ok(
         &req.id,
-        serde_json::json!({ "text": "🔄 Gateway restart requested. (Not yet implemented — restart manually.)" }),
+        serde_json::json!({ "text": "🔄 Gateway restart initiated. The process will exit in 1 second." }),
     )
 }
 
@@ -1590,10 +1585,6 @@ fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, Ws
                 format!("Invalid parameters: {}", e),
             )),
         },
-        None => Err(WsResponse::err(
-            &req.id,
-            "INVALID_PARAMS",
-            "Missing parameters",
-        )),
+        None => Err(WsResponse::err(&req.id, "INVALID_PARAMS", "Missing parameters")),
     }
 }

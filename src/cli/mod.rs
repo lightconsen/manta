@@ -22,12 +22,12 @@ mod device;
 mod entity;
 mod export;
 mod mcp;
+mod memory;
 mod plugin;
 mod provider;
 mod security;
 mod session;
 mod setup;
-mod memory;
 mod skill;
 mod team;
 
@@ -340,11 +340,9 @@ impl Cli {
             Commands::Team { command } => team::run_team_command(command).await,
             Commands::Channel { command } => channel::run_channel_command(command).await,
             Commands::Plugin { command } => plugin::run_plugin_command(command).await,
-            Commands::Start {
-                host,
-                port,
-                foreground,
-            } => daemon::run_start_daemon(host, *port, *foreground, config).await,
+            Commands::Start { host, port, foreground } => {
+                daemon::run_start_daemon(host, *port, *foreground, config).await
+            }
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,

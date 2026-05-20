@@ -95,9 +95,7 @@ impl DependencyGraph {
             path: &mut Vec<String>,
         ) -> Result<(), DependencyError> {
             if temp_mark.contains(name) {
-                return Err(DependencyError::CircularDependency {
-                    cycle: path.clone(),
-                });
+                return Err(DependencyError::CircularDependency { cycle: path.clone() });
             }
 
             if visited.contains(name) {
@@ -174,9 +172,7 @@ impl DependencyGraph {
         }
 
         if order.len() != self.nodes.len() {
-            return Err(DependencyError::CircularDependency {
-                cycle: Vec::new(),
-            });
+            return Err(DependencyError::CircularDependency { cycle: Vec::new() });
         }
 
         Ok(order)
@@ -258,7 +254,11 @@ pub enum DependencyError {
     /// Circular dependency detected
     CircularDependency { cycle: Vec<String> },
     /// A skill conflicts with another
-    Conflict { skill1: String, skill2: String, reason: String },
+    Conflict {
+        skill1: String,
+        skill2: String,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for DependencyError {

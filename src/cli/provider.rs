@@ -48,10 +48,7 @@ pub async fn run_provider_command(command: &ProviderCommands) -> Result<()> {
                     let body: serde_json::Value = resp.json().await.unwrap_or_default();
                     if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
                         println!("Providers:");
-                        println!(
-                            "{:<20} {:<10} {:<10} {}",
-                            "ID", "Enabled", "Healthy", "Name"
-                        );
+                        println!("{:<20} {:<10} {:<10} {}", "ID", "Enabled", "Healthy", "Name");
                         println!("{}", "-".repeat(60));
                         for p in providers {
                             println!(

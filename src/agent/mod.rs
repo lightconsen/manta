@@ -448,7 +448,10 @@ impl AgentConfig {
                     }
                     _ => {
                         // Fallback: raw text without frontmatter
-                        memory.read(crate::memory::MemoryType::Soul).await.unwrap_or_default()
+                        memory
+                            .read(crate::memory::MemoryType::Soul)
+                            .await
+                            .unwrap_or_default()
                     }
                 };
 
@@ -526,6 +529,8 @@ pub struct Agent {
     disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
     /// Session file manager for isolated per-session file operations.
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
+    /// Provider-specific extra parameters (e.g. thinking config) injected into completion requests.
+    extra_params: Arc<RwLock<Option<serde_json::Value>>>,
 }
 
 impl Agent {
@@ -557,7 +562,15 @@ impl Agent {
             artifact_store: None,
             disk_budget: None,
             session_file_manager: None,
+            extra_params: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set provider-specific extra parameters (e.g. thinking config) to inject
+    /// into every completion request.
+    pub async fn set_extra_params(&self, params: Option<serde_json::Value>) {
+        let mut guard = self.extra_params.write().await;
+        *guard = params;
     }
 
     /// Set the skill trust level for the next process_message invocation.
@@ -1658,12 +1671,14 @@ impl Agent {
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
+        let extra = self.extra_params.read().await.clone();
         let mut request = CompletionRequest {
             model: self.model.clone(),
             messages,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
             stream: false,
+            extra,
             ..Default::default()
         };
 
@@ -1857,12 +1872,14 @@ impl Agent {
         let tool_defs = self.tools.get_available(&tool_context);
         let has_tools = !tool_defs.is_empty();
 
+        let extra = self.extra_params.read().await.clone();
         let mut request = CompletionRequest {
             model: self.model.clone(),
             messages,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
             stream: true,
+            extra,
             ..Default::default()
         };
 
@@ -1916,10 +1933,7 @@ impl Agent {
             if let Some(ref text_delta) = chunk.content {
                 if !text_delta.is_empty() {
                     accumulated_text.push_str(text_delta);
-                    (progress_cb)(ProgressEvent::ContentDelta {
-                        text: text_delta.clone(),
-                    })
-                    .await;
+                    (progress_cb)(ProgressEvent::ContentDelta { text: text_delta.clone() }).await;
                 }
             }
 
@@ -1928,9 +1942,10 @@ impl Agent {
                 for call in calls {
                     // Merge partial tool calls by index (streaming deltas use index as key)
                     let key = call.index.unwrap_or(0);
-                    if let Some(existing) = accumulated_tool_calls.iter_mut().find(|c| {
-                        c.index == Some(key) || (c.index.is_none() && c.id == call.id)
-                    }) {
+                    if let Some(existing) = accumulated_tool_calls
+                        .iter_mut()
+                        .find(|c| c.index == Some(key) || (c.index.is_none() && c.id == call.id))
+                    {
                         // Fill in id/type/name from first chunk if they were empty
                         if existing.id.is_empty() && !call.id.is_empty() {
                             existing.id = call.id.clone();
@@ -1939,7 +1954,10 @@ impl Agent {
                             existing.call_type = call.call_type.clone();
                         }
                         existing.function.name.push_str(&call.function.name);
-                        existing.function.arguments.push_str(&call.function.arguments);
+                        existing
+                            .function
+                            .arguments
+                            .push_str(&call.function.arguments);
                     } else {
                         accumulated_tool_calls.push(call.clone());
                     }
@@ -1975,19 +1993,23 @@ impl Agent {
         let response = crate::providers::CompletionResponse {
             message: final_message,
             usage,
-            model: self.model.clone().unwrap_or_else(|| self.provider.default_model().to_string()),
+            model: self
+                .model
+                .clone()
+                .unwrap_or_else(|| self.provider.default_model().to_string()),
             finish_reason,
         };
 
         // Record token usage in cost guard (approximate from accumulated text if no usage provided)
         if let Some(ref guard) = self.cost_guard {
-            let prompt_tokens = context.to_messages().iter().map(|m| m.content.len() / 4).sum::<usize>() as u64;
-            let completion_tokens = (accumulated_text.len() + accumulated_reasoning.len()) as u64 / 4;
-            guard.record_usage(
-                prompt_tokens,
-                completion_tokens,
-                response.model.as_str(),
-            );
+            let prompt_tokens = context
+                .to_messages()
+                .iter()
+                .map(|m| m.content.len() / 4)
+                .sum::<usize>() as u64;
+            let completion_tokens =
+                (accumulated_text.len() + accumulated_reasoning.len()) as u64 / 4;
+            guard.record_usage(prompt_tokens, completion_tokens, response.model.as_str());
         }
 
         // Handle tool calls if present
@@ -2179,7 +2201,8 @@ impl Agent {
         }
 
         // Get final response with progress
-        let mut final_response = Box::pin(self.get_completion_with_progress(context, progress_cb)).await?;
+        let mut final_response =
+            Box::pin(self.get_completion_with_progress(context, progress_cb)).await?;
 
         // Preserve tool calls from the original assistant message so that
         // downstream consumers (session_store, etc.) can see what tools were invoked.
@@ -2301,6 +2324,44 @@ impl Agent {
                     (turn.index, state, user_preview, asst_preview)
                 })
                 .collect()
+        })
+    }
+
+    /// Return context assembly info for a conversation.
+    ///
+    /// Returns `(message_count, token_count, max_tokens, system_prompt_len, tool_iterations)`
+    /// or `None` if the thread is not found.
+    pub async fn context_info(&self, conv_id: &str) -> Option<(usize, usize, usize, usize, usize)> {
+        let map = self.thread_map.lock().await;
+        map.get(conv_id).map(|t| {
+            (
+                t.context.message_count(),
+                t.context.token_count(),
+                t.context.max_context_tokens(),
+                t.context.system_prompt().len(),
+                t.context.tool_iterations(),
+            )
+        })
+    }
+
+    /// Compact the context for a conversation using the Summarize strategy.
+    ///
+    /// Returns `(before_message_count, after_message_count)` or `None` if the
+    /// thread is not found or no compaction was needed.
+    pub async fn compact_context(&self, conv_id: &str) -> Option<(usize, usize)> {
+        let mut map = self.thread_map.lock().await;
+        map.get_mut(conv_id).map(|thread| {
+            let messages = thread.context.to_messages();
+            let before = messages.len();
+            let target = thread.context.max_context_tokens() / 2;
+            let compressor =
+                ContextCompressor::new(target).with_strategy(CompressionStrategy::Summarize);
+            let compressed = compressor.compress(&messages);
+            let after = compressed.len();
+            if after < before {
+                thread.context.replace_messages(compressed);
+            }
+            (before, after)
         })
     }
 

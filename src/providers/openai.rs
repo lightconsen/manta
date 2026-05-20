@@ -239,8 +239,20 @@ impl Provider for OpenAiProvider {
             stop: request.stop,
         };
 
+        // Merge provider-specific extra parameters
+        let mut body_value = serde_json::to_value(&body).unwrap_or_default();
+        if let Some(extra) = request.extra {
+            if let serde_json::Value::Object(ref mut map) = body_value {
+                if let serde_json::Value::Object(extra_map) = extra {
+                    for (k, v) in extra_map {
+                        map.insert(k, v);
+                    }
+                }
+            }
+        }
+
         // Debug: print the actual request body
-        let body_json = serde_json::to_string(&body).unwrap_or_default();
+        let body_json = serde_json::to_string(&body_value).unwrap_or_default();
         info!("OpenAI API request body: {}", body_json);
 
         let request_url = self.url("/chat/completions");
@@ -256,7 +268,7 @@ impl Provider for OpenAiProvider {
                 .client
                 .post(&request_url)
                 .headers(self.headers())
-                .json(&body)
+                .json(&body_value)
                 .send()
                 .await
             {
@@ -340,6 +352,18 @@ impl Provider for OpenAiProvider {
             stop: request.stop,
         };
 
+        // Merge provider-specific extra parameters
+        let mut body_value = serde_json::to_value(&body).unwrap_or_default();
+        if let Some(extra) = request.extra {
+            if let serde_json::Value::Object(ref mut map) = body_value {
+                if let serde_json::Value::Object(extra_map) = extra {
+                    for (k, v) in extra_map {
+                        map.insert(k, v);
+                    }
+                }
+            }
+        }
+
         let request_url = self.url("/chat/completions");
 
         // Retry logic for transient errors (same as complete())
@@ -351,7 +375,7 @@ impl Provider for OpenAiProvider {
                 .client
                 .post(&request_url)
                 .headers(self.stream_headers())
-                .json(&body)
+                .json(&body_value)
                 .send()
                 .await
             {
@@ -585,23 +609,23 @@ impl OpenAiStream {
                     let tool_calls = choice.delta.tool_calls.as_ref().map(|calls| {
                         calls
                             .iter()
-                            .map(|tc| {
-                                ToolCall {
-                                    id: tc.id.clone().unwrap_or_default(),
-                                    call_type: tc.call_type.clone().unwrap_or_default(),
-                                    function: super::FunctionCall {
-                                        name: tc.function
-                                            .as_ref()
-                                            .and_then(|f| f.name.clone())
-                                            .unwrap_or_default(),
-                                        arguments: tc.function
-                                            .as_ref()
-                                            .and_then(|f| f.arguments.clone())
-                                            .unwrap_or_default(),
-                                    },
-                                    result: None,
-                                    index: Some(tc.index),
-                                }
+                            .map(|tc| ToolCall {
+                                id: tc.id.clone().unwrap_or_default(),
+                                call_type: tc.call_type.clone().unwrap_or_default(),
+                                function: super::FunctionCall {
+                                    name: tc
+                                        .function
+                                        .as_ref()
+                                        .and_then(|f| f.name.clone())
+                                        .unwrap_or_default(),
+                                    arguments: tc
+                                        .function
+                                        .as_ref()
+                                        .and_then(|f| f.arguments.clone())
+                                        .unwrap_or_default(),
+                                },
+                                result: None,
+                                index: Some(tc.index),
                             })
                             .collect()
                     });

@@ -24,6 +24,6 @@ pub mod engine;
 pub mod state;
 pub mod store;
 
-pub use engine::{TaskFlowEngine, TaskExecutor, TaskResult, TaskFlowContext, TestExecutor};
+pub use engine::{TaskExecutor, TaskFlowContext, TaskFlowEngine, TaskResult, TestExecutor};
 pub use state::{TaskFlowCheckpoint, TaskFlowConfig, TaskFlowState, TaskFlowSummary};
 pub use store::CheckpointStore;

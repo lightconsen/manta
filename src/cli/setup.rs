@@ -46,7 +46,11 @@ async fn run_interactive_setup() -> Result<()> {
     let mut auth_mode = String::new();
     io::stdin().read_line(&mut auth_mode).unwrap();
     let auth_mode = auth_mode.trim();
-    let auth_mode = if auth_mode.is_empty() { "token" } else { auth_mode };
+    let auth_mode = if auth_mode.is_empty() {
+        "token"
+    } else {
+        auth_mode
+    };
 
     // Shared token
     let shared_token = if auth_mode == "token" || auth_mode == "device" {
@@ -84,7 +88,11 @@ async fn run_interactive_setup() -> Result<()> {
     let mut provider = String::new();
     io::stdin().read_line(&mut provider).unwrap();
     let provider = provider.trim();
-    let provider = if provider.is_empty() { "openai" } else { provider };
+    let provider = if provider.is_empty() {
+        "openai"
+    } else {
+        provider
+    };
 
     // API key
     print!("\n5. API Key for {}: ", provider);
