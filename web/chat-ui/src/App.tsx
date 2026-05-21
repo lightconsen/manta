@@ -648,16 +648,21 @@ function ChatApp() {
     localStorage.setItem("manta_sidebar_collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
-  // Network status
-  useEffect(() => {
-    return transport.onStatusChange((status) => setNetworkStatus(status));
-  }, [transport]);
-
   // Load sessions
   const refreshSessions = useCallback(async () => {
     const list = await transport.listSessions();
     setSessions(list);
   }, [transport]);
+
+  // Network status
+  useEffect(() => {
+    return transport.onStatusChange((status) => {
+      setNetworkStatus(status);
+      if (status === "connected") {
+        refreshSessions();
+      }
+    });
+  }, [transport, refreshSessions]);
 
   useEffect(() => {
     refreshSessions();
