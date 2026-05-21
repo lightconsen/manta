@@ -38,7 +38,12 @@ fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
     let mut config = GatewayConfig::default();
     config.host = "127.0.0.1".to_string();
     config.port = port;
-    config.storage.storage_type = "memory".to_string();
+    // Use SQLite with a temp DB so session_store is available for history tests
+    config.storage.storage_type = "sqlite".to_string();
+    config.storage.database_url = Some(format!(
+        "sqlite:{}",
+        std::env::temp_dir().join(format!("manta_e2e_test_{}.db", port)).display()
+    ));
     config.security.auth_mode = AuthMode::None;
     config.plugins.enabled = false;
     config.channels.clear();
@@ -56,12 +61,13 @@ fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
                     other
                 ),
             };
+            let base_url = env::var("MANTA_TEST_BASE_URL").ok();
             let provider_config = ProviderConfig {
                 provider_type,
                 api_key: key,
                 api_keys: vec![],
                 auth_profile: None,
-                base_url: None,
+                base_url,
                 timeout: Duration::from_secs(60),
                 max_retries: 3,
                 retry_delay_ms: 1000,
@@ -85,8 +91,15 @@ async fn start_test_gateway(port: u16, with_provider: bool) {
         let _ = gateway.start().await;
     });
 
-    // Wait for server to be ready
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Wait for server to be ready (poll WS endpoint up to 10s)
+    let url = format!("ws://127.0.0.1:{}/ws", port);
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if connect_async(&url).await.is_ok() {
+            return;
+        }
+    }
+    panic!("Gateway did not start within 10 seconds");
 }
 
 async fn ws_connect(port: u16) -> (WsWrite, WsRead) {
@@ -700,18 +713,19 @@ async fn chat_send_returns_assistant_response() {
         "chat.send",
         json!({
             "session_id": session_id,
-            "content": "Say exactly 'hello-from-llm' and nothing else."
+            "message": "Say exactly 'hello-from-llm' and nothing else."
         }),
     )
     .await;
 
-    // Wait for agent response event
-    let payload = ws_wait_for_event(&mut read, "agent.response", 60)
+    // Wait for final response event (AgentResponse is suppressed in WS protocol;
+    // streaming responses emit chat.delta + chat.final via Completed)
+    let payload = ws_wait_for_event(&mut read, "chat.final", 60)
         .await
-        .expect("Timed out waiting for agent.response event");
+        .expect("Timed out waiting for chat.final event");
 
     let content = payload
-        .get("content")
+        .get("response")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
@@ -769,7 +783,8 @@ async fn command_persisted_to_session_history() {
 
     let messages = resp_payload(&history_resp)
         .unwrap()
-        .as_array()
+        .get("messages")
+        .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 

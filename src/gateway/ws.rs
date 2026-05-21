@@ -419,6 +419,7 @@ async fn finalize_hello_ok(
         }
         cg.user_id = user_id.clone();
         cg.scopes = granted_scopes.clone();
+        cg.handshaked = true;
         cg.conn_id.clone()
     };
 
@@ -576,6 +577,7 @@ async fn handle_chat_send(
     #[derive(Debug, Deserialize)]
     #[allow(dead_code)]
     struct ChatSendParams {
+        #[serde(alias = "content")]
         message: String,
         #[serde(default)]
         session_id: Option<String>,
