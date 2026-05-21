@@ -472,6 +472,13 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "user_id": user_id,
             }),
         )),
+        GatewayEvent::SessionRenamed { session_id, name } => Some((
+            "session.renamed".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "name": name,
+            }),
+        )),
     }
 }
 

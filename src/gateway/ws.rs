@@ -632,32 +632,31 @@ async fn handle_chat_send(
         }
     }
 
-    // Auto-generate session name in the background (first message only)
+    // Auto-generate session name (first message only)
+    // Use the user's first message as the name immediately — no extra LLM call.
     if should_name {
         let store = state.session_store.clone();
-        let router = state.model_router.clone();
         let sid = session_id.clone();
         let msg = params.message.clone();
+        let trimmed = msg.trim();
+        let name = trimmed
+            .split_whitespace()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let name = if name.len() > 40 {
+            format!("{}...", &name[..40])
+        } else if name.is_empty() {
+            "New Session".to_string()
+        } else {
+            name
+        };
         tokio::spawn(async move {
-            let prompt = format!(
-                "Give a very short title (3-5 words max, no punctuation, plain text only) for a chat session that starts with this message. Be concise and descriptive.\n\nMessage: {}\n\nTitle:",
-                msg
-            );
-            let messages = vec![
-                crate::providers::Message::system("You generate short, clear chat session titles."),
-                crate::providers::Message::user(prompt),
-            ];
-            match router.complete_auto(messages).await {
-                Ok(resp) => {
-                    let name = resp.message.content.trim().trim_matches('"').trim();
-                    if !name.is_empty() && name.len() <= 60 {
-                        if let Some(ref s) = store {
-                            let _ = s.set_session_name(&sid, name).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to auto-name session {}: {}", sid, e);
+            if let Some(ref s) = store {
+                if let Err(e) = s.set_session_name(&sid, &name).await {
+                    tracing::warn!("Failed to save session name for {}: {}", sid, e);
+                } else {
+                    tracing::info!("Session {} named: '{}'", sid, name);
                 }
             }
         });

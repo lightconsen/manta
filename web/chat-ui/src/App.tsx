@@ -677,11 +677,24 @@ function ChatApp() {
     });
   }, [transport, refreshSessions]);
 
-  // Listen for new sessions and cron results
+  // Listen for new sessions, renames, and cron results
   useEffect(() => {
     return transport.onEvent((evt) => {
       if (evt.event === "session.created") {
         refreshSessions();
+      }
+      if (evt.event === "session.renamed") {
+        const p = evt.payload as Record<string, string> | undefined;
+        if (!p) return;
+        const renamedSessionId = p.session_id;
+        const newName = p.name;
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === renamedSessionId
+              ? { ...s, label: newName }
+              : s
+          )
+        );
       }
       if (evt.event === "cron.completed") {
         const p = evt.payload as Record<string, string> | undefined;

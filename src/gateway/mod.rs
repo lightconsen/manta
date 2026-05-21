@@ -926,6 +926,11 @@ pub enum GatewayEvent {
         agent_id: String,
         user_id: String,
     },
+    /// Session display name was auto-generated or updated
+    SessionRenamed {
+        session_id: String,
+        name: String,
+    },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
         /// "agent" or "channel"
@@ -3125,6 +3130,36 @@ impl Gateway {
             .await;
     }
 
+/// Extract a concise session name from the first assistant response.
+/// Strips markdown, takes the first meaningful words, and limits length.
+fn extract_session_name(content: &str) -> String {
+    // Strip common markdown patterns
+    let cleaned = content
+        .replace("#", "")
+        .replace("**", "")
+        .replace("*", "")
+        .replace("`", "")
+        .replace(">", "")
+        .replace("-", "")
+        .replace("|", "")
+        .replace("\n", " ")
+        .replace("\r", " ");
+
+    let name = cleaned
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if name.len() > 40 {
+        format!("{}...", &name[..40])
+    } else if name.is_empty() {
+        "New Session".to_string()
+    } else {
+        name
+    }
+}
+
     /// Send a single message to an agent via the ACP controller.
     ///
     /// This routes execution through the centralized ACP actor queue,
@@ -3368,6 +3403,22 @@ impl Gateway {
                         .await
                     {
                         warn!("Failed to save assistant message to session history: {}", e);
+                    }
+
+                    // Auto-name session from first assistant response if no name yet
+                    if let Ok(existing) = store.get_session_name(session_id).await {
+                        if existing.is_none() {
+                            let name = Self::extract_session_name(&outgoing.content);
+                            if let Err(e) = store.set_session_name(session_id, &name).await {
+                                warn!("Failed to save session name: {}", e);
+                            } else {
+                                info!("Session {} auto-named: '{}'", session_id, name);
+                                let _ = state.event_tx.send(GatewayEvent::SessionRenamed {
+                                    session_id: session_id.to_string(),
+                                    name: name.clone(),
+                                });
+                            }
+                        }
                     }
                 }
                 let _ = state.event_tx.send(GatewayEvent::AgentResponse {
@@ -8575,6 +8626,7 @@ async fn web_terminal_events_handler(
                         GatewayEvent::RepairAction { .. } => "repair_action",
                         GatewayEvent::DevicePairRequested { .. } => "device_pair_requested",
                         GatewayEvent::SessionCreated { .. } => "session_created",
+                        GatewayEvent::SessionRenamed { .. } => "session_renamed",
                         GatewayEvent::CronAnnounce { .. } => "cron_announce",
                     };
                     map.insert("event_type".to_string(), serde_json::json!(event_type));
