@@ -612,6 +612,7 @@ async fn handle_chat_send(
     };
 
     // Save user message to persistent session history
+    let mut should_name = false;
     if let Some(ref store) = state.session_store {
         if let Err(e) = store
             .append_message(&session_id, "user", &params.message, None, None, None)
@@ -619,6 +620,47 @@ async fn handle_chat_send(
         {
             tracing::warn!("Failed to save user message to session history: {}", e);
         }
+        // Check if this is the first message and session has no name yet
+        if let Ok(ps) = store.load_session(&session_id).await {
+            if ps.as_ref().map(|m| m.message_count).unwrap_or(0) <= 1 {
+                if let Ok(existing) = store.get_session_name(&session_id).await {
+                    if existing.is_none() {
+                        should_name = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Auto-generate session name in the background (first message only)
+    if should_name {
+        let store = state.session_store.clone();
+        let router = state.model_router.clone();
+        let sid = session_id.clone();
+        let msg = params.message.clone();
+        tokio::spawn(async move {
+            let prompt = format!(
+                "Give a very short title (3-5 words max, no punctuation, plain text only) for a chat session that starts with this message. Be concise and descriptive.\n\nMessage: {}\n\nTitle:",
+                msg
+            );
+            let messages = vec![
+                crate::providers::Message::system("You generate short, clear chat session titles."),
+                crate::providers::Message::user(prompt),
+            ];
+            match router.complete_auto(messages).await {
+                Ok(resp) => {
+                    let name = resp.message.content.trim().trim_matches('"').trim();
+                    if !name.is_empty() && name.len() <= 60 {
+                        if let Some(ref s) = store {
+                            let _ = s.set_session_name(&sid, name).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to auto-name session {}: {}", sid, e);
+                }
+            }
+        });
     }
 
     let incoming =
@@ -757,10 +799,15 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
             Ok(rows) => rows
                 .into_iter()
                 .map(|meta| {
-                    let name = meta
-                        .last_activity
-                        .format("%b %d %H:%M")
-                        .to_string();
+                    let name = meta.name.unwrap_or_else(|| {
+                        if meta.message_count == 0 {
+                            "New Session".to_string()
+                        } else {
+                            meta.last_activity
+                                .format("%b %d %H:%M")
+                                .to_string()
+                        }
+                    });
                     serde_json::json!({
                         "session_id": meta.session_id,
                         "name": name,

@@ -32,6 +32,9 @@ pub struct SessionMetadata {
     /// Message count
     #[serde(default)]
     pub message_count: usize,
+    /// Display name (auto-generated or user-set)
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl SessionMetadata {
@@ -52,6 +55,7 @@ impl SessionMetadata {
             last_activity: now,
             is_active: true,
             message_count: 0,
+            name: None,
         }
     }
 
@@ -170,7 +174,8 @@ impl SessionStore {
                 last_activity INTEGER NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 state_json TEXT,
-                message_count INTEGER NOT NULL DEFAULT 0
+                message_count INTEGER NOT NULL DEFAULT 0,
+                name TEXT
             )
             "#,
         )
@@ -180,6 +185,11 @@ impl SessionStore {
             context: format!("Failed to create sessions table"),
             details: e.to_string(),
         })?;
+
+        // Migrate: add name column if it doesn't exist (for existing databases)
+        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
+            .execute(&self.pool)
+            .await;
 
         // Session messages table - stores conversation history
         sqlx::query(
@@ -406,6 +416,7 @@ impl SessionStore {
                     .unwrap_or_else(Utc::now),
                     is_active: row.get::<i64, _>("is_active") != 0,
                     message_count: row.get::<i64, _>("message_count") as usize,
+                    name: row.get("name"),
                 };
 
                 let session = PersistedSession {
@@ -439,7 +450,7 @@ impl SessionStore {
         active_only: bool,
     ) -> Result<Vec<SessionMetadata>> {
         let mut query = String::from(
-            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count FROM sessions WHERE 1=1"
+            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count, name FROM sessions WHERE 1=1"
         );
 
         if agent_id.is_some() {
@@ -458,7 +469,7 @@ impl SessionStore {
         query.push_str(" ORDER BY last_activity DESC");
 
         let mut sql_query =
-            sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64)>(&query);
+            sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64, Option<String>)>(&query);
 
         if let Some(agent) = agent_id {
             sql_query = sql_query.bind(agent);
@@ -490,6 +501,7 @@ impl SessionStore {
                     last_activity,
                     is_active,
                     message_count,
+                    name,
                 )| {
                     SessionMetadata {
                         session_id: id,
@@ -502,6 +514,7 @@ impl SessionStore {
                             .unwrap_or_else(Utc::now),
                         is_active: is_active != 0,
                         message_count: message_count as usize,
+                        name,
                     }
                 },
             )
@@ -632,6 +645,36 @@ impl SessionStore {
             })?;
 
         Ok(())
+    }
+
+    /// Set session display name
+    pub async fn set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET name = ?, last_activity = ? WHERE id = ?")
+            .bind(name)
+            .bind(Utc::now().timestamp_millis())
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to update session name"),
+                details: e.to_string(),
+            })?;
+
+        Ok(())
+    }
+
+    /// Get session display name
+    pub async fn get_session_name(&self, session_id: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT name FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to get session name"),
+                details: e.to_string(),
+            })?;
+
+        Ok(row.and_then(|r| r.get::<Option<String>, _>("name")))
     }
 
     /// Delete a session and all its messages
