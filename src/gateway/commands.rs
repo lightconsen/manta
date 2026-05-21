@@ -394,20 +394,37 @@ pub async fn handle_commands_execute(
 
 fn handle_help(req: &WsRequest) -> WsResponse {
     let commands = built_in_commands();
-    let mut lines = vec!["📋 Manta Commands".to_string(), "─".repeat(30)];
+    let mut lines = vec!["📋 **Manta Commands**".to_string(), "".to_string()];
 
-    for c in &commands {
-        let icon = match c.category {
-            CommandCategory::Session => "🗂️",
-            CommandCategory::Model => "🧠",
-            CommandCategory::Status => "ℹ️",
-            CommandCategory::Agents => "🤖",
-            CommandCategory::Tools => "🛠️",
-            CommandCategory::Admin => "🔒",
-        };
-        let admin_mark = if c.requires_admin { " [admin]" } else { "" };
-        let args = c.args.as_deref().unwrap_or("");
-        lines.push(format!("{} /{}{} — {}{}", icon, c.name, args, c.description, admin_mark));
+    let categories = [
+        (CommandCategory::Session, "🗂️ Session"),
+        (CommandCategory::Model, "🧠 Model"),
+        (CommandCategory::Status, "ℹ️ Status"),
+        (CommandCategory::Agents, "🤖 Agents"),
+        (CommandCategory::Tools, "🛠️ Tools"),
+        (CommandCategory::Admin, "🔒 Admin"),
+    ];
+
+    for (cat, title) in &categories {
+        let cat_cmds: Vec<&CommandDef> = commands.iter().filter(|c| c.category == *cat).collect();
+        if cat_cmds.is_empty() {
+            continue;
+        }
+        lines.push(format!("### {}", title));
+        for c in cat_cmds {
+            let admin_mark = if c.requires_admin { " `[admin]`" } else { "" };
+            let args = c.args.as_deref().unwrap_or("");
+            let args_display = if args.is_empty() {
+                "".to_string()
+            } else {
+                format!(" `{}`", args)
+            };
+            lines.push(format!(
+                "- `/{}{}` — {}{}",
+                c.name, args_display, c.description, admin_mark
+            ));
+        }
+        lines.push("".to_string());
     }
 
     WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
