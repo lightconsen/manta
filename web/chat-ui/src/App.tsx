@@ -702,6 +702,12 @@ function ChatApp() {
   }, [transport, refreshSessions]);
 
   const handleNewSession = useCallback(() => {
+    // Don't create a new session if the current one already has no messages
+    if (transport.getMessages().length === 0) {
+      transport.setMessages([]);
+      setSessionKey((k) => k + 1);
+      return;
+    }
     transport.createSession();
     transport.setMessages([]);
     setSessionKey((k) => k + 1);

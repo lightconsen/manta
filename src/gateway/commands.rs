@@ -273,13 +273,18 @@ pub async fn handle_commands_execute(
     };
     if let Some(ref sid) = session_id {
         if let Some(ref store) = state.session_store {
+            tracing::info!("Persisting command /{} to session {}", normalized, sid);
             if let Err(e) = store
                 .append_message(sid, "user", &user_text, None, None, None)
                 .await
             {
                 tracing::warn!("Failed to save command input to session history: {}", e);
             }
+        } else {
+            tracing::warn!("No session_store available, cannot persist command /{}", normalized);
         }
+    } else {
+        tracing::warn!("No session_id for command /{}, cannot persist", normalized);
     }
 
     // Execute command and capture response

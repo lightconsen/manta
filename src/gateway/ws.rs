@@ -292,6 +292,22 @@ async fn dispatch_method(
     let scopes = conn.read().await.scopes.clone();
     if let Some(required) = method_scope(&req.method) {
         if !scopes_allow(&scopes, &req.method) {
+            // Persist commands.execute scope errors to session history
+            if req.method == "commands.execute" {
+                if let Some(ref params_val) = req.params {
+                    if let Ok(params) = serde_json::from_value::<serde_json::Value>(params_val.clone()) {
+                        if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
+                            let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            let user_text = format!("/{}", command);
+                            let error_text = format!("Command error: Missing required scope: {}", required);
+                            if let Some(ref store) = state.session_store {
+                                let _ = store.append_message(session_id, "user", &user_text, None, None, None).await;
+                                let _ = store.append_message(session_id, "assistant", &error_text, None, None, None).await;
+                            }
+                        }
+                    }
+                }
+            }
             return error_forbidden(&req.id, required);
         }
     }
@@ -362,11 +378,14 @@ async fn handle_connect(
     // Auth resolution
     let (user_id, granted_scopes) = match auth_mode {
         crate::gateway::protocol::AuthMode::None => {
-            // No auth required, grant default scopes
-            (
-                Some(UserId::new("anonymous")),
-                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
-            )
+            // No auth required, grant requested scopes (capped to available scopes)
+            let mut scopes: Vec<String> = DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect();
+            for s in &params.scopes {
+                if crate::gateway::protocol::ALL_SCOPES.contains(&s.as_str()) && !scopes.contains(s) {
+                    scopes.push(s.clone());
+                }
+            }
+            (Some(UserId::new("anonymous")), scopes)
         }
         crate::gateway::protocol::AuthMode::Token => {
             resolve_token_auth(req, state, &params, conn).await
@@ -732,9 +751,34 @@ async fn handle_chat_abort(
 }
 
 async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let sessions = {
+    // Prefer SQLite session_store for persistence across restarts/browsers
+    let sessions: Vec<serde_json::Value> = if let Some(ref store) = state.session_store {
+        match store.find_sessions(None, None, None, false).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|meta| {
+                    let name = meta
+                        .last_activity
+                        .format("%b %d %H:%M")
+                        .to_string();
+                    serde_json::json!({
+                        "session_id": meta.session_id,
+                        "name": name,
+                    })
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to list sessions from store: {}", e);
+                Vec::new()
+            }
+        }
+    } else {
+        // Fallback to in-memory session manager
         let mgr = state.session_manager.read().await;
         mgr.list_sessions()
+            .into_iter()
+            .map(|id| serde_json::json!({ "session_id": id, "name": id }))
+            .collect()
     };
 
     WsResponse::ok(&req.id, serde_json::json!({ "sessions": sessions }))
