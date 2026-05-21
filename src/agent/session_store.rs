@@ -391,7 +391,7 @@ impl SessionStore {
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
         let row = sqlx::query(
             r#"
-            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count
+            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name
             FROM sessions
             WHERE id = ?
             "#,
