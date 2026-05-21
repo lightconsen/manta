@@ -15,11 +15,13 @@ use manta::gateway::{Gateway, GatewayConfig};
 use manta::model_router::{ProviderConfig, ProviderType};
 use manta::tools::{
     CodeExecutionTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
-    NodesTool, ProcessTool, ShellTool, TimeTool, TodoTool, Tool, ToolContext,
+    MemoryTool, NodesTool, ProcessTool, ShellTool, TimeTool, TodoTool, Tool, ToolContext,
+    ToolRegistry, WebFetchTool,
 };
 use serde_json::json;
 use serial_test::serial;
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -456,6 +458,91 @@ async fn code_exec_tool_runs_python() {
     }
 }
 
+#[tokio::test]
+async fn web_fetch_tool_fetches_example_com() {
+    let tool = WebFetchTool::new();
+    let result = tool
+        .execute(
+            json!({"url": "https://example.com"}),
+            &test_context(),
+        )
+        .await;
+
+    match result {
+        Ok(output) => {
+            assert!(
+                output.output.contains("Example Domain")
+                    || output.output.to_lowercase().contains("example"),
+                "Expected example.com content, got: {}",
+                output.output
+            );
+        }
+        Err(e) => {
+            println!("web_fetch failed (network may be unavailable): {}", e);
+        }
+    }
+}
+
+#[tokio::test]
+async fn memory_tool_creates_and_reads() {
+    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_{}.db", std::process::id()));
+    let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
+    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let ctx = test_context();
+
+    // Store a memory
+    let store_result = tool
+        .execute(
+            json!({
+                "action": "store",
+                "content": "e2e-test-memory-value",
+                "category": "fact"
+            }),
+            &ctx,
+        )
+        .await
+        .expect("store failed");
+
+    let stored_id = store_result
+        .data
+        .as_ref()
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_str())
+        .expect("Missing memory id")
+        .to_string();
+
+    // Retrieve it
+    let retrieve_result = tool
+        .execute(
+            json!({"action": "retrieve", "id": stored_id}),
+            &ctx,
+        )
+        .await
+        .expect("retrieve failed");
+
+    assert!(
+        retrieve_result.output.contains("e2e-test-memory-value"),
+        "Expected stored memory content, got: {}",
+        retrieve_result.output
+    );
+
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn acp_tools_exist_in_registry() {
+    let mut registry = ToolRegistry::new();
+    // ACP tools need an AcpControlPlane instance; just verify the tool names
+    // exist when registered via the normal constructor.
+    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    registry.register(Box::new(manta::tools::AcpSpawnTool::new(acp)));
+    assert!(
+        registry.has("spawn_subagent"),
+        "spawn_subagent tool should be registered"
+    );
+}
+
 // ── WebSocket Command Tests ───────────────────────────────────────────────────
 
 #[tokio::test]
@@ -801,5 +888,219 @@ async fn command_persisted_to_session_history() {
     assert!(
         has_user_command,
         "Expected /help command to be persisted in session history"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn reset_session_command_clears_history() {
+    let port = 39012;
+    start_test_gateway(port, false).await;
+    let (mut write, mut read) = ws_connect(port).await;
+
+    // Create a session
+    let create_resp = ws_request(
+        &mut write,
+        &mut read,
+        "sessions.create",
+        json!({"agent_id": "default"}),
+    )
+    .await;
+    assert!(resp_is_ok(&create_resp), "sessions.create failed: {:?}", resp_error(&create_resp));
+
+    let session_id = resp_payload(&create_resp)
+        .unwrap()
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+    // Subscribe so reset picks it up
+    let _sub_resp = ws_request(
+        &mut write,
+        &mut read,
+        "sessions.subscribe",
+        json!({"session_ids": [session_id]}),
+    )
+    .await;
+
+    // Execute /help command (persisted to history)
+    let _resp = ws_request(
+        &mut write,
+        &mut read,
+        "commands.execute",
+        json!({"command": "help", "session_id": session_id}),
+    )
+    .await;
+
+    // Verify history is not empty before reset
+    let history_before = ws_request(
+        &mut write,
+        &mut read,
+        "chat.history",
+        json!({"session_id": session_id}),
+    )
+    .await;
+    let msgs_before = resp_payload(&history_before)
+        .unwrap()
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(!msgs_before.is_empty(), "History should have /help before reset");
+
+    // Reset the session
+    let reset_resp = ws_request(
+        &mut write,
+        &mut read,
+        "commands.execute",
+        json!({"command": "reset"}),
+    )
+    .await;
+    assert!(resp_is_ok(&reset_resp), "reset command failed: {:?}", resp_error(&reset_resp));
+
+    // Verify /help message is gone (reset clears prior history).
+    // Note: the reset command's own assistant response is persisted after
+    // the reset handler returns, so there may be 1 assistant message.
+    let history_after = ws_request(
+        &mut write,
+        &mut read,
+        "chat.history",
+        json!({"session_id": session_id}),
+    )
+    .await;
+    let msgs_after = resp_payload(&history_after)
+        .unwrap()
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let has_help = msgs_after.iter().any(|m| {
+        m.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("/help")
+    });
+    assert!(
+        !has_help,
+        "/help message should have been cleared by reset, got: {:?}",
+        msgs_after
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn stop_command_returns_ok() {
+    let port = 39013;
+    start_test_gateway(port, false).await;
+    let (mut write, mut read) = ws_connect(port).await;
+
+    // Create and subscribe to a session
+    let create_resp = ws_request(
+        &mut write,
+        &mut read,
+        "sessions.create",
+        json!({"agent_id": "default"}),
+    )
+    .await;
+    let session_id = resp_payload(&create_resp)
+        .unwrap()
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+    let _sub_resp = ws_request(
+        &mut write,
+        &mut read,
+        "sessions.subscribe",
+        json!({"session_ids": [session_id]}),
+    )
+    .await;
+
+    // Stop should return OK even if nothing is running
+    let resp = ws_request(
+        &mut write,
+        &mut read,
+        "commands.execute",
+        json!({"command": "stop"}),
+    )
+    .await;
+    assert!(resp_is_ok(&resp), "stop command failed: {:?}", resp_error(&resp));
+    let text = resp_payload(&resp)
+        .unwrap()
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        text.contains("Stop") || text.contains("stop"),
+        "Expected stop acknowledgment, got: {}",
+        text
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn session_auto_named_after_first_message() {
+    let port = 39014;
+    start_test_gateway(port, false).await;
+    let (mut write, mut read) = ws_connect(port).await;
+
+    // Create a session
+    let create_resp = ws_request(
+        &mut write,
+        &mut read,
+        "sessions.create",
+        json!({"agent_id": "default"}),
+    )
+    .await;
+    let session_id = resp_payload(&create_resp)
+        .unwrap()
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+    // Send a message — the first user message auto-names the session
+    let _ = ws_request(
+        &mut write,
+        &mut read,
+        "chat.send",
+        json!({"session_id": session_id, "message": "Tell me about the weather today"}),
+    )
+    .await;
+
+    // Query sessions.list to verify the name was set
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let list_resp = ws_request(&mut write, &mut read, "sessions.list", json!(null)).await;
+    assert!(resp_is_ok(&list_resp), "sessions.list failed: {:?}", resp_error(&list_resp));
+
+    let sessions = resp_payload(&list_resp)
+        .unwrap()
+        .get("sessions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let session = sessions
+        .iter()
+        .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some(&session_id));
+
+    assert!(session.is_some(), "Created session not found in list");
+    let name = session
+        .unwrap()
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        name != "New Session" && !name.is_empty(),
+        "Session should be auto-named, got: '{}'",
+        name
+    );
+    assert!(
+        name.to_lowercase().contains("weather"),
+        "Auto-named session should contain 'weather', got: '{}'",
+        name
     );
 }

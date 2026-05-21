@@ -680,6 +680,16 @@ impl SessionStore {
     /// Delete a session and all its messages
     #[instrument(skip(self))]
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        // Delete messages first (SQLite FK cascade requires pragma)
+        sqlx::query("DELETE FROM session_messages WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| MantaError::Storage {
+                context: format!("Failed to delete session messages"),
+                details: e.to_string(),
+            })?;
+
         sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(session_id)
             .execute(&self.pool)

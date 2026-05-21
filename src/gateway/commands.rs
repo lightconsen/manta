@@ -490,6 +490,12 @@ async fn handle_reset(
             mgr.terminate_session(&sid);
             mgr.create_session(sid.clone());
         }
+        // Clear persisted history so the session truly resets
+        if let Some(ref store) = state.session_store {
+            if let Err(e) = store.delete_session(&sid).await {
+                tracing::warn!("Failed to delete session {} during reset: {}", sid, e);
+            }
+        }
         return WsResponse::ok(
             &req.id,
             serde_json::json!({ "text": format!("🔄 Session `{}` reset.", sid) }),
