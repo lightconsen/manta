@@ -4,6 +4,7 @@ import {
   ThreadPrimitive,
   ComposerPrimitive,
   useLocalRuntime,
+  useComposerRuntime,
 } from "@assistant-ui/react";
 import {
   MantaWebSocketTransport,
@@ -197,11 +198,13 @@ function Sidebar({
             } ${collapsed ? "justify-center" : ""}`}
             title={s.id}
           >
-            <span className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 shrink-0 flex items-center justify-center text-[10px] text-white font-bold">
-              {s.label?.charAt(0).toUpperCase() || "S"}
-            </span>
             {!collapsed && (
               <span className="truncate">{s.label || s.id}</span>
+            )}
+            {collapsed && (
+              <span className="text-[10px] font-medium truncate max-w-[2.5rem]">
+                {(s.label || s.id).slice(0, 3)}
+              </span>
             )}
           </button>
         ))}
@@ -421,28 +424,26 @@ function CommandPalette({
 /* ── Chat Content ── */
 function ChatContent({ messages }: { messages: ChatMessage[] }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composer = useComposerRuntime();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [paletteCommands, setPaletteCommands] = useState<CommandDef[]>([]);
 
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
+  const handleInput = useCallback(() => {
+    const val = inputRef.current?.value || "";
+    if (val.startsWith("/")) {
+      const filter = val.slice(1).split(" ")[0] || "";
+      const cmds = getCommandCompletions(filter);
+      setPaletteCommands(cmds);
+      setPaletteOpen(cmds.length > 0);
+      setPaletteIndex(0);
+    } else {
+      setPaletteOpen(false);
+    }
+  }, []);
 
-    const handleInput = () => {
-      const val = el.value;
-      if (val.startsWith("/")) {
-        const filter = val.slice(1).split(" ")[0] || "";
-        const cmds = getCommandCompletions(filter);
-        setPaletteCommands(cmds);
-        setPaletteOpen(cmds.length > 0);
-        setPaletteIndex(0);
-      } else {
-        setPaletteOpen(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (!paletteOpen) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -454,32 +455,25 @@ function ChatContent({ messages }: { messages: ChatMessage[] }) {
         e.preventDefault();
         const cmd = paletteCommands[paletteIndex];
         if (cmd) {
-          el.value = `/${cmd.name} `;
-          el.focus();
+          composer.setText(`/${cmd.name} `);
           setPaletteOpen(false);
-          el.dispatchEvent(new Event("input", { bubbles: true }));
+          setTimeout(() => inputRef.current?.focus(), 0);
         }
       } else if (e.key === "Escape") {
         setPaletteOpen(false);
       }
-    };
+    },
+    [paletteOpen, paletteCommands, paletteIndex, composer]
+  );
 
-    el.addEventListener("input", handleInput);
-    el.addEventListener("keydown", handleKeyDown);
-    return () => {
-      el.removeEventListener("input", handleInput);
-      el.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [paletteOpen, paletteCommands.length, paletteIndex]);
-
-  const handleSelectCommand = useCallback((cmd: CommandDef) => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.value = `/${cmd.name} `;
-    el.focus();
-    setPaletteOpen(false);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  }, []);
+  const handleSelectCommand = useCallback(
+    (cmd: CommandDef) => {
+      composer.setText(`/${cmd.name} `);
+      setPaletteOpen(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    },
+    [composer]
+  );
 
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
@@ -505,47 +499,9 @@ function ChatContent({ messages }: { messages: ChatMessage[] }) {
       </ThreadPrimitive.Viewport>
 
       <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
-        <ComposerPrimitive.Root className="flex items-end gap-2 max-w-3xl mx-auto">
-          {/* Attachment buttons */}
-          <div className="flex items-center gap-1 shrink-0 pb-1">
-            <button
-              type="button"
-              title="Voice input"
-              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
-              onClick={() => alert('Voice input coming soon')}
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              title="Upload image"
-              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
-              onClick={() => alert('Image upload coming soon')}
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              title="Upload file"
-              className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-800 transition"
-              onClick={() => alert('File upload coming soon')}
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="relative flex-1">
+        <ComposerPrimitive.Root className="max-w-3xl mx-auto w-full">
+          <div className="relative flex flex-col rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 focus-within:ring-2 focus-within:ring-emerald-500/30 focus-within:border-emerald-500/50 transition">
+            {/* Command palette */}
             {paletteOpen && (
               <CommandPalette
                 commands={paletteCommands}
@@ -553,18 +509,64 @@ function ChatContent({ messages }: { messages: ChatMessage[] }) {
                 onSelect={handleSelectCommand}
               />
             )}
+
+            {/* Multiline input */}
             <ComposerPrimitive.Input
               ref={inputRef}
-              className="w-full resize-none rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500/50 transition min-h-[44px] max-h-[120px]"
+              onInput={handleInput}
+              onKeyDown={handleKeyDown}
+              className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none min-h-[60px] max-h-[200px]"
               placeholder="Message Manta..."
+              rows={1}
             />
+
+            {/* Bottom toolbar */}
+            <div className="flex items-center justify-between px-2 pb-2 pt-1">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Voice input"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  onClick={() => alert('Voice input coming soon')}
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="23" />
+                    <line x1="8" y1="23" x2="16" y2="23" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  title="Upload image"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  onClick={() => alert('Image upload coming soon')}
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  title="Upload file"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  onClick={() => alert('File upload coming soon')}
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </button>
+              </div>
+              <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white transition shadow-sm">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              </ComposerPrimitive.Send>
+            </div>
           </div>
-          <ComposerPrimitive.Send className="shrink-0 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white text-sm font-medium transition shadow-sm">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </ComposerPrimitive.Send>
         </ComposerPrimitive.Root>
       </div>
     </ThreadPrimitive.Root>
@@ -663,6 +665,13 @@ function ChatApp() {
     return () => clearInterval(interval);
   }, [refreshSessions]);
 
+  // Refresh session list immediately when transport creates/switches sessions
+  useEffect(() => {
+    return transport.onSessionChange(() => {
+      refreshSessions();
+    });
+  }, [transport, refreshSessions]);
+
   // Listen for new sessions and cron results
   useEffect(() => {
     return transport.onEvent((evt) => {
@@ -696,7 +705,7 @@ function ChatApp() {
     transport.createSession();
     transport.setMessages([]);
     setSessionKey((k) => k + 1);
-    setTimeout(refreshSessions, 500);
+    refreshSessions();
   }, [transport, refreshSessions]);
 
   const handleSwitchSession = useCallback(

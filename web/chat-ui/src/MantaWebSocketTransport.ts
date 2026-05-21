@@ -46,6 +46,7 @@ export interface ChatMessage {
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
+export type SessionCallback = () => void;
 
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
@@ -112,6 +113,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private currentStatus: NetworkStatus = "connecting";
   private messages: ChatMessage[] = [];
   private messagesListeners: Set<MessagesCallback> = new Set();
+  private sessionListeners: Set<SessionCallback> = new Set();
 
   constructor() {
     this.deviceId =
@@ -134,6 +136,15 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     this.statusListeners.add(callback);
     callback(this.currentStatus);
     return () => this.statusListeners.delete(callback);
+  }
+
+  onSessionChange(callback: SessionCallback): () => void {
+    this.sessionListeners.add(callback);
+    return () => this.sessionListeners.delete(callback);
+  }
+
+  private notifySessionChange() {
+    this.sessionListeners.forEach((cb) => cb());
   }
 
   getSessionId(): string {
@@ -167,7 +178,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
         protocol_version: 1,
         client: { id: "web", version: "1.0.0" },
         device: { id: this.deviceId },
-        scopes: ["chat", "read"],
+        scopes: ["chat", "read", "write"],
       });
     };
 
@@ -251,6 +262,21 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   }
 
   createSession(): string {
+    // Reuse an existing empty session if one exists
+    const sessions = this.getLocalSessions();
+    for (const sid of sessions) {
+      if (this.getHistory(sid).length === 0) {
+        this.sessionId = sid;
+        localStorage.setItem("manta_session", this.sessionId);
+        this.subscribedSessions = [];
+        this.sendRequest("sessions.create", {
+          session_id: this.sessionId,
+        });
+        this.notifySessionChange();
+        return this.sessionId;
+      }
+    }
+
     const newSessionId = `web:${this.deviceId}_${Date.now()}`;
     this.sessionId = newSessionId;
     localStorage.setItem("manta_session", this.sessionId);
@@ -259,11 +285,11 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       session_id: this.sessionId,
     });
     // Persist session in local list
-    const sessions = this.getLocalSessions();
     if (!sessions.includes(newSessionId)) {
       sessions.unshift(newSessionId);
       localStorage.setItem("manta_sessions", JSON.stringify(sessions));
     }
+    this.notifySessionChange();
     return this.sessionId;
   }
 
@@ -366,6 +392,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
         session_ids: [sessionId],
       });
     }
+    this.notifySessionChange();
   }
 
   /* ── Session history (localStorage) ── */

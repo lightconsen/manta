@@ -259,73 +259,130 @@ pub async fn handle_commands_execute(
 
     debug!("Executing command: /{} args='{}'", normalized, params.args);
 
-    // Find the command definition
-    let commands = built_in_commands();
-    let def = match commands
-        .iter()
-        .find(|c| c.key == normalized || c.name == normalized)
-    {
-        Some(d) => d.clone(),
-        None => {
-            return WsResponse::err(
-                &req.id,
-                "COMMAND_NOT_FOUND",
-                format!("Unknown command: /{}", normalized),
-            );
+    // Determine session_id for persistence
+    let mut session_id = params.session_id.clone();
+    if session_id.is_none() {
+        session_id = conn.read().await.subscriptions.first().cloned();
+    }
+
+    // Persist user command input
+    let user_text = if params.args.is_empty() {
+        format!("/{}", normalized)
+    } else {
+        format!("/{}", params.command)
+    };
+    if let Some(ref sid) = session_id {
+        if let Some(ref store) = state.session_store {
+            if let Err(e) = store
+                .append_message(sid, "user", &user_text, None, None, None)
+                .await
+            {
+                tracing::warn!("Failed to save command input to session history: {}", e);
+            }
         }
+    }
+
+    // Execute command and capture response
+    let response = async {
+        // Find the command definition
+        let commands = built_in_commands();
+        let def = match commands
+            .iter()
+            .find(|c| c.key == normalized || c.name == normalized)
+        {
+            Some(d) => d.clone(),
+            None => {
+                return WsResponse::err(
+                    &req.id,
+                    "COMMAND_NOT_FOUND",
+                    format!("Unknown command: /{}", normalized),
+                );
+            }
+        };
+
+        // Check admin requirement
+        if def.requires_admin {
+            let conn_guard = conn.read().await;
+            let scopes = &conn_guard.scopes;
+            if !scopes_allow(scopes, "commands.execute.admin") {
+                return error_forbidden(&req.id, SCOPE_ADMIN);
+            }
+        }
+
+        // Dispatch to handler
+        match normalized.as_str() {
+            "help" | "commands" => handle_help(req),
+            "status" => handle_status(req, state).await,
+            "whoami" => handle_whoami(req, conn).await,
+            "stop" => handle_stop(req, conn, state).await,
+            "reset" => handle_reset(req, conn, state).await,
+            "model" => handle_model(req, conn, state, &params.args).await,
+            "think" => handle_think(req, state, &params.args).await,
+            "verbose" => handle_verbose(req, state, &params.args).await,
+            "trace" => handle_trace(req, state, &params.args).await,
+            "fast" => handle_fast(req, state, &params.args).await,
+            "reasoning" => handle_reasoning(req, state, &params.args).await,
+            "queue" => handle_queue(req, state, &params.args).await,
+            "tools" => handle_tools(req, state, &params.args).await,
+            "usage" => handle_usage(req, state).await,
+            "context" => handle_context(req, conn, state).await,
+            "compact" => handle_compact(req, conn, state, &params.args).await,
+            "session" => handle_session(req, conn, state, &params.args).await,
+            "export-session" => handle_export_session(req, conn, state, &params.args).await,
+            "subagents" => handle_subagents(req, conn, state, &params.args).await,
+            "acp" => handle_acp(req, conn, state, &params.args).await,
+            "steer" | "tell" => handle_steer(req, conn, state, &params.args).await,
+            "kill" => handle_kill(req, conn, state, &params.args).await,
+            "focus" => handle_focus(req, conn, state, &params.args).await,
+            "unfocus" => handle_unfocus(req, conn, state).await,
+            "skill" => handle_skill(req, state, &params.args).await,
+            "allowlist" => handle_allowlist(req, state, &params.args).await,
+            "approve" => handle_approve(req, state, &params.args).await,
+            "btw" => handle_btw(req, state, &params.args).await,
+            "config" => handle_config(req, state, &params.args).await,
+            "plugins" => handle_plugins(req, state, &params.args).await,
+            "mcp" => handle_mcp(req, state, &params.args).await,
+            "debug" => handle_debug(req, state, &params.args).await,
+            "restart" => handle_restart(req).await,
+            "bash" => handle_bash(req, &params.args).await,
+            _ => WsResponse::err(
+                &req.id,
+                "NOT_IMPLEMENTED",
+                format!("Command /{} is not yet implemented", normalized),
+            ),
+        }
+    }
+    .await;
+
+    // Persist command result
+    let result_text = if response.ok {
+        response
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        response
+            .error
+            .as_ref()
+            .map(|e| format!("Command error: {}", e.message))
+            .unwrap_or_else(|| "Command error".to_string())
     };
 
-    // Check admin requirement
-    if def.requires_admin {
-        let conn_guard = conn.read().await;
-        let scopes = &conn_guard.scopes;
-        if !scopes_allow(scopes, "commands.execute.admin") {
-            return error_forbidden(&req.id, SCOPE_ADMIN);
+    if let Some(ref sid) = session_id {
+        if let Some(ref store) = state.session_store {
+            if let Err(e) = store
+                .append_message(sid, "assistant", &result_text, None, None, None)
+                .await
+            {
+                tracing::warn!("Failed to save command result to session history: {}", e);
+            }
         }
     }
 
-    // Dispatch to handler
-    match normalized.as_str() {
-        "help" | "commands" => handle_help(req),
-        "status" => handle_status(req, state).await,
-        "whoami" => handle_whoami(req, conn).await,
-        "stop" => handle_stop(req, conn, state).await,
-        "reset" => handle_reset(req, conn, state).await,
-        "model" => handle_model(req, conn, state, &params.args).await,
-        "think" => handle_think(req, state, &params.args).await,
-        "verbose" => handle_verbose(req, state, &params.args).await,
-        "trace" => handle_trace(req, state, &params.args).await,
-        "fast" => handle_fast(req, state, &params.args).await,
-        "reasoning" => handle_reasoning(req, state, &params.args).await,
-        "queue" => handle_queue(req, state, &params.args).await,
-        "tools" => handle_tools(req, state, &params.args).await,
-        "usage" => handle_usage(req, state).await,
-        "context" => handle_context(req, conn, state).await,
-        "compact" => handle_compact(req, conn, state, &params.args).await,
-        "session" => handle_session(req, conn, state, &params.args).await,
-        "export-session" => handle_export_session(req, conn, state, &params.args).await,
-        "subagents" => handle_subagents(req, conn, state, &params.args).await,
-        "acp" => handle_acp(req, conn, state, &params.args).await,
-        "steer" | "tell" => handle_steer(req, conn, state, &params.args).await,
-        "kill" => handle_kill(req, conn, state, &params.args).await,
-        "focus" => handle_focus(req, conn, state, &params.args).await,
-        "unfocus" => handle_unfocus(req, conn, state).await,
-        "skill" => handle_skill(req, state, &params.args).await,
-        "allowlist" => handle_allowlist(req, state, &params.args).await,
-        "approve" => handle_approve(req, state, &params.args).await,
-        "btw" => handle_btw(req, state, &params.args).await,
-        "config" => handle_config(req, state, &params.args).await,
-        "plugins" => handle_plugins(req, state, &params.args).await,
-        "mcp" => handle_mcp(req, state, &params.args).await,
-        "debug" => handle_debug(req, state, &params.args).await,
-        "restart" => handle_restart(req).await,
-        "bash" => handle_bash(req, &params.args).await,
-        _ => WsResponse::err(
-            &req.id,
-            "NOT_IMPLEMENTED",
-            format!("Command /{} is not yet implemented", normalized),
-        ),
-    }
+    response
 }
 
 // ── Individual command handlers ───────────────────────────────────────────────
