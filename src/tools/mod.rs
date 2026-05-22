@@ -576,7 +576,7 @@ pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use nodes::NodesTool;
 pub use openclaw_tools::{
     AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
-    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool, SubagentsTool,
+    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
 };
 pub use pdf::PdfTool;
 pub use process::ProcessTool;

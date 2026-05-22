@@ -301,8 +301,8 @@ async fn dispatch_method(
                             let user_text = format!("/{}", command);
                             let error_text = format!("Command error: Missing required scope: {}", required);
                             if let Some(ref store) = state.session_store {
-                                let _ = store.append_message(session_id, "user", &user_text, None, None, None).await;
-                                let _ = store.append_message(session_id, "assistant", &error_text, None, None, None).await;
+                                let _ = store.append_message(session_id, "user", &user_text, None, None, None, None, None).await;
+                                let _ = store.append_message(session_id, "assistant", &error_text, None, None, None, None, None).await;
                             }
                         }
                     }
@@ -617,7 +617,7 @@ async fn handle_chat_send(
     let mut should_name = false;
     if let Some(ref store) = state.session_store {
         if let Err(e) = store
-            .append_message(&session_id, "user", &params.message, None, None, None)
+            .append_message(&session_id, "user", &params.message, None, None, None, None, None)
             .await
         {
             tracing::warn!("Failed to save user message to session history: {}", e);
@@ -664,6 +664,30 @@ async fn handle_chat_send(
         });
     }
 
+    // Resolve bound agent from session store (unified session model)
+    if let Some(ref store) = state.session_store {
+        if let Ok(Some(ps)) = store.load_session(&session_id).await {
+            if let Some(ref bound_agent) = ps.metadata.bound_agent_id {
+                let route = crate::inbound::RouteResult {
+                    agent_id: bound_agent.clone(),
+                    workspace_id: None,
+                    created_binding: false,
+                };
+                state.agent_router.bind_session(&session_id, &route).await;
+            }
+        }
+    }
+
+    // Explicit agent_id override from request
+    if let Some(agent_id) = params.agent_id {
+        let route = crate::inbound::RouteResult {
+            agent_id,
+            workspace_id: None,
+            created_binding: false,
+        };
+        state.agent_router.bind_session(&session_id, &route).await;
+    }
+
     let incoming =
         crate::channels::IncomingMessage::new(user_id.clone(), session_id.clone(), params.message)
             .with_provenance(crate::channels::InputProvenance::ExternalUser {
@@ -674,7 +698,7 @@ async fn handle_chat_send(
     // Route through inbound pipeline
     let routed = state.inbound_pipeline.process(incoming).await;
 
-    if let Some(ref r) = routed {
+    if let Some(ref _r) = routed {
         // Subscribe to this session automatically
         let mut cg = conn.write().await;
         if !cg.subscriptions.contains(&session_id) {
@@ -742,7 +766,7 @@ async fn handle_chat_history(
         {
             Ok(rows) => rows
                 .into_iter()
-                .map(|(id, role, content, reasoning, tool_calls_json, dt)| {
+                .map(|(id, role, content, reasoning, tool_calls_json, dt, _transcript_id, _run_id)| {
                     let tool_calls: Option<serde_json::Value> =
                         tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
                     serde_json::json!({
@@ -825,7 +849,7 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
     } else {
         // Fallback to in-memory session manager
         let mgr = state.session_manager.read().await;
-        mgr.list_sessions()
+        mgr.list_sessions().await
             .into_iter()
             .map(|id| serde_json::json!({ "session_id": id, "name": id }))
             .collect()

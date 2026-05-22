@@ -647,6 +647,8 @@ pub struct SubagentHandle {
     pub status: SubagentStatus,
     /// Execution controller for runtime pause/resume/step/cancel
     pub controller: Arc<ExecutionController>,
+    /// Abort handle for force-killing the subagent task
+    pub abort_handle: tokio::task::AbortHandle,
 }
 
 /// Subagent status
@@ -1060,6 +1062,8 @@ impl AcpControlPlane {
             info!("Subagent {} task ended", subagent_id_clone);
         });
 
+        let abort_handle = join_handle.abort_handle();
+
         // Watchdog: await the JoinHandle and update status on exit or panic.
         let subagents_ref = Arc::clone(&self.subagents);
         let watch_id = subagent_id.clone();
@@ -1097,6 +1101,7 @@ impl AcpControlPlane {
             command_tx,
             status: SubagentStatus::Ready,
             controller: controller_clone,
+            abort_handle,
         };
 
         // Register subagent
@@ -1192,6 +1197,68 @@ impl AcpControlPlane {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    /// Kill a subagent immediately (force abort)
+    pub async fn kill_subagent(&self, subagent_id: &str) -> crate::Result<bool> {
+        let mut subagents = self.subagents.write().await;
+
+        if let Some(subagent) = subagents.get_mut(subagent_id) {
+            subagent.status = SubagentStatus::Terminated;
+            let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
+            subagent.abort_handle.abort();
+            info!("Killed subagent {} (force abort)", subagent_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Steer a subagent — cancel current execution and send a new message
+    pub async fn steer_subagent(
+        &self,
+        subagent_id: &str,
+        message: String,
+    ) -> crate::Result<String> {
+        let subagents = self.subagents.read().await;
+        let subagent = subagents.get(subagent_id).ok_or_else(|| {
+            crate::error::MantaError::NotFound {
+                resource: format!("Subagent '{}'", subagent_id),
+            }
+        })?;
+
+        // 1. Cancel any in-progress execution
+        let _ = subagent.command_tx.send(SubagentCommand::Cancel).await;
+
+        // 2. Build steer message
+        let steer_msg = IncomingMessage::new(
+            "user".to_string(),
+            format!("steer-{}", subagent_id),
+            message,
+        );
+
+        // 3. Send steer message as new ProcessMessage
+        let (response_tx, response_rx) = oneshot::channel();
+        subagent
+            .command_tx
+            .send(SubagentCommand::ProcessMessage {
+                message: steer_msg,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                crate::error::MantaError::Internal("Subagent command channel closed".to_string())
+            })?;
+
+        drop(subagents);
+
+        match response_rx.await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(crate::error::MantaError::Internal(
+                "Steer response dropped".to_string(),
+            )),
         }
     }
 

@@ -35,6 +35,12 @@ pub struct SessionMetadata {
     /// Display name (auto-generated or user-set)
     #[serde(default)]
     pub name: Option<String>,
+    /// Bound agent ID for unified session model (OpenClaw-style agent binding)
+    #[serde(default)]
+    pub bound_agent_id: Option<String>,
+    /// Transcript ID for conversation grouping (OpenClaw-style transcript tracking)
+    #[serde(default)]
+    pub transcript_id: Option<String>,
 }
 
 impl SessionMetadata {
@@ -56,6 +62,8 @@ impl SessionMetadata {
             is_active: true,
             message_count: 0,
             name: None,
+            bound_agent_id: None,
+            transcript_id: None,
         }
     }
 
@@ -175,7 +183,9 @@ impl SessionStore {
                 is_active INTEGER NOT NULL DEFAULT 1,
                 state_json TEXT,
                 message_count INTEGER NOT NULL DEFAULT 0,
-                name TEXT
+                name TEXT,
+                bound_agent_id TEXT,
+                transcript_id TEXT
             )
             "#,
         )
@@ -191,6 +201,16 @@ impl SessionStore {
             .execute(&self.pool)
             .await;
 
+        // Migrate: add bound_agent_id column if it doesn't exist
+        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN bound_agent_id TEXT")
+            .execute(&self.pool)
+            .await;
+
+        // Migrate: add transcript_id column if it doesn't exist
+        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN transcript_id TEXT")
+            .execute(&self.pool)
+            .await;
+
         // Session messages table - stores conversation history
         sqlx::query(
             r#"
@@ -203,6 +223,8 @@ impl SessionStore {
                 tool_calls_json TEXT,
                 created_at INTEGER NOT NULL,
                 metadata TEXT,
+                transcript_id TEXT,
+                run_id TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             )
             "#,
@@ -353,8 +375,8 @@ impl SessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name, bound_agent_id, transcript_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 channel = excluded.channel,
@@ -362,7 +384,10 @@ impl SessionStore {
                 last_activity = excluded.last_activity,
                 is_active = excluded.is_active,
                 state_json = excluded.state_json,
-                message_count = excluded.message_count
+                message_count = excluded.message_count,
+                name = excluded.name,
+                bound_agent_id = excluded.bound_agent_id,
+                transcript_id = excluded.transcript_id
             "#,
         )
         .bind(session_id)
@@ -374,6 +399,9 @@ impl SessionStore {
         .bind(metadata.is_active)
         .bind(state_json)
         .bind(metadata.message_count as i64)
+        .bind(&metadata.name)
+        .bind(&metadata.bound_agent_id)
+        .bind(&metadata.transcript_id)
         .execute(&self.pool)
         .await
         .map_err(|e| MantaError::Storage { context: format!("Failed to save session"), details: e.to_string() })?;
@@ -391,7 +419,7 @@ impl SessionStore {
     pub async fn load_session(&self, session_id: &str) -> Result<Option<PersistedSession>> {
         let row = sqlx::query(
             r#"
-            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name
+            SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, state_json, message_count, name, bound_agent_id, transcript_id
             FROM sessions
             WHERE id = ?
             "#,
@@ -417,6 +445,8 @@ impl SessionStore {
                     is_active: row.get::<i64, _>("is_active") != 0,
                     message_count: row.get::<i64, _>("message_count") as usize,
                     name: row.get("name"),
+                    bound_agent_id: row.get("bound_agent_id"),
+                    transcript_id: row.get("transcript_id"),
                 };
 
                 let session = PersistedSession {
@@ -450,7 +480,7 @@ impl SessionStore {
         active_only: bool,
     ) -> Result<Vec<SessionMetadata>> {
         let mut query = String::from(
-            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count, name FROM sessions WHERE 1=1"
+            "SELECT id, agent_id, channel, channel_id, created_at, last_activity, is_active, message_count, name, bound_agent_id, transcript_id FROM sessions WHERE 1=1"
         );
 
         if agent_id.is_some() {
@@ -469,7 +499,7 @@ impl SessionStore {
         query.push_str(" ORDER BY last_activity DESC");
 
         let mut sql_query =
-            sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64, Option<String>)>(&query);
+            sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>)>(&query);
 
         if let Some(agent) = agent_id {
             sql_query = sql_query.bind(agent);
@@ -502,6 +532,8 @@ impl SessionStore {
                     is_active,
                     message_count,
                     name,
+                    bound_agent_id,
+                    transcript_id,
                 )| {
                     SessionMetadata {
                         session_id: id,
@@ -515,6 +547,8 @@ impl SessionStore {
                         is_active: is_active != 0,
                         message_count: message_count as usize,
                         name,
+                        bound_agent_id,
+                        transcript_id,
                     }
                 },
             )
@@ -534,6 +568,8 @@ impl SessionStore {
         metadata_json: Option<&str>,
         reasoning_content: Option<&str>,
         tool_calls_json: Option<&str>,
+        transcript_id: Option<&str>,
+        run_id: Option<&str>,
     ) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
@@ -553,8 +589,8 @@ impl SessionStore {
 
         let result = sqlx::query(
             r#"
-            INSERT INTO session_messages (session_id, role, content, reasoning_content, tool_calls_json, created_at, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO session_messages (session_id, role, content, reasoning_content, tool_calls_json, created_at, metadata, transcript_id, run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session_id)
@@ -564,6 +600,8 @@ impl SessionStore {
         .bind(tool_calls_json)
         .bind(now)
         .bind(metadata_json)
+        .bind(transcript_id)
+        .bind(run_id)
         .execute(&self.pool)
         .await
         .map_err(|e| MantaError::Storage {
@@ -585,19 +623,19 @@ impl SessionStore {
     }
 
     /// Get messages for a session, ordered oldest first.
-    /// Returns `(id, role, content, reasoning_content, tool_calls_json, created_at)`.
+    /// Returns `(id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id)`.
     #[instrument(skip(self))]
     pub async fn get_messages(
         &self,
         session_id: &str,
         limit: i64,
         before: Option<DateTime<Utc>>,
-    ) -> Result<Vec<(i64, String, String, Option<String>, Option<String>, DateTime<Utc>)>> {
+    ) -> Result<Vec<(i64, String, String, Option<String>, Option<String>, DateTime<Utc>, Option<String>, Option<String>)>> {
         let before_ts = before.map(|dt| dt.timestamp_millis()).unwrap_or(i64::MAX);
 
         let rows = sqlx::query(
             r#"
-            SELECT id, role, content, reasoning_content, tool_calls_json, created_at
+            SELECT id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id
             FROM session_messages
             WHERE session_id = ? AND created_at < ?
             ORDER BY created_at ASC
@@ -624,7 +662,9 @@ impl SessionStore {
                 let tool_calls: Option<String> = row.get("tool_calls_json");
                 let ts: i64 = row.get("created_at");
                 let dt = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
-                (id, role, content, reasoning, tool_calls, dt)
+                let transcript_id: Option<String> = row.get("transcript_id");
+                let run_id: Option<String> = row.get("run_id");
+                (id, role, content, reasoning, tool_calls, dt, transcript_id, run_id)
             })
             .collect();
 
@@ -1047,12 +1087,12 @@ mod tests {
 
         // Append messages
         store
-            .append_message("msg-test", "user", "Hello", None, None, None)
+            .append_message("msg-test", "user", "Hello", None, None, None, None, None)
             .await
             .expect("Failed to append message");
 
         store
-            .append_message("msg-test", "assistant", "Hi there!", None, None, None)
+            .append_message("msg-test", "assistant", "Hi there!", None, None, None, None, None)
             .await
             .expect("Failed to append message");
 
@@ -1129,7 +1169,7 @@ mod tests {
         let meta = SessionMetadata::new("stats-test", "main", "cli", "local");
         store.save_session("stats-test", &meta, "{}").await.unwrap();
         store
-            .append_message("stats-test", "user", "hi", None, None, None)
+            .append_message("stats-test", "user", "hi", None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1257,7 +1297,7 @@ mod tests {
 
         for i in 0..5 {
             store
-                .append_message("limit-test", "user", &format!("msg{}", i), None, None, None)
+                .append_message("limit-test", "user", &format!("msg{}", i), None, None, None, None, None)
                 .await
                 .unwrap();
         }

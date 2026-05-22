@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::acp::{AcpControlPlane, AcpSessionId};
+use crate::acp::AcpControlPlane;
 use crate::channels::IncomingMessage;
 use crate::gateway::GatewayState;
 
@@ -19,14 +19,14 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 
 // ── sessions_list ────────────────────────────────────────────────────────────
 
-/// List all active ACP sessions and their subagents.
+/// List all sessions from persistent storage.
 pub struct SessionsListTool {
-    acp: Arc<AcpControlPlane>,
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl SessionsListTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
-        Self { acp }
+    pub fn new(store: Option<Arc<crate::agent::session_store::SessionStore>>) -> Self {
+        Self { store }
     }
 }
 
@@ -37,7 +37,7 @@ impl Tool for SessionsListTool {
     }
 
     fn description(&self) -> &str {
-        "List all active ACP sessions and their subagents with status information."
+        "List all sessions from persistent storage with metadata."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -53,48 +53,86 @@ impl Tool for SessionsListTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let start = std::time::Instant::now();
-        let subagents = self.acp.list_subagents().await;
 
-        let sessions: Vec<_> = subagents
-            .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "subagent_id": s.id,
-                    "session_id": s.session_id.to_string(),
-                    "parent_id": s.parent_id,
-                    "mode": format!("{:?}", s.mode),
-                    "status": format!("{:?}", s.status),
-                    "thread_id": s.thread_id,
+        let store = match &self.store {
+            Some(s) => s,
+            None => {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Persistent session storage is not available".to_string()),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+        };
+
+        match store.find_sessions(None, None, None, false).await {
+            Ok(sessions) => {
+                let list: Vec<_> = sessions
+                    .iter()
+                    .map(|s| {
+                        let mut obj = serde_json::json!({
+                            "session_id": s.session_id,
+                            "agent_id": s.agent_id,
+                            "channel": s.channel,
+                            "channel_id": s.channel_id,
+                            "created_at": s.created_at.to_rfc3339(),
+                            "last_activity": s.last_activity.to_rfc3339(),
+                            "is_active": s.is_active,
+                            "message_count": s.message_count,
+                        });
+                        if let Some(name) = &s.name {
+                            obj["name"] = serde_json::Value::String(name.clone());
+                        }
+                        if let Some(bound) = &s.bound_agent_id {
+                            obj["bound_agent_id"] = serde_json::Value::String(bound.clone());
+                        }
+                        obj
+                    })
+                    .collect();
+
+                Ok(ToolExecutionResult {
+                    success: true,
+                    output: format!("Found {} session(s)", list.len()),
+                    error: None,
+                    data: Some(serde_json::json!({ "sessions": list })),
+                    execution_time: start.elapsed(),
                 })
-            })
-            .collect();
-
-        Ok(ToolExecutionResult {
-            success: true,
-            output: format!("Found {} active session(s)", sessions.len()),
-            error: None,
-            data: Some(serde_json::json!({ "sessions": sessions })),
-            execution_time: start.elapsed(),
-        })
+            }
+            Err(e) => Ok(ToolExecutionResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Failed to list sessions: {}", e)),
+                data: None,
+                execution_time: start.elapsed(),
+            }),
+        }
     }
 }
 
 // ── sessions_history ─────────────────────────────────────────────────────────
 
-/// Get thread/history info for a session.
+/// Get chat message history for a session from persistent storage.
 pub struct SessionsHistoryTool {
-    acp: Arc<AcpControlPlane>,
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl SessionsHistoryTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
-        Self { acp }
+    pub fn new(store: Option<Arc<crate::agent::session_store::SessionStore>>) -> Self {
+        Self { store }
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct SessionsHistoryArgs {
     session_id: String,
+    #[serde(default = "default_history_limit")]
+    limit: i64,
+}
+
+fn default_history_limit() -> i64 {
+    50
 }
 
 #[async_trait]
@@ -104,7 +142,7 @@ impl Tool for SessionsHistoryTool {
     }
 
     fn description(&self) -> &str {
-        "Get history and thread context for an ACP session. Returns subagent list and thread binding information."
+        "Get chat message history for a session. Returns user and assistant messages ordered oldest first."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -113,7 +151,12 @@ impl Tool for SessionsHistoryTool {
             "properties": {
                 "session_id": {
                     "type": "string",
-                    "description": "ACP session ID"
+                    "description": "Session ID"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of messages to return",
+                    "default": 50
                 }
             },
             "required": ["session_id"]
@@ -139,42 +182,63 @@ impl Tool for SessionsHistoryTool {
             }
         };
 
-        let session_id = AcpSessionId(args.session_id);
+        let store = match &self.store {
+            Some(s) => s,
+            None => {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Persistent session storage is not available".to_string()),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+        };
 
-        if self.acp.get_session_info(&session_id).await.is_none() {
-            return Ok(ToolExecutionResult {
+        match store.get_messages(&args.session_id, args.limit, None).await {
+            Ok(messages) => {
+                let history: Vec<_> = messages
+                    .iter()
+                    .map(|(id, role, content, reasoning, tool_calls, created_at, _transcript_id, _run_id)| {
+                        let mut msg = serde_json::json!({
+                            "id": id,
+                            "role": role,
+                            "content": content,
+                            "created_at": created_at.to_rfc3339(),
+                        });
+                        if let Some(r) = reasoning {
+                            msg["reasoning_content"] = serde_json::Value::String(r.clone());
+                        }
+                        if let Some(t) = tool_calls {
+                            msg["tool_calls_json"] = serde_json::Value::String(t.clone());
+                        }
+                        msg
+                    })
+                    .collect();
+
+                Ok(ToolExecutionResult {
+                    success: true,
+                    output: format!(
+                        "Session {} has {} message(s)",
+                        args.session_id,
+                        history.len()
+                    ),
+                    error: None,
+                    data: Some(serde_json::json!({
+                        "session_id": args.session_id,
+                        "messages": history,
+                    })),
+                    execution_time: start.elapsed(),
+                })
+            }
+            Err(e) => Ok(ToolExecutionResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Session {} not found", session_id)),
+                error: Some(format!("Failed to load session history: {}", e)),
                 data: None,
                 execution_time: start.elapsed(),
-            });
+            }),
         }
-
-        let subagents = self.acp.list_session_subagents(&session_id).await;
-
-        let history: Vec<_> = subagents
-            .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "subagent_id": s.id,
-                    "status": format!("{:?}", s.status),
-                    "mode": format!("{:?}", s.mode),
-                    "thread_id": s.thread_id,
-                })
-            })
-            .collect();
-
-        Ok(ToolExecutionResult {
-            success: true,
-            output: format!("Session {} has {} subagent(s)", session_id, history.len()),
-            error: None,
-            data: Some(serde_json::json!({
-                "session_id": session_id.to_string(),
-                "subagents": history,
-            })),
-            execution_time: start.elapsed(),
-        })
     }
 }
 
@@ -374,21 +438,20 @@ impl Tool for SessionsYieldTool {
 
 // ── session_status ───────────────────────────────────────────────────────────
 
-/// Get the status of a session or subagent.
+/// Get the status and metadata of a session from persistent storage.
 pub struct SessionStatusTool {
-    acp: Arc<AcpControlPlane>,
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl SessionStatusTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
-        Self { acp }
+    pub fn new(store: Option<Arc<crate::agent::session_store::SessionStore>>) -> Self {
+        Self { store }
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct SessionStatusArgs {
-    session_id: Option<String>,
-    subagent_id: Option<String>,
+    session_id: String,
 }
 
 #[async_trait]
@@ -398,7 +461,7 @@ impl Tool for SessionStatusTool {
     }
 
     fn description(&self) -> &str {
-        "Get the status of an ACP session or subagent. Provide either session_id or subagent_id."
+        "Get the status and metadata of a session from persistent storage."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -407,13 +470,10 @@ impl Tool for SessionStatusTool {
             "properties": {
                 "session_id": {
                     "type": "string",
-                    "description": "ACP session ID"
-                },
-                "subagent_id": {
-                    "type": "string",
-                    "description": "Subagent ID"
+                    "description": "Session ID"
                 }
-            }
+            },
+            "required": ["session_id"]
         })
     }
 
@@ -436,201 +496,65 @@ impl Tool for SessionStatusTool {
             }
         };
 
-        if let Some(subagent_id) = args.subagent_id {
-            match self.acp.get_subagent_status(&subagent_id).await {
-                Some(status) => Ok(ToolExecutionResult {
-                    success: true,
-                    output: format!("Subagent {} status: {:?}", subagent_id, status),
-                    error: None,
-                    data: Some(serde_json::json!({
-                        "subagent_id": subagent_id,
-                        "status": format!("{:?}", status),
-                    })),
-                    execution_time: start.elapsed(),
-                }),
-                None => Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Subagent {} not found", subagent_id)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                }),
-            }
-        } else if let Some(session_id) = args.session_id {
-            let session_id = AcpSessionId(session_id);
-            match self.acp.get_session_info(&session_id).await {
-                Some(info) => Ok(ToolExecutionResult {
-                    success: true,
-                    output: format!("Session {} has {} subagent(s)", info.id, info.subagent_count),
-                    error: None,
-                    data: Some(serde_json::json!({
-                        "session_id": info.id.to_string(),
-                        "parent_agent_id": info.parent_agent_id,
-                        "subagent_count": info.subagent_count,
-                        "created_at": info.created_at.to_rfc3339(),
-                    })),
-                    execution_time: start.elapsed(),
-                }),
-                None => Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Session {} not found", session_id)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                }),
-            }
-        } else {
-            Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some("Provide either session_id or subagent_id".to_string()),
-                data: None,
-                execution_time: start.elapsed(),
-            })
-        }
-    }
-}
-
-// ── subagents ────────────────────────────────────────────────────────────────
-
-/// Unified subagent management tool.
-pub struct SubagentsTool {
-    acp: Arc<AcpControlPlane>,
-}
-
-impl SubagentsTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
-        Self { acp }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-enum SubagentsAction {
-    List,
-    Status { subagent_id: String },
-    Shutdown { subagent_id: String },
-}
-
-#[async_trait]
-impl Tool for SubagentsTool {
-    fn name(&self) -> &str {
-        "subagents"
-    }
-
-    fn description(&self) -> &str {
-        "Manage subagents. List all subagents, check status, or shut down a specific subagent."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list", "status", "shutdown"],
-                    "description": "Action to perform"
-                },
-                "subagent_id": {
-                    "type": "string",
-                    "description": "Subagent ID (required for status and shutdown)"
-                }
-            },
-            "required": ["action"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: Value,
-        _context: &ToolContext,
-    ) -> crate::Result<ToolExecutionResult> {
-        let start = std::time::Instant::now();
-        let action: SubagentsAction = match serde_json::from_value(args) {
-            Ok(a) => a,
-            Err(e) => {
+        let store = match &self.store {
+            Some(s) => s,
+            None => {
                 return Ok(ToolExecutionResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!("Invalid arguments: {}", e)),
+                    error: Some("Persistent session storage is not available".to_string()),
                     data: None,
                     execution_time: start.elapsed(),
                 });
             }
         };
 
-        match action {
-            SubagentsAction::List => {
-                let subagents = self.acp.list_subagents().await;
-                let list: Vec<_> = subagents
-                    .iter()
-                    .map(|s| {
-                        serde_json::json!({
-                            "id": s.id,
-                            "session_id": s.session_id.to_string(),
-                            "status": format!("{:?}", s.status),
-                            "mode": format!("{:?}", s.mode),
-                        })
-                    })
-                    .collect();
+        match store.load_session(&args.session_id).await {
+            Ok(Some(ps)) => {
+                let m = &ps.metadata;
+                let mut data = serde_json::json!({
+                    "session_id": m.session_id,
+                    "agent_id": m.agent_id,
+                    "channel": m.channel,
+                    "channel_id": m.channel_id,
+                    "created_at": m.created_at.to_rfc3339(),
+                    "last_activity": m.last_activity.to_rfc3339(),
+                    "is_active": m.is_active,
+                    "message_count": m.message_count,
+                    "state_json": ps.state_json,
+                });
+                if let Some(name) = &m.name {
+                    data["name"] = serde_json::Value::String(name.clone());
+                }
+                if let Some(bound) = &m.bound_agent_id {
+                    data["bound_agent_id"] = serde_json::Value::String(bound.clone());
+                }
 
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!("Found {} subagent(s)", list.len()),
+                    output: format!(
+                        "Session {}: active={}, messages={}",
+                        m.session_id, m.is_active, m.message_count
+                    ),
                     error: None,
-                    data: Some(serde_json::json!({ "subagents": list })),
+                    data: Some(data),
                     execution_time: start.elapsed(),
                 })
             }
-            SubagentsAction::Status { subagent_id } => {
-                match self.acp.get_subagent_status(&subagent_id).await {
-                    Some(status) => Ok(ToolExecutionResult {
-                        success: true,
-                        output: format!("Subagent {}: {:?}", subagent_id, status),
-                        error: None,
-                        data: Some(serde_json::json!({
-                            "subagent_id": subagent_id,
-                            "status": format!("{:?}", status),
-                        })),
-                        execution_time: start.elapsed(),
-                    }),
-                    None => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Subagent {} not found", subagent_id)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
-                }
-            }
-            SubagentsAction::Shutdown { subagent_id } => {
-                match self.acp.shutdown_subagent(&subagent_id).await {
-                    Ok(true) => Ok(ToolExecutionResult {
-                        success: true,
-                        output: format!("Subagent {} shut down", subagent_id),
-                        error: None,
-                        data: Some(serde_json::json!({
-                            "subagent_id": subagent_id,
-                            "action": "shutdown",
-                        })),
-                        execution_time: start.elapsed(),
-                    }),
-                    Ok(false) => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Subagent {} not found", subagent_id)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
-                    Err(e) => Ok(ToolExecutionResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Failed to shut down: {}", e)),
-                        data: None,
-                        execution_time: start.elapsed(),
-                    }),
-                }
-            }
+            Ok(None) => Ok(ToolExecutionResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Session {} not found", args.session_id)),
+                data: None,
+                execution_time: start.elapsed(),
+            }),
+            Err(e) => Ok(ToolExecutionResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Failed to load session: {}", e)),
+                data: None,
+                execution_time: start.elapsed(),
+            }),
         }
     }
 }
@@ -1082,42 +1006,7 @@ mod tests {
             "session_id": "sess-1"
         }))
         .unwrap();
-        assert_eq!(args.session_id, Some("sess-1".to_string()));
-        assert_eq!(args.subagent_id, None);
-
-        let args2: SessionStatusArgs = serde_json::from_value(serde_json::json!({
-            "subagent_id": "sub-1"
-        }))
-        .unwrap();
-        assert_eq!(args2.subagent_id, Some("sub-1".to_string()));
-        assert_eq!(args2.session_id, None);
-    }
-
-    #[test]
-    fn test_subagents_action_parsing() {
-        let action: SubagentsAction = serde_json::from_value(serde_json::json!({
-            "action": "list"
-        }))
-        .unwrap();
-        assert!(matches!(action, SubagentsAction::List));
-
-        let action: SubagentsAction = serde_json::from_value(serde_json::json!({
-            "action": "status",
-            "subagent_id": "sub-1"
-        }))
-        .unwrap();
-        assert!(
-            matches!(action, SubagentsAction::Status { subagent_id } if subagent_id == "sub-1")
-        );
-
-        let action: SubagentsAction = serde_json::from_value(serde_json::json!({
-            "action": "shutdown",
-            "subagent_id": "sub-1"
-        }))
-        .unwrap();
-        assert!(
-            matches!(action, SubagentsAction::Shutdown { subagent_id } if subagent_id == "sub-1")
-        );
+        assert_eq!(args.session_id, "sess-1");
     }
 
     #[test]

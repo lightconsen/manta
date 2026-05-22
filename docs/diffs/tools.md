@@ -181,11 +181,11 @@ Manta validates tools at registration time:
 | **Memory Search** | ✅ | ✅ `memory_search` | `src/tools/memory.rs` | ~847 |
 | **Memory CRUD** | ✅ | ✅ `memory_get` | `src/tools/memory.rs` | ~847 |
 | **Todo/Tasks** | ❌ | ✅ `todo` | `src/tools/todo_tool.rs` | ~546 |
-| **Subagent Spawn** | ✅ | ✅ `spawn_subagent` | `src/tools/acp_tool.rs` | ~436 |
-| **Subagent Session** | ✅ | ✅ `manage_acp_session` | `src/tools/acp_tool.rs` | ~436 |
+| **Subagent Spawn** | ✅ | ✅ `acp_spawn` | `src/tools/acp_tool.rs` | ~436 |
+| **Subagent Session** | ✅ | ✅ `acp_session` | `src/tools/acp_tool.rs` | ~436 |
 | **Delegate** | ✅ | ✅ `delegate` | `src/tools/delegate_tool.rs` | ~696 |
 | **Team Communicate** | ❌ | ✅ `team_communicate` | `src/tools/team_communicate_tool.rs` | ~324 |
-| **MCP Connect** | ✅ | ✅ `mcp_connect` | `src/tools/mcp.rs` | ~1252 |
+| **MCP Connect** | ✅ | ✅ `mcp_connection` | `src/tools/mcp.rs` | ~1252 |
 | **Canvas Tools** | ✅ `pi-tools` | ✅ via `CanvasManager` | `src/canvas/` | — |
 
 ### Key Differences

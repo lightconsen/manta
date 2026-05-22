@@ -252,6 +252,10 @@ impl Tool for FileWriteTool {
             .await
             .map_err(|e| crate::error::MantaError::Io(e))?;
 
+        file.flush()
+            .await
+            .map_err(|e| crate::error::MantaError::Io(e))?;
+
         info!("Wrote {} bytes to {}", content.len(), path.display());
 
         Ok(ToolExecutionResult::success(format!(

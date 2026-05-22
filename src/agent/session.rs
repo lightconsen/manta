@@ -372,6 +372,8 @@ pub struct SessionManager {
     sessions: HashMap<String, Arc<std::sync::Mutex<MultiAgentSession>>>,
     /// Session timeout
     timeout: std::time::Duration,
+    /// Optional persistent session store for unified session model
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl SessionManager {
@@ -380,10 +382,17 @@ impl SessionManager {
         Self {
             sessions: HashMap::new(),
             timeout: std::time::Duration::from_secs(3600), // 1 hour default
+            store: None,
         }
     }
 
-    /// Create a new session and spawn its background processing task
+    /// Attach a persistent session store for unified session operations.
+    pub fn with_store(&mut self, store: Arc<crate::agent::session_store::SessionStore>) {
+        self.store = Some(store);
+    }
+
+    /// Create a new session and spawn its background processing task.
+    /// Also persists to SessionStore when available (unified session model).
     pub fn create_session(&mut self, session_id: String) -> mpsc::Sender<SessionMessage> {
         let (session, message_rx) = MultiAgentSession::new(session_id.clone());
         let sender = session.sender();
@@ -396,7 +405,22 @@ impl SessionManager {
             Arc::clone(&session_arc),
         ));
 
-        self.sessions.insert(session_id, session_arc);
+        self.sessions.insert(session_id.clone(), session_arc);
+
+        // Auto-persist to SessionStore if available
+        if let Some(ref store) = self.store {
+            let store = store.clone();
+            let sid = session_id;
+            tokio::spawn(async move {
+                let metadata = crate::agent::session_store::SessionMetadata::new(
+                    &sid, "", "", "",
+                );
+                if let Err(e) = store.save_session(&sid, &metadata, "{}").await {
+                    tracing::warn!("Failed to auto-persist session {}: {}", sid, e);
+                }
+            });
+        }
+
         sender
     }
 
@@ -408,7 +432,7 @@ impl SessionManager {
         self.sessions.get(session_id).cloned()
     }
 
-    /// Terminate a session
+    /// Terminate a session. Also updates SessionStore when available.
     pub fn terminate_session(&mut self, session_id: &str) {
         if let Some(arc) = self.sessions.get(session_id) {
             if let Ok(mut session) = arc.lock() {
@@ -418,6 +442,18 @@ impl SessionManager {
             }
         }
         self.sessions.remove(session_id);
+
+        // Update SessionStore if available
+        if let Some(ref store) = self.store {
+            let store = store.clone();
+            let sid = session_id.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = store.set_session_active(&sid, false).await {
+                    tracing::warn!("Failed to update session {} status in store: {}", sid, e);
+                }
+            });
+        }
+
         info!("Terminated session '{}'", session_id);
     }
 
@@ -440,9 +476,20 @@ impl SessionManager {
         }
     }
 
-    /// Get all session IDs
-    pub fn list_sessions(&self) -> Vec<String> {
-        self.sessions.keys().cloned().collect()
+    /// List all sessions. Delegates to SessionStore when available (unified model),
+    /// otherwise falls back to in-memory sessions.
+    pub async fn list_sessions(&self) -> Vec<String> {
+        if let Some(ref store) = self.store {
+            match store.find_sessions(None, None, None, false).await {
+                Ok(sessions) => sessions.into_iter().map(|m| m.session_id).collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to list sessions from store: {}", e);
+                    self.sessions.keys().cloned().collect()
+                }
+            }
+        } else {
+            self.sessions.keys().cloned().collect()
+        }
     }
 
     /// Set session timeout
@@ -891,17 +938,17 @@ mod tests {
         assert!(debug.contains("GetStatus"));
     }
 
-    #[test]
-    fn test_session_manager_new() {
+    #[tokio::test]
+    async fn test_session_manager_new() {
         let manager = SessionManager::new();
-        assert!(manager.list_sessions().is_empty());
+        assert!(manager.list_sessions().await.is_empty());
     }
 
     #[tokio::test]
     async fn test_session_manager_create_and_get() {
         let mut manager = SessionManager::new();
         let _sender = manager.create_session("sess1".to_string());
-        assert_eq!(manager.list_sessions().len(), 1);
+        assert_eq!(manager.list_sessions().await.len(), 1);
 
         let session = manager.get_session("sess1");
         assert!(session.is_some());
@@ -912,7 +959,7 @@ mod tests {
         let mut manager = SessionManager::new();
         manager.create_session("sess1".to_string());
         manager.create_session("sess2".to_string());
-        let sessions = manager.list_sessions();
+        let sessions = manager.list_sessions().await;
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&"sess1".to_string()));
         assert!(sessions.contains(&"sess2".to_string()));
@@ -922,9 +969,9 @@ mod tests {
     async fn test_session_manager_terminate_session() {
         let mut manager = SessionManager::new();
         manager.create_session("sess1".to_string());
-        assert_eq!(manager.list_sessions().len(), 1);
+        assert_eq!(manager.list_sessions().await.len(), 1);
         manager.terminate_session("sess1");
-        assert!(manager.list_sessions().is_empty());
+        assert!(manager.list_sessions().await.is_empty());
         assert!(manager.get_session("sess1").is_none());
     }
 
@@ -936,9 +983,9 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        assert_eq!(manager.list_sessions().len(), 1);
+        assert_eq!(manager.list_sessions().await.len(), 1);
         manager.cleanup_timed_out();
-        assert!(manager.list_sessions().is_empty());
+        assert!(manager.list_sessions().await.is_empty());
     }
 
     #[test]

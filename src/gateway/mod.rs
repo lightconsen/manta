@@ -1107,6 +1107,67 @@ impl Gateway {
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
+        // Initialize storage adapter and shared SQLite pool early (needed for session_store → tool_registry)
+        let (storage, unified_vector_store, sqlite_pool): (
+            Arc<RwLock<dyn crate::adapters::Storage>>,
+            Option<Arc<dyn crate::memory::VectorStore>>,
+            Option<sqlx::SqlitePool>,
+        ) = match config.storage.storage_type.as_str() {
+            "sqlite" => {
+                let db_path = config
+                    .storage
+                    .database_url
+                    .as_ref()
+                    .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
+                    .unwrap_or_else(|| crate::dirs::manta_dir().join("data").join("manta.db"));
+                if let Some(parent) = db_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.ok();
+                }
+                if !db_path.exists() {
+                    tokio::fs::File::create(&db_path).await.ok();
+                }
+                let db_url = format!("sqlite:///{}", db_path.display());
+                info!("Connecting to SQLite storage at: {}", db_url);
+                let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
+                    crate::error::MantaError::Storage {
+                        context: "Failed to connect to SQLite".into(),
+                        details: e.to_string(),
+                    }
+                })?;
+                let sqlite_storage = Arc::new(crate::adapters::SqliteStorage::new(pool.clone()));
+                let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
+                let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
+                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::new(pool.clone())));
+                (storage, Some(vector_store), Some(pool))
+            }
+            "file" => {
+                let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
+                let storage = Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?));
+                (storage, None, None)
+            }
+            _ => {
+                let storage = Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()));
+                (storage, None, None)
+            }
+        };
+
+        // Create session_store early so it can be passed to tool registry
+        let session_store: Option<Arc<crate::agent::session_store::SessionStore>> =
+            if let Some(ref pool) = sqlite_pool {
+                match crate::agent::session_store::SessionStore::from_pool(pool.clone()).await {
+                    Ok(store) => {
+                        info!("SessionStore initialized for persistent chat history");
+                        Some(Arc::new(store))
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize SessionStore: {}. Chat history will not persist.", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
         // Create ACP control plane first (needed for tool registration)
         let acp = Arc::new(AcpControlPlane::new());
 
@@ -1118,8 +1179,13 @@ impl Gateway {
 
         // Create tool registry with built-in tools (including ACP tools if enabled)
         let tool_registry = Arc::new(
-            create_default_tool_registry(acp.clone(), mcp_manager.clone(), approval_queue.clone())
-                .await?,
+            create_default_tool_registry(
+                acp.clone(),
+                mcp_manager.clone(),
+                approval_queue.clone(),
+                session_store.clone(),
+            )
+            .await?,
         );
 
         // Initialize plugin manager
@@ -1208,64 +1274,6 @@ impl Gateway {
         };
         let multi_tier_rate_limiter =
             Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(multi_tier_config));
-
-        // Initialize storage adapter and shared SQLite pool (for SessionSearch)
-        // For unified storage (sqlite), we keep a separate Arc to use for VectorStore/MemoryStore
-        let (storage, unified_vector_store, sqlite_pool): (
-            Arc<RwLock<dyn crate::adapters::Storage>>,
-            Option<Arc<dyn crate::memory::VectorStore>>,
-            Option<sqlx::SqlitePool>,
-        ) = match config.storage.storage_type.as_str() {
-            "sqlite" => {
-                // Use absolute path for database to avoid working directory issues
-                let db_path = config
-                    .storage
-                    .database_url
-                    .as_ref()
-                    .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
-                    .unwrap_or_else(|| crate::dirs::manta_dir().join("data").join("manta.db"));
-
-                // Ensure parent directory exists
-                if let Some(parent) = db_path.parent() {
-                    tokio::fs::create_dir_all(parent).await.ok();
-                }
-
-                // Create empty database file if it doesn't exist
-                if !db_path.exists() {
-                    tokio::fs::File::create(&db_path).await.ok();
-                }
-
-                // SQLite URL format: sqlite:///absolute/path/to/db for absolute paths
-                let db_url = format!("sqlite:///{}", db_path.display());
-                info!("Connecting to SQLite storage at: {}", db_url);
-
-                // Create shared pool for both storage and session search
-                let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
-                        context: "Failed to connect to SQLite".into(),
-                        details: e.to_string(),
-                    }
-                })?;
-
-                let sqlite_storage = Arc::new(crate::adapters::SqliteStorage::new(pool.clone()));
-                // Clone the Arc for use as VectorStore trait object
-                let vector_store: Arc<dyn crate::memory::VectorStore> = sqlite_storage.clone();
-                // Wrap in RwLock for the generic storage interface
-                let storage: Arc<RwLock<dyn crate::adapters::Storage>> =
-                    Arc::new(RwLock::new(crate::adapters::SqliteStorage::new(pool.clone())));
-                (storage, Some(vector_store), Some(pool))
-            }
-            "file" => {
-                let base_path = config.storage.base_path.as_deref().unwrap_or("./data");
-                let storage = Arc::new(RwLock::new(crate::adapters::FileStorage::new(base_path)?));
-                (storage, None, None)
-            }
-            _ => {
-                // Default to memory storage
-                let storage = Arc::new(RwLock::new(crate::adapters::InMemoryStorage::new()));
-                (storage, None, None)
-            }
-        };
 
         // Create inbound / outbound pipelines (skeleton alignment)
         let agent_router = if let Some(pool) = sqlite_pool.clone() {
@@ -1379,20 +1387,7 @@ impl Gateway {
             skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
             session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
-            session_store: if let Some(ref pool) = sqlite_pool {
-                match crate::agent::session_store::SessionStore::from_pool(pool.clone()).await {
-                    Ok(store) => {
-                        info!("SessionStore initialized for persistent chat history");
-                        Some(Arc::new(store))
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize SessionStore: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            },
+            session_store,
             mcp_manager: mcp_manager.clone(),
             runtime_settings: Arc::new(RwLock::new(HashMap::new())),
             approval_queue,
@@ -1437,6 +1432,12 @@ impl Gateway {
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
         });
+
+        // Attach SessionStore to SessionManager for unified session model
+        if let Some(ref store) = state.session_store {
+            let mut mgr = state.session_manager.write().await;
+            mgr.with_store(store.clone());
+        }
 
         // Initialize audit table (SQLite-backed persistent audit log)
         if let Err(e) = state.audit_log.init().await {
@@ -2291,6 +2292,9 @@ async fn spawn_agent_inner(
                                 .unwrap_or_else(|| session_id.clone())
                         };
 
+                        // Generate run_id for this agent execution (OpenClaw-style run tracking)
+                        let run_id = uuid::Uuid::new_v4().to_string();
+
                         // Persist assistant response to session history
                         if let Some(ref store) = state.session_store {
                             if let Err(e) = store
@@ -2301,6 +2305,8 @@ async fn spawn_agent_inner(
                                     None,
                                     None,
                                     None,
+                                    Some(&session_id), // transcript_id defaults to session_id
+                                    Some(&run_id),
                                 )
                                 .await
                             {
@@ -3401,6 +3407,9 @@ fn extract_session_name(content: &str) -> String {
                     );
                 }
 
+                // Generate run_id for this agent execution (OpenClaw-style run tracking)
+                let run_id = uuid::Uuid::new_v4().to_string();
+
                 // Save assistant response to persistent session history
                 if let Some(ref store) = state.session_store {
                     let reasoning = outgoing.reasoning_content.as_deref();
@@ -3416,6 +3425,8 @@ fn extract_session_name(content: &str) -> String {
                             None,
                             reasoning,
                             tool_calls_json.as_deref(),
+                            Some(session_id), // transcript_id defaults to session_id
+                            Some(&run_id),
                         )
                         .await
                     {
@@ -3921,6 +3932,7 @@ async fn create_default_tool_registry(
     acp: Arc<AcpControlPlane>,
     mcp_manager: Arc<McpManager>,
     approval_queue: Arc<ApprovalQueue>,
+    session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
 ) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
@@ -3965,16 +3977,15 @@ async fn create_default_tool_registry(
     registry.register(Box::new(BrowserTool::new()));
 
     // Register ACP tools for subagent spawning
-    registry.register(Box::new(AcpSpawnTool::new(acp.clone())));
+    registry.register(Box::new(AcpSpawnTool::new(acp.clone(), session_store.clone())));
     registry.register(Box::new(AcpSessionTool::new(acp.clone())));
 
     // Register OpenClaw-compatible session tools
-    registry.register(Box::new(SessionsListTool::new(acp.clone())));
-    registry.register(Box::new(SessionsHistoryTool::new(acp.clone())));
+    registry.register(Box::new(SessionsListTool::new(session_store.clone())));
+    registry.register(Box::new(SessionsHistoryTool::new(session_store.clone())));
     registry.register(Box::new(SessionsSendTool::new(acp.clone())));
     registry.register(Box::new(SessionsYieldTool::new(acp.clone())));
-    registry.register(Box::new(SessionStatusTool::new(acp.clone())));
-    registry.register(Box::new(SubagentsTool::new(acp.clone())));
+    registry.register(Box::new(SessionStatusTool::new(session_store.clone())));
     registry.register(Box::new(ApplyPatchTool::new()));
 
     // Register memory tool for persistent memory storage
@@ -4045,8 +4056,8 @@ async fn create_default_tool_registry(
     registry.mark_privileged("file_write");
     registry.mark_privileged("file_edit");
     registry.mark_privileged("delegate");
-    registry.mark_privileged("spawn_subagent");
-    registry.mark_privileged("manage_acp_session");
+    registry.mark_privileged("acp_spawn");
+    registry.mark_privileged("acp_session");
     registry.mark_privileged("memory");
     registry.mark_privileged("sessions_send");
     registry.mark_privileged("sessions_yield");
@@ -6158,7 +6169,7 @@ fn default_acp_mode() -> String {
     "run".to_string()
 }
 
-async fn spawn_subagent_handler(
+async fn acp_spawn_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SpawnSubagentRequest>,
 ) -> impl IntoResponse {

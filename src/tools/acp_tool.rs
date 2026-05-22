@@ -16,16 +16,20 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 /// Tool for spawning subagents via ACP
 pub struct AcpSpawnTool {
     acp: Arc<AcpControlPlane>,
+    session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl AcpSpawnTool {
     /// Create a new ACP spawn tool
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
-        Self { acp }
+    pub fn new(
+        acp: Arc<AcpControlPlane>,
+        session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    ) -> Self {
+        Self { acp, session_store }
     }
 }
 
-/// Arguments for the spawn_subagent tool
+/// Arguments for the acp_spawn tool
 #[derive(Debug, Deserialize)]
 struct SpawnSubagentArgs {
     /// The task/prompt for the subagent
@@ -42,6 +46,9 @@ struct SpawnSubagentArgs {
     /// Maximum execution time in seconds
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Session ID to bind this subagent to. Future messages to this session will be routed to the subagent.
+    #[serde(default)]
+    pub bind_to_session: Option<String>,
 }
 
 fn default_spawn_mode() -> String {
@@ -55,7 +62,7 @@ fn default_thread_binding() -> String {
 #[async_trait]
 impl Tool for AcpSpawnTool {
     fn name(&self) -> &str {
-        "spawn_subagent"
+        "acp_spawn"
     }
 
     fn description(&self) -> &str {
@@ -91,6 +98,10 @@ impl Tool for AcpSpawnTool {
                     "description": "Maximum execution time in seconds (only for run mode)",
                     "minimum": 1,
                     "maximum": 3600
+                },
+                "bind_to_session": {
+                    "type": "string",
+                    "description": "Session ID to bind this subagent to. Future messages to this session will be routed to the subagent."
                 }
             },
             "required": ["task"]
@@ -162,6 +173,24 @@ impl Tool for AcpSpawnTool {
         {
             Ok(handle) => {
                 let subagent_id = handle.id.clone();
+
+                // Bind subagent to session if requested (unified session model)
+                if let Some(ref target_session) = args.bind_to_session {
+                    if let Some(ref store) = self.session_store {
+                        if let Ok(Some(mut ps)) = store.load_session(target_session).await {
+                            ps.metadata.bound_agent_id = Some(subagent_id.clone());
+                            if let Err(e) = store.save_session(target_session, &ps.metadata, &ps.state_json).await {
+                                warn!("Failed to bind subagent {} to session {}: {}", subagent_id, target_session, e);
+                            } else {
+                                info!("Bound subagent {} to session {}", subagent_id, target_session);
+                            }
+                        } else {
+                            warn!("Cannot bind subagent: session {} not found", target_session);
+                        }
+                    } else {
+                        warn!("Cannot bind subagent: session store not available");
+                    }
+                }
 
                 // Create message for the subagent
                 let message = IncomingMessage::new(
@@ -254,6 +283,13 @@ enum SessionAction {
     Get { session_id: String },
     /// Terminate a session
     Terminate { session_id: String },
+    /// Kill a subagent immediately
+    Kill { subagent_id: String },
+    /// Steer a subagent — cancel current execution and send a new message
+    Steer {
+        subagent_id: String,
+        message: String,
+    },
     /// Send message to a session subagent
     Message {
         session_id: String,
@@ -265,11 +301,11 @@ enum SessionAction {
 #[async_trait]
 impl Tool for AcpSessionTool {
     fn name(&self) -> &str {
-        "manage_acp_session"
+        "acp_session"
     }
 
     fn description(&self) -> &str {
-        "Manage ACP (Agent Control Plane) sessions. List active sessions, get session info, terminate sessions, or send messages to active subagents."
+        "Manage ACP (Agent Control Plane) sessions. List active sessions, get session info, terminate sessions, kill subagents, steer running subagents, or send messages to active subagents."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -278,7 +314,7 @@ impl Tool for AcpSessionTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "get", "terminate", "message"],
+                    "enum": ["list", "get", "terminate", "kill", "steer", "message"],
                     "description": "Action to perform"
                 },
                 "session_id": {
@@ -287,11 +323,11 @@ impl Tool for AcpSessionTool {
                 },
                 "subagent_id": {
                     "type": "string",
-                    "description": "Subagent ID (required for message action)"
+                    "description": "Subagent ID (required for kill, steer, message action)"
                 },
                 "message": {
                     "type": "string",
-                    "description": "Message to send (required for message action)"
+                    "description": "Message to send (required for steer, message action)"
                 }
             },
             "required": ["action"]
@@ -394,6 +430,56 @@ impl Tool for AcpSessionTool {
                         success: false,
                         output: String::new(),
                         error: Some(format!("Failed to terminate session: {}", e)),
+                        data: None,
+                        execution_time: start.elapsed(),
+                    }),
+                }
+            }
+            SessionAction::Kill { subagent_id } => {
+                match self.acp.kill_subagent(&subagent_id).await {
+                    Ok(true) => Ok(ToolExecutionResult {
+                        success: true,
+                        output: format!("Killed subagent {}", subagent_id),
+                        error: None,
+                        data: Some(serde_json::json!({
+                            "subagent_id": subagent_id,
+                            "action": "kill",
+                        })),
+                        execution_time: start.elapsed(),
+                    }),
+                    Ok(false) => Ok(ToolExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("Subagent {} not found", subagent_id)),
+                        data: None,
+                        execution_time: start.elapsed(),
+                    }),
+                    Err(e) => Ok(ToolExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("Failed to kill subagent: {}", e)),
+                        data: None,
+                        execution_time: start.elapsed(),
+                    }),
+                }
+            }
+            SessionAction::Steer { subagent_id, message } => {
+                match self.acp.steer_subagent(&subagent_id, message).await {
+                    Ok(response) => Ok(ToolExecutionResult {
+                        success: true,
+                        output: response.clone(),
+                        error: None,
+                        data: Some(serde_json::json!({
+                            "subagent_id": subagent_id,
+                            "response": response,
+                            "action": "steer",
+                        })),
+                        execution_time: start.elapsed(),
+                    }),
+                    Err(e) => Ok(ToolExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("Failed to steer subagent: {}", e)),
                         data: None,
                         execution_time: start.elapsed(),
                     }),
@@ -508,8 +594,8 @@ mod tests {
     #[tokio::test]
     async fn test_acp_spawn_tool_name_and_schema() {
         let acp = Arc::new(AcpControlPlane::new());
-        let tool = AcpSpawnTool::new(acp);
-        assert_eq!(tool.name(), "spawn_subagent");
+        let tool = AcpSpawnTool::new(acp, None);
+        assert_eq!(tool.name(), "acp_spawn");
         let schema = tool.parameters_schema();
         assert!(schema.get("properties").is_some());
         let req = schema.get("required").unwrap().as_array().unwrap();
@@ -520,7 +606,7 @@ mod tests {
     async fn test_acp_session_tool_name_and_schema() {
         let acp = Arc::new(AcpControlPlane::new());
         let tool = AcpSessionTool::new(acp);
-        assert_eq!(tool.name(), "manage_acp_session");
+        assert_eq!(tool.name(), "acp_session");
         let schema = tool.parameters_schema();
         assert!(schema.get("properties").is_some());
     }
@@ -567,7 +653,7 @@ mod tests {
     #[tokio::test]
     async fn test_acp_spawn_tool_no_agent_builder() {
         let acp = Arc::new(AcpControlPlane::new());
-        let tool = AcpSpawnTool::new(acp);
+        let tool = AcpSpawnTool::new(acp, None);
         let ctx = ToolContext::new("user", "conv");
         let result = tool
             .execute(
@@ -588,7 +674,7 @@ mod tests {
     #[tokio::test]
     async fn test_acp_spawn_tool_invalid_args() {
         let acp = Arc::new(AcpControlPlane::new());
-        let tool = AcpSpawnTool::new(acp);
+        let tool = AcpSpawnTool::new(acp, None);
         let ctx = ToolContext::new("user", "conv");
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         assert!(!result.success);

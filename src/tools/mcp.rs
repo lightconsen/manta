@@ -982,7 +982,7 @@ impl Default for McpConnectionTool {
 #[async_trait]
 impl Tool for McpConnectionTool {
     fn name(&self) -> &str {
-        "mcp"
+        "mcp_connection"
     }
 
     fn description(&self) -> &str {

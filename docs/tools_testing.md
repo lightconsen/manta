@@ -179,7 +179,7 @@ The following tools require `SkillTrust::Trusted` to execute:
 
 ```rust
 shell, execute_code, file_write, file_edit, delegate,
-spawn_subagent, manage_acp_session, memory,
+acp_spawn, acp_session, memory,
 sessions_send, sessions_yield, subagents, apply_patch,
 message, process, image_generate
 ```
