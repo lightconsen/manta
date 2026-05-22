@@ -168,6 +168,10 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             .with_args("list|kill|log|info|send|steer|spawn"),
         CommandDef::new("acp", "acp", "Manage ACP sessions", CommandCategory::Agents)
             .with_args("spawn|cancel|steer|close|sessions|status|..."),
+        CommandDef::new("skill", "skill", "List or show skill details", CommandCategory::Agents)
+            .with_args("[name]"),
+        CommandDef::new("session", "session", "Manage session timeouts", CommandCategory::Session)
+            .with_args("idle|max-age <duration|off>"),
         CommandDef::new("kill", "kill", "Abort sub-agent runs", CommandCategory::Agents)
             .with_args("<id|#|all>"),
         CommandDef::new("steer", "steer", "Send steering to a sub-agent", CommandCategory::Agents)

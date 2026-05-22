@@ -672,35 +672,37 @@ async fn handle_chat_send(
             });
 
     // Route through inbound pipeline
-    match state.inbound_pipeline.process(incoming).await {
-        Some(routed) => {
-            // Subscribe to this session automatically
-            let mut cg = conn.write().await;
-            if !cg.subscriptions.contains(&session_id) {
-                cg.subscriptions.push(session_id.clone());
-            }
-            drop(cg);
+    let routed = state.inbound_pipeline.process(incoming).await;
 
-            // Notify clients if this is a newly derived session
-            if is_new_session {
-                let _ = state
-                    .event_tx
-                    .send(crate::gateway::GatewayEvent::SessionCreated {
-                        session_id: session_id.clone(),
-                        agent_id: routed.agent_id.clone(),
-                        user_id: user_id.clone(),
-                    });
-            }
-
-            WsResponse::ok(
-                &req.id,
-                serde_json::json!({
-                    "status": "accepted",
-                    "session_id": session_id,
-                    "agent_id": routed.agent_id,
-                }),
-            )
+    if let Some(ref r) = routed {
+        // Subscribe to this session automatically
+        let mut cg = conn.write().await;
+        if !cg.subscriptions.contains(&session_id) {
+            cg.subscriptions.push(session_id.clone());
         }
+        drop(cg);
+    }
+
+    // Notify clients if this is a newly derived session
+    if is_new_session {
+        let _ = state
+            .event_tx
+            .send(crate::gateway::GatewayEvent::SessionCreated {
+                session_id: session_id.clone(),
+                agent_id: routed.as_ref().map(|r| r.agent_id.clone()).unwrap_or_default(),
+                user_id: user_id.clone(),
+            });
+    }
+
+    match routed {
+        Some(routed) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "status": "accepted",
+                "session_id": session_id,
+                "agent_id": routed.agent_id,
+            }),
+        ),
         None => WsResponse::ok(
             &req.id,
             serde_json::json!({
@@ -871,6 +873,14 @@ async fn handle_sessions_create(
         mgr.create_session(session_id.clone());
     }
 
+    // Also persist to session_store so sessions.list can find it
+    if let Some(ref store) = state.session_store {
+        let metadata = crate::agent::session_store::SessionMetadata::new(
+            &session_id, "", "", "",
+        );
+        let _ = store.save_session(&session_id, &metadata, "{}").await;
+    }
+
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -898,6 +908,11 @@ async fn handle_sessions_delete(
     {
         let mut mgr = state.session_manager.write().await;
         mgr.terminate_session(&params.session_id);
+    }
+
+    // Also delete from session_store for consistency
+    if let Some(ref store) = state.session_store {
+        let _ = store.delete_session(&params.session_id).await;
     }
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "deleted" }))

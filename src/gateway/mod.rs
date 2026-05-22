@@ -2291,6 +2291,23 @@ async fn spawn_agent_inner(
                                 .unwrap_or_else(|| session_id.clone())
                         };
 
+                        // Persist assistant response to session history
+                        if let Some(ref store) = state.session_store {
+                            if let Err(e) = store
+                                .append_message(
+                                    &session_id,
+                                    "assistant",
+                                    &response_content,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .await
+                            {
+                                warn!("Failed to save assistant message to session history: {}", e);
+                            }
+                        }
+
                         // Send response event
                         info!("DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})", agent_id, session_id, conversation_id);
                         let _ = state.event_tx.send(GatewayEvent::AgentResponse {
