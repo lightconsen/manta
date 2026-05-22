@@ -423,10 +423,8 @@ fn handle_help(req: &WsRequest) -> WsResponse {
             } else {
                 format!(" `{}`", args)
             };
-            lines.push(format!(
-                "- `/{}{}` — {}{}",
-                c.name, args_display, c.description, admin_mark
-            ));
+            lines
+                .push(format!("- `/{}{}` — {}{}", c.name, args_display, c.description, admin_mark));
         }
         lines.push("".to_string());
     }

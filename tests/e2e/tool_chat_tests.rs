@@ -37,9 +37,7 @@ async fn tool_shell_invoked_via_chat() {
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
-                                        == Some("shell")
+                                    if p.get("tool_name").and_then(|v| v.as_str()) == Some("shell")
                                     {
                                         shell_called = true;
                                     }
@@ -63,10 +61,7 @@ async fn tool_shell_invoked_via_chat() {
     if shell_called {
         tracing::info!("Shell tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -133,10 +128,7 @@ async fn tool_file_invoked_via_chat() {
     if file_called {
         tracing::info!("File tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -156,10 +148,7 @@ async fn tool_todo_invoked_via_chat() {
     client.subscribe(vec![sid.clone()]).await;
 
     client
-        .send_chat(
-            &sid,
-            "Use the todo tool to add a task 'e2e-todo-item' and then list all todos.",
-        )
+        .send_chat(&sid, "Use the todo tool to add a task 'e2e-todo-item' and then list all todos.")
         .await;
 
     let result = timeout(Duration::from_secs(60), async {
@@ -176,10 +165,7 @@ async fn tool_todo_invoked_via_chat() {
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
-                                        == Some("todo")
-                                    {
+                                    if p.get("tool_name").and_then(|v| v.as_str()) == Some("todo") {
                                         todo_called = true;
                                     }
                                 }
@@ -202,10 +188,7 @@ async fn tool_todo_invoked_via_chat() {
     if todo_called {
         tracing::info!("Todo tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -245,8 +228,7 @@ async fn tool_code_exec_invoked_via_chat() {
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
+                                    if p.get("tool_name").and_then(|v| v.as_str())
                                         == Some("execute_code")
                                     {
                                         code_called = true;
@@ -271,10 +253,7 @@ async fn tool_code_exec_invoked_via_chat() {
     if code_called {
         tracing::info!("Execute_code tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -314,8 +293,7 @@ async fn tool_web_fetch_invoked_via_chat() {
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
+                                    if p.get("tool_name").and_then(|v| v.as_str())
                                         == Some("web_fetch")
                                     {
                                         fetch_called = true;
@@ -340,10 +318,7 @@ async fn tool_web_fetch_invoked_via_chat() {
     if fetch_called {
         tracing::info!("Web_fetch tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -383,9 +358,7 @@ async fn tool_memory_invoked_via_chat() {
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
-                                        == Some("memory")
+                                    if p.get("tool_name").and_then(|v| v.as_str()) == Some("memory")
                                     {
                                         memory_called = true;
                                     }
@@ -409,10 +382,7 @@ async fn tool_memory_invoked_via_chat() {
     if memory_called {
         tracing::info!("Memory tool was invoked via chat");
     }
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -456,11 +426,9 @@ async fn tool_process_invoked_via_chat() {
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
-    let _results = run_tool_chat_test(
-        40087,
-        "Use the process tool to list running processes.",
-        "process",
-    ).await;
+    let _results =
+        run_tool_chat_test(40087, "Use the process tool to list running processes.", "process")
+            .await;
 }
 
 #[tokio::test]
@@ -472,11 +440,8 @@ async fn tool_nodes_invoked_via_chat() {
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
-    let _results = run_tool_chat_test(
-        40088,
-        "Use the nodes tool to list available nodes.",
-        "nodes",
-    ).await;
+    let _results =
+        run_tool_chat_test(40088, "Use the nodes tool to list available nodes.", "nodes").await;
 }
 
 #[tokio::test]
@@ -492,7 +457,8 @@ async fn tool_web_search_invoked_via_chat() {
         40089,
         "Use the web_search tool to search for Rust programming language.",
         "web_search",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -540,7 +506,8 @@ async fn tool_pdf_invoked_via_chat() {
         40092,
         "Use the pdf tool to generate a PDF with content 'Hello PDF' and save it.",
         "pdf",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -556,7 +523,8 @@ async fn tool_image_invoked_via_chat() {
         40093,
         "Use the image tool to get info about the file /tmp/manta-test.png.",
         "image",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -568,11 +536,9 @@ async fn tool_tts_invoked_via_chat() {
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
-    let _results = run_tool_chat_test(
-        40094,
-        "Use the tts tool to convert the text 'Hello' to speech.",
-        "tts",
-    ).await;
+    let _results =
+        run_tool_chat_test(40094, "Use the tts tool to convert the text 'Hello' to speech.", "tts")
+            .await;
 }
 
 #[tokio::test]
@@ -588,7 +554,8 @@ async fn tool_memory_search_invoked_via_chat() {
         40095,
         "Use the memory_search tool to search for 'Manta'.",
         "memory_search",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -604,7 +571,8 @@ async fn tool_memory_get_invoked_via_chat() {
         40096,
         "Use the memory_get tool to list all stored memories.",
         "memory_get",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -616,11 +584,8 @@ async fn tool_cron_invoked_via_chat() {
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
-    let _results = run_tool_chat_test(
-        40097,
-        "Use the cron tool to list all cron jobs.",
-        "cron",
-    ).await;
+    let _results =
+        run_tool_chat_test(40097, "Use the cron tool to list all cron jobs.", "cron").await;
 }
 
 #[tokio::test]
@@ -652,7 +617,8 @@ async fn tool_acp_spawn_invoked_via_chat() {
         40099,
         "Call the acp_spawn tool with task='say hello' and mode='run' to spawn a subagent.",
         "acp_spawn",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -668,7 +634,8 @@ async fn tool_acp_session_invoked_via_chat() {
         40100,
         "Call the acp_session tool with action=list to list active ACP sessions.",
         "acp_session",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -700,7 +667,8 @@ async fn tool_sessions_list_invoked_via_chat() {
         40101,
         "Call the sessions_list tool to list all active sessions.",
         "sessions_list",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -716,7 +684,8 @@ async fn tool_sessions_history_invoked_via_chat() {
         40102,
         "Call the sessions_history tool with session_id='test-session' to get chat history.",
         "sessions_history",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -748,7 +717,8 @@ async fn tool_sessions_yield_invoked_via_chat() {
         40104,
         "Call the sessions_yield tool with subagent_id='test-subagent' to yield a subagent.",
         "sessions_yield",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -796,7 +766,8 @@ async fn tool_delegate_invoked_via_chat() {
         40108,
         "Call the delegate tool with action=list to list delegated child agents.",
         "delegate",
-    ).await;
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -812,5 +783,6 @@ async fn tool_mcp_connection_invoked_via_chat() {
         40109,
         "Use the mcp_connection tool to list all connected MCP servers.",
         "mcp_connection",
-    ).await;
+    )
+    .await;
 }

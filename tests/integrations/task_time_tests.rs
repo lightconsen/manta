@@ -55,7 +55,9 @@ async fn cron_tool_list_without_scheduler() {
     assert!(!r.success, "Expected success=false when scheduler not set");
     let err_msg = r.error.expect("Expected error message");
     assert!(
-        err_msg.contains("scheduler") || err_msg.contains("not initialized") || err_msg.contains("Cron scheduler not available"),
+        err_msg.contains("scheduler")
+            || err_msg.contains("not initialized")
+            || err_msg.contains("Cron scheduler not available"),
         "Expected scheduler-related error, got: {}",
         err_msg
     );
@@ -79,15 +81,15 @@ async fn todo_updates_status() {
         .to_string();
 
     let update_result = tool
-        .execute(
-            json!({"action": "update", "task_id": task_id, "status": "completed"}),
-            &ctx,
-        )
+        .execute(json!({"action": "update", "task_id": task_id, "status": "completed"}), &ctx)
         .await
         .expect("update failed");
     assert!(update_result.success, "Update should succeed");
 
-    let list_result = tool.execute(json!({"action": "list"}), &ctx).await.expect("list failed");
+    let list_result = tool
+        .execute(json!({"action": "list"}), &ctx)
+        .await
+        .expect("list failed");
     let tasks = list_result
         .data
         .as_ref()
@@ -126,19 +128,36 @@ async fn todo_clears_completed() {
         .execute(json!({"action": "create", "content": "task 1"}), &ctx)
         .await
         .unwrap();
-    let id1 = r1.data.as_ref().unwrap().get("task_id").unwrap().as_str().unwrap();
+    let id1 = r1
+        .data
+        .as_ref()
+        .unwrap()
+        .get("task_id")
+        .unwrap()
+        .as_str()
+        .unwrap();
 
     let r2 = tool
         .execute(json!({"action": "create", "content": "task 2"}), &ctx)
         .await
         .unwrap();
-    let _id2 = r2.data.as_ref().unwrap().get("task_id").unwrap().as_str().unwrap();
+    let _id2 = r2
+        .data
+        .as_ref()
+        .unwrap()
+        .get("task_id")
+        .unwrap()
+        .as_str()
+        .unwrap();
 
     let _ = tool
         .execute(json!({"action": "update", "task_id": id1, "status": "completed"}), &ctx)
         .await;
 
-    let clear_result = tool.execute(json!({"action": "clear_completed"}), &ctx).await.unwrap();
+    let clear_result = tool
+        .execute(json!({"action": "clear_completed"}), &ctx)
+        .await
+        .unwrap();
     assert!(clear_result.success);
 
     let list_result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();

@@ -4,10 +4,7 @@ use super::*;
 async fn web_fetch_tool_fetches_example_com() {
     let tool = WebFetchTool::new();
     let result = tool
-        .execute(
-            json!({"url": "https://example.com"}),
-            &test_context(),
-        )
+        .execute(json!({"url": "https://example.com"}), &test_context())
         .await;
 
     match result {
@@ -34,18 +31,12 @@ async fn web_fetch_tool_fetches_example_com() {
 async fn web_search_tool_duckduckgo() {
     let tool = WebSearchTool::new();
     let result = tool
-        .execute(
-            json!({"query": "Rust programming language", "limit": 3}),
-            &test_context(),
-        )
+        .execute(json!({"query": "Rust programming language", "limit": 3}), &test_context())
         .await;
 
     match result {
         Ok(output) => {
-            assert!(
-                !output.output.is_empty(),
-                "Expected search results, got empty output"
-            );
+            assert!(!output.output.is_empty(), "Expected search results, got empty output");
             println!("WebSearch results: {}", output.output);
         }
         Err(e) => {
@@ -66,7 +57,9 @@ async fn web_fetch_invalid_url_fails() {
 async fn web_fetch_unsupported_scheme_fails() {
     let tool = WebFetchTool::new();
     let ctx = test_context();
-    let result = tool.execute(json!({"url": "ftp://example.com"}), &ctx).await;
+    let result = tool
+        .execute(json!({"url": "ftp://example.com"}), &ctx)
+        .await;
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for unsupported scheme");
@@ -105,7 +98,9 @@ async fn web_search_query_too_long_fails() {
 async fn web_search_returns_structured_results() {
     let tool = WebSearchTool::new();
     let ctx = test_context();
-    let result = tool.execute(json!({"query": "Rust programming language", "limit": 3}), &ctx).await;
+    let result = tool
+        .execute(json!({"query": "Rust programming language", "limit": 3}), &ctx)
+        .await;
 
     match result {
         Ok(output) => {
@@ -119,7 +114,10 @@ async fn web_search_returns_structured_results() {
                     .unwrap_or_default();
                 assert!(!results.is_empty(), "Expected structured results array");
             } else {
-                println!("Web search returned error (network may be unavailable): {:?}", output.error);
+                println!(
+                    "Web search returned error (network may be unavailable): {:?}",
+                    output.error
+                );
             }
         }
         Err(e) => {

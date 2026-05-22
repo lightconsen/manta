@@ -927,10 +927,7 @@ pub enum GatewayEvent {
         user_id: String,
     },
     /// Session display name was auto-generated or updated
-    SessionRenamed {
-        session_id: String,
-        name: String,
-    },
+    SessionRenamed { session_id: String, name: String },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
         /// "agent" or "channel"
@@ -1160,7 +1157,10 @@ impl Gateway {
                         Some(Arc::new(store))
                     }
                     Err(e) => {
-                        warn!("Failed to initialize SessionStore: {}. Chat history will not persist.", e);
+                        warn!(
+                            "Failed to initialize SessionStore: {}. Chat history will not persist.",
+                            e
+                        );
                         None
                     }
                 }
@@ -1169,7 +1169,11 @@ impl Gateway {
             };
 
         // Create ACP control plane first (needed for tool registration)
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = if let Some(ref store) = session_store {
+            Arc::new(AcpControlPlane::new().with_store(store.clone()))
+        } else {
+            Arc::new(AcpControlPlane::new())
+        };
 
         // Create the shared MCP manager
         let mcp_manager = Arc::new(McpManager::new());
@@ -3153,35 +3157,35 @@ impl Gateway {
             .await;
     }
 
-/// Extract a concise session name from the first assistant response.
-/// Strips markdown, takes the first meaningful words, and limits length.
-fn extract_session_name(content: &str) -> String {
-    // Strip common markdown patterns
-    let cleaned = content
-        .replace("#", "")
-        .replace("**", "")
-        .replace("*", "")
-        .replace("`", "")
-        .replace(">", "")
-        .replace("-", "")
-        .replace("|", "")
-        .replace("\n", " ")
-        .replace("\r", " ");
+    /// Extract a concise session name from the first assistant response.
+    /// Strips markdown, takes the first meaningful words, and limits length.
+    fn extract_session_name(content: &str) -> String {
+        // Strip common markdown patterns
+        let cleaned = content
+            .replace("#", "")
+            .replace("**", "")
+            .replace("*", "")
+            .replace("`", "")
+            .replace(">", "")
+            .replace("-", "")
+            .replace("|", "")
+            .replace("\n", " ")
+            .replace("\r", " ");
 
-    let name = cleaned
-        .split_whitespace()
-        .take(6)
-        .collect::<Vec<_>>()
-        .join(" ");
+        let name = cleaned
+            .split_whitespace()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" ");
 
-    if name.len() > 40 {
-        format!("{}...", &name[..40])
-    } else if name.is_empty() {
-        "New Session".to_string()
-    } else {
-        name
+        if name.len() > 40 {
+            format!("{}...", &name[..40])
+        } else if name.is_empty() {
+            "New Session".to_string()
+        } else {
+            name
+        }
     }
-}
 
     /// Send a single message to an agent via the ACP controller.
     ///

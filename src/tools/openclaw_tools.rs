@@ -199,30 +199,37 @@ impl Tool for SessionsHistoryTool {
             Ok(messages) => {
                 let history: Vec<_> = messages
                     .iter()
-                    .map(|(id, role, content, reasoning, tool_calls, created_at, _transcript_id, _run_id)| {
-                        let mut msg = serde_json::json!({
-                            "id": id,
-                            "role": role,
-                            "content": content,
-                            "created_at": created_at.to_rfc3339(),
-                        });
-                        if let Some(r) = reasoning {
-                            msg["reasoning_content"] = serde_json::Value::String(r.clone());
-                        }
-                        if let Some(t) = tool_calls {
-                            msg["tool_calls_json"] = serde_json::Value::String(t.clone());
-                        }
-                        msg
-                    })
+                    .map(
+                        |(
+                            id,
+                            role,
+                            content,
+                            reasoning,
+                            tool_calls,
+                            created_at,
+                            _transcript_id,
+                            _run_id,
+                        )| {
+                            let mut msg = serde_json::json!({
+                                "id": id,
+                                "role": role,
+                                "content": content,
+                                "created_at": created_at.to_rfc3339(),
+                            });
+                            if let Some(r) = reasoning {
+                                msg["reasoning_content"] = serde_json::Value::String(r.clone());
+                            }
+                            if let Some(t) = tool_calls {
+                                msg["tool_calls_json"] = serde_json::Value::String(t.clone());
+                            }
+                            msg
+                        },
+                    )
                     .collect();
 
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!(
-                        "Session {} has {} message(s)",
-                        args.session_id,
-                        history.len()
-                    ),
+                    output: format!("Session {} has {} message(s)", args.session_id, history.len()),
                     error: None,
                     data: Some(serde_json::json!({
                         "session_id": args.session_id,

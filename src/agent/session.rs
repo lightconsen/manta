@@ -412,9 +412,7 @@ impl SessionManager {
             let store = store.clone();
             let sid = session_id;
             tokio::spawn(async move {
-                let metadata = crate::agent::session_store::SessionMetadata::new(
-                    &sid, "", "", "",
-                );
+                let metadata = crate::agent::session_store::SessionMetadata::new(&sid, "", "", "");
                 if let Err(e) = store.save_session(&sid, &metadata, "{}").await {
                     tracing::warn!("Failed to auto-persist session {}: {}", sid, e);
                 }

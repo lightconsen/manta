@@ -740,6 +740,8 @@ pub struct AcpControlPlane {
     default_agent_builder: Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
     /// Command channel to the ACP actor loop
     command_tx: mpsc::Sender<AcpCommand>,
+    /// Optional session store for persisting subagent run records
+    store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 /// ACP Session - groups related subagents
@@ -762,7 +764,14 @@ impl AcpControlPlane {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             default_agent_builder: Arc::new(RwLock::new(None)),
             command_tx,
+            store: None,
         }
+    }
+
+    /// Attach a session store for persisting subagent run records.
+    pub fn with_store(mut self, store: Arc<crate::agent::session_store::SessionStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Set the default agent builder (consuming self).
@@ -925,7 +934,7 @@ impl AcpControlPlane {
 
         // Build agent config
         let _agent_config = AgentConfig {
-            system_prompt: config.system_prompt.unwrap_or_default(),
+            system_prompt: config.system_prompt.clone().unwrap_or_default(),
             max_tokens: config.max_tokens.map(|m| m as u32).unwrap_or(2048),
             max_context_tokens: 4096,
             max_concurrent_tools: 5,
@@ -1067,12 +1076,19 @@ impl AcpControlPlane {
         // Watchdog: await the JoinHandle and update status on exit or panic.
         let subagents_ref = Arc::clone(&self.subagents);
         let watch_id = subagent_id.clone();
+        let store_ref = self.store.clone();
         tokio::spawn(async move {
             match join_handle.await {
                 Ok(()) => {
                     let mut map = subagents_ref.write().await;
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Terminated;
+                    }
+                    drop(map);
+                    if let Some(store) = store_ref {
+                        let _ = store
+                            .complete_subagent_run(&watch_id, Some("normal exit"), None)
+                            .await;
                     }
                 }
                 Err(e) if e.is_panic() => {
@@ -1081,6 +1097,12 @@ impl AcpControlPlane {
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Crashed;
                     }
+                    drop(map);
+                    if let Some(store) = store_ref {
+                        let _ = store
+                            .complete_subagent_run(&watch_id, None, Some("panicked"))
+                            .await;
+                    }
                 }
                 Err(_) => {
                     // Aborted externally
@@ -1088,6 +1110,8 @@ impl AcpControlPlane {
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Terminated;
                     }
+                    drop(map);
+                    // Kill/abort already updates the store, so no-op here.
                 }
             }
         });
@@ -1126,6 +1150,29 @@ impl AcpControlPlane {
                     created_at: chrono::Utc::now(),
                 },
             );
+        }
+
+        // Persist subagent run record if store is attached.
+        if let Some(ref store) = self.store {
+            let _ = store
+                .save_subagent_run(
+                    &subagent_id,
+                    &subagent_id,
+                    &session_id.to_string(),
+                    &parent_id,
+                    None,
+                    config.system_prompt.as_deref(),
+                    if config.mode == SpawnMode::Run {
+                        "run"
+                    } else {
+                        "session"
+                    },
+                    Some(&thread_id),
+                )
+                .await;
+            let _ = store
+                .update_subagent_run_status(&subagent_id, "ready")
+                .await;
         }
 
         info!("Subagent {} spawned successfully", subagent_id);
@@ -1194,6 +1241,12 @@ impl AcpControlPlane {
             subagent.status = SubagentStatus::ShuttingDown;
             let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
             // Watchdog task will update status to Terminated once the task exits.
+            drop(subagents);
+            if let Some(ref store) = self.store {
+                let _ = store
+                    .update_subagent_run_status(subagent_id, "shutting_down")
+                    .await;
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -1209,6 +1262,10 @@ impl AcpControlPlane {
             let _ = subagent.command_tx.send(SubagentCommand::Shutdown).await;
             subagent.abort_handle.abort();
             info!("Killed subagent {} (force abort)", subagent_id);
+            drop(subagents);
+            if let Some(ref store) = self.store {
+                let _ = store.kill_subagent_run(subagent_id, "user").await;
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -1222,11 +1279,12 @@ impl AcpControlPlane {
         message: String,
     ) -> crate::Result<String> {
         let subagents = self.subagents.read().await;
-        let subagent = subagents.get(subagent_id).ok_or_else(|| {
-            crate::error::MantaError::NotFound {
-                resource: format!("Subagent '{}'", subagent_id),
-            }
-        })?;
+        let subagent =
+            subagents
+                .get(subagent_id)
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                })?;
 
         // 1. Cancel any in-progress execution
         let _ = subagent.command_tx.send(SubagentCommand::Cancel).await;
@@ -1235,7 +1293,7 @@ impl AcpControlPlane {
         let steer_msg = IncomingMessage::new(
             "user".to_string(),
             format!("steer-{}", subagent_id),
-            message,
+            message.clone(),
         );
 
         // 3. Send steer message as new ProcessMessage
@@ -1253,12 +1311,15 @@ impl AcpControlPlane {
 
         drop(subagents);
 
+        // Persist steer event
+        if let Some(ref store) = self.store {
+            let _ = store.append_steer_to_run(subagent_id, &message).await;
+        }
+
         match response_rx.await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(crate::error::MantaError::Internal(
-                "Steer response dropped".to_string(),
-            )),
+            Err(_) => Err(crate::error::MantaError::Internal("Steer response dropped".to_string())),
         }
     }
 

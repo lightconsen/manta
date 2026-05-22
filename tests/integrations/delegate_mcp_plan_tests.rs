@@ -26,10 +26,7 @@ async fn update_plan_tool_crud() {
         .to_string();
 
     let get_result = tool
-        .execute(
-            json!({"action": "get", "plan_id": plan_id}),
-            &ctx,
-        )
+        .execute(json!({"action": "get", "plan_id": plan_id}), &ctx)
         .await
         .expect("get should succeed");
     assert!(
@@ -70,10 +67,7 @@ async fn update_plan_tool_crud() {
         .expect("set_status should succeed");
 
     let _ = tool
-        .execute(
-            json!({"action": "delete", "plan_id": plan_id}),
-            &ctx,
-        )
+        .execute(json!({"action": "delete", "plan_id": plan_id}), &ctx)
         .await
         .expect("delete should succeed");
 }
@@ -98,7 +92,9 @@ async fn delegate_tool_spawn_without_agent() {
     match result {
         Ok(output) => {
             assert!(
-                output.output.contains("child") || output.output.contains("delegated") || output.output.contains("task"),
+                output.output.contains("child")
+                    || output.output.contains("delegated")
+                    || output.output.contains("task"),
                 "Expected delegation info, got: {}",
                 output.output
             );
@@ -114,16 +110,15 @@ async fn mcp_connection_tool_lists_empty() {
     let manager = Arc::new(manta::tools::mcp::McpManager::new());
     let tool = McpConnectionTool::with_manager(manager);
     let result = tool
-        .execute(
-            json!({"action": "list"}),
-            &test_context(),
-        )
+        .execute(json!({"action": "list"}), &test_context())
         .await;
 
     match result {
         Ok(output) => {
             assert!(
-                output.output.contains("No servers") || output.output.contains("server") || output.output.is_empty(),
+                output.output.contains("No servers")
+                    || output.output.contains("server")
+                    || output.output.is_empty(),
                 "Expected server list info, got: {}",
                 output.output
             );
@@ -228,13 +223,17 @@ async fn update_plan_set_status_invalid_status_fails() {
     let ctx = test_context();
 
     let create_result = tool
-        .execute(
-            json!({"action": "create", "title": "status-test", "steps": ["step"]}),
-            &ctx,
-        )
+        .execute(json!({"action": "create", "title": "status-test", "steps": ["step"]}), &ctx)
         .await
         .expect("create failed");
-    let plan_id = create_result.data.as_ref().unwrap().get("id").unwrap().as_str().unwrap();
+    let plan_id = create_result
+        .data
+        .as_ref()
+        .unwrap()
+        .get("id")
+        .unwrap()
+        .as_str()
+        .unwrap();
 
     let result = tool
         .execute(

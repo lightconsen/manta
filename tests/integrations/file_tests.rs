@@ -8,10 +8,7 @@ async fn file_read_write_cycle() {
 
     let write_tool = FileWriteTool::new();
     let _ = write_tool
-        .execute(
-            json!({"path": path_str, "content": "hello world"}),
-            &test_context(),
-        )
+        .execute(json!({"path": path_str, "content": "hello world"}), &test_context())
         .await
         .expect("file_write should succeed");
 
@@ -36,10 +33,7 @@ async fn file_edit_tool_replaces_content() {
 
     let write_tool = FileWriteTool::new();
     let _ = write_tool
-        .execute(
-            json!({"path": path_str, "content": "old content here"}),
-            &test_context(),
-        )
+        .execute(json!({"path": path_str, "content": "old content here"}), &test_context())
         .await
         .unwrap();
 
@@ -151,7 +145,9 @@ async fn file_read_binary_returns_placeholder() {
 
     let tool = FileReadTool::new();
     let ctx = test_context();
-    let result = tool.execute(json!({"path": file_path.to_str().unwrap()}), &ctx).await;
+    let result = tool
+        .execute(json!({"path": file_path.to_str().unwrap()}), &ctx)
+        .await;
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(output.success, "Binary read should succeed with placeholder");
@@ -330,7 +326,9 @@ async fn grep_no_matches_returns_empty() {
 async fn grep_json_format_returns_structured() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file_path = temp_dir.path().join("search.rs");
-    tokio::fs::write(&file_path, "fn main() {}\n").await.unwrap();
+    tokio::fs::write(&file_path, "fn main() {}\n")
+        .await
+        .unwrap();
 
     let tool = GrepTool::new();
     let ctx = test_context();

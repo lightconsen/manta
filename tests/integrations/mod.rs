@@ -5,11 +5,10 @@
 pub use manta::tools::{
     AcpSessionTool, AcpSpawnTool, ApplyPatchTool, BrowserTool, CanvasTool, CodeExecutionTool,
     CronTool, DelegateTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
-    ImageGenerateTool, ImageTool, McpConnectionTool, MemoryGetTool, MemorySearchTool,
-    MemoryTool, NodesTool, PdfTool, ProcessTool, SessionStatusTool,
-    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool, ShellTool,
-    TimeTool,
-    TodoTool, Tool, ToolContext, TtsTool, UpdatePlanTool, WebFetchTool, WebSearchTool,
+    ImageGenerateTool, ImageTool, McpConnectionTool, MemoryGetTool, MemorySearchTool, MemoryTool,
+    NodesTool, PdfTool, ProcessTool, SessionStatusTool, SessionsHistoryTool, SessionsListTool,
+    SessionsSendTool, SessionsYieldTool, ShellTool, TimeTool, TodoTool, Tool, ToolContext, TtsTool,
+    UpdatePlanTool, WebFetchTool, WebSearchTool,
 };
 pub use serde_json::json;
 pub use std::sync::Arc;
@@ -21,12 +20,12 @@ pub fn test_context() -> ToolContext {
         .with_timeout(Duration::from_secs(10))
 }
 
-mod file_tests;
-mod execution_tests;
-mod web_tests;
-mod task_time_tests;
-mod memory_tests;
 mod acp_tests;
 mod delegate_mcp_plan_tests;
+mod execution_tests;
+mod file_tests;
 mod media_tests;
+mod memory_tests;
 mod network_tests;
+mod task_time_tests;
+mod web_tests;

@@ -39,21 +39,21 @@ async fn llm_chat_streaming_journey() {
     let mut history = Vec::new();
     for _ in 0..20 {
         history = client.get_history(&sid).await;
-        let has_assistant = history.iter().any(|m| {
-            m.get("role").and_then(|v| v.as_str()) == Some("assistant")
-        });
+        let has_assistant = history
+            .iter()
+            .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
         if has_assistant {
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    let has_user = history.iter().any(|m| {
-        m.get("role").and_then(|v| v.as_str()) == Some("user")
-    });
-    let has_assistant = history.iter().any(|m| {
-        m.get("role").and_then(|v| v.as_str()) == Some("assistant")
-    });
+    let has_user = history
+        .iter()
+        .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"));
+    let has_assistant = history
+        .iter()
+        .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
     assert!(has_user, "User message should be persisted");
     assert!(has_assistant, "Assistant response should be persisted");
 }
@@ -120,32 +120,17 @@ async fn llm_tool_invocation_journey() {
 
     if !tool_calling.is_empty() {
         let first = &tool_calling[0];
-        assert_eq!(
-            first.get("session_id").and_then(|v| v.as_str()),
-            Some(sid.as_str())
-        );
-        assert!(
-            first.get("tool_name").is_some(),
-            "tool.calling event should have tool_name"
-        );
+        assert_eq!(first.get("session_id").and_then(|v| v.as_str()), Some(sid.as_str()));
+        assert!(first.get("tool_name").is_some(), "tool.calling event should have tool_name");
     }
 
     if !tool_results.is_empty() {
         let first = &tool_results[0];
-        assert_eq!(
-            first.get("session_id").and_then(|v| v.as_str()),
-            Some(sid.as_str())
-        );
-        assert!(
-            first.get("result").is_some(),
-            "tool.result event should have result"
-        );
+        assert_eq!(first.get("session_id").and_then(|v| v.as_str()), Some(sid.as_str()));
+        assert!(first.get("result").is_some(), "tool.result event should have result");
     }
 
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 60s"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 60s");
 }
 
 #[tokio::test]
@@ -170,8 +155,5 @@ async fn session_created_event_on_first_chat() {
         .await
         .expect("Expected session.created event");
 
-    assert!(
-        payload.get("session_id").is_some(),
-        "session.created should contain session_id"
-    );
+    assert!(payload.get("session_id").is_some(), "session.created should contain session_id");
 }

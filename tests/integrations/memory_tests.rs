@@ -4,7 +4,9 @@ use super::*;
 async fn memory_tool_creates_and_reads() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let tool = MemoryTool::with_database_url(&db_url)
+        .await
+        .expect("Failed to create MemoryTool");
     let ctx = test_context();
 
     let store_result = tool
@@ -28,10 +30,7 @@ async fn memory_tool_creates_and_reads() {
         .to_string();
 
     let retrieve_result = tool
-        .execute(
-            json!({"action": "retrieve", "id": stored_id}),
-            &ctx,
-        )
+        .execute(json!({"action": "retrieve", "id": stored_id}), &ctx)
         .await
         .expect("retrieve failed");
 
@@ -49,12 +48,16 @@ async fn memory_search_tool_searches() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_search_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"),
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
     );
     let tool = MemorySearchTool::with_store(store.clone());
     let ctx = test_context();
 
-    let memory_tool = MemoryTool::with_store(store.clone()).await.expect("Failed to create MemoryTool");
+    let memory_tool = MemoryTool::with_store(store.clone())
+        .await
+        .expect("Failed to create MemoryTool");
     let _ = memory_tool
         .execute(
             json!({
@@ -68,10 +71,7 @@ async fn memory_search_tool_searches() {
         .expect("store failed");
 
     let result = tool
-        .execute(
-            json!({"action": "search", "query": "Rust programming"}),
-            &ctx,
-        )
+        .execute(json!({"action": "search", "query": "Rust programming"}), &ctx)
         .await
         .expect("search should succeed");
 
@@ -89,12 +89,16 @@ async fn memory_get_tool_crud() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_get_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"),
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
     );
     let tool = MemoryGetTool::with_store(store.clone());
     let ctx = test_context();
 
-    let memory_tool = MemoryTool::with_store(store.clone()).await.expect("Failed to create MemoryTool");
+    let memory_tool = MemoryTool::with_store(store.clone())
+        .await
+        .expect("Failed to create MemoryTool");
     let store_result = memory_tool
         .execute(
             json!({
@@ -116,10 +120,7 @@ async fn memory_get_tool_crud() {
         .to_string();
 
     let result = tool
-        .execute(
-            json!({"action": "retrieve", "id": memory_id}),
-            &ctx,
-        )
+        .execute(json!({"action": "retrieve", "id": memory_id}), &ctx)
         .await
         .expect("retrieve should succeed");
 
@@ -140,10 +141,7 @@ async fn memory_get_tool_crud() {
     );
 
     let _ = tool
-        .execute(
-            json!({"action": "delete", "id": memory_id}),
-            &ctx,
-        )
+        .execute(json!({"action": "delete", "id": memory_id}), &ctx)
         .await
         .expect("delete should succeed");
 
@@ -152,9 +150,12 @@ async fn memory_get_tool_crud() {
 
 #[tokio::test]
 async fn memory_retrieve_nonexistent_fails() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_neg_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memory_neg_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let tool = MemoryTool::with_database_url(&db_url)
+        .await
+        .expect("Failed to create MemoryTool");
     let ctx = test_context();
 
     let result = tool
@@ -169,21 +170,37 @@ async fn memory_retrieve_nonexistent_fails() {
 
 #[tokio::test]
 async fn memory_delete_removes_entry() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_del_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memory_del_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let tool = MemoryTool::with_database_url(&db_url)
+        .await
+        .expect("Failed to create MemoryTool");
     let ctx = test_context();
 
     let store_result = tool
         .execute(json!({"action": "store", "content": "to-delete", "category": "test"}), &ctx)
         .await
         .expect("store failed");
-    let id = store_result.data.as_ref().unwrap().get("id").unwrap().as_str().unwrap();
+    let id = store_result
+        .data
+        .as_ref()
+        .unwrap()
+        .get("id")
+        .unwrap()
+        .as_str()
+        .unwrap();
 
-    let del_result = tool.execute(json!({"action": "delete", "id": id}), &ctx).await.unwrap();
+    let del_result = tool
+        .execute(json!({"action": "delete", "id": id}), &ctx)
+        .await
+        .unwrap();
     assert!(del_result.success);
 
-    let retrieve_result = tool.execute(json!({"action": "retrieve", "id": id}), &ctx).await.unwrap();
+    let retrieve_result = tool
+        .execute(json!({"action": "retrieve", "id": id}), &ctx)
+        .await
+        .unwrap();
     assert!(!retrieve_result.success, "Expected retrieve to fail after delete");
 
     let _ = std::fs::remove_file(&db_path);
@@ -191,16 +208,26 @@ async fn memory_delete_removes_entry() {
 
 #[tokio::test]
 async fn memory_update_modifies_content() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_upd_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memory_upd_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let tool = MemoryTool::with_database_url(&db_url)
+        .await
+        .expect("Failed to create MemoryTool");
     let ctx = test_context();
 
     let store_result = tool
         .execute(json!({"action": "store", "content": "original", "category": "test"}), &ctx)
         .await
         .expect("store failed");
-    let id = store_result.data.as_ref().unwrap().get("id").unwrap().as_str().unwrap();
+    let id = store_result
+        .data
+        .as_ref()
+        .unwrap()
+        .get("id")
+        .unwrap()
+        .as_str()
+        .unwrap();
 
     let update_result = tool
         .execute(json!({"action": "update", "id": id, "content": "updated"}), &ctx)
@@ -208,7 +235,10 @@ async fn memory_update_modifies_content() {
         .unwrap();
     assert!(update_result.success);
 
-    let retrieve_result = tool.execute(json!({"action": "retrieve", "id": id}), &ctx).await.unwrap();
+    let retrieve_result = tool
+        .execute(json!({"action": "retrieve", "id": id}), &ctx)
+        .await
+        .unwrap();
     assert!(retrieve_result.output.contains("updated"), "Expected updated content");
 
     let _ = std::fs::remove_file(&db_path);
@@ -216,22 +246,35 @@ async fn memory_update_modifies_content() {
 
 #[tokio::test]
 async fn memory_invalid_action_fails() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_inv_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memory_inv_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let tool = MemoryTool::with_database_url(&db_url).await.expect("Failed to create MemoryTool");
+    let tool = MemoryTool::with_database_url(&db_url)
+        .await
+        .expect("Failed to create MemoryTool");
     let ctx = test_context();
 
-    let result = tool.execute(json!({"action": "invalid_action"}), &ctx).await;
-    assert!(result.is_err() || !result.unwrap().success, "Expected failure for invalid action");
+    let result = tool
+        .execute(json!({"action": "invalid_action"}), &ctx)
+        .await;
+    assert!(
+        result.is_err() || !result.unwrap().success,
+        "Expected failure for invalid action"
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
 
 #[tokio::test]
 async fn memory_search_no_results_returns_empty() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memsearch_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memsearch_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let store = Arc::new(manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"));
+    let store = Arc::new(
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
+    );
     let tool = MemorySearchTool::with_store(store);
     let ctx = test_context();
 
@@ -248,14 +291,22 @@ async fn memory_search_no_results_returns_empty() {
 
 #[tokio::test]
 async fn memory_search_store_then_search() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memsearch2_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("manta_e2e_memsearch2_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let store = Arc::new(manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"));
+    let store = Arc::new(
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
+    );
     let tool = MemorySearchTool::with_store(store);
     let ctx = test_context();
 
     let _ = tool
-        .execute(json!({"action": "store", "content": "Manta is a great project", "category": "test"}), &ctx)
+        .execute(
+            json!({"action": "store", "content": "Manta is a great project", "category": "test"}),
+            &ctx,
+        )
         .await;
 
     let result = tool
@@ -278,7 +329,11 @@ async fn memory_search_store_then_search() {
 async fn memory_get_delete_nonexistent_fails() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_memget_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let store = Arc::new(manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"));
+    let store = Arc::new(
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
+    );
     let tool = MemoryGetTool::with_store(store);
     let ctx = test_context();
 
@@ -296,18 +351,30 @@ async fn memory_get_delete_nonexistent_fails() {
 async fn memory_get_list_returns_all() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_memget2_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let store = Arc::new(manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"));
-    let memory_tool = MemoryTool::with_store(store.clone()).await.expect("Failed to create MemoryTool");
+    let store = Arc::new(
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
+    );
+    let memory_tool = MemoryTool::with_store(store.clone())
+        .await
+        .expect("Failed to create MemoryTool");
     let get_tool = MemoryGetTool::with_store(store);
     let ctx = test_context();
 
     for i in 0..3 {
         let _ = memory_tool
-            .execute(json!({"action": "store", "content": format!("entry {}", i), "category": "test"}), &ctx)
+            .execute(
+                json!({"action": "store", "content": format!("entry {}", i), "category": "test"}),
+                &ctx,
+            )
             .await;
     }
 
-    let result = get_tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
+    let result = get_tool
+        .execute(json!({"action": "list"}), &ctx)
+        .await
+        .unwrap();
     assert!(result.success);
     let count = result
         .data
@@ -324,7 +391,11 @@ async fn memory_get_list_returns_all() {
 async fn memory_get_update_nonexistent_fails() {
     let db_path = std::env::temp_dir().join(format!("manta_e2e_memget3_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
-    let store = Arc::new(manta::memory::SqliteMemoryStore::new(&db_url).await.expect("Failed to create store"));
+    let store = Arc::new(
+        manta::memory::SqliteMemoryStore::new(&db_url)
+            .await
+            .expect("Failed to create store"),
+    );
     let tool = MemoryGetTool::with_store(store);
     let ctx = test_context();
 

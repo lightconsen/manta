@@ -11,7 +11,10 @@ async fn acp_spawn_tool_executes_without_agent_builder() {
         .unwrap();
     assert!(!result.success, "Expected failure without agent builder");
     assert!(
-        result.error.unwrap().contains("No agent builder configured"),
+        result
+            .error
+            .unwrap()
+            .contains("No agent builder configured"),
         "Expected 'No agent builder configured' error"
     );
 }
@@ -21,10 +24,7 @@ async fn acp_session_tool_lists_sessions() {
     let acp = Arc::new(manta::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
-    let result = tool
-        .execute(json!({"action": "list"}), &ctx)
-        .await
-        .unwrap();
+    let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
     assert!(result.success, "list action should succeed");
     assert!(
         result.output.contains("0 active subagent"),
@@ -65,9 +65,7 @@ async fn sessions_history_tool_returns_history() {
             .unwrap(),
     );
     let session_id = "test-session-history";
-    let meta = manta::agent::session_store::SessionMetadata::new(
-        session_id, "main", "ws", "anon",
-    );
+    let meta = manta::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
     store.save_session(session_id, &meta, "{}").await.unwrap();
     store
         .append_message(session_id, "user", "Hello", None, None, None, None, None)
@@ -128,10 +126,7 @@ async fn sessions_yield_tool_fails_for_missing_subagent() {
         .await
         .unwrap();
     assert!(!result.success, "Expected failure for missing subagent");
-    assert!(
-        result.error.unwrap().contains("not found"),
-        "Expected 'not found' error"
-    );
+    assert!(result.error.unwrap().contains("not found"), "Expected 'not found' error");
 }
 
 #[tokio::test]
@@ -224,7 +219,10 @@ async fn sessions_yield_missing_subagent_id_fails() {
     let tool = SessionsYieldTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({}), &ctx).await;
-    assert!(result.is_err() || !result.unwrap().success, "Expected failure for missing subagent_id");
+    assert!(
+        result.is_err() || !result.unwrap().success,
+        "Expected failure for missing subagent_id"
+    );
 }
 
 #[tokio::test]
@@ -278,7 +276,10 @@ async fn apply_patch_missing_patch_fails() {
     let tool = ApplyPatchTool::new();
     let ctx = test_context();
     let result = tool.execute(json!({}), &ctx).await;
-    assert!(result.is_err() || !result.unwrap().success, "Expected failure for missing patch");
+    assert!(
+        result.is_err() || !result.unwrap().success,
+        "Expected failure for missing patch"
+    );
 }
 
 #[tokio::test]
@@ -291,7 +292,11 @@ async fn acp_spawn_missing_task_fails() {
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for missing task");
     let err = output.error.unwrap();
-    assert!(err.contains("task") || err.contains("missing"), "Expected task-related error, got: {}", err);
+    assert!(
+        err.contains("task") || err.contains("missing"),
+        "Expected task-related error, got: {}",
+        err
+    );
 }
 
 #[tokio::test]
@@ -300,15 +305,15 @@ async fn acp_spawn_with_timeout_accepted() {
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool
-        .execute(
-            json!({"task": "test", "mode": "run", "timeout_seconds": 10}),
-            &ctx,
-        )
+        .execute(json!({"task": "test", "mode": "run", "timeout_seconds": 10}), &ctx)
         .await
         .unwrap();
     assert!(!result.success, "Expected failure without agent builder");
     assert!(
-        result.error.unwrap().contains("No agent builder configured"),
+        result
+            .error
+            .unwrap()
+            .contains("No agent builder configured"),
         "Expected 'No agent builder configured' error"
     );
 }
@@ -324,10 +329,7 @@ async fn acp_session_get_nonexistent_fails() {
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for nonexistent session");
-    assert!(
-        output.error.unwrap().contains("not found"),
-        "Expected 'not found' error"
-    );
+    assert!(output.error.unwrap().contains("not found"), "Expected 'not found' error");
 }
 
 #[tokio::test]
@@ -351,7 +353,10 @@ async fn sessions_send_missing_session_id_fails() {
     let result = tool
         .execute(json!({"subagent_id": "x", "message": "y"}), &ctx)
         .await;
-    assert!(result.is_err() || !result.unwrap().success, "Expected failure for missing session_id");
+    assert!(
+        result.is_err() || !result.unwrap().success,
+        "Expected failure for missing session_id"
+    );
 }
 
 #[tokio::test]
@@ -365,10 +370,7 @@ async fn acp_session_kill_nonexistent_fails() {
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for nonexistent subagent");
-    assert!(
-        output.error.unwrap().contains("not found"),
-        "Expected 'not found' error"
-    );
+    assert!(output.error.unwrap().contains("not found"), "Expected 'not found' error");
 }
 
 #[tokio::test]
@@ -377,14 +379,13 @@ async fn acp_session_steer_nonexistent_fails() {
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
-        .execute(json!({"action": "steer", "subagent_id": "nonexistent", "message": "change direction"}), &ctx)
+        .execute(
+            json!({"action": "steer", "subagent_id": "nonexistent", "message": "change direction"}),
+            &ctx,
+        )
         .await;
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for nonexistent subagent");
-    assert!(
-        output.error.unwrap().contains("not found"),
-        "Expected 'not found' error"
-    );
+    assert!(output.error.unwrap().contains("not found"), "Expected 'not found' error");
 }
-

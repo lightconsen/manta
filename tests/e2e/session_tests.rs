@@ -15,10 +15,7 @@ async fn session_full_lifecycle() {
 
     let sessions = client.list_sessions().await;
     assert_eq!(sessions.len(), 1, "Expected 1 session after creation");
-    assert_eq!(
-        sessions[0].get("session_id").and_then(|v| v.as_str()),
-        Some(sid.as_str())
-    );
+    assert_eq!(sessions[0].get("session_id").and_then(|v| v.as_str()), Some(sid.as_str()));
 
     client.subscribe(vec![sid.clone()]).await;
     client.send_chat(&sid, "Hello session").await;
@@ -42,9 +39,9 @@ async fn session_full_lifecycle() {
 
     let sessions = client.list_sessions().await;
     assert!(
-        sessions.iter().all(|s| {
-            s.get("session_id").and_then(|v| v.as_str()) != Some(&sid)
-        }),
+        sessions
+            .iter()
+            .all(|s| { s.get("session_id").and_then(|v| v.as_str()) != Some(&sid) }),
         "Deleted session should not appear in list"
     );
 }

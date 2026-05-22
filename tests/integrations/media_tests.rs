@@ -4,7 +4,12 @@ use super::*;
 async fn pdf_tool_generates_output() {
     let tool = PdfTool::new();
     let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("test_output").to_str().unwrap().to_string();
+    let output_path = temp_dir
+        .path()
+        .join("test_output")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let result = tool
         .execute(
@@ -20,7 +25,9 @@ async fn pdf_tool_generates_output() {
     match result {
         Ok(output) => {
             assert!(
-                output.output.contains("test_output") || output.output.contains("html") || output.output.contains("pdf"),
+                output.output.contains("test_output")
+                    || output.output.contains("html")
+                    || output.output.contains("pdf"),
                 "Expected output path info, got: {}",
                 output.output
             );
@@ -38,30 +45,22 @@ async fn image_tool_reads_temp_file() {
     let img_path = temp_dir.path().join("test.png");
 
     let png_header: Vec<u8> = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D,
-        0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x01,
-        0x08, 0x02, 0x00, 0x00, 0x00,
-        0x90, 0x77, 0x53, 0xDE,
-        0x00, 0x00, 0x00, 0x00,
-        0x49, 0x45, 0x4E, 0x44,
-        0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     tokio::fs::write(&img_path, &png_header).await.unwrap();
 
     let result = tool
-        .execute(
-            json!({"path": img_path.to_str().unwrap(), "action": "info"}),
-            &test_context(),
-        )
+        .execute(json!({"path": img_path.to_str().unwrap(), "action": "info"}), &test_context())
         .await;
 
     match result {
         Ok(output) => {
             assert!(
-                output.output.contains("png") || output.output.contains("PNG") || output.output.contains("1x1"),
+                output.output.contains("png")
+                    || output.output.contains("PNG")
+                    || output.output.contains("1x1"),
                 "Expected PNG info, got: {}",
                 output.output
             );
@@ -76,10 +75,7 @@ async fn image_tool_reads_temp_file() {
 async fn tts_tool_falls_back_without_key() {
     let tool = TtsTool::new();
     let result = tool
-        .execute(
-            json!({"text": "hello world"}),
-            &test_context(),
-        )
+        .execute(json!({"text": "hello world"}), &test_context())
         .await;
 
     match result {
@@ -89,7 +85,10 @@ async fn tts_tool_falls_back_without_key() {
         Err(e) => {
             let err_str = format!("{}", e);
             assert!(
-                err_str.contains("API key") || err_str.contains("TTS") || err_str.contains("say") || err_str.contains("espeak"),
+                err_str.contains("API key")
+                    || err_str.contains("TTS")
+                    || err_str.contains("say")
+                    || err_str.contains("espeak"),
                 "Expected TTS-related error, got: {}",
                 err_str
             );
@@ -120,7 +119,9 @@ async fn canvas_tool_presents() {
     match result {
         Ok(output) => {
             assert!(
-                output.output.contains("presented") || output.output.contains("canvas") || output.output.contains("Test Canvas"),
+                output.output.contains("presented")
+                    || output.output.contains("canvas")
+                    || output.output.contains("Test Canvas"),
                 "Expected canvas presentation confirmation, got: {}",
                 output.output
             );
@@ -151,7 +152,11 @@ async fn pdf_generates_with_custom_title() {
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(output.success);
-    assert!(output.output.contains("Custom Title") || output.output.contains("pdf") || output.output.contains("HTML"));
+    assert!(
+        output.output.contains("Custom Title")
+            || output.output.contains("pdf")
+            || output.output.contains("HTML")
+    );
 }
 
 #[tokio::test]
@@ -198,13 +203,12 @@ async fn image_reads_jpeg() {
 
     let tool = ImageTool::new();
     let ctx = test_context();
-    let result = tool.execute(json!({"path": file_path.to_str().unwrap()}), &ctx).await;
+    let result = tool
+        .execute(json!({"path": file_path.to_str().unwrap()}), &ctx)
+        .await;
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert!(
-        output.success || output.error.is_some(),
-        "Expected either success or error"
-    );
+    assert!(output.success || output.error.is_some(), "Expected either success or error");
 }
 
 #[tokio::test]
@@ -343,4 +347,3 @@ async fn image_generate_no_api_key_fails() {
         err
     );
 }
-

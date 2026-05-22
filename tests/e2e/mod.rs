@@ -16,9 +16,8 @@ pub use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 // ── Type Aliases ──────────────────────────────────────────────────────────────
 
-pub type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+pub type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 pub type WsWrite = futures_util::stream::SplitSink<WsStream, Message>;
 pub type WsRead = futures_util::stream::SplitStream<WsStream>;
 
@@ -52,13 +51,22 @@ pub fn discover_local_providers() -> Vec<LocalProviderConfig> {
             for line in content.lines() {
                 let line = line.trim();
                 if line.starts_with("export MANTA_API_KEY=") {
-                    api_key = line.split('=').nth(1).map(|s| s.trim().trim_matches('"').to_string());
+                    api_key = line
+                        .split('=')
+                        .nth(1)
+                        .map(|s| s.trim().trim_matches('"').to_string());
                 }
                 if line.starts_with("export MANTA_BASE_URL=") {
-                    base_url = line.split('=').nth(1).map(|s| s.trim().trim_matches('"').to_string());
+                    base_url = line
+                        .split('=')
+                        .nth(1)
+                        .map(|s| s.trim().trim_matches('"').to_string());
                 }
                 if line.starts_with("export MANTA_MODEL=") {
-                    model = line.split('=').nth(1).map(|s| s.trim().trim_matches('"').to_string());
+                    model = line
+                        .split('=')
+                        .nth(1)
+                        .map(|s| s.trim().trim_matches('"').to_string());
                 }
                 if line.starts_with("export MANTA_IS_ANTHROPIC=") {
                     is_anthropic = line.contains("true");
@@ -91,10 +99,9 @@ pub fn discover_local_providers() -> Vec<LocalProviderConfig> {
 }
 
 pub fn pick_test_provider() -> Option<LocalProviderConfig> {
-    if let (Ok(key), Ok(name)) = (
-        std::env::var("MANTA_TEST_PROVIDER_KEY"),
-        std::env::var("MANTA_TEST_PROVIDER"),
-    ) {
+    if let (Ok(key), Ok(name)) =
+        (std::env::var("MANTA_TEST_PROVIDER_KEY"), std::env::var("MANTA_TEST_PROVIDER"))
+    {
         let base_url = std::env::var("MANTA_TEST_BASE_URL").unwrap_or_default();
         let model = std::env::var("MANTA_TEST_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
         let is_anthropic = name == "anthropic" || name == "kimi";
@@ -158,7 +165,9 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
                 max_retries: 3,
                 retry_delay_ms: 1000,
             };
-            config.providers.insert(provider.name.clone(), provider_config);
+            config
+                .providers
+                .insert(provider.name.clone(), provider_config);
             config.model_provider = provider.name;
             config.model = provider.model;
         }
@@ -385,10 +394,7 @@ impl FrontendSimulator {
 
     pub async fn send_chat(&mut self, session_id: &str, message: &str) {
         let resp = self
-            .request(
-                "chat.send",
-                json!({"session_id": session_id, "message": message}),
-            )
+            .request("chat.send", json!({"session_id": session_id, "message": message}))
             .await;
         assert!(resp.get("ok").and_then(|v| v.as_bool()) == Some(true));
     }
@@ -411,7 +417,8 @@ impl FrontendSimulator {
     }
 
     pub async fn execute_command(&mut self, command: &str) -> serde_json::Value {
-        self.request("commands.execute", json!({"command": command})).await
+        self.request("commands.execute", json!({"command": command}))
+            .await
     }
 }
 
@@ -451,8 +458,7 @@ pub async fn run_tool_chat_test(
                         match name {
                             Some("tool.calling") => {
                                 if let Some(ref p) = payload {
-                                    if p.get("tool_name")
-                                        .and_then(|v| v.as_str())
+                                    if p.get("tool_name").and_then(|v| v.as_str())
                                         == Some(expected_tool)
                                     {
                                         tool_called = true;
@@ -485,14 +491,8 @@ pub async fn run_tool_chat_test(
         "Expected {} tool to be invoked, but it was not called",
         expected_tool
     );
-    assert!(
-        chat_final.is_some(),
-        "Expected chat.final event within 120s"
-    );
-    assert!(
-        !tool_results.is_empty(),
-        "Expected at least one tool.result event"
-    );
+    assert!(chat_final.is_some(), "Expected chat.final event within 120s");
+    assert!(!tool_results.is_empty(), "Expected at least one tool.result event");
     for result in &tool_results {
         assert_eq!(
             result.get("tool_name").and_then(|v| v.as_str()),
@@ -501,17 +501,14 @@ pub async fn run_tool_chat_test(
             expected_tool,
             result.get("tool_name")
         );
-        assert!(
-            result.get("result").is_some(),
-            "Expected result field in tool.result"
-        );
+        assert!(result.get("result").is_some(), "Expected result field in tool.result");
     }
     tool_results
 }
 
-mod session_tests;
-mod command_tests;
 mod agent_tests;
+mod command_tests;
 mod health_tests;
 mod llm_chat_tests;
+mod session_tests;
 mod tool_chat_tests;

@@ -42,8 +42,5 @@ async fn agents_get_returns_not_found_for_unknown() {
         resp
     );
     let error = resp.get("error").unwrap();
-    assert_eq!(
-        error.get("code").and_then(|v| v.as_str()),
-        Some("AGENT_NOT_FOUND")
-    );
+    assert_eq!(error.get("code").and_then(|v| v.as_str()), Some("AGENT_NOT_FOUND"));
 }

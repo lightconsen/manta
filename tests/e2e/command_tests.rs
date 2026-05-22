@@ -8,10 +8,7 @@ async fn command_help_returns_markdown() {
     let mut client = FrontendSimulator::connect(port).await;
 
     let resp = client.execute_command("help").await;
-    assert!(
-        resp.get("ok").and_then(|v| v.as_bool()) == Some(true),
-        "help command failed"
-    );
+    assert!(resp.get("ok").and_then(|v| v.as_bool()) == Some(true), "help command failed");
     let text = resp_payload(&resp)
         .unwrap()
         .get("text")
@@ -188,21 +185,14 @@ async fn commands_list_returns_catalog() {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    assert!(
-        commands.len() >= 20,
-        "Expected at least 20 commands, got: {}",
-        commands.len()
-    );
+    assert!(commands.len() >= 20, "Expected at least 20 commands, got: {}", commands.len());
     let names: Vec<String> = commands
         .iter()
         .filter_map(|c| c.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
     assert!(names.contains(&"help".to_string()), "Expected 'help' command");
     assert!(names.contains(&"tools".to_string()), "Expected 'tools' command");
-    assert!(
-        names.contains(&"session".to_string()),
-        "Expected 'session' command"
-    );
+    assert!(names.contains(&"session".to_string()), "Expected 'session' command");
 }
 
 #[tokio::test]
@@ -238,11 +228,7 @@ async fn command_reset_clears_history() {
         .get("text")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert!(
-        text.contains("reset"),
-        "Expected reset confirmation, got: {}",
-        text
-    );
+    assert!(text.contains("reset"), "Expected reset confirmation, got: {}", text);
 }
 
 #[tokio::test]
@@ -278,10 +264,7 @@ async fn command_skill_not_found() {
     let mut client = FrontendSimulator::connect(port).await;
 
     let resp = client
-        .request(
-            "commands.execute",
-            json!({"command": "skill", "args": "nonexistent-skill-xyz"}),
-        )
+        .request("commands.execute", json!({"command": "skill", "args": "nonexistent-skill-xyz"}))
         .await;
     assert!(
         resp.get("ok").and_then(|v| v.as_bool()) == Some(false),
@@ -289,10 +272,7 @@ async fn command_skill_not_found() {
         resp
     );
     let error = resp.get("error").unwrap();
-    assert_eq!(
-        error.get("code").and_then(|v| v.as_str()),
-        Some("SKILL_NOT_FOUND")
-    );
+    assert_eq!(error.get("code").and_then(|v| v.as_str()), Some("SKILL_NOT_FOUND"));
 }
 
 #[tokio::test]
@@ -303,10 +283,7 @@ async fn command_mcp_disconnect_requires_arg() {
     let mut client = FrontendSimulator::connect(port).await;
 
     let resp = client
-        .request(
-            "commands.execute",
-            json!({"command": "mcp", "args": "disconnect"}),
-        )
+        .request("commands.execute", json!({"command": "mcp", "args": "disconnect"}))
         .await;
     assert!(
         resp.get("ok").and_then(|v| v.as_bool()) == Some(false),
@@ -314,10 +291,7 @@ async fn command_mcp_disconnect_requires_arg() {
         resp
     );
     let error = resp.get("error").unwrap();
-    assert_eq!(
-        error.get("code").and_then(|v| v.as_str()),
-        Some("INVALID_ARGS")
-    );
+    assert_eq!(error.get("code").and_then(|v| v.as_str()), Some("INVALID_ARGS"));
 }
 
 #[tokio::test]
@@ -409,10 +383,7 @@ async fn command_persisted_to_session_history() {
     client.subscribe(vec![sid.clone()]).await;
 
     let resp = client
-        .request(
-            "commands.execute",
-            json!({"command": "help", "session_id": sid}),
-        )
+        .request("commands.execute", json!({"command": "help", "session_id": sid}))
         .await;
     assert!(
         resp.get("ok").and_then(|v| v.as_bool()) == Some(true),
@@ -422,17 +393,12 @@ async fn command_persisted_to_session_history() {
 
     let history = client.get_history(&sid).await;
     let has_user_command = history.iter().any(|m| {
-        m.get("role")
-            .and_then(|v| v.as_str())
-            == Some("user")
+        m.get("role").and_then(|v| v.as_str()) == Some("user")
             && m.get("content")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .contains("/help")
     });
 
-    assert!(
-        has_user_command,
-        "Expected /help command to be persisted in session history"
-    );
+    assert!(has_user_command, "Expected /help command to be persisted in session history");
 }

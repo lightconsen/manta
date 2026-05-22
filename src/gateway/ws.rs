@@ -295,14 +295,37 @@ async fn dispatch_method(
             // Persist commands.execute scope errors to session history
             if req.method == "commands.execute" {
                 if let Some(ref params_val) = req.params {
-                    if let Ok(params) = serde_json::from_value::<serde_json::Value>(params_val.clone()) {
-                        if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
-                            let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    if let Ok(params) =
+                        serde_json::from_value::<serde_json::Value>(params_val.clone())
+                    {
+                        if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str())
+                        {
+                            let command = params
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
                             let user_text = format!("/{}", command);
-                            let error_text = format!("Command error: Missing required scope: {}", required);
+                            let error_text =
+                                format!("Command error: Missing required scope: {}", required);
                             if let Some(ref store) = state.session_store {
-                                let _ = store.append_message(session_id, "user", &user_text, None, None, None, None, None).await;
-                                let _ = store.append_message(session_id, "assistant", &error_text, None, None, None, None, None).await;
+                                let _ = store
+                                    .append_message(
+                                        session_id, "user", &user_text, None, None, None, None,
+                                        None,
+                                    )
+                                    .await;
+                                let _ = store
+                                    .append_message(
+                                        session_id,
+                                        "assistant",
+                                        &error_text,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -381,7 +404,8 @@ async fn handle_connect(
             // No auth required, grant requested scopes (capped to available scopes)
             let mut scopes: Vec<String> = DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect();
             for s in &params.scopes {
-                if crate::gateway::protocol::ALL_SCOPES.contains(&s.as_str()) && !scopes.contains(s) {
+                if crate::gateway::protocol::ALL_SCOPES.contains(&s.as_str()) && !scopes.contains(s)
+                {
                     scopes.push(s.clone());
                 }
             }
@@ -713,7 +737,10 @@ async fn handle_chat_send(
             .event_tx
             .send(crate::gateway::GatewayEvent::SessionCreated {
                 session_id: session_id.clone(),
-                agent_id: routed.as_ref().map(|r| r.agent_id.clone()).unwrap_or_default(),
+                agent_id: routed
+                    .as_ref()
+                    .map(|r| r.agent_id.clone())
+                    .unwrap_or_default(),
                 user_id: user_id.clone(),
             });
     }
@@ -766,18 +793,29 @@ async fn handle_chat_history(
         {
             Ok(rows) => rows
                 .into_iter()
-                .map(|(id, role, content, reasoning, tool_calls_json, dt, _transcript_id, _run_id)| {
-                    let tool_calls: Option<serde_json::Value> =
-                        tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
-                    serde_json::json!({
-                        "id": format!("msg_{}", id),
-                        "role": role,
-                        "content": content,
-                        "reasoning_content": reasoning,
-                        "tool_calls": tool_calls,
-                        "timestamp": dt.timestamp(),
-                    })
-                })
+                .map(
+                    |(
+                        id,
+                        role,
+                        content,
+                        reasoning,
+                        tool_calls_json,
+                        dt,
+                        _transcript_id,
+                        _run_id,
+                    )| {
+                        let tool_calls: Option<serde_json::Value> =
+                            tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
+                        serde_json::json!({
+                            "id": format!("msg_{}", id),
+                            "role": role,
+                            "content": content,
+                            "reasoning_content": reasoning,
+                            "tool_calls": tool_calls,
+                            "timestamp": dt.timestamp(),
+                        })
+                    },
+                )
                 .collect::<Vec<_>>(),
             Err(_) => Vec::new(),
         }
@@ -830,9 +868,7 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
                         if meta.message_count == 0 {
                             "New Session".to_string()
                         } else {
-                            meta.last_activity
-                                .format("%b %d %H:%M")
-                                .to_string()
+                            meta.last_activity.format("%b %d %H:%M").to_string()
                         }
                     });
                     serde_json::json!({
@@ -849,7 +885,8 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
     } else {
         // Fallback to in-memory session manager
         let mgr = state.session_manager.read().await;
-        mgr.list_sessions().await
+        mgr.list_sessions()
+            .await
             .into_iter()
             .map(|id| serde_json::json!({ "session_id": id, "name": id }))
             .collect()
@@ -899,9 +936,7 @@ async fn handle_sessions_create(
 
     // Also persist to session_store so sessions.list can find it
     if let Some(ref store) = state.session_store {
-        let metadata = crate::agent::session_store::SessionMetadata::new(
-            &session_id, "", "", "",
-        );
+        let metadata = crate::agent::session_store::SessionMetadata::new(&session_id, "", "", "");
         let _ = store.save_session(&session_id, &metadata, "{}").await;
     }
 

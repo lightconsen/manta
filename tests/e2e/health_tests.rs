@@ -14,10 +14,7 @@ async fn health_returns_healthy() {
         resp.get("error")
     );
     let payload = resp_payload(&resp).unwrap();
-    assert_eq!(
-        payload.get("status").and_then(|v| v.as_str()),
-        Some("healthy")
-    );
+    assert_eq!(payload.get("status").and_then(|v| v.as_str()), Some("healthy"));
 }
 
 #[tokio::test]
@@ -34,10 +31,7 @@ async fn system_presence_returns_online() {
         resp.get("error")
     );
     let payload = resp_payload(&resp).unwrap();
-    assert_eq!(
-        payload.get("online").and_then(|v| v.as_bool()),
-        Some(true)
-    );
+    assert_eq!(payload.get("online").and_then(|v| v.as_bool()), Some(true));
 }
 
 #[tokio::test]

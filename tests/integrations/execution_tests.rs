@@ -46,10 +46,7 @@ async fn process_tool_lists_processes() {
         .await
         .expect("process tool should succeed");
 
-    assert!(
-        !result.output.is_empty(),
-        "process tool returned empty content"
-    );
+    assert!(!result.output.is_empty(), "process tool returned empty content");
 }
 
 #[tokio::test]
@@ -69,7 +66,8 @@ async fn shell_nonzero_exit_fails() {
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for nonzero exit code");
     assert!(
-        output.error.as_ref().unwrap().contains("42") || output.error.as_ref().unwrap().contains("Exit code"),
+        output.error.as_ref().unwrap().contains("42")
+            || output.error.as_ref().unwrap().contains("Exit code"),
         "Expected exit code in error, got: {:?}",
         output.error
     );
@@ -79,7 +77,9 @@ async fn shell_nonzero_exit_fails() {
 async fn shell_pipeline_works() {
     let tool = ShellTool::new();
     let ctx = test_context();
-    let result = tool.execute(json!({"command": "echo 'hello pipe' | grep pipe"}), &ctx).await;
+    let result = tool
+        .execute(json!({"command": "echo 'hello pipe' | grep pipe"}), &ctx)
+        .await;
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(output.success);
@@ -91,16 +91,14 @@ async fn code_exec_forbidden_import_fails() {
     let tool = CodeExecutionTool::new();
     let ctx = test_context();
     let result = tool
-        .execute(
-            json!({"code": "import subprocess\nprint('ok')", "language": "python"}),
-            &ctx,
-        )
+        .execute(json!({"code": "import subprocess\nprint('ok')", "language": "python"}), &ctx)
         .await;
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(!output.success, "Expected failure for forbidden import");
     assert!(
-        output.error.as_ref().unwrap().contains("validation failed") || output.error.as_ref().unwrap().contains("forbidden"),
+        output.error.as_ref().unwrap().contains("validation failed")
+            || output.error.as_ref().unwrap().contains("forbidden"),
         "Expected validation error, got: {:?}",
         output.error
     );
@@ -146,7 +144,12 @@ async fn code_exec_timeout_fails() {
     let output = result.unwrap();
     assert!(!output.success, "Expected timeout failure");
     assert!(
-        output.error.as_ref().unwrap().to_lowercase().contains("timed out"),
+        output
+            .error
+            .as_ref()
+            .unwrap()
+            .to_lowercase()
+            .contains("timed out"),
         "Expected timeout error, got: {:?}",
         output.error
     );

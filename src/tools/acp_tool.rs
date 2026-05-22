@@ -179,10 +179,19 @@ impl Tool for AcpSpawnTool {
                     if let Some(ref store) = self.session_store {
                         if let Ok(Some(mut ps)) = store.load_session(target_session).await {
                             ps.metadata.bound_agent_id = Some(subagent_id.clone());
-                            if let Err(e) = store.save_session(target_session, &ps.metadata, &ps.state_json).await {
-                                warn!("Failed to bind subagent {} to session {}: {}", subagent_id, target_session, e);
+                            if let Err(e) = store
+                                .save_session(target_session, &ps.metadata, &ps.state_json)
+                                .await
+                            {
+                                warn!(
+                                    "Failed to bind subagent {} to session {}: {}",
+                                    subagent_id, target_session, e
+                                );
                             } else {
-                                info!("Bound subagent {} to session {}", subagent_id, target_session);
+                                info!(
+                                    "Bound subagent {} to session {}",
+                                    subagent_id, target_session
+                                );
                             }
                         } else {
                             warn!("Cannot bind subagent: session {} not found", target_session);
