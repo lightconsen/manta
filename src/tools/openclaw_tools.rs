@@ -140,6 +140,17 @@ impl Tool for SessionsHistoryTool {
         };
 
         let session_id = AcpSessionId(args.session_id);
+
+        if self.acp.get_session_info(&session_id).await.is_none() {
+            return Ok(ToolExecutionResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Session {} not found", session_id)),
+                data: None,
+                execution_time: start.elapsed(),
+            });
+        }
+
         let subagents = self.acp.list_session_subagents(&session_id).await;
 
         let history: Vec<_> = subagents

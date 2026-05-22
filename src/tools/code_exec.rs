@@ -116,6 +116,7 @@ impl CodeExecutionTool {
         &self,
         code: &str,
         _context: &ToolContext,
+        timeout_secs: u64,
     ) -> crate::Result<CodeResult> {
         // Create wrapped code with output capture
         let max_size = self.config.max_output_size;
@@ -187,7 +188,7 @@ print(json.dumps(result))
         })?;
 
         // Wait for execution with timeout
-        let timeout_duration = Duration::from_secs(self.config.timeout_secs);
+        let timeout_duration = Duration::from_secs(timeout_secs);
         let result = timeout(timeout_duration, async {
             let stdout = child.stdout.take().unwrap();
             let stderr = child.stderr.take().unwrap();
@@ -251,7 +252,7 @@ print(json.dumps(result))
                 let _ = child.kill().await;
                 Err(crate::error::MantaError::Internal(format!(
                     "Code execution timed out after {} seconds",
-                    self.config.timeout_secs
+                    timeout_secs
                 )))
             }
         }
@@ -365,11 +366,13 @@ print(json.dumps({"average": result, "count": len(data)}))
             }
         }
 
+        let timeout_secs = args["timeout"].as_u64().unwrap_or(self.config.timeout_secs);
+
         info!("Executing {} code ({} bytes)", language, code.len());
         debug!("Code: {}", code.chars().take(200).collect::<String>());
 
         // Execute the code
-        match self.execute_python(code, context).await {
+        match self.execute_python(code, context, timeout_secs).await {
             Ok(result) => {
                 let success =
                     result.exit_code == 0 && result.result["success"].as_bool().unwrap_or(true);

@@ -1090,6 +1090,12 @@ Actions:
                         "server_id is required for disconnect".to_string(),
                     )
                 })?;
+                if self.manager.get_client(server_id).await.is_none() {
+                    return Ok(ToolExecutionResult::error(format!(
+                        "MCP server '{}' is not connected",
+                        server_id
+                    )));
+                }
                 self.manager.disconnect(server_id).await?;
                 Ok(ToolExecutionResult::success(format!(
                     "Disconnected from MCP server '{}'",
