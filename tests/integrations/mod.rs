@@ -28,6 +28,7 @@ mod execution_tests;
 mod file_tests;
 mod media_tests;
 mod memory_tests;
+mod message_tool_tests;
 mod network_tests;
 mod task_time_tests;
 mod web_tests;
