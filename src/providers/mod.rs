@@ -248,6 +248,12 @@ pub struct CompletionRequest {
     pub stop: Option<Vec<String>>,
     /// Provider-specific extra parameters (e.g. thinking, top_p, etc.)
     pub extra: Option<serde_json::Value>,
+    /// Whether the request requires vision capability (image input).
+    pub requires_vision: bool,
+    /// Whether the request requires tool calling capability.
+    pub requires_tools: bool,
+    /// Whether the request requires reasoning / thinking capability.
+    pub requires_reasoning: bool,
 }
 
 impl Default for CompletionRequest {
@@ -261,6 +267,9 @@ impl Default for CompletionRequest {
             model: None,
             stop: None,
             extra: None,
+            requires_vision: false,
+            requires_tools: false,
+            requires_reasoning: false,
         }
     }
 }

@@ -211,6 +211,55 @@ fn apply_known_model_metadata(mut entry: ModelCatalogEntry, model_id: &str) -> M
     entry
 }
 
+/// Plugin-driven model discovery source.
+///
+/// Scans loaded plugin manifests for `Models` capabilities and
+/// converts them into `ModelCatalogEntry` instances.
+pub struct PluginModelSource {
+    plugins: Vec<crate::plugins::manifest::PluginManifest>,
+}
+
+impl PluginModelSource {
+    /// Create a source from a list of plugin manifests.
+    pub fn new(plugins: Vec<crate::plugins::manifest::PluginManifest>) -> Self {
+        Self { plugins }
+    }
+}
+
+#[async_trait]
+impl ModelDiscoverySource for PluginModelSource {
+    async fn discover(&self) -> crate::Result<Vec<ModelCatalogEntry>> {
+        let mut entries = Vec::new();
+        for plugin in &self.plugins {
+            for model in plugin.get_models() {
+                let mut entry = ModelCatalogEntry::new(
+                    model.id.clone(),
+                    model.name.clone(),
+                    model.provider.clone(),
+                );
+                if let Some(ctx) = model.context_window {
+                    entry.context_window = Some(ctx);
+                }
+                entry.supports_vision = model.supports_vision;
+                entry.supports_tools = model.supports_tools;
+                entry.supports_reasoning = model.supports_reasoning;
+                entry.input_modalities = model.input_modalities.clone();
+                if let (Some(input), Some(output)) =
+                    (model.input_cost_per_1k, model.output_cost_per_1k)
+                {
+                    entry.pricing = Some(ModelPricing {
+                        input_per_1k: input,
+                        output_per_1k: output,
+                        cached_input_per_1k: None,
+                    });
+                }
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
+    }
+}
+
 /// Dynamic model catalog with discovery and suppression.
 pub struct ModelCatalog {
     /// All discovered entries keyed by "provider:model_id"

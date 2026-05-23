@@ -58,6 +58,43 @@ pub enum PluginCapability {
         /// List of commands
         commands: Vec<PluginCommand>,
     },
+    /// Provides LLM model entries for the catalog
+    Models {
+        /// List of models provided by this plugin
+        models: Vec<PluginModelEntry>,
+    },
+}
+
+/// A model entry declared by a plugin for dynamic model discovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginModelEntry {
+    /// Provider-specific model ID
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Provider name (e.g. "openai", "anthropic", or a custom plugin provider)
+    pub provider: String,
+    /// Context window size in tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<usize>,
+    /// Whether the model supports vision / image input
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Whether the model supports tool calling
+    #[serde(default)]
+    pub supports_tools: bool,
+    /// Whether the model supports reasoning / thinking
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    /// Supported input modalities
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    /// Pricing: input cost per 1K tokens (USD)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_cost_per_1k: Option<f64>,
+    /// Pricing: output cost per 1K tokens (USD)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_cost_per_1k: Option<f64>,
 }
 
 /// Tool definition from a plugin
@@ -144,6 +181,7 @@ impl PluginManifest {
                     PluginCapability::Channel { .. } => "channel",
                     PluginCapability::Hooks { .. } => "hooks",
                     PluginCapability::Commands { .. } => "commands",
+                    PluginCapability::Models { .. } => "models",
                 };
                 t == capability_type
             })
@@ -159,6 +197,22 @@ impl PluginManifest {
                 .iter()
                 .filter_map(|c| match c {
                     PluginCapability::Tools { tools } => Some(tools.iter()),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Get model entries if available
+    pub fn get_models(&self) -> Vec<&PluginModelEntry> {
+        if let Some(ref capabilities) = self.capabilities {
+            capabilities
+                .iter()
+                .filter_map(|c| match c {
+                    PluginCapability::Models { models } => Some(models.iter()),
                     _ => None,
                 })
                 .flatten()

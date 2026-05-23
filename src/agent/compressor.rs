@@ -390,6 +390,7 @@ impl ContextCompressor {
             stream: false,
             stop: None,
             extra: None,
+            ..Default::default()
         };
 
         match provider.complete(req).await {

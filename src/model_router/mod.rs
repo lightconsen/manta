@@ -9,6 +9,7 @@
 
 pub mod auth_profile;
 pub mod failure_class;
+pub mod gateway_client;
 pub mod model_catalog;
 pub mod oauth_credential;
 pub mod usage_tracker;
@@ -27,6 +28,7 @@ pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
 };
 pub use failure_class::FailureClass;
+pub use gateway_client::{GatewayClient, HttpGatewayClient};
 pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
 pub use oauth_credential::Credential;
 pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig};
@@ -772,7 +774,13 @@ impl ModelRouter {
             tools: None,
             stop: None,
             extra: None,
+            requires_vision: false,
+            requires_tools: false,
+            requires_reasoning: false,
         };
+
+        // Capability-aware routing: upgrade alias if needed
+        let alias = self.resolve_alias_with_capabilities(&alias, &request).await;
 
         // Try primary provider, then fallbacks
         let providers_to_try = self.get_provider_chain(&alias).await;
@@ -1047,6 +1055,78 @@ impl ModelRouter {
         }
     }
 
+    /// Resolve an alias, upgrading to a capability-compatible model if needed.
+    ///
+    /// If the request requires vision/tools/reasoning and the resolved alias
+    /// maps to a model that lacks those capabilities, search the catalog for
+    /// the cheapest compatible model and switch to that alias.
+    async fn resolve_alias_with_capabilities(
+        &self,
+        alias: &ModelAlias,
+        request: &CompletionRequest,
+    ) -> ModelAlias {
+        if !request.requires_vision && !request.requires_tools && !request.requires_reasoning {
+            return alias.clone();
+        }
+
+        let entry = self
+            .model_catalog
+            .get(&alias.provider, &alias.model)
+            .await;
+
+        let compatible = entry.map_or(false, |e| {
+            (!request.requires_vision || e.supports_vision)
+                && (!request.requires_tools || e.supports_tools)
+                && (!request.requires_reasoning || e.supports_reasoning)
+        });
+
+        if compatible {
+            return alias.clone();
+        }
+
+        // Search catalog for cheapest compatible model
+        let candidates = self.model_catalog.list().await;
+        let mut best: Option<(&ModelCatalogEntry, f64)> = None;
+
+        for c in &candidates {
+            if (!request.requires_vision || c.supports_vision)
+                && (!request.requires_tools || c.supports_tools)
+                && (!request.requires_reasoning || c.supports_reasoning)
+            {
+                let cost = c
+                    .pricing
+                    .as_ref()
+                    .map(|p| p.input_per_1k + p.output_per_1k)
+                    .unwrap_or(f64::MAX);
+                if best.map_or(true, |(_, best_cost)| cost < best_cost) {
+                    best = Some((c, cost));
+                }
+            }
+        }
+
+        if let Some((entry, _)) = best {
+            info!(
+                "Capability routing: upgraded '{}' (provider={}, model={}) to '{}' (provider={}, model={}) for vision={} tools={} reasoning={}",
+                alias.name,
+                alias.provider,
+                alias.model,
+                entry.name,
+                entry.provider,
+                entry.id,
+                request.requires_vision,
+                request.requires_tools,
+                request.requires_reasoning,
+            );
+            let mut upgraded = alias.clone();
+            upgraded.provider = entry.provider.clone();
+            upgraded.model = entry.id.clone();
+            return upgraded;
+        }
+
+        // No compatible model found — fall back to original alias
+        alias.clone()
+    }
+
     /// Get the ordered list of providers to try
     async fn get_provider_chain(&self, alias: &ModelAlias) -> Vec<FallbackEntry> {
         let chains = self.fallback_chains.read().await;
@@ -1161,6 +1241,7 @@ impl ModelRouter {
                     tools: None,
                     stop: None,
                     extra: None,
+                    ..Default::default()
                 };
 
                 let start = std::time::Instant::now();
@@ -1438,6 +1519,7 @@ impl ModelRouter {
             tools: None,
             stop: None,
             extra: None,
+            ..Default::default()
         };
 
         let start = std::time::Instant::now();
@@ -1487,6 +1569,7 @@ impl ModelRouter {
             tools: None,
             stop: None,
             extra: None,
+            ..Default::default()
         };
 
         let start = std::time::Instant::now();

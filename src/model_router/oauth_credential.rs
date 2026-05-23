@@ -158,6 +158,39 @@ impl Credential {
     }
 }
 
+/// Resolve a credential following the priority chain:
+///
+/// 1. Environment variable (e.g. `MANTA_PROVIDER_{NAME}_KEY`) — highest priority
+/// 2. Bearer token / OAuth2 from auth_profile
+/// 3. API key from config `api_keys` list
+/// 4. Single `api_key` from config — lowest priority
+///
+/// This mirrors OpenClaw's credential priority: token > env > config.
+pub fn resolve_from_env_and_config(provider_name: &str, config_api_key: &str, config_api_keys: &[String]) -> Option<Credential> {
+    let env_key = format!("MANTA_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
+
+    // 1. Environment variable (highest priority)
+    if let Ok(key) = std::env::var(&env_key) {
+        if !key.is_empty() {
+            return Some(Credential::ApiKey { key });
+        }
+    }
+
+    // 2. Config api_keys list
+    if let Some(key) = config_api_keys.first() {
+        if !key.is_empty() {
+            return Some(Credential::ApiKey { key: key.clone() });
+        }
+    }
+
+    // 3. Single api_key from config
+    if !config_api_key.is_empty() {
+        return Some(Credential::ApiKey { key: config_api_key.to_string() });
+    }
+
+    None
+}
+
 impl fmt::Display for Credential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

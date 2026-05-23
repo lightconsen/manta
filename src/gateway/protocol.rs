@@ -192,7 +192,14 @@ pub struct ServerInfo {
     pub conn_id: String,
 }
 
-// ── Scopes ────────────────────────────────────────────────────────────────────
+// ── Scopes (Operator Scope system) ────────────────────────────────────────────
+///
+/// Manta uses an Operator Scope model aligned with OpenClaw's
+/// `method-scopes.ts`. Each WebSocket method declares a required scope;
+/// the gateway verifies the connection's granted scopes before dispatch.
+///
+/// Scope hierarchy (least to most privileged):
+///   read < chat < write < acp < pairing < admin
 
 /// Scope: chat operations (send, history, abort)
 pub const SCOPE_CHAT: &str = "chat";

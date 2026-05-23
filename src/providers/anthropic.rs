@@ -553,6 +553,7 @@ impl Provider for AnthropicProvider {
             tools: None,
             stop: None,
             extra: None,
+            ..Default::default()
         };
 
         match self.complete(request).await {
