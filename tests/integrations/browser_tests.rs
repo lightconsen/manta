@@ -9,17 +9,22 @@
 #![cfg(feature = "browser")]
 
 use manta::browser::{
-    ActKind, BrowserPool, BrowserPoolConfig, BrowserProfile, NavigationPolicy,
-    assert_navigation_allowed,
+    assert_navigation_allowed, ActKind, BrowserPool, BrowserPoolConfig, BrowserProfile,
+    NavigationPolicy,
 };
-use manta::tools::{Tool, ToolContext};
 use manta::tools::browser::BrowserTool;
+use manta::tools::{Tool, ToolContext};
 use serde_json::json;
 use serial_test::serial;
 
 /// Check if Chrome/Chromium is available on the system
 fn chrome_available() -> bool {
-    for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"] {
+    for cmd in [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ] {
         if std::process::Command::new("which")
             .arg(cmd)
             .output()
@@ -41,7 +46,10 @@ fn chrome_compatible() -> bool {
         return false;
     }
     let commands: Vec<String> = [
-        "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -224,7 +232,11 @@ async fn test_browser_click() {
     let result = tool.execute(args, &ctx).await.unwrap();
     assert!(result.success, "browser click failed: {:?}", result.error);
     let data = result.data.expect("expected data");
-    let results = data.get("results").expect("expected results").as_array().expect("expected array");
+    let results = data
+        .get("results")
+        .expect("expected results")
+        .as_array()
+        .expect("expected array");
     assert_eq!(results.len(), 3);
     let ok_val = results[2].get("Ok").expect("expected Ok");
     let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -252,7 +264,11 @@ async fn test_browser_type() {
     let result = tool.execute(args, &ctx).await.unwrap();
     assert!(result.success, "browser type failed: {:?}", result.error);
     let data = result.data.expect("expected data");
-    let results = data.get("results").expect("expected results").as_array().expect("expected array");
+    let results = data
+        .get("results")
+        .expect("expected results")
+        .as_array()
+        .expect("expected array");
     assert_eq!(results.len(), 3);
     let ok_val = results[2].get("Ok").expect("expected Ok");
     let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -280,7 +296,11 @@ async fn test_browser_scroll() {
     let result = tool.execute(args, &ctx).await.unwrap();
     assert!(result.success, "browser scroll failed: {:?}", result.error);
     let data = result.data.expect("expected data");
-    let results = data.get("results").expect("expected results").as_array().expect("expected array");
+    let results = data
+        .get("results")
+        .expect("expected results")
+        .as_array()
+        .expect("expected array");
     assert_eq!(results.len(), 3);
     let ok_val = results[2].get("Ok").expect("expected Ok");
     let scroll_y = ok_val.get("result").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -309,7 +329,11 @@ async fn test_browser_press() {
     let result = tool.execute(args, &ctx).await.unwrap();
     assert!(result.success, "browser press failed: {:?}", result.error);
     let data = result.data.expect("expected data");
-    let results = data.get("results").expect("expected results").as_array().expect("expected array");
+    let results = data
+        .get("results")
+        .expect("expected results")
+        .as_array()
+        .expect("expected array");
     assert_eq!(results.len(), 4);
     let ok_val = results[3].get("Ok").expect("expected Ok");
     let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");

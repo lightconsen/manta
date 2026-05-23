@@ -535,6 +535,7 @@ pub trait Tool: Send + Sync {
 pub type BoxedTool = Box<dyn Tool>;
 
 pub mod acp_tool;
+pub mod agents_list;
 pub mod browser;
 pub mod canvas;
 pub mod code_exec;
@@ -542,21 +543,20 @@ pub mod command_gate;
 pub mod cron_tool;
 pub mod delegate_tool;
 pub mod file;
+pub mod gateway;
 pub mod grep;
 pub mod hooks;
 pub mod image;
 pub mod mcp;
 pub mod memory;
-pub mod nodes;
-pub mod agents_list;
-pub mod gateway;
 pub mod message;
+pub mod nodes;
 pub mod patch;
 pub mod pdf;
-pub mod session;
 pub mod process;
 pub mod sandbox;
 pub mod sdk;
+pub mod session;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
@@ -566,29 +566,29 @@ pub mod update_plan;
 pub mod web;
 
 pub use acp_tool::{AcpSessionTool, AcpSpawnTool};
+pub use agents_list::AgentsListTool;
 pub use browser::BrowserTool;
 pub use canvas::CanvasTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
 pub use delegate_tool::DelegateTool;
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
+pub use gateway::GatewayTool;
 pub use grep::GrepTool;
 pub use hooks::{ToolHooks, ToolPolicyDecision};
 pub use image::{ImageGenerateTool, ImageTool};
 pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
-pub use nodes::NodesTool;
-pub use agents_list::AgentsListTool;
-pub use gateway::GatewayTool;
 pub use message::MessageTool;
+pub use nodes::NodesTool;
 pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
-pub use session::{
-    SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
-};
 pub use process::ProcessTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
+pub use session::{
+    SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
+};
 pub use shell::ShellTool;
 pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;

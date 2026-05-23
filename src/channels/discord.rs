@@ -79,9 +79,9 @@ pub struct DiscordChannel {
     #[cfg(feature = "discord")]
     http: Option<Arc<serenity::http::Http>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Message ID to Channel ID mapping for edit/delete operations
+    /// Manta message ID -> (Discord message ID, Discord channel ID) mapping
     #[cfg(feature = "discord")]
-    message_channel_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, u64>>>,
+    message_map: Arc<tokio::sync::RwLock<std::collections::HashMap<Id, (u64, u64)>>>,
     /// Session mapping: channel_id -> session_uuid (for /new command support)
     #[cfg(feature = "discord")]
     session_map: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, String>>>,
@@ -116,9 +116,7 @@ impl DiscordChannel {
             http,
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(feature = "discord")]
-            message_channel_map: Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
+            message_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             #[cfg(feature = "discord")]
             session_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             pairing_store: Arc::new(RwLock::new(None)),
@@ -174,16 +172,16 @@ impl DiscordChannel {
 
     /// Track a message ID to channel ID mapping
     #[cfg(feature = "discord")]
-    async fn track_message(&self, message_id: u64, channel_id: u64) {
-        let mut map = self.message_channel_map.write().await;
-        map.insert(message_id, channel_id);
+    async fn track_message(&self, manta_id: Id, discord_msg_id: u64, channel_id: u64) {
+        let mut map = self.message_map.write().await;
+        map.insert(manta_id, (discord_msg_id, channel_id));
     }
 
-    /// Get channel ID for a message ID
+    /// Get (Discord message ID, channel ID) for a Manta message ID
     #[cfg(feature = "discord")]
-    async fn get_message_channel(&self, message_id: u64) -> Option<u64> {
-        let map = self.message_channel_map.read().await;
-        map.get(&message_id).copied()
+    async fn get_message_info(&self, manta_id: Id) -> Option<(u64, u64)> {
+        let map = self.message_map.read().await;
+        map.get(&manta_id).copied()
     }
 
     /// Check if user is allowed
@@ -339,13 +337,16 @@ impl Channel for DiscordChannel {
                     // Send embed message
                     let embed = Self::create_serenity_embed(embed);
                     let builder = CreateMessage::new().add_embed(embed);
-                    let _sent = channel_id.send_message(http, builder).await.map_err(|e| {
+                    let sent = channel_id.send_message(http, builder).await.map_err(|e| {
                         crate::error::MantaError::ExternalService {
                             source: format!("Discord send failed: {}", e),
                             cause: None,
                         }
                     })?;
-                    return Ok(Id::new());
+                    let manta_id = Id::new();
+                    self.track_message(manta_id, sent.id.get(), channel_id.get())
+                        .await;
+                    return Ok(manta_id);
                 }
                 _ => message.content,
             };
@@ -360,11 +361,11 @@ impl Channel for DiscordChannel {
             })?;
 
             // Track the message for edit/delete operations
-            let message_id = sent.id.get();
-            let channel_id_val = channel_id.get();
-            self.track_message(message_id, channel_id_val).await;
+            let manta_id = Id::new();
+            self.track_message(manta_id, sent.id.get(), channel_id.get())
+                .await;
 
-            Ok(Id::new())
+            Ok(manta_id)
         }
 
         #[cfg(not(feature = "discord"))]
@@ -408,33 +409,28 @@ impl Channel for DiscordChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         #[cfg(feature = "discord")]
         {
-            let message_id_num: u64 = message_id.to_string().parse().map_err(|_| {
-                crate::error::MantaError::Validation("Invalid message ID".to_string())
-            })?;
-
-            // Look up the channel ID from our tracking map
-            let channel_id_num =
-                self.get_message_channel(message_id_num)
-                    .await
-                    .ok_or_else(|| crate::error::MantaError::NotFound {
-                        resource: format!(
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
-                        message_id_num
+                        message_id
                     ),
-                    })?;
+                })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
                 crate::error::MantaError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
-            let message_id = serenity::model::id::MessageId::new(message_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
 
             // Edit the message
             channel_id
                 .edit_message(
                     http,
-                    message_id,
+                    serenity_msg_id,
                     serenity::builder::EditMessage::new().content(new_content),
                 )
                 .await
@@ -456,31 +452,26 @@ impl Channel for DiscordChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         #[cfg(feature = "discord")]
         {
-            let message_id_num: u64 = message_id.to_string().parse().map_err(|_| {
-                crate::error::MantaError::Validation("Invalid message ID".to_string())
-            })?;
-
-            // Look up the channel ID from our tracking map
-            let channel_id_num =
-                self.get_message_channel(message_id_num)
-                    .await
-                    .ok_or_else(|| crate::error::MantaError::NotFound {
-                        resource: format!(
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
-                        message_id_num
+                        message_id
                     ),
-                    })?;
+                })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
                 crate::error::MantaError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
-            let message_id = serenity::model::id::MessageId::new(message_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
 
             // Delete the message
             channel_id
-                .delete_message(http, message_id)
+                .delete_message(http, serenity_msg_id)
                 .await
                 .map_err(|e| crate::error::MantaError::ExternalService {
                     source: format!("Discord delete failed: {}", e),
@@ -488,8 +479,8 @@ impl Channel for DiscordChannel {
                 })?;
 
             // Remove from tracking
-            let mut map = self.message_channel_map.write().await;
-            map.remove(&message_id_num);
+            let mut map = self.message_map.write().await;
+            map.remove(&message_id);
 
             Ok(())
         }
@@ -525,6 +516,192 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             Ok(false)
+        }
+    }
+
+    // ── Advanced actions ───────────────────────────────────────────────────
+
+    async fn add_reaction(&self, message_id: Id, emoji: String) -> crate::Result<()> {
+        #[cfg(feature = "discord")]
+        {
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking", message_id),
+                })?;
+
+            let http = self.http.as_ref().ok_or_else(|| {
+                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+            })?;
+
+            let channel_id = ChannelId::new(channel_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
+            let reaction = serenity::model::channel::ReactionType::Unicode(emoji);
+
+            channel_id
+                .create_reaction(http, serenity_msg_id, reaction)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord add reaction failed: {}", e),
+                    cause: None,
+                })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "discord"))]
+        {
+            let _ = (message_id, emoji);
+            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+        }
+    }
+
+    async fn remove_reaction(&self, message_id: Id, emoji: String) -> crate::Result<()> {
+        #[cfg(feature = "discord")]
+        {
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking", message_id),
+                })?;
+
+            let http = self.http.as_ref().ok_or_else(|| {
+                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+            })?;
+
+            let channel_id = ChannelId::new(channel_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
+            let reaction = serenity::model::channel::ReactionType::Unicode(emoji);
+
+            channel_id
+                .delete_reaction(http, serenity_msg_id, None, reaction)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord remove reaction failed: {}", e),
+                    cause: None,
+                })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "discord"))]
+        {
+            let _ = (message_id, emoji);
+            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+        }
+    }
+
+    async fn pin_message(&self, message_id: Id) -> crate::Result<()> {
+        #[cfg(feature = "discord")]
+        {
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking", message_id),
+                })?;
+
+            let http = self.http.as_ref().ok_or_else(|| {
+                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+            })?;
+
+            let channel_id = ChannelId::new(channel_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
+
+            channel_id.pin(http, serenity_msg_id).await.map_err(|e| {
+                crate::error::MantaError::ExternalService {
+                    source: format!("Discord pin failed: {}", e),
+                    cause: None,
+                }
+            })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "discord"))]
+        {
+            let _ = message_id;
+            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+        }
+    }
+
+    async fn unpin_message(&self, message_id: Id) -> crate::Result<()> {
+        #[cfg(feature = "discord")]
+        {
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking", message_id),
+                })?;
+
+            let http = self.http.as_ref().ok_or_else(|| {
+                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+            })?;
+
+            let channel_id = ChannelId::new(channel_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
+
+            channel_id.unpin(http, serenity_msg_id).await.map_err(|e| {
+                crate::error::MantaError::ExternalService {
+                    source: format!("Discord unpin failed: {}", e),
+                    cause: None,
+                }
+            })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "discord"))]
+        {
+            let _ = message_id;
+            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+        }
+    }
+
+    async fn create_thread(
+        &self,
+        message_id: Id,
+        title: Option<String>,
+    ) -> crate::Result<ConversationId> {
+        #[cfg(feature = "discord")]
+        {
+            let (discord_msg_id, channel_id_num) = self
+                .get_message_info(message_id)
+                .await
+                .ok_or_else(|| crate::error::MantaError::NotFound {
+                    resource: format!("Message {} not found in tracking", message_id),
+                })?;
+
+            let http = self.http.as_ref().ok_or_else(|| {
+                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+            })?;
+
+            let channel_id = ChannelId::new(channel_id_num);
+            let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
+            let thread_name = title.unwrap_or_else(|| "Thread".to_string());
+
+            let thread = channel_id
+                .create_thread_from_message(
+                    http,
+                    serenity_msg_id,
+                    serenity::builder::CreateThread::new(thread_name),
+                )
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Discord create thread failed: {}", e),
+                    cause: None,
+                })?;
+
+            Ok(ConversationId::new(thread.id.get().to_string()))
+        }
+
+        #[cfg(not(feature = "discord"))]
+        {
+            let _ = (message_id, title);
+            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
         }
     }
 }

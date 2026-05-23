@@ -517,7 +517,9 @@ impl Tool for SessionStatusTool {
                 return Ok(ToolExecutionResult {
                     success: false,
                     output: String::new(),
-                    error: Some("No current session available (conversation_id is empty)".to_string()),
+                    error: Some(
+                        "No current session available (conversation_id is empty)".to_string(),
+                    ),
                     data: None,
                     execution_time: start.elapsed(),
                 });
@@ -589,7 +591,10 @@ impl Tool for SessionStatusTool {
                 if let Ok(mut state) = serde_json::from_str::<serde_json::Value>(&ps.state_json) {
                     if let Some(obj) = state.as_object_mut() {
                         if !provider.is_empty() {
-                            obj.insert("providerOverride".to_string(), serde_json::Value::String(provider));
+                            obj.insert(
+                                "providerOverride".to_string(),
+                                serde_json::Value::String(provider),
+                            );
                         } else {
                             obj.remove("providerOverride");
                         }
@@ -601,7 +606,10 @@ impl Tool for SessionStatusTool {
             }
 
             if changed_model {
-                if let Err(e) = store.save_session(&target_id, &ps.metadata, &ps.state_json).await {
+                if let Err(e) = store
+                    .save_session(&target_id, &ps.metadata, &ps.state_json)
+                    .await
+                {
                     return Ok(ToolExecutionResult {
                         success: false,
                         output: String::new(),
@@ -615,10 +623,18 @@ impl Tool for SessionStatusTool {
 
         let runtime_model = serde_json::from_str::<serde_json::Value>(&ps.state_json)
             .ok()
-            .and_then(|v| v.get("modelOverride").and_then(|m| m.as_str()).map(String::from));
+            .and_then(|v| {
+                v.get("modelOverride")
+                    .and_then(|m| m.as_str())
+                    .map(String::from)
+            });
         let runtime_provider = serde_json::from_str::<serde_json::Value>(&ps.state_json)
             .ok()
-            .and_then(|v| v.get("providerOverride").and_then(|m| m.as_str()).map(String::from));
+            .and_then(|v| {
+                v.get("providerOverride")
+                    .and_then(|m| m.as_str())
+                    .map(String::from)
+            });
 
         let primary_model_label = match (&runtime_provider, &runtime_model) {
             (Some(p), Some(m)) => format!("{}/{}", p, m),

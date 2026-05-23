@@ -18,7 +18,7 @@ pub mod pool;
 pub mod profile;
 
 #[cfg(feature = "browser")]
-pub use aria_snapshot::{aria_snapshot, act_by_ref, ActKind, AriaNodeLine, AriaSnapshot};
+pub use aria_snapshot::{act_by_ref, aria_snapshot, ActKind, AriaNodeLine, AriaSnapshot};
 #[cfg(feature = "browser")]
 pub use pool::{BrowserInstance, BrowserPool, PageHandle};
 #[cfg(feature = "browser")]

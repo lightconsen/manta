@@ -1872,14 +1872,8 @@ impl Gateway {
                         *bridge_lock = Some(bridge);
                     }
                     let mut settings = self.state.runtime_settings.write().await;
-                    settings.insert(
-                        "browser_bridge_url".to_string(),
-                        serde_json::json!(url),
-                    );
-                    settings.insert(
-                        "browser_bridge_token".to_string(),
-                        serde_json::json!(token),
-                    );
+                    settings.insert("browser_bridge_url".to_string(), serde_json::json!(url));
+                    settings.insert("browser_bridge_token".to_string(), serde_json::json!(token));
                 }
                 Err(e) => {
                     warn!("Failed to start browser bridge server: {}", e);

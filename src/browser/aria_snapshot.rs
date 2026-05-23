@@ -248,19 +248,17 @@ pub async fn aria_snapshot(
 }
 "#;
 
-    let result = page.evaluate(script).await.map_err(|e| {
-        crate::error::MantaError::ExternalService {
-            source: "Failed to extract ARIA snapshot".to_string(),
-            cause: Some(Box::new(e)),
-        }
-    })?;
+    let result =
+        page.evaluate(script)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Failed to extract ARIA snapshot".to_string(),
+                cause: Some(Box::new(e)),
+            })?;
 
     let data = result.value().cloned().unwrap_or_default();
 
-    let _ref_count = data
-        .get("refCount")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let _ref_count = data.get("refCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
     let elements = data
         .get("elements")
@@ -345,9 +343,10 @@ pub async fn act_by_ref(
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Element with ref {} not found", ref_id),
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Element with ref {} not found",
+                    ref_id
+                )));
             }
             Ok(format!("Clicked element [ref={}]", ref_id))
         }
@@ -367,7 +366,9 @@ pub async fn act_by_ref(
                     return {{ error: "Element is not an input" }};
                 }}"#,
                 selector,
-                text.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'")
+                text.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\'', "\\'")
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::MantaError::ExternalService {
@@ -377,9 +378,10 @@ pub async fn act_by_ref(
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Element with ref {} not found or not an input", ref_id),
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Element with ref {} not found or not an input",
+                    ref_id
+                )));
             }
             Ok(format!("Typed text into element [ref={}]", ref_id))
         }
@@ -403,9 +405,10 @@ pub async fn act_by_ref(
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Element with ref {} not found", ref_id),
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Element with ref {} not found",
+                    ref_id
+                )));
             }
             Ok(format!("Hovered over element [ref={}]", ref_id))
         }
@@ -426,7 +429,9 @@ pub async fn act_by_ref(
                     return {{ error: "Element is not an input" }};
                 }}"#,
                 selector,
-                text.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'")
+                text.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\'', "\\'")
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
                 crate::error::MantaError::ExternalService {
@@ -436,9 +441,10 @@ pub async fn act_by_ref(
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(
-                    format!("Element with ref {} not found or not an input", ref_id),
-                ));
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Element with ref {} not found or not an input",
+                    ref_id
+                )));
             }
             Ok(format!("Filled element [ref={}]", ref_id))
         }

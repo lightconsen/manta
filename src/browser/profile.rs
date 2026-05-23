@@ -98,9 +98,7 @@ impl BrowserProfile {
     pub fn chrome_mcp(name: impl Into<String>, cdp_url: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            driver: BrowserDriver::ChromeMcp {
-                cdp_url: cdp_url.into(),
-            },
+            driver: BrowserDriver::ChromeMcp { cdp_url: cdp_url.into() },
             ..Default::default()
         }
     }

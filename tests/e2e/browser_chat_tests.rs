@@ -10,7 +10,12 @@ use super::*;
 /// Check if Chrome/Chromium is available on the system
 fn chrome_available() -> bool {
     // Check common executable names
-    for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"] {
+    for cmd in [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ] {
         if std::process::Command::new("which")
             .arg(cmd)
             .output()

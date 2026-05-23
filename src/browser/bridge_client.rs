@@ -150,11 +150,9 @@ impl BridgeClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge status request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge status request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -164,12 +162,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge status".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Navigate to a URL
@@ -187,11 +185,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge navigate request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge navigate request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -201,12 +197,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge navigate response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Take an ARIA snapshot
@@ -230,11 +226,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge snapshot request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge snapshot request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -244,12 +238,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge snapshot response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Act on an element by ref_id
@@ -275,11 +269,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge act request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge act request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -289,12 +281,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge act response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Take a screenshot
@@ -318,11 +310,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge screenshot request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge screenshot request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -332,12 +322,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge screenshot response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Start a browser instance
@@ -352,11 +342,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge start request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge start request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -366,12 +354,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge start response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 
     /// Stop a browser instance
@@ -386,11 +374,9 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                crate::error::MantaError::ExternalService {
-                    source: "Bridge stop request failed".to_string(),
-                    cause: Some(Box::new(e)),
-                }
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: "Bridge stop request failed".to_string(),
+                cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
@@ -400,12 +386,12 @@ impl BridgeClient {
             });
         }
 
-        res.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        res.json()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: "Failed to parse bridge stop response".to_string(),
                 cause: Some(Box::new(e)),
-            }
-        })
+            })
     }
 }
 

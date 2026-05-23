@@ -81,6 +81,10 @@ pub enum MantaError {
     /// Sandbox policy violation
     #[error("Sandbox violation: {0}")]
     SandboxViolation(String),
+
+    /// Operation not supported by this channel/provider
+    #[error("Unsupported: {0}")]
+    Unsupported(String),
 }
 
 /// Configuration-specific errors

@@ -47,9 +47,8 @@ impl NavigationPolicy {
 
 /// Validate that a URL is allowed by the navigation policy
 pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate::Result<()> {
-    let parsed = url::Url::parse(url).map_err(|e| {
-        crate::error::MantaError::Validation(format!("Invalid URL: {}", e))
-    })?;
+    let parsed = url::Url::parse(url)
+        .map_err(|e| crate::error::MantaError::Validation(format!("Invalid URL: {}", e)))?;
 
     let scheme = parsed.scheme();
     if !matches!(scheme, "http" | "https" | "about") {
@@ -68,7 +67,11 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
     };
 
     // Check blocked hostnames
-    if policy.blocked_hostnames.iter().any(|h| host.eq_ignore_ascii_case(h)) {
+    if policy
+        .blocked_hostnames
+        .iter()
+        .any(|h| host.eq_ignore_ascii_case(h))
+    {
         return Err(crate::error::MantaError::Validation(format!(
             "Hostname '{}' is blocked",
             host
@@ -87,7 +90,10 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
 
     // Check allowlist (if specified, only allowlisted hosts are permitted)
     if !policy.allowed_hostnames.is_empty()
-        && !policy.allowed_hostnames.iter().any(|h| host.eq_ignore_ascii_case(h))
+        && !policy
+            .allowed_hostnames
+            .iter()
+            .any(|h| host.eq_ignore_ascii_case(h))
     {
         return Err(crate::error::MantaError::Validation(format!(
             "Hostname '{}' is not in the allowed list",

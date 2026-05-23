@@ -580,6 +580,152 @@ impl Channel for TelegramChannel {
             Ok(false)
         }
     }
+
+    // ── Advanced actions ───────────────────────────────────────────────────
+
+    async fn add_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
+        // teloxide 0.12 does not expose set_message_reaction (Bot API 7.0+)
+        Err(crate::MantaError::Unsupported(
+            "Telegram reactions require teloxide >= 0.13".into(),
+        ))
+    }
+
+    async fn remove_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
+        Err(crate::MantaError::Unsupported(
+            "Telegram reactions require teloxide >= 0.13".into(),
+        ))
+    }
+
+    async fn pin_message(&self, message_id: Id) -> crate::Result<()> {
+        #[cfg(feature = "telegram")]
+        {
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
+
+            let (chat_id, telegram_msg_id) = {
+                let map = self.message_map.read().await;
+                map.get(&message_id).copied().ok_or_else(|| {
+                    crate::error::MantaError::Validation(format!(
+                        "Message ID {} not found",
+                        message_id
+                    ))
+                })?
+            };
+
+            bot.pin_chat_message(ChatId(chat_id), MessageId(telegram_msg_id))
+                .await
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Telegram pin error: {}", e))
+                })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "telegram"))]
+        {
+            let _ = message_id;
+            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+        }
+    }
+
+    async fn unpin_message(&self, message_id: Id) -> crate::Result<()> {
+        #[cfg(feature = "telegram")]
+        {
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
+
+            let (chat_id, telegram_msg_id) = {
+                let map = self.message_map.read().await;
+                map.get(&message_id).copied().ok_or_else(|| {
+                    crate::error::MantaError::Validation(format!(
+                        "Message ID {} not found",
+                        message_id
+                    ))
+                })?
+            };
+
+            bot.unpin_chat_message(ChatId(chat_id))
+                .message_id(MessageId(telegram_msg_id))
+                .await
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Telegram unpin error: {}", e))
+                })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "telegram"))]
+        {
+            let _ = message_id;
+            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+        }
+    }
+
+    async fn create_thread(
+        &self,
+        _message_id: Id,
+        _title: Option<String>,
+    ) -> crate::Result<ConversationId> {
+        // Telegram does not have a native "create thread from message" API
+        // Forum topics exist but require a forum supergroup
+        Err(crate::MantaError::Unsupported(
+            "Telegram does not support thread creation from messages".into(),
+        ))
+    }
+
+    async fn send_poll(
+        &self,
+        conversation_id: ConversationId,
+        question: String,
+        options: Vec<String>,
+    ) -> crate::Result<Id> {
+        #[cfg(feature = "telegram")]
+        {
+            let bot = {
+                let bot_guard = self.bot.read().await;
+                bot_guard.as_ref().cloned().ok_or_else(|| {
+                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                })?
+            };
+
+            let chat_id: i64 = conversation_id
+                .0
+                .parse()
+                .map_err(|_| crate::error::MantaError::Validation("Invalid chat ID".to_string()))?;
+
+            let poll_options: Vec<String> = options.into_iter().map(|o| o.into()).collect();
+
+            let sent = bot
+                .send_poll(ChatId(chat_id), question, poll_options)
+                .await
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("Telegram poll error: {}", e))
+                })?;
+
+            let internal_id = Id::new();
+            let telegram_msg_id = sent.id.0;
+            {
+                let mut map = self.message_map.write().await;
+                map.insert(internal_id.clone(), (chat_id, telegram_msg_id));
+            }
+
+            Ok(internal_id)
+        }
+
+        #[cfg(not(feature = "telegram"))]
+        {
+            let _ = (conversation_id, question, options);
+            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+        }
+    }
 }
 
 #[cfg(feature = "telegram")]

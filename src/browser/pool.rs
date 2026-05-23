@@ -73,10 +73,12 @@ impl BrowserInstance {
             builder = builder.arg(arg.clone());
         }
 
-        let config = builder.build().map_err(|e| crate::error::MantaError::ExternalService {
-            source: format!("Browser configuration failed: {}", e),
-            cause: None,
-        })?;
+        let config = builder
+            .build()
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: format!("Browser configuration failed: {}", e),
+                cause: None,
+            })?;
 
         let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
             crate::error::MantaError::ExternalService {
@@ -111,12 +113,12 @@ impl BrowserInstance {
     pub async fn connect(cdp_url: &str, profile: &BrowserProfile) -> crate::Result<Self> {
         use chromiumoxide::browser::Browser;
 
-        let (browser, mut handler) = Browser::connect(cdp_url)
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let (browser, mut handler) = Browser::connect(cdp_url).await.map_err(|e| {
+            crate::error::MantaError::ExternalService {
                 source: format!("Failed to connect to Chrome at {}", cdp_url),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
         let browser = Arc::new(browser);
 
@@ -220,7 +222,13 @@ impl BrowserInstance {
         let pages = self.pages.read().await;
         let mut result = Vec::new();
         for (target_id, handle) in pages.iter() {
-            let title = handle.page.get_title().await.ok().flatten().unwrap_or_default();
+            let title = handle
+                .page
+                .get_title()
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
             let url = handle.page.url().await.ok().flatten().unwrap_or_default();
             result.push((target_id.clone(), title, url));
         }
@@ -280,10 +288,8 @@ impl BrowserPool {
         let instances: Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>> =
             Arc::new(RwLock::new(HashMap::new()));
         let mut profiles_map = HashMap::new();
-        profiles_map.insert(
-            config.default_profile.clone(),
-            BrowserProfile::new(&config.default_profile),
-        );
+        profiles_map
+            .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
         let profiles = Arc::new(RwLock::new(profiles_map));
 
         // Start background cleanup task only if a Tokio runtime is available
@@ -313,10 +319,8 @@ impl BrowserPool {
     /// Create a pool with pre-configured profiles
     pub fn with_profiles(config: BrowserPoolConfig, extra_profiles: Vec<BrowserProfile>) -> Self {
         let mut profiles_map = HashMap::new();
-        profiles_map.insert(
-            config.default_profile.clone(),
-            BrowserProfile::new(&config.default_profile),
-        );
+        profiles_map
+            .insert(config.default_profile.clone(), BrowserProfile::new(&config.default_profile));
         for profile in extra_profiles {
             profiles_map.insert(profile.name.clone(), profile);
         }
@@ -355,10 +359,7 @@ impl BrowserPool {
 
     /// Get or create a browser instance for a profile
     #[cfg(feature = "browser")]
-    pub async fn get_or_create(
-        &self,
-        profile_name: &str,
-    ) -> crate::Result<Arc<BrowserInstance>> {
+    pub async fn get_or_create(&self, profile_name: &str) -> crate::Result<Arc<BrowserInstance>> {
         // Fast path: instance already exists
         {
             let instances = self.instances.read().await;
@@ -398,11 +399,7 @@ impl BrowserPool {
 
     /// Create a new page in a browser instance for the given profile
     #[cfg(feature = "browser")]
-    pub async fn new_page(
-        &self,
-        profile_name: &str,
-        url: &str,
-    ) -> crate::Result<PageHandle> {
+    pub async fn new_page(&self, profile_name: &str, url: &str) -> crate::Result<PageHandle> {
         let instance = self.get_or_create(profile_name).await?;
         instance.new_page(url).await
     }

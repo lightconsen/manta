@@ -69,7 +69,9 @@ fn is_allowed_config_path(path: &str) -> bool {
         if pat.len() > segments.len() {
             return false;
         }
-        pat.iter().zip(segments.iter()).all(|(p, s)| *p == "*" || p == s)
+        pat.iter()
+            .zip(segments.iter())
+            .all(|(p, s)| *p == "*" || p == s)
     })
 }
 
@@ -79,16 +81,28 @@ fn collect_changed_paths(current: &Value, next: &Value, base: &str, out: &mut Ha
     }
     match (current, next) {
         (Value::Array(ca), Value::Array(na)) => {
-            let c_has_id = ca.iter().all(|v| v.as_object().map(|o| o.contains_key("id")).unwrap_or(false));
-            let n_has_id = na.iter().all(|v| v.as_object().map(|o| o.contains_key("id")).unwrap_or(false));
+            let c_has_id = ca
+                .iter()
+                .all(|v| v.as_object().map(|o| o.contains_key("id")).unwrap_or(false));
+            let n_has_id = na
+                .iter()
+                .all(|v| v.as_object().map(|o| o.contains_key("id")).unwrap_or(false));
             if c_has_id && n_has_id && !ca.is_empty() && !na.is_empty() {
                 let c_ids: std::collections::HashMap<String, &Value> = ca
                     .iter()
-                    .filter_map(|v| v.get("id").and_then(|id| id.as_str()).map(|s| (s.to_string(), v)))
+                    .filter_map(|v| {
+                        v.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| (s.to_string(), v))
+                    })
                     .collect();
                 let n_ids: std::collections::HashMap<String, &Value> = na
                     .iter()
-                    .filter_map(|v| v.get("id").and_then(|id| id.as_str()).map(|s| (s.to_string(), v)))
+                    .filter_map(|v| {
+                        v.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| (s.to_string(), v))
+                    })
                     .collect();
                 let all_ids: HashSet<String> = c_ids.keys().chain(n_ids.keys()).cloned().collect();
                 for id in all_ids {
@@ -106,7 +120,11 @@ fn collect_changed_paths(current: &Value, next: &Value, base: &str, out: &mut Ha
         (Value::Object(co), Value::Object(no)) => {
             let keys: HashSet<String> = co.keys().chain(no.keys()).cloned().collect();
             for k in keys {
-                let next = if base.is_empty() { k.clone() } else { format!("{}.{}", base, k) };
+                let next = if base.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}.{}", base, k)
+                };
                 collect_changed_paths(
                     co.get(&k).unwrap_or(&Value::Null),
                     no.get(&k).unwrap_or(&Value::Null),
@@ -285,13 +303,13 @@ impl Tool for GatewayTool {
 
         match args.action.as_str() {
             "restart" => {
-                let delay = args.delay_ms.map(|d| format!(" in {}ms", d)).unwrap_or_default();
+                let delay = args
+                    .delay_ms
+                    .map(|d| format!(" in {}ms", d))
+                    .unwrap_or_default();
                 let reason = args.reason.as_deref().unwrap_or("gateway tool restart");
                 let note = args.note.as_deref().unwrap_or("Gateway restart scheduled");
-                info!(
-                    "gateway tool: restart requested{} (reason={})",
-                    delay, reason
-                );
+                info!("gateway tool: restart requested{} (reason={})", delay, reason);
                 self.state
                     .audit_log
                     .log(
@@ -449,7 +467,9 @@ impl Tool for GatewayTool {
                     }
                 }
 
-                if let Err(e) = assert_config_mutation_allowed(&current_config_json, &raw, &args.action) {
+                if let Err(e) =
+                    assert_config_mutation_allowed(&current_config_json, &raw, &args.action)
+                {
                     return Ok(ToolExecutionResult {
                         success: false,
                         output: String::new(),
@@ -478,18 +498,19 @@ impl Tool for GatewayTool {
                     parsed
                 };
 
-                let new_config: crate::gateway::GatewayConfig = match serde_json::from_value(next_config_json) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        return Ok(ToolExecutionResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("Config validation failed: {}", e)),
-                            data: None,
-                            execution_time: start.elapsed(),
-                        });
-                    }
-                };
+                let new_config: crate::gateway::GatewayConfig =
+                    match serde_json::from_value(next_config_json) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return Ok(ToolExecutionResult {
+                                success: false,
+                                output: String::new(),
+                                error: Some(format!("Config validation failed: {}", e)),
+                                data: None,
+                                execution_time: start.elapsed(),
+                            });
+                        }
+                    };
 
                 let config_path = match self.state.config_path.as_ref() {
                     Some(p) => p.clone(),
@@ -497,7 +518,10 @@ impl Tool for GatewayTool {
                         return Ok(ToolExecutionResult {
                             success: false,
                             output: String::new(),
-                            error: Some("No config file path configured — cannot persist changes".to_string()),
+                            error: Some(
+                                "No config file path configured — cannot persist changes"
+                                    .to_string(),
+                            ),
                             data: None,
                             execution_time: start.elapsed(),
                         });
@@ -538,10 +562,7 @@ impl Tool for GatewayTool {
                     compute_config_hash(&json)
                 };
 
-                info!(
-                    "gateway tool: {} persisted to {:?}",
-                    args.action, config_path
-                );
+                info!("gateway tool: {} persisted to {:?}", args.action, config_path);
 
                 self.state
                     .audit_log
@@ -557,7 +578,11 @@ impl Tool for GatewayTool {
 
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!("{} applied and persisted. New hash: {}.", args.action, &new_hash[..16]),
+                    output: format!(
+                        "{} applied and persisted. New hash: {}.",
+                        args.action,
+                        &new_hash[..16]
+                    ),
                     error: None,
                     data: Some(serde_json::json!({
                         "ok": true,

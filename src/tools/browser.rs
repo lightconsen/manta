@@ -91,9 +91,7 @@ pub enum BrowserAction {
         mobile: Option<bool>,
     },
     /// Take an ARIA snapshot of the current page
-    Snapshot {
-        max_chars: Option<usize>,
-    },
+    Snapshot { max_chars: Option<usize> },
     /// Act on an element by ref_id from a previous snapshot
     #[cfg(feature = "browser")]
     Act {
@@ -134,9 +132,15 @@ pub enum BrowserAction {
     /// List browser tabs/pages
     ListTabs,
     /// Switch to a specific tab by index or title
-    SwitchTab { index: Option<usize>, title: Option<String> },
+    SwitchTab {
+        index: Option<usize>,
+        title: Option<String>,
+    },
     /// Close a specific tab by index or title
-    CloseTab { index: Option<usize>, title: Option<String> },
+    CloseTab {
+        index: Option<usize>,
+        title: Option<String>,
+    },
 }
 
 /// Browser tool for web automation
@@ -278,48 +282,44 @@ impl BrowserTool {
                 Err(e) => Err(format!("Failed to get HTML: {}", e)),
             },
 
-            BrowserAction::GetText { selector } => {
-                match selector {
-                    Some(sel) => match page.find_element(&sel).await {
-                        Ok(elem) => match elem.inner_text().await {
-                            Ok(Some(text)) => Ok(json!({
-                                "success": true,
-                                "text": text,
-                                "selector": sel
-                            })),
-                            Ok(None) => Ok(json!({
-                                "success": true,
-                                "text": "",
-                                "selector": sel
-                            })),
-                            Err(e) => Err(format!("Failed to get text: {}", e)),
-                        },
-                        Err(e) => Err(format!("Element not found: {}", e)),
+            BrowserAction::GetText { selector } => match selector {
+                Some(sel) => match page.find_element(&sel).await {
+                    Ok(elem) => match elem.inner_text().await {
+                        Ok(Some(text)) => Ok(json!({
+                            "success": true,
+                            "text": text,
+                            "selector": sel
+                        })),
+                        Ok(None) => Ok(json!({
+                            "success": true,
+                            "text": "",
+                            "selector": sel
+                        })),
+                        Err(e) => Err(format!("Failed to get text: {}", e)),
                     },
-                    None => {
-                        let script = r#"() => document.body.innerText"#;
-                        match page.evaluate(script).await {
-                            Ok(result) => {
-                                let text = result.into_value::<String>().unwrap_or_default();
-                                Ok(json!({
-                                    "success": true,
-                                    "text": text
-                                }))
-                            }
-                            Err(e) => Err(format!("Failed to get page text: {}", e)),
+                    Err(e) => Err(format!("Element not found: {}", e)),
+                },
+                None => {
+                    let script = r#"() => document.body.innerText"#;
+                    match page.evaluate(script).await {
+                        Ok(result) => {
+                            let text = result.into_value::<String>().unwrap_or_default();
+                            Ok(json!({
+                                "success": true,
+                                "text": text
+                            }))
                         }
+                        Err(e) => Err(format!("Failed to get page text: {}", e)),
                     }
                 }
-            }
+            },
 
             BrowserAction::Screenshot { full_page, selector } => {
                 let result = match selector {
-                    Some(sel) => {
-                        match page.find_element(&sel).await {
-                            Ok(elem) => elem.screenshot(CaptureScreenshotFormat::Png).await,
-                            Err(e) => Err(e),
-                        }
-                    }
+                    Some(sel) => match page.find_element(&sel).await {
+                        Ok(elem) => elem.screenshot(CaptureScreenshotFormat::Png).await,
+                        Err(e) => Err(e),
+                    },
                     None => {
                         let params = if full_page.unwrap_or(false) {
                             ScreenshotParamsBuilder::default()
@@ -403,7 +403,10 @@ impl BrowserTool {
             }
 
             BrowserAction::ExecuteScript { script } => {
-                match page.evaluate(format!("() => {{ {} }}", script).as_str()).await {
+                match page
+                    .evaluate(format!("() => {{ {} }}", script).as_str())
+                    .await
+                {
                     Ok(result) => {
                         let value = result.value().cloned().unwrap_or(json!(null));
                         Ok(json!({
@@ -671,7 +674,8 @@ impl BrowserTool {
                 if let Some(mob) = mobile {
                     builder = builder.mobile(mob);
                 }
-                let params = builder.build()
+                let params = builder
+                    .build()
                     .map_err(|e| format!("Failed to build viewport params: {}", e))?;
 
                 match page.execute(params).await {
@@ -819,7 +823,13 @@ impl BrowserTool {
                             }}
                             return {{ error: 'Text not found' }};
                         }}"#,
-                        selector, text, text.len(), text, text, text.len(), text
+                        selector,
+                        text,
+                        text.len(),
+                        text,
+                        text,
+                        text.len(),
+                        text
                     )
                 } else {
                     let s = start.unwrap_or(0);
@@ -882,16 +892,15 @@ impl BrowserTool {
                 params.prompt_text = text;
                 match page.execute(params).await {
                     Ok(_) => Ok(json!({ "success": true, "action": action })),
-                    Err(e) => Err(format!(
-                        "Failed to handle dialog (no dialog may be open): {}",
-                        e
-                    )),
+                    Err(e) => {
+                        Err(format!("Failed to handle dialog (no dialog may be open): {}", e))
+                    }
                 }
             }
 
             BrowserAction::SetDownloadBehavior { behavior, download_path } => {
-                let browser_ref = browser
-                    .ok_or("Download behavior requires a browser session".to_string())?;
+                let browser_ref =
+                    browser.ok_or("Download behavior requires a browser session".to_string())?;
                 use chromiumoxide::cdp::browser_protocol::browser::{
                     SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
                 };
@@ -910,8 +919,12 @@ impl BrowserTool {
             }
 
             BrowserAction::ListTabs => Err("Tab management requires pool-based mode".to_string()),
-            BrowserAction::SwitchTab { .. } => Err("Tab management requires pool-based mode".to_string()),
-            BrowserAction::CloseTab { .. } => Err("Tab management requires pool-based mode".to_string()),
+            BrowserAction::SwitchTab { .. } => {
+                Err("Tab management requires pool-based mode".to_string())
+            }
+            BrowserAction::CloseTab { .. } => {
+                Err("Tab management requires pool-based mode".to_string())
+            }
         }
     }
 
@@ -969,9 +982,9 @@ impl BrowserTool {
                     let tabs = instance.list_pages().await;
                     let tabs_json: Vec<Value> = tabs
                         .into_iter()
-                        .map(|(id, title, url)| {
-                            json!({"target_id": id, "title": title, "url": url})
-                        })
+                        .map(
+                            |(id, title, url)| json!({"target_id": id, "title": title, "url": url}),
+                        )
                         .collect();
                     Ok(json!({
                         "success": true,
@@ -997,9 +1010,7 @@ impl BrowserTool {
                                 }
                                 Ok(json!({"success": true, "target_id": id}))
                             }
-                            Ok(false) => {
-                                Err("Failed to switch tab: page not found".to_string())
-                            }
+                            Ok(false) => Err("Failed to switch tab: page not found".to_string()),
                             Err(e) => Err(format!("Failed to switch tab: {}", e)),
                         },
                         None => Err("Tab not found".to_string()),
@@ -1018,9 +1029,7 @@ impl BrowserTool {
                     match target_id {
                         Some(id) => match instance.close_page(&id).await {
                             Ok(true) => Ok(json!({"success": true, "target_id": id})),
-                            Ok(false) => {
-                                Err("Failed to close tab: page not found".to_string())
-                            }
+                            Ok(false) => Err("Failed to close tab: page not found".to_string()),
                             Err(e) => Err(format!("Failed to close tab: {}", e)),
                         },
                         None => Err("Tab not found".to_string()),
@@ -1107,7 +1116,13 @@ impl BrowserTool {
 
         for action in actions {
             debug!("Executing browser action (legacy): {:?}", action);
-            let result = Self::execute_single_action(action, &page, Some(browser.as_ref()), &mut screenshot_data).await;
+            let result = Self::execute_single_action(
+                action,
+                &page,
+                Some(browser.as_ref()),
+                &mut screenshot_data,
+            )
+            .await;
             results.push(result);
         }
 
@@ -1665,10 +1680,7 @@ mod tests {
         assert!(json.contains("switch_tab"));
         assert!(json.contains("Example"));
 
-        let close_tab = BrowserAction::CloseTab {
-            index: Some(0),
-            title: None,
-        };
+        let close_tab = BrowserAction::CloseTab { index: Some(0), title: None };
         let json = serde_json::to_string(&close_tab).unwrap();
         assert!(json.contains("close_tab"));
     }
@@ -1728,32 +1740,33 @@ mod tests {
             "snapshot": { "max_chars": 5000 }
         }))
         .unwrap();
-        assert!(
-            matches!(snapshot, BrowserAction::Snapshot { max_chars: Some(5000) })
-        );
+        assert!(matches!(snapshot, BrowserAction::Snapshot { max_chars: Some(5000) }));
 
         let act: BrowserAction = serde_json::from_value(json!({
             "act": { "ref_id": 7, "action": { "click": null } }
         }))
         .unwrap();
-        assert!(
-            matches!(act, BrowserAction::Act { ref_id: 7, action: crate::browser::ActKind::Click })
-        );
+        assert!(matches!(
+            act,
+            BrowserAction::Act {
+                ref_id: 7,
+                action: crate::browser::ActKind::Click
+            }
+        ));
 
         let act_type: BrowserAction = serde_json::from_value(json!({
             "act": { "ref_id": 2, "action": { "type": { "text": "hello" } } }
         }))
         .unwrap();
-        assert!(
-            matches!(
-                act_type,
-                BrowserAction::Act { ref_id: 2, action: crate::browser::ActKind::Type { ref text } } if text == "hello"
-            )
-        );
+        assert!(matches!(
+            act_type,
+            BrowserAction::Act { ref_id: 2, action: crate::browser::ActKind::Type { ref text } } if text == "hello"
+        ));
 
         let press: BrowserAction = serde_json::from_value(json!({
             "press": { "key": "Enter" }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(press, BrowserAction::Press { ref key } if key == "Enter"));
 
         let drag: BrowserAction = serde_json::from_value(json!({
@@ -1763,35 +1776,49 @@ mod tests {
 
         let select: BrowserAction = serde_json::from_value(json!({
             "select": { "selector": "#input", "text": "hello", "start": 0, "end": 5 }
-        })).unwrap();
-        assert!(matches!(select, BrowserAction::Select { ref selector, .. } if selector == "#input"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(select, BrowserAction::Select { ref selector, .. } if selector == "#input")
+        );
 
         let upload: BrowserAction = serde_json::from_value(json!({
             "upload_files": { "selector": "#file", "files": ["/tmp/test.txt"] }
-        })).unwrap();
-        assert!(matches!(upload, BrowserAction::UploadFiles { ref selector, .. } if selector == "#file"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(upload, BrowserAction::UploadFiles { ref selector, .. } if selector == "#file")
+        );
 
         let dialog: BrowserAction = serde_json::from_value(json!({
             "handle_dialog": { "action": "accept", "text": "ok" }
-        })).unwrap();
-        assert!(matches!(dialog, BrowserAction::HandleDialog { ref action, .. } if action == "accept"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(dialog, BrowserAction::HandleDialog { ref action, .. } if action == "accept")
+        );
 
         let download: BrowserAction = serde_json::from_value(json!({
             "set_download_behavior": { "behavior": "allow", "download_path": "/tmp" }
-        })).unwrap();
-        assert!(matches!(download, BrowserAction::SetDownloadBehavior { ref behavior, .. } if behavior == "allow"));
+        }))
+        .unwrap();
+        assert!(
+            matches!(download, BrowserAction::SetDownloadBehavior { ref behavior, .. } if behavior == "allow")
+        );
 
         let list_tabs: BrowserAction = serde_json::from_value(json!({"list_tabs": null})).unwrap();
         assert!(matches!(list_tabs, BrowserAction::ListTabs));
 
         let switch_tab: BrowserAction = serde_json::from_value(json!({
             "switch_tab": { "index": 1, "title": "Example" }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(switch_tab, BrowserAction::SwitchTab { index: Some(1), .. }));
 
         let close_tab: BrowserAction = serde_json::from_value(json!({
             "close_tab": { "index": 0 }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(close_tab, BrowserAction::CloseTab { index: Some(0), .. }));
     }
 }

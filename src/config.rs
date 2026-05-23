@@ -480,10 +480,11 @@ impl Config {
         #[cfg(feature = "browser")]
         {
             if let Ok(val) = std::env::var(format!("{}_BROWSER_BRIDGE_ENABLED", ENV_PREFIX)) {
-                self.browser.bridge_enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
-                    key: "browser.bridge_enabled".to_string(),
-                    message: format!("Invalid boolean: {}", e),
-                })?;
+                self.browser.bridge_enabled =
+                    val.parse().map_err(|e| ConfigError::InvalidValue {
+                        key: "browser.bridge_enabled".to_string(),
+                        message: format!("Invalid boolean: {}", e),
+                    })?;
             }
             if let Ok(port) = std::env::var(format!("{}_BROWSER_BRIDGE_PORT", ENV_PREFIX)) {
                 self.browser.bridge_port = port.parse().map_err(|e| ConfigError::InvalidValue {

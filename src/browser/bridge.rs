@@ -137,10 +137,7 @@ impl BrowserBridge {
     /// Create a new bridge server
     pub fn new(pool: Arc<BrowserPool>, port: u16) -> Self {
         let token = uuid::Uuid::new_v4().to_string();
-        let state = BridgeState {
-            pool,
-            token: token.clone(),
-        };
+        let state = BridgeState { pool, token: token.clone() };
         Self { state, port }
     }
 
@@ -159,17 +156,14 @@ impl BrowserBridge {
         let app = Self::router(self.state.clone());
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
 
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+        let listener = TcpListener::bind(addr).await.map_err(|e| {
+            crate::error::MantaError::ExternalService {
                 source: format!("Failed to bind bridge server to {}", addr),
                 cause: Some(Box::new(e)),
-            })?;
+            }
+        })?;
 
-        let actual_port = listener
-            .local_addr()
-            .map(|a| a.port())
-            .unwrap_or(self.port);
+        let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(self.port);
         self.port = actual_port;
         info!(port = actual_port, "Browser bridge server starting");
 
@@ -267,14 +261,10 @@ async fn snapshot_handler(
 
     debug!(profile = %req.profile, target_id = %req.target_id, "Bridge snapshot");
 
-    let instance = state
-        .pool
-        .get_or_create(&req.profile)
-        .await
-        .map_err(|e| {
-            error!("Failed to get browser instance: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let instance = state.pool.get_or_create(&req.profile).await.map_err(|e| {
+        error!("Failed to get browser instance: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let page_handle = instance.get_page(&req.target_id).await.ok_or_else(|| {
         warn!("Page not found: {}", req.target_id);
@@ -310,14 +300,10 @@ async fn act_handler(
 
     debug!(profile = %req.profile, target_id = %req.target_id, ref_id = req.ref_id, "Bridge act");
 
-    let instance = state
-        .pool
-        .get_or_create(&req.profile)
-        .await
-        .map_err(|e| {
-            error!("Failed to get browser instance: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let instance = state.pool.get_or_create(&req.profile).await.map_err(|e| {
+        error!("Failed to get browser instance: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let page_handle = instance.get_page(&req.target_id).await.ok_or_else(|| {
         warn!("Page not found: {}", req.target_id);
@@ -331,10 +317,7 @@ async fn act_handler(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(ActResponse {
-        success: true,
-        message,
-    }))
+    Ok(Json(ActResponse { success: true, message }))
 }
 
 /// Take a screenshot of a page
@@ -348,14 +331,10 @@ async fn screenshot_handler(
 
     debug!(profile = %req.profile, target_id = %req.target_id, "Bridge screenshot");
 
-    let instance = state
-        .pool
-        .get_or_create(&req.profile)
-        .await
-        .map_err(|e| {
-            error!("Failed to get browser instance: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let instance = state.pool.get_or_create(&req.profile).await.map_err(|e| {
+        error!("Failed to get browser instance: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let page_handle = instance.get_page(&req.target_id).await.ok_or_else(|| {
         warn!("Page not found: {}", req.target_id);
@@ -376,14 +355,10 @@ async fn screenshot_handler(
             .build()
     };
 
-    let data = page_handle
-        .page
-        .screenshot(params)
-        .await
-        .map_err(|e| {
-            error!("Screenshot failed: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let data = page_handle.page.screenshot(params).await.map_err(|e| {
+        error!("Screenshot failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let base64 = base64::engine::general_purpose::STANDARD.encode(&data);
 
@@ -422,14 +397,10 @@ async fn start_handler(
 
     debug!(profile = %req.profile, "Bridge start");
 
-    state
-        .pool
-        .get_or_create(&req.profile)
-        .await
-        .map_err(|e| {
-            error!("Failed to start browser instance: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    state.pool.get_or_create(&req.profile).await.map_err(|e| {
+        error!("Failed to start browser instance: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(MessageResponse {
         success: true,

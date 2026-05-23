@@ -588,6 +588,47 @@ pub trait Channel: Send + Sync {
             Err(_) => health::HealthStatus::Unhealthy,
         }
     }
+
+    // ── Advanced message actions (default = unsupported) ───────────────────
+
+    /// Add a reaction (emoji) to a message.
+    async fn add_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
+        Err(crate::MantaError::Unsupported("reactions not supported".into()))
+    }
+
+    /// Remove a reaction (emoji) from a message.
+    async fn remove_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
+        Err(crate::MantaError::Unsupported("reactions not supported".into()))
+    }
+
+    /// Pin a message in the conversation.
+    async fn pin_message(&self, _message_id: Id) -> crate::Result<()> {
+        Err(crate::MantaError::Unsupported("pin not supported".into()))
+    }
+
+    /// Unpin a message.
+    async fn unpin_message(&self, _message_id: Id) -> crate::Result<()> {
+        Err(crate::MantaError::Unsupported("unpin not supported".into()))
+    }
+
+    /// Create a thread from a message.
+    async fn create_thread(
+        &self,
+        _message_id: Id,
+        _title: Option<String>,
+    ) -> crate::Result<ConversationId> {
+        Err(crate::MantaError::Unsupported("threads not supported".into()))
+    }
+
+    /// Send a poll to a conversation.
+    async fn send_poll(
+        &self,
+        _conversation_id: ConversationId,
+        _question: String,
+        _options: Vec<String>,
+    ) -> crate::Result<Id> {
+        Err(crate::MantaError::Unsupported("polls not supported".into()))
+    }
 }
 
 /// A boxed channel for storage
