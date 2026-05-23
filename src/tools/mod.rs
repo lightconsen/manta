@@ -548,8 +548,12 @@ pub mod image;
 pub mod mcp;
 pub mod memory;
 pub mod nodes;
-pub mod openclaw_tools;
+pub mod agents_list;
+pub mod gateway;
+pub mod message;
+pub mod patch;
 pub mod pdf;
+pub mod session;
 pub mod process;
 pub mod sandbox;
 pub mod sdk;
@@ -574,11 +578,14 @@ pub use image::{ImageGenerateTool, ImageTool};
 pub use mcp::McpConnectionTool;
 pub use memory::{MemoryGetTool, MemorySearchTool, MemoryTool};
 pub use nodes::NodesTool;
-pub use openclaw_tools::{
-    AgentsListTool, ApplyPatchTool, GatewayTool, MessageTool, SessionStatusTool,
-    SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
-};
+pub use agents_list::AgentsListTool;
+pub use gateway::GatewayTool;
+pub use message::MessageTool;
+pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
+pub use session::{
+    SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
+};
 pub use process::ProcessTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
 pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};

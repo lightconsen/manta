@@ -1,19 +1,11 @@
-//! OpenClaw-Compatible Tools
+//! Session management tools
 //!
-//! Implements tool names matching OpenClaw's built-in tool set:
-//! - sessions_list, sessions_history, sessions_send, sessions_yield, session_status
-//! - subagents, agents_list, gateway, apply_patch
+//! Tools for listing, querying, sending to, yielding, and inspecting sessions.
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::info;
-
-use crate::acp::AcpControlPlane;
-use crate::channels::IncomingMessage;
-use crate::gateway::GatewayState;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -253,11 +245,11 @@ impl Tool for SessionsHistoryTool {
 
 /// Send a message to a subagent in a session.
 pub struct SessionsSendTool {
-    acp: Arc<AcpControlPlane>,
+    acp: Arc<crate::acp::AcpControlPlane>,
 }
 
 impl SessionsSendTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
+    pub fn new(acp: Arc<crate::acp::AcpControlPlane>) -> Self {
         Self { acp }
     }
 }
@@ -319,7 +311,7 @@ impl Tool for SessionsSendTool {
             }
         };
 
-        let msg = IncomingMessage::new(
+        let msg = crate::channels::IncomingMessage::new(
             context.user_id.clone(),
             context.conversation_id.clone(),
             args.message,
@@ -352,11 +344,11 @@ impl Tool for SessionsSendTool {
 
 /// Yield (cancel/pause) a subagent in a session.
 pub struct SessionsYieldTool {
-    acp: Arc<AcpControlPlane>,
+    acp: Arc<crate::acp::AcpControlPlane>,
 }
 
 impl SessionsYieldTool {
-    pub fn new(acp: Arc<AcpControlPlane>) -> Self {
+    pub fn new(acp: Arc<crate::acp::AcpControlPlane>) -> Self {
         Self { acp }
     }
 }
@@ -408,12 +400,8 @@ impl Tool for SessionsYieldTool {
             }
         };
 
-        // Find the subagent and send cancel command
-        info!("Yielding subagent {}", args.subagent_id);
+        tracing::info!("Yielding subagent {}", args.subagent_id);
 
-        // We need to get the command_tx to send Cancel
-        // But AcpControlPlane doesn't expose subagents directly
-        // Use shutdown as a proxy (it sends Shutdown command)
         match self.acp.shutdown_subagent(&args.subagent_id).await {
             Ok(true) => Ok(ToolExecutionResult {
                 success: true,
@@ -445,7 +433,7 @@ impl Tool for SessionsYieldTool {
 
 // ── session_status ───────────────────────────────────────────────────────────
 
-/// Get the status and metadata of a session from persistent storage.
+/// Get the status of a session and optionally override its model.
 pub struct SessionStatusTool {
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
@@ -458,7 +446,10 @@ impl SessionStatusTool {
 
 #[derive(Debug, Deserialize)]
 struct SessionStatusArgs {
-    session_id: String,
+    #[serde(default)]
+    session_key: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[async_trait]
@@ -468,26 +459,29 @@ impl Tool for SessionStatusTool {
     }
 
     fn description(&self) -> &str {
-        "Get the status and metadata of a session from persistent storage."
+        "Get the status of a session. Use session_key to target a specific session ('current', 'main', or a session ID). Use model to override the session's model (e.g. 'anthropic/claude-opus' or 'default' to reset)."
     }
 
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "session_id": {
+                "session_key": {
                     "type": "string",
-                    "description": "Session ID"
+                    "description": "Session key: 'current', 'main', or a specific session ID"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model override, e.g. 'provider/model' or 'default' to reset"
                 }
-            },
-            "required": ["session_id"]
+            }
         })
     }
 
     async fn execute(
         &self,
         args: Value,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let start = std::time::Instant::now();
         let args: SessionStatusArgs = match serde_json::from_value(args) {
@@ -516,459 +510,173 @@ impl Tool for SessionStatusTool {
             }
         };
 
-        match store.load_session(&args.session_id).await {
-            Ok(Some(ps)) => {
-                let m = &ps.metadata;
-                let mut data = serde_json::json!({
-                    "session_id": m.session_id,
-                    "agent_id": m.agent_id,
-                    "channel": m.channel,
-                    "channel_id": m.channel_id,
-                    "created_at": m.created_at.to_rfc3339(),
-                    "last_activity": m.last_activity.to_rfc3339(),
-                    "is_active": m.is_active,
-                    "message_count": m.message_count,
-                    "state_json": ps.state_json,
-                });
-                if let Some(name) = &m.name {
-                    data["name"] = serde_json::Value::String(name.clone());
-                }
-                if let Some(bound) = &m.bound_agent_id {
-                    data["bound_agent_id"] = serde_json::Value::String(bound.clone());
-                }
-
-                Ok(ToolExecutionResult {
-                    success: true,
-                    output: format!(
-                        "Session {}: active={}, messages={}",
-                        m.session_id, m.is_active, m.message_count
-                    ),
-                    error: None,
-                    data: Some(data),
+        // Resolve session key
+        let key_raw = args.session_key.as_deref().unwrap_or("current");
+        let target_id = if key_raw == "current" {
+            if context.conversation_id.is_empty() {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("No current session available (conversation_id is empty)".to_string()),
+                    data: None,
                     execution_time: start.elapsed(),
-                })
+                });
             }
-            Ok(None) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Session {} not found", args.session_id)),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-            Err(e) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to load session: {}", e)),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
+            context.conversation_id.clone()
+        } else if key_raw == "main" {
+            match store.find_sessions(None, None, None, true).await {
+                Ok(sessions) if !sessions.is_empty() => sessions[0].session_id.clone(),
+                _ => {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("No main session found".to_string()),
+                        data: None,
+                        execution_time: start.elapsed(),
+                    });
+                }
+            }
+        } else {
+            key_raw.to_string()
+        };
+
+        // Load session
+        let mut ps = match store.load_session(&target_id).await {
+            Ok(Some(ps)) => ps,
+            Ok(None) => {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Session {} not found", target_id)),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+            Err(e) => {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to load session: {}", e)),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+        };
+
+        let m = &ps.metadata;
+        let mut changed_model = false;
+
+        // Handle model override
+        if let Some(model_raw) = args.model {
+            let model_trim = model_raw.trim();
+            if model_trim.eq_ignore_ascii_case("default") {
+                if let Ok(mut state) = serde_json::from_str::<serde_json::Value>(&ps.state_json) {
+                    if let Some(obj) = state.as_object_mut() {
+                        obj.remove("providerOverride");
+                        obj.remove("modelOverride");
+                        ps.state_json = serde_json::to_string(&state).unwrap_or_default();
+                        changed_model = true;
+                    }
+                }
+            } else {
+                let parts: Vec<&str> = model_trim.split('/').collect();
+                let (provider, model) = if parts.len() >= 2 {
+                    (parts[0].to_string(), parts[1..].join("/"))
+                } else {
+                    (String::new(), model_trim.to_string())
+                };
+
+                if let Ok(mut state) = serde_json::from_str::<serde_json::Value>(&ps.state_json) {
+                    if let Some(obj) = state.as_object_mut() {
+                        if !provider.is_empty() {
+                            obj.insert("providerOverride".to_string(), serde_json::Value::String(provider));
+                        } else {
+                            obj.remove("providerOverride");
+                        }
+                        obj.insert("modelOverride".to_string(), serde_json::Value::String(model));
+                        ps.state_json = serde_json::to_string(&state).unwrap_or_default();
+                        changed_model = true;
+                    }
+                }
+            }
+
+            if changed_model {
+                if let Err(e) = store.save_session(&target_id, &ps.metadata, &ps.state_json).await {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("Failed to save session model override: {}", e)),
+                        data: None,
+                        execution_time: start.elapsed(),
+                    });
+                }
+            }
         }
-    }
-}
 
-// ── agents_list ──────────────────────────────────────────────────────────────
+        let runtime_model = serde_json::from_str::<serde_json::Value>(&ps.state_json)
+            .ok()
+            .and_then(|v| v.get("modelOverride").and_then(|m| m.as_str()).map(String::from));
+        let runtime_provider = serde_json::from_str::<serde_json::Value>(&ps.state_json)
+            .ok()
+            .and_then(|v| v.get("providerOverride").and_then(|m| m.as_str()).map(String::from));
 
-/// List available agent personalities.
-pub struct AgentsListTool {
-    agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
-}
+        let primary_model_label = match (&runtime_provider, &runtime_model) {
+            (Some(p), Some(m)) => format!("{}/{}", p, m),
+            (None, Some(m)) => m.clone(),
+            _ => "default".to_string(),
+        };
 
-impl AgentsListTool {
-    pub fn new(agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>) -> Self {
-        Self { agent_registry }
-    }
-}
+        let mut lines = vec![
+            format!("Session: {}", m.session_id),
+            format!("Agent: {}", m.agent_id),
+            format!("Channel: {}:{}", m.channel, m.channel_id),
+            format!("Messages: {}", m.message_count),
+            format!("Model: {}", primary_model_label),
+            format!("Active: {}", m.is_active),
+        ];
+        if changed_model {
+            lines.push("Model override updated".to_string());
+        }
+        if let Some(name) = &m.name {
+            lines.push(format!("Name: {}", name));
+        }
+        if let Some(bound) = &m.bound_agent_id {
+            lines.push(format!("Bound agent: {}", bound));
+        }
+        lines.push(format!(
+            "Created: {} | Last activity: {}",
+            m.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
+            m.last_activity.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
-#[async_trait]
-impl Tool for AgentsListTool {
-    fn name(&self) -> &str {
-        "agents_list"
-    }
-
-    fn description(&self) -> &str {
-        "List all available agent personalities/types that can be used for subagent spawning."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {},
-        })
-    }
-
-    async fn execute(
-        &self,
-        _args: Value,
-        _context: &ToolContext,
-    ) -> crate::Result<ToolExecutionResult> {
-        let start = std::time::Instant::now();
-        let registry = self.agent_registry.read().await;
-        let agents = registry.list();
-
-        let agent_info: Vec<_> = agents
-            .iter()
-            .filter_map(|id| {
-                registry.get(id).map(|p| {
-                    serde_json::json!({
-                        "id": id,
-                        "name": p.display_name(),
-                    })
-                })
-            })
-            .collect();
+        let status_text = lines.join("\n");
+        let data = serde_json::json!({
+            "ok": true,
+            "session_key": target_id,
+            "changed_model": changed_model,
+            "status_text": status_text,
+            "metadata": {
+                "session_id": m.session_id,
+                "agent_id": m.agent_id,
+                "channel": m.channel,
+                "channel_id": m.channel_id,
+                "created_at": m.created_at.to_rfc3339(),
+                "last_activity": m.last_activity.to_rfc3339(),
+                "is_active": m.is_active,
+                "message_count": m.message_count,
+                "model": primary_model_label,
+                "name": m.name,
+                "bound_agent_id": m.bound_agent_id,
+            }
+        });
 
         Ok(ToolExecutionResult {
             success: true,
-            output: format!("Found {} agent personality(ies)", agent_info.len()),
+            output: status_text,
             error: None,
-            data: Some(serde_json::json!({ "agents": agent_info })),
+            data: Some(data),
             execution_time: start.elapsed(),
         })
-    }
-}
-
-// ── gateway ──────────────────────────────────────────────────────────────────
-
-/// Gateway status and information tool.
-pub struct GatewayTool {
-    state: Arc<GatewayState>,
-}
-
-impl GatewayTool {
-    pub fn new(state: Arc<GatewayState>) -> Self {
-        Self { state }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct GatewayArgs {
-    #[serde(default)]
-    detail: bool,
-}
-
-#[async_trait]
-impl Tool for GatewayTool {
-    fn name(&self) -> &str {
-        "gateway"
-    }
-
-    fn description(&self) -> &str {
-        "Get gateway status and system information. Use detail=true for verbose output."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "detail": {
-                    "type": "boolean",
-                    "description": "Include detailed information",
-                    "default": false
-                }
-            }
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: Value,
-        _context: &ToolContext,
-    ) -> crate::Result<ToolExecutionResult> {
-        let start = std::time::Instant::now();
-        let args: GatewayArgs = serde_json::from_value(args).unwrap_or_default();
-
-        let agent_count = {
-            let agents = self.state.agents.read().await;
-            agents.len()
-        };
-
-        let plugin_count = self.state.plugin_manager.list_plugins().await.len();
-
-        let info = serde_json::json!({
-            "agents_count": agent_count,
-            "plugins_count": plugin_count,
-            "version": env!("CARGO_PKG_VERSION"),
-        });
-
-        let output = if args.detail {
-            format!(
-                "Gateway status: {} agent(s), {} plugin(s), version {}",
-                agent_count,
-                plugin_count,
-                env!("CARGO_PKG_VERSION")
-            )
-        } else {
-            format!("Gateway: {} agents, {} plugins", agent_count, plugin_count)
-        };
-
-        Ok(ToolExecutionResult {
-            success: true,
-            output,
-            error: None,
-            data: Some(info),
-            execution_time: start.elapsed(),
-        })
-    }
-}
-
-impl Default for GatewayArgs {
-    fn default() -> Self {
-        Self { detail: false }
-    }
-}
-
-// ── apply_patch ──────────────────────────────────────────────────────────────
-
-/// Apply a unified diff patch to files.
-pub struct ApplyPatchTool;
-
-impl ApplyPatchTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ApplyPatchArgs {
-    /// Unified diff patch content
-    patch: String,
-    /// Target directory (default: current working directory)
-    #[serde(default)]
-    directory: String,
-}
-
-#[async_trait]
-impl Tool for ApplyPatchTool {
-    fn name(&self) -> &str {
-        "apply_patch"
-    }
-
-    fn description(&self) -> &str {
-        "Apply a unified diff patch to files. The patch should be in standard unified diff format (as produced by git diff or diff -u)."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "patch": {
-                    "type": "string",
-                    "description": "Unified diff patch content"
-                },
-                "directory": {
-                    "type": "string",
-                    "description": "Target directory for patch application (default: current directory)",
-                    "default": "."
-                }
-            },
-            "required": ["patch"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: Value,
-        context: &ToolContext,
-    ) -> crate::Result<ToolExecutionResult> {
-        let start = std::time::Instant::now();
-        let args: ApplyPatchArgs = match serde_json::from_value(args) {
-            Ok(a) => a,
-            Err(e) => {
-                return Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Invalid arguments: {}", e)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                });
-            }
-        };
-
-        let target_dir = if args.directory.is_empty() {
-            context.working_directory.clone()
-        } else {
-            std::path::PathBuf::from(&args.directory)
-        };
-
-        // Write patch to a temporary file
-        let patch_file = target_dir.join(format!("manta_patch_{}.diff", uuid::Uuid::new_v4()));
-        match tokio::fs::write(&patch_file, &args.patch).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Failed to write patch file: {}", e)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                });
-            }
-        }
-
-        // Apply patch using git apply or patch command
-        let result = tokio::process::Command::new("git")
-            .args(["apply", "--check", patch_file.to_str().unwrap_or("")])
-            .current_dir(&target_dir)
-            .output()
-            .await;
-
-        let check_ok = match result {
-            Ok(output) => output.status.success(),
-            Err(_) => false,
-        };
-
-        if !check_ok {
-            // Try with patch command as fallback
-            let _ = tokio::fs::remove_file(&patch_file).await;
-            return Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(
-                    "Patch does not apply cleanly. Check the patch format and target files."
-                        .to_string(),
-                ),
-                data: None,
-                execution_time: start.elapsed(),
-            });
-        }
-
-        // Actually apply the patch
-        let apply_result = tokio::process::Command::new("git")
-            .args(["apply", patch_file.to_str().unwrap_or("")])
-            .current_dir(&target_dir)
-            .output()
-            .await;
-
-        let _ = tokio::fs::remove_file(&patch_file).await;
-
-        match apply_result {
-            Ok(output) if output.status.success() => Ok(ToolExecutionResult {
-                success: true,
-                output: "Patch applied successfully".to_string(),
-                error: None,
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-            Ok(output) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Patch application failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-            Err(e) => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to run git apply: {}", e)),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-        }
-    }
-}
-
-// ── message ──────────────────────────────────────────────────────────────────
-
-/// Send a message through a channel.
-pub struct MessageTool {
-    state: Arc<GatewayState>,
-}
-
-impl MessageTool {
-    pub fn new(state: Arc<GatewayState>) -> Self {
-        Self { state }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct MessageArgs {
-    channel: String,
-    user_id: String,
-    content: String,
-}
-
-#[async_trait]
-impl Tool for MessageTool {
-    fn name(&self) -> &str {
-        "message"
-    }
-
-    fn description(&self) -> &str {
-        "Send a message through a channel (e.g., telegram, discord). The message is injected into the inbound pipeline for processing."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "channel": {
-                    "type": "string",
-                    "description": "Channel name (e.g., 'telegram', 'discord', 'web')"
-                },
-                "user_id": {
-                    "type": "string",
-                    "description": "User ID sending the message"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Message content"
-                }
-            },
-            "required": ["channel", "user_id", "content"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: Value,
-        _context: &ToolContext,
-    ) -> crate::Result<ToolExecutionResult> {
-        let start = std::time::Instant::now();
-        let args: MessageArgs = match serde_json::from_value(args) {
-            Ok(a) => a,
-            Err(e) => {
-                return Ok(ToolExecutionResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Invalid arguments: {}", e)),
-                    data: None,
-                    execution_time: start.elapsed(),
-                });
-            }
-        };
-
-        let incoming = IncomingMessage::new(
-            args.user_id.clone(),
-            format!("{}:{}", args.channel, args.user_id),
-            args.content,
-        )
-        .with_provenance(crate::channels::InputProvenance::ExternalUser {
-            channel: args.channel.clone(),
-            is_direct: true,
-        });
-
-        match self.state.inbound_pipeline.process(incoming).await {
-            Some(_) => Ok(ToolExecutionResult {
-                success: true,
-                output: format!("Message sent to {} channel", args.channel),
-                error: None,
-                data: Some(serde_json::json!({
-                    "channel": args.channel,
-                    "user_id": args.user_id,
-                })),
-                execution_time: start.elapsed(),
-            }),
-            None => Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some("Failed to route message: pipeline returned None".to_string()),
-                data: None,
-                execution_time: start.elapsed(),
-            }),
-        }
     }
 }
 
@@ -1010,54 +718,9 @@ mod tests {
     #[test]
     fn test_session_status_args_parsing() {
         let args: SessionStatusArgs = serde_json::from_value(serde_json::json!({
-            "session_id": "sess-1"
+            "session_key": "sess-1"
         }))
         .unwrap();
-        assert_eq!(args.session_id, "sess-1");
-    }
-
-    #[test]
-    fn test_apply_patch_args_parsing() {
-        let args: ApplyPatchArgs = serde_json::from_value(serde_json::json!({
-            "patch": "diff content",
-            "directory": "/tmp"
-        }))
-        .unwrap();
-        assert_eq!(args.patch, "diff content");
-        assert_eq!(args.directory, "/tmp");
-
-        let args2: ApplyPatchArgs = serde_json::from_value(serde_json::json!({
-            "patch": "diff content"
-        }))
-        .unwrap();
-        assert_eq!(args2.directory, "");
-    }
-
-    #[test]
-    fn test_message_args_parsing() {
-        let args: MessageArgs = serde_json::from_value(serde_json::json!({
-            "channel": "telegram",
-            "user_id": "user1",
-            "content": "hello"
-        }))
-        .unwrap();
-        assert_eq!(args.channel, "telegram");
-        assert_eq!(args.user_id, "user1");
-        assert_eq!(args.content, "hello");
-    }
-
-    #[test]
-    fn test_gateway_args_defaults() {
-        let args: GatewayArgs = serde_json::from_value(serde_json::json!({})).unwrap();
-        assert!(!args.detail);
-    }
-
-    #[test]
-    fn test_gateway_args_detail() {
-        let args: GatewayArgs = serde_json::from_value(serde_json::json!({
-            "detail": true
-        }))
-        .unwrap();
-        assert!(args.detail);
+        assert_eq!(args.session_key, Some("sess-1".to_string()));
     }
 }
