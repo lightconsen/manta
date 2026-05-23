@@ -68,6 +68,8 @@ pub struct HttpGatewayClient {
     /// If `Some`, the client logs the observed fingerprint on first
     /// use for operator comparison.
     tls_fingerprint: Option<String>,
+    /// Optional per-client token-bucket rate limiter.
+    rate_limiter: Option<std::sync::Arc<crate::security::RateLimiter>>,
 }
 
 impl std::fmt::Debug for HttpGatewayClient {
@@ -76,6 +78,7 @@ impl std::fmt::Debug for HttpGatewayClient {
             .field("base_url", &self.base_url)
             .field("max_retries", &self.max_retries)
             .field("tls_fingerprint", &self.tls_fingerprint.is_some())
+            .field("rate_limiter", &self.rate_limiter.is_some())
             .finish()
     }
 }
@@ -103,6 +106,7 @@ impl HttpGatewayClient {
             max_retries: 3,
             retry_delay: Duration::from_millis(500),
             tls_fingerprint: None,
+            rate_limiter: None,
         })
     }
 
@@ -124,6 +128,12 @@ impl HttpGatewayClient {
         self
     }
 
+    /// Builder: attach a token-bucket rate limiter to this client.
+    pub fn with_rate_limiter(mut self, limiter: std::sync::Arc<crate::security::RateLimiter>) -> Self {
+        self.rate_limiter = Some(limiter);
+        self
+    }
+
     /// Build the full URL for a path.
     fn url(&self, path: &str) -> String {
         if path.starts_with("http://") || path.starts_with("https://") {
@@ -142,6 +152,23 @@ impl HttpGatewayClient {
         F: Fn() -> Fut + Send,
         Fut: std::future::Future<Output = crate::Result<reqwest::Response>> + Send,
     {
+        // Token-bucket rate limit check
+        if let Some(ref limiter) = self.rate_limiter {
+            let user_id = crate::security::UserId::new(&self.base_url);
+            match limiter.check(&user_id).await {
+                crate::security::RateLimitResult::Allowed { .. } => {}
+                crate::security::RateLimitResult::Denied { retry_after_secs } => {
+                    return Err(crate::error::MantaError::ExternalService {
+                        source: format!(
+                            "Rate limited: retry after {} seconds",
+                            retry_after_secs
+                        ),
+                        cause: None,
+                    });
+                }
+            }
+        }
+
         let mut last_error = None;
 
         for attempt in 0..=self.max_retries {
@@ -327,5 +354,19 @@ mod tests {
 
         assert_eq!(client.max_retries, 5);
         assert_eq!(client.tls_fingerprint, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_rate_limiter_builder() {
+        let limiter = std::sync::Arc::new(crate::security::RateLimiter::new(10, 1.0));
+        let client = HttpGatewayClient::new(
+            "https://api.example.com",
+            Credential::api_key("test"),
+            Duration::from_secs(30),
+        )
+        .unwrap()
+        .with_rate_limiter(limiter);
+
+        assert!(client.rate_limiter.is_some());
     }
 }

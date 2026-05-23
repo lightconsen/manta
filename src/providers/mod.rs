@@ -254,6 +254,8 @@ pub struct CompletionRequest {
     pub requires_tools: bool,
     /// Whether the request requires reasoning / thinking capability.
     pub requires_reasoning: bool,
+    /// Fallback models to try if the primary model fails.
+    pub fallback_models: Vec<String>,
 }
 
 impl Default for CompletionRequest {
@@ -270,6 +272,7 @@ impl Default for CompletionRequest {
             requires_vision: false,
             requires_tools: false,
             requires_reasoning: false,
+            fallback_models: Vec::new(),
         }
     }
 }

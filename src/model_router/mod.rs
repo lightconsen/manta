@@ -777,13 +777,34 @@ impl ModelRouter {
             requires_vision: false,
             requires_tools: false,
             requires_reasoning: false,
+            ..Default::default()
         };
 
         // Capability-aware routing: upgrade alias if needed
         let alias = self.resolve_alias_with_capabilities(&alias, &request).await;
 
         // Try primary provider, then fallbacks
-        let providers_to_try = self.get_provider_chain(&alias).await;
+        let mut providers_to_try = self.get_provider_chain(&alias).await;
+
+        // Append request-level fallback models if specified
+        for fallback in &request.fallback_models {
+            let config = self.config.read().await;
+            if let Some(fb_alias) = config.aliases.get(fallback).cloned() {
+                drop(config);
+                let fb_chain = self.get_provider_chain(&fb_alias).await;
+                for entry in fb_chain {
+                    // Avoid duplicate provider+model combinations
+                    if !providers_to_try
+                        .iter()
+                        .any(|e| e.provider == entry.provider && e.model == entry.model)
+                    {
+                        providers_to_try.push(entry);
+                    }
+                }
+            } else {
+                drop(config);
+            }
+        }
 
         let mut last_error = None;
 
