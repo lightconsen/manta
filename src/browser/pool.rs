@@ -213,6 +213,55 @@ impl BrowserInstance {
     pub async fn page_count(&self) -> usize {
         self.pages.read().await.len()
     }
+
+    /// List all pages with their target_id, title, and url
+    #[cfg(feature = "browser")]
+    pub async fn list_pages(&self) -> Vec<(String, String, String)> {
+        let pages = self.pages.read().await;
+        let mut result = Vec::new();
+        for (target_id, handle) in pages.iter() {
+            let title = handle.page.get_title().await.ok().flatten().unwrap_or_default();
+            let url = handle.page.url().await.ok().flatten().unwrap_or_default();
+            result.push((target_id.clone(), title, url));
+        }
+        result
+    }
+
+    /// Switch focus to a page by target_id (bring to front)
+    #[cfg(feature = "browser")]
+    pub async fn switch_page(&self, target_id: &str) -> crate::Result<bool> {
+        let page = {
+            let pages = self.pages.read().await;
+            pages.get(target_id).cloned()
+        };
+
+        if let Some(handle) = page {
+            handle.page.activate().await.map_err(|e| {
+                crate::error::MantaError::ExternalService {
+                    source: "Failed to activate page".to_string(),
+                    cause: Some(Box::new(e)),
+                }
+            })?;
+            *self.last_used.write().await = Instant::now();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Find a page target_id by title (fuzzy match)
+    #[cfg(feature = "browser")]
+    pub async fn find_page_by_title(&self, title: &str) -> Option<String> {
+        let pages = self.pages.read().await;
+        for (target_id, handle) in pages.iter() {
+            if let Ok(Some(page_title)) = handle.page.get_title().await {
+                if page_title.contains(title) {
+                    return Some(target_id.clone());
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Pool of browser instances keyed by profile name
@@ -393,6 +442,46 @@ impl BrowserPool {
         result
     }
 
+    /// List all pages for a profile
+    #[cfg(feature = "browser")]
+    pub async fn list_pages(
+        &self,
+        profile_name: &str,
+    ) -> crate::Result<Vec<(String, String, String)>> {
+        let instances = self.instances.read().await;
+        if let Some(instance) = instances.get(profile_name) {
+            Ok(instance.list_pages().await)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Switch to a page by target_id
+    #[cfg(feature = "browser")]
+    pub async fn switch_page(&self, profile_name: &str, target_id: &str) -> crate::Result<bool> {
+        let instances = self.instances.read().await;
+        if let Some(instance) = instances.get(profile_name) {
+            instance.switch_page(target_id).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Find a page by title and return its target_id
+    #[cfg(feature = "browser")]
+    pub async fn find_page_by_title(
+        &self,
+        profile_name: &str,
+        title: &str,
+    ) -> crate::Result<Option<String>> {
+        let instances = self.instances.read().await;
+        if let Some(instance) = instances.get(profile_name) {
+            Ok(instance.find_page_by_title(title).await)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Evict idle instances
     async fn evict_idle(
         instances: &Arc<RwLock<HashMap<String, Arc<BrowserInstance>>>>,
@@ -482,5 +571,41 @@ mod tests {
         let pool = BrowserPool::new(config);
         let status = pool.status().await;
         assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "browser")]
+    async fn test_browser_pool_list_pages_empty_profile() {
+        let config = BrowserPoolConfig::default();
+        let pool = BrowserPool::new(config);
+        let pages = pool.list_pages("nonexistent").await.unwrap();
+        assert!(pages.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "browser")]
+    async fn test_browser_pool_switch_page_not_found() {
+        let config = BrowserPoolConfig::default();
+        let pool = BrowserPool::new(config);
+        let result = pool.switch_page("nonexistent", "target-1").await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "browser")]
+    async fn test_browser_pool_find_page_empty() {
+        let config = BrowserPoolConfig::default();
+        let pool = BrowserPool::new(config);
+        let result = pool.find_page_by_title("nonexistent", "foo").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "browser")]
+    async fn test_browser_pool_close_page_not_found() {
+        let config = BrowserPoolConfig::default();
+        let pool = BrowserPool::new(config);
+        let result = pool.close_page("nonexistent", "target-1").await.unwrap();
+        assert!(!result);
     }
 }

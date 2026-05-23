@@ -100,6 +100,43 @@ pub enum BrowserAction {
         ref_id: usize,
         action: crate::browser::ActKind,
     },
+    /// Press a key on the page
+    Press { key: String },
+    /// Drag an element from one point to another
+    Drag {
+        selector: String,
+        target_selector: Option<String>,
+        delta_x: Option<i32>,
+        delta_y: Option<i32>,
+    },
+    /// Select text in an input or textarea
+    Select {
+        selector: String,
+        text: Option<String>,
+        start: Option<usize>,
+        end: Option<usize>,
+    },
+    /// Upload files to a file input element
+    UploadFiles {
+        selector: String,
+        files: Vec<String>,
+    },
+    /// Handle a JavaScript dialog (alert/confirm/prompt)
+    HandleDialog {
+        action: String,
+        text: Option<String>,
+    },
+    /// Set download behavior
+    SetDownloadBehavior {
+        behavior: String,
+        download_path: Option<String>,
+    },
+    /// List browser tabs/pages
+    ListTabs,
+    /// Switch to a specific tab by index or title
+    SwitchTab { index: Option<usize>, title: Option<String> },
+    /// Close a specific tab by index or title
+    CloseTab { index: Option<usize>, title: Option<String> },
 }
 
 /// Browser tool for web automation
@@ -180,6 +217,7 @@ impl BrowserTool {
     async fn execute_single_action(
         action: BrowserAction,
         page: &chromiumoxide::Page,
+        browser: Option<&chromiumoxide::Browser>,
         screenshot_data: &mut Option<String>,
     ) -> Result<serde_json::Value, String> {
         use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
@@ -661,6 +699,211 @@ impl BrowserTool {
                     Err(e) => Err(format!("Failed to act on ref {}: {}", ref_id, e)),
                 }
             }
+
+            BrowserAction::Press { key } => {
+                let script = format!(
+                    r#"() => {{
+                        const el = document.activeElement || document.body;
+                        const evt = new KeyboardEvent('keydown', {{ key: '{}', bubbles: true }});
+                        el.dispatchEvent(evt);
+                        const evtUp = new KeyboardEvent('keyup', {{ key: '{}', bubbles: true }});
+                        el.dispatchEvent(evtUp);
+                        return true;
+                    }}"#,
+                    key, key
+                );
+                match page.evaluate(script.as_str()).await {
+                    Ok(_) => Ok(json!({ "success": true, "key": key })),
+                    Err(e) => Err(format!("Failed to press key: {}", e)),
+                }
+            }
+
+            BrowserAction::Drag {
+                selector,
+                target_selector,
+                delta_x,
+                delta_y,
+            } => {
+                let script = if let Some(target) = target_selector {
+                    format!(
+                        r#"() => {{
+                            const src = document.querySelector('{}');
+                            const dst = document.querySelector('{}');
+                            if (!src || !dst) return {{ error: 'Element not found' }};
+                            const srcRect = src.getBoundingClientRect();
+                            const dstRect = dst.getBoundingClientRect();
+                            const sx = srcRect.left + srcRect.width / 2;
+                            const sy = srcRect.top + srcRect.height / 2;
+                            const dx = dstRect.left + dstRect.width / 2;
+                            const dy = dstRect.top + dstRect.height / 2;
+                            ['mousedown','mousemove','mouseup'].forEach((type,i) => {{
+                                const e = new MouseEvent(type, {{
+                                    bubbles: true, clientX: i === 0 ? sx : dx, clientY: i === 0 ? sy : dy,
+                                    buttons: 1
+                                }});
+                                (i === 0 ? src : document.body).dispatchEvent(e);
+                            }});
+                            return {{ success: true, from: {{ x: sx, y: sy }}, to: {{ x: dx, y: dy }} }};
+                        }}"#,
+                        selector, target
+                    )
+                } else {
+                    let dx = delta_x.unwrap_or(100);
+                    let dy = delta_y.unwrap_or(0);
+                    format!(
+                        r#"() => {{
+                            const el = document.querySelector('{}');
+                            if (!el) return {{ error: 'Element not found' }};
+                            const rect = el.getBoundingClientRect();
+                            const sx = rect.left + rect.width / 2;
+                            const sy = rect.top + rect.height / 2;
+                            const dx = sx + {};
+                            const dy = sy + {};
+                            ['mousedown','mousemove','mouseup'].forEach((type,i) => {{
+                                const e = new MouseEvent(type, {{
+                                    bubbles: true, clientX: i === 0 ? sx : dx, clientY: i === 0 ? sy : dy,
+                                    buttons: 1
+                                }});
+                                (i === 0 ? el : document.body).dispatchEvent(e);
+                            }});
+                            return {{ success: true, from: {{ x: sx, y: sy }}, to: {{ x: dx, y: dy }} }};
+                        }}"#,
+                        selector, dx, dy
+                    )
+                };
+                match page.evaluate(script.as_str()).await {
+                    Ok(result) => {
+                        let value = result.value().cloned().unwrap_or(json!(null));
+                        Ok(json!({ "success": true, "result": value }))
+                    }
+                    Err(e) => Err(format!("Failed to drag: {}", e)),
+                }
+            }
+
+            BrowserAction::Select { selector, text, start, end } => {
+                let script = if let Some(text) = text {
+                    format!(
+                        r#"() => {{
+                            const el = document.querySelector('{}');
+                            if (!el) return {{ error: 'Element not found' }};
+                            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {{
+                                el.focus();
+                                const idx = el.value.indexOf('{}');
+                                if (idx >= 0) {{
+                                    el.setSelectionRange(idx, idx + {});
+                                    return {{ success: true, selected: '{}' }};
+                                }}
+                                return {{ error: 'Text not found in element' }};
+                            }}
+                            const range = document.createRange();
+                            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                            let node;
+                            while ((node = walker.nextNode())) {{
+                                const idx = node.textContent.indexOf('{}');
+                                if (idx >= 0) {{
+                                    range.setStart(node, idx);
+                                    range.setEnd(node, idx + {});
+                                    const sel = window.getSelection();
+                                    sel.removeAllRanges();
+                                    sel.addRange(range);
+                                    return {{ success: true, selected: '{}' }};
+                                }}
+                            }}
+                            return {{ error: 'Text not found' }};
+                        }}"#,
+                        selector, text, text.len(), text, text, text.len(), text
+                    )
+                } else {
+                    let s = start.unwrap_or(0);
+                    let e = end.unwrap_or(usize::MAX);
+                    format!(
+                        r#"() => {{
+                            const el = document.querySelector('{}');
+                            if (!el) return {{ error: 'Element not found' }};
+                            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {{
+                                el.focus();
+                                const len = el.value.length;
+                                const start = Math.min({}, len);
+                                const end = Math.min({}, len);
+                                el.setSelectionRange(start, end);
+                                return {{ success: true, start, end, selected: el.value.substring(start, end) }};
+                            }}
+                            return {{ error: 'Selection by index only supported for input/textarea' }};
+                        }}"#,
+                        selector, s, e
+                    )
+                };
+                match page.evaluate(script.as_str()).await {
+                    Ok(result) => {
+                        let value = result.value().cloned().unwrap_or(json!(null));
+                        Ok(json!({ "success": true, "result": value }))
+                    }
+                    Err(e) => Err(format!("Failed to select: {}", e)),
+                }
+            }
+
+            BrowserAction::UploadFiles { selector, files } => {
+                use chromiumoxide::cdp::browser_protocol::dom::{
+                    GetDocumentParams, QuerySelectorParams, SetFileInputFilesParams,
+                };
+                let doc = page
+                    .execute(GetDocumentParams::default())
+                    .await
+                    .map_err(|e| format!("Failed to get document: {}", e))?;
+                let root_id = doc.result.root.node_id;
+                let query = page
+                    .execute(QuerySelectorParams::new(root_id, &selector))
+                    .await
+                    .map_err(|e| format!("Failed to query selector: {}", e))?;
+                let node_id = query.result.node_id;
+                let mut params = SetFileInputFilesParams::new(files);
+                params.node_id = Some(node_id);
+                match page.execute(params).await {
+                    Ok(_) => Ok(json!({
+                        "success": true,
+                        "selector": selector,
+                    })),
+                    Err(e) => Err(format!("Failed to set file input files: {}", e)),
+                }
+            }
+
+            BrowserAction::HandleDialog { action, text } => {
+                use chromiumoxide::cdp::browser_protocol::page::HandleJavaScriptDialogParams;
+                let accept = action == "accept";
+                let mut params = HandleJavaScriptDialogParams::new(accept);
+                params.prompt_text = text;
+                match page.execute(params).await {
+                    Ok(_) => Ok(json!({ "success": true, "action": action })),
+                    Err(e) => Err(format!(
+                        "Failed to handle dialog (no dialog may be open): {}",
+                        e
+                    )),
+                }
+            }
+
+            BrowserAction::SetDownloadBehavior { behavior, download_path } => {
+                let browser_ref = browser
+                    .ok_or("Download behavior requires a browser session".to_string())?;
+                use chromiumoxide::cdp::browser_protocol::browser::{
+                    SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
+                };
+                let behavior_enum = match behavior.as_str() {
+                    "allow" => SetDownloadBehaviorBehavior::Allow,
+                    "deny" => SetDownloadBehaviorBehavior::Deny,
+                    "allowAndName" => SetDownloadBehaviorBehavior::AllowAndName,
+                    _ => SetDownloadBehaviorBehavior::Default,
+                };
+                let mut params = SetDownloadBehaviorParams::new(behavior_enum);
+                params.download_path = download_path;
+                match browser_ref.execute(params).await {
+                    Ok(_) => Ok(json!({ "success": true, "behavior": behavior })),
+                    Err(e) => Err(format!("Failed to set download behavior: {}", e)),
+                }
+            }
+
+            BrowserAction::ListTabs => Err("Tab management requires pool-based mode".to_string()),
+            BrowserAction::SwitchTab { .. } => Err("Tab management requires pool-based mode".to_string()),
+            BrowserAction::CloseTab { .. } => Err("Tab management requires pool-based mode".to_string()),
         }
     }
 
@@ -673,22 +916,29 @@ impl BrowserTool {
         let output = serde_json::to_string_pretty(&results)
             .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
-        let mut result = ToolExecutionResult::success(output);
-
-        if let Some(screenshot) = screenshot_data {
-            result = result.with_data(json!({
+        let data = if let Some(screenshot) = screenshot_data {
+            json!({
                 "screenshot_base64": screenshot,
                 "results": results
-            }));
+            })
         } else {
-            result = result.with_data(json!({ "results": results }));
-        }
+            json!({ "results": results })
+        };
 
-        if !success {
-            result = ToolExecutionResult::error("One or more browser actions failed");
+        if success {
+            ToolExecutionResult::success(output).with_data(data)
+        } else {
+            let errors: Vec<String> = results
+                .iter()
+                .filter_map(|r| r.as_ref().err().cloned())
+                .collect();
+            let error_msg = if errors.is_empty() {
+                "One or more browser actions failed".to_string()
+            } else {
+                format!("Browser action errors: {}", errors.join("; "))
+            };
+            ToolExecutionResult::error(error_msg).with_data(data)
         }
-
-        result
     }
 
     /// Execute browser actions via pool (persistent session)
@@ -698,16 +948,86 @@ impl BrowserTool {
         actions: Vec<BrowserAction>,
         pool: &std::sync::Arc<crate::browser::BrowserPool>,
     ) -> crate::Result<ToolExecutionResult> {
-        // Create a new page for this action sequence
-        let handle = pool.new_page(&self.profile, "about:blank").await?;
-        let page = &handle.page;
+        let instance = pool.get_or_create(&self.profile).await?;
+        let mut current_handle = instance.new_page("about:blank").await?;
 
         let mut results = Vec::new();
         let mut screenshot_data = None;
 
         for action in actions {
             debug!("Executing browser action (pool): {:?}", action);
-            let result = Self::execute_single_action(action, page, &mut screenshot_data).await;
+            let result = match action {
+                BrowserAction::ListTabs => {
+                    let tabs = instance.list_pages().await;
+                    let tabs_json: Vec<Value> = tabs
+                        .into_iter()
+                        .map(|(id, title, url)| {
+                            json!({"target_id": id, "title": title, "url": url})
+                        })
+                        .collect();
+                    Ok(json!({
+                        "success": true,
+                        "tabs": tabs_json,
+                        "count": tabs_json.len()
+                    }))
+                }
+                BrowserAction::SwitchTab { index, title } => {
+                    let tabs = instance.list_pages().await;
+                    let target_id = if let Some(idx) = index {
+                        tabs.get(idx).map(|(id, _, _)| id.clone())
+                    } else if let Some(ref t) = title {
+                        instance.find_page_by_title(t).await
+                    } else {
+                        None
+                    };
+
+                    match target_id {
+                        Some(id) => match instance.switch_page(&id).await {
+                            Ok(true) => {
+                                if let Some(handle) = instance.get_page(&id).await {
+                                    current_handle = handle;
+                                }
+                                Ok(json!({"success": true, "target_id": id}))
+                            }
+                            Ok(false) => {
+                                Err("Failed to switch tab: page not found".to_string())
+                            }
+                            Err(e) => Err(format!("Failed to switch tab: {}", e)),
+                        },
+                        None => Err("Tab not found".to_string()),
+                    }
+                }
+                BrowserAction::CloseTab { index, title } => {
+                    let tabs = instance.list_pages().await;
+                    let target_id = if let Some(idx) = index {
+                        tabs.get(idx).map(|(id, _, _)| id.clone())
+                    } else if let Some(ref t) = title {
+                        instance.find_page_by_title(t).await
+                    } else {
+                        None
+                    };
+
+                    match target_id {
+                        Some(id) => match instance.close_page(&id).await {
+                            Ok(true) => Ok(json!({"success": true, "target_id": id})),
+                            Ok(false) => {
+                                Err("Failed to close tab: page not found".to_string())
+                            }
+                            Err(e) => Err(format!("Failed to close tab: {}", e)),
+                        },
+                        None => Err("Tab not found".to_string()),
+                    }
+                }
+                other => {
+                    Self::execute_single_action(
+                        other,
+                        &current_handle.page,
+                        Some(instance.browser.as_ref()),
+                        &mut screenshot_data,
+                    )
+                    .await
+                }
+            };
             results.push(result);
         }
 
@@ -779,7 +1099,7 @@ impl BrowserTool {
 
         for action in actions {
             debug!("Executing browser action (legacy): {:?}", action);
-            let result = Self::execute_single_action(action, &page, &mut screenshot_data).await;
+            let result = Self::execute_single_action(action, &page, Some(browser.as_ref()), &mut screenshot_data).await;
             results.push(result);
         }
 
@@ -1275,6 +1595,74 @@ mod tests {
         assert!(json.contains("act"));
         assert!(json.contains("3"));
         assert!(json.contains("click"));
+
+        let press = BrowserAction::Press { key: "Enter".to_string() };
+        let json = serde_json::to_string(&press).unwrap();
+        assert!(json.contains("press"));
+        assert!(json.contains("Enter"));
+
+        let drag = BrowserAction::Drag {
+            selector: "#item".to_string(),
+            target_selector: Some("#dropzone".to_string()),
+            delta_x: Some(100),
+            delta_y: Some(0),
+        };
+        let json = serde_json::to_string(&drag).unwrap();
+        assert!(json.contains("drag"));
+        assert!(json.contains("#item"));
+
+        let select = BrowserAction::Select {
+            selector: "#input".to_string(),
+            text: Some("hello".to_string()),
+            start: None,
+            end: None,
+        };
+        let json = serde_json::to_string(&select).unwrap();
+        assert!(json.contains("select"));
+        assert!(json.contains("hello"));
+
+        let upload = BrowserAction::UploadFiles {
+            selector: "#file".to_string(),
+            files: vec!["/tmp/test.txt".to_string()],
+        };
+        let json = serde_json::to_string(&upload).unwrap();
+        assert!(json.contains("upload_files"));
+        assert!(json.contains("/tmp/test.txt"));
+
+        let dialog = BrowserAction::HandleDialog {
+            action: "accept".to_string(),
+            text: Some("ok".to_string()),
+        };
+        let json = serde_json::to_string(&dialog).unwrap();
+        assert!(json.contains("handle_dialog"));
+        assert!(json.contains("accept"));
+
+        let download = BrowserAction::SetDownloadBehavior {
+            behavior: "allow".to_string(),
+            download_path: Some("/tmp".to_string()),
+        };
+        let json = serde_json::to_string(&download).unwrap();
+        assert!(json.contains("set_download_behavior"));
+        assert!(json.contains("allow"));
+
+        let list_tabs = BrowserAction::ListTabs;
+        let json = serde_json::to_string(&list_tabs).unwrap();
+        assert!(json.contains("list_tabs"));
+
+        let switch_tab = BrowserAction::SwitchTab {
+            index: Some(1),
+            title: Some("Example".to_string()),
+        };
+        let json = serde_json::to_string(&switch_tab).unwrap();
+        assert!(json.contains("switch_tab"));
+        assert!(json.contains("Example"));
+
+        let close_tab = BrowserAction::CloseTab {
+            index: Some(0),
+            title: None,
+        };
+        let json = serde_json::to_string(&close_tab).unwrap();
+        assert!(json.contains("close_tab"));
     }
 
     #[test]
@@ -1354,5 +1742,48 @@ mod tests {
                 BrowserAction::Act { ref_id: 2, action: crate::browser::ActKind::Type { ref text } } if text == "hello"
             )
         );
+
+        let press: BrowserAction = serde_json::from_value(json!({
+            "press": { "key": "Enter" }
+        })).unwrap();
+        assert!(matches!(press, BrowserAction::Press { ref key } if key == "Enter"));
+
+        let drag: BrowserAction = serde_json::from_value(json!({
+            "drag": { "selector": "#item", "target_selector": "#dropzone", "delta_x": 100, "delta_y": 0 }
+        })).unwrap();
+        assert!(matches!(drag, BrowserAction::Drag { ref selector, .. } if selector == "#item"));
+
+        let select: BrowserAction = serde_json::from_value(json!({
+            "select": { "selector": "#input", "text": "hello", "start": 0, "end": 5 }
+        })).unwrap();
+        assert!(matches!(select, BrowserAction::Select { ref selector, .. } if selector == "#input"));
+
+        let upload: BrowserAction = serde_json::from_value(json!({
+            "upload_files": { "selector": "#file", "files": ["/tmp/test.txt"] }
+        })).unwrap();
+        assert!(matches!(upload, BrowserAction::UploadFiles { ref selector, .. } if selector == "#file"));
+
+        let dialog: BrowserAction = serde_json::from_value(json!({
+            "handle_dialog": { "action": "accept", "text": "ok" }
+        })).unwrap();
+        assert!(matches!(dialog, BrowserAction::HandleDialog { ref action, .. } if action == "accept"));
+
+        let download: BrowserAction = serde_json::from_value(json!({
+            "set_download_behavior": { "behavior": "allow", "download_path": "/tmp" }
+        })).unwrap();
+        assert!(matches!(download, BrowserAction::SetDownloadBehavior { ref behavior, .. } if behavior == "allow"));
+
+        let list_tabs: BrowserAction = serde_json::from_value(json!({"list_tabs": null})).unwrap();
+        assert!(matches!(list_tabs, BrowserAction::ListTabs));
+
+        let switch_tab: BrowserAction = serde_json::from_value(json!({
+            "switch_tab": { "index": 1, "title": "Example" }
+        })).unwrap();
+        assert!(matches!(switch_tab, BrowserAction::SwitchTab { index: Some(1), .. }));
+
+        let close_tab: BrowserAction = serde_json::from_value(json!({
+            "close_tab": { "index": 0 }
+        })).unwrap();
+        assert!(matches!(close_tab, BrowserAction::CloseTab { index: Some(0), .. }));
     }
 }
