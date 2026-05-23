@@ -39,6 +39,11 @@ pub struct Config {
     #[serde(default)]
     pub services: HashMap<String, ServiceConfig>,
 
+    /// Browser automation configuration
+    #[cfg(feature = "browser")]
+    #[serde(default)]
+    pub browser: BrowserConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -283,6 +288,44 @@ impl Default for RetryConfig {
     }
 }
 
+/// Browser automation configuration
+#[cfg(feature = "browser")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserConfig {
+    /// Enable the browser bridge server
+    #[serde(default = "default_false")]
+    pub bridge_enabled: bool,
+    /// Port for the browser bridge server
+    #[serde(default = "default_bridge_port")]
+    pub bridge_port: u16,
+    /// Pool configuration
+    #[serde(default)]
+    pub pool: crate::browser::BrowserPoolConfig,
+    /// Browser profiles
+    #[serde(default)]
+    pub profiles: Vec<crate::browser::BrowserProfile>,
+}
+
+#[cfg(feature = "browser")]
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            bridge_enabled: false,
+            bridge_port: default_bridge_port(),
+            pool: crate::browser::BrowserPoolConfig::default(),
+            profiles: vec![crate::browser::BrowserProfile::default()],
+        }
+    }
+}
+
+fn default_bridge_port() -> u16 {
+    18800
+}
+
+fn default_false() -> bool {
+    false
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -290,6 +333,8 @@ impl Default for Config {
             server: ServerConfig::default(),
             logging: LoggingConfig::default(),
             storage: StorageConfig::default(),
+            #[cfg(feature = "browser")]
+            browser: BrowserConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }
@@ -431,6 +476,23 @@ impl Config {
             self.storage.connection = Some(conn);
         }
 
+        // Browser config from env
+        #[cfg(feature = "browser")]
+        {
+            if let Ok(val) = std::env::var(format!("{}_BROWSER_BRIDGE_ENABLED", ENV_PREFIX)) {
+                self.browser.bridge_enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "browser.bridge_enabled".to_string(),
+                    message: format!("Invalid boolean: {}", e),
+                })?;
+            }
+            if let Ok(port) = std::env::var(format!("{}_BROWSER_BRIDGE_PORT", ENV_PREFIX)) {
+                self.browser.bridge_port = port.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "browser.bridge_port".to_string(),
+                    message: format!("Invalid port number: {}", e),
+                })?;
+            }
+        }
+
         Ok(())
     }
 
@@ -451,6 +513,16 @@ impl Config {
             return Err(ConfigError::InvalidValue {
                 key: "logging.level".to_string(),
                 message: format!("Invalid log level: {}", self.logging.level),
+            }
+            .into());
+        }
+
+        // Validate browser config
+        #[cfg(feature = "browser")]
+        if self.browser.bridge_port == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "browser.bridge_port".to_string(),
+                message: "Bridge port cannot be 0".to_string(),
             }
             .into());
         }
@@ -1156,5 +1228,63 @@ timeout_seconds = 60
                 exec: None,
             })
         );
+    }
+
+    #[test]
+    #[cfg(feature = "browser")]
+    fn test_browser_config_default() {
+        let config = Config::default();
+        assert!(!config.browser.bridge_enabled);
+        assert_eq!(config.browser.bridge_port, 18800);
+        assert_eq!(config.browser.pool.default_profile, "default");
+        assert_eq!(config.browser.profiles.len(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "browser")]
+    fn test_browser_config_from_toml() {
+        let toml_str = r#"
+[browser]
+bridge_enabled = true
+bridge_port = 18801
+
+[browser.pool]
+idle_timeout_secs = 600
+cleanup_interval_secs = 120
+
+[[browser.profiles]]
+name = "default"
+headless = true
+viewport_width = 1280
+viewport_height = 720
+
+[[browser.profiles]]
+name = "headed"
+headless = false
+viewport_width = 1920
+viewport_height = 1080
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.browser.bridge_enabled);
+        assert_eq!(config.browser.bridge_port, 18801);
+        assert_eq!(config.browser.pool.idle_timeout_secs, 600);
+        assert_eq!(config.browser.pool.cleanup_interval_secs, 120);
+        assert_eq!(config.browser.profiles.len(), 2);
+        assert_eq!(config.browser.profiles[0].name, "default");
+        assert!(config.browser.profiles[0].headless);
+        assert_eq!(config.browser.profiles[1].name, "headed");
+        assert!(!config.browser.profiles[1].headless);
+    }
+
+    #[test]
+    #[cfg(feature = "browser")]
+    fn test_browser_config_validate() {
+        let mut config = Config::default();
+        config.browser.bridge_port = 0;
+        assert!(config.validate().is_err());
+
+        config.browser.bridge_port = 18800;
+        assert!(config.validate().is_ok());
     }
 }

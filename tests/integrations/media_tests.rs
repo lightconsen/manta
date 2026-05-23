@@ -269,6 +269,7 @@ async fn tts_missing_text_fails() {
 }
 
 #[tokio::test]
+#[cfg(not(feature = "browser"))]
 async fn browser_navigate_without_feature_fails() {
     let tool = BrowserTool::new();
     let ctx = test_context();

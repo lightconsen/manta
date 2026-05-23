@@ -151,6 +151,8 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         disk_budget: Arc::new(disk_budget),
         session_file_manager: Arc::new(session_file_manager),
         group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+        #[cfg(feature = "browser")]
+        browser_bridge: tokio::sync::RwLock::new(None),
     }
 }
 

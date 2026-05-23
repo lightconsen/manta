@@ -117,6 +117,10 @@ pub struct GatewayConfig {
     /// When true, restrict file operations to `workspace_dir`.
     #[serde(default)]
     pub workspace_only: bool,
+    /// Browser configuration (bridge, profiles, pool)
+    #[cfg(feature = "browser")]
+    #[serde(default)]
+    pub browser: crate::config::BrowserConfig,
 }
 
 fn default_model() -> String {
@@ -462,6 +466,8 @@ impl Default for GatewayConfig {
             cost_guard: CostGuardConfig::default(),
             workspace_dir: None,
             workspace_only: false,
+            #[cfg(feature = "browser")]
+            browser: crate::config::BrowserConfig::default(),
         }
     }
 }
@@ -647,6 +653,9 @@ pub struct GatewayState {
     pub session_file_manager: Arc<crate::agent::SessionFileManager>,
     /// Group session manager for multi-member sessions with role awareness.
     pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
+    /// Browser bridge server (started when browser.bridge_enabled is true)
+    #[cfg(feature = "browser")]
+    pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
 }
 
 impl GatewayState {
@@ -1435,6 +1444,8 @@ impl Gateway {
                 Arc::new(manager)
             },
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
+            #[cfg(feature = "browser")]
+            browser_bridge: tokio::sync::RwLock::new(None),
         });
 
         // Attach SessionStore to SessionManager for unified session model
@@ -1841,6 +1852,40 @@ impl Gateway {
 
         // Initialize configured channels
         self.init_channels().await?;
+
+        // Start browser bridge server if enabled
+        #[cfg(feature = "browser")]
+        if self.config.browser.bridge_enabled {
+            let pool = Arc::new(crate::browser::BrowserPool::with_profiles(
+                self.config.browser.pool.clone(),
+                self.config.browser.profiles.clone(),
+            ));
+            let mut bridge =
+                crate::browser::BrowserBridge::new(pool, self.config.browser.bridge_port);
+            let token = bridge.token().to_string();
+            match bridge.start().await {
+                Ok(port) => {
+                    let url = format!("http://127.0.0.1:{}", port);
+                    info!(port = port, "Browser bridge server started");
+                    {
+                        let mut bridge_lock = self.state.browser_bridge.write().await;
+                        *bridge_lock = Some(bridge);
+                    }
+                    let mut settings = self.state.runtime_settings.write().await;
+                    settings.insert(
+                        "browser_bridge_url".to_string(),
+                        serde_json::json!(url),
+                    );
+                    settings.insert(
+                        "browser_bridge_token".to_string(),
+                        serde_json::json!(token),
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to start browser bridge server: {}", e);
+                }
+            }
+        }
 
         // Build HTTP router
         let app = self.build_router().await;
