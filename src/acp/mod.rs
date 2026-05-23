@@ -341,7 +341,7 @@ struct SessionExecution {
 }
 
 /// ACP actor loop — routes commands to per-session serial queues
-async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>) {
+async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iterations: usize) {
     let mut sessions: HashMap<String, SessionHandle> = HashMap::new();
     let mut session_meta: HashMap<String, SessionExecution> = HashMap::new();
 
@@ -354,6 +354,7 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>) {
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Session,
+                    max_iterations,
                 )
                 .await;
 
@@ -376,6 +377,7 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>) {
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Run,
+                    max_iterations,
                 )
                 .await;
 
@@ -403,6 +405,7 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>) {
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Session,
+                    max_iterations,
                 )
                 .await;
 
@@ -489,6 +492,7 @@ async fn get_or_create_session<'a>(
     session_meta: &'a mut HashMap<String, SessionExecution>,
     session_id: &str,
     mode: ExecutionMode,
+    max_iterations: usize,
 ) -> &'a SessionHandle {
     if !sessions.contains_key(session_id) {
         let (tx, rx) = mpsc::channel::<SessionCommand>(256);
@@ -499,7 +503,7 @@ async fn get_or_create_session<'a>(
             controller: controller.clone(),
             mode,
             current_iteration: 0,
-            max_iterations: 50,
+            max_iterations,
             current_message: None,
         };
 
@@ -509,7 +513,12 @@ async fn get_or_create_session<'a>(
             mode,
         };
 
-        tokio::spawn(session_actor_loop(rx, ctrl_clone, session_id.to_string()));
+        tokio::spawn(session_actor_loop(
+            rx,
+            ctrl_clone,
+            session_id.to_string(),
+            max_iterations,
+        ));
 
         sessions.insert(session_id.to_string(), handle);
         session_meta.insert(session_id.to_string(), meta);
@@ -523,6 +532,7 @@ async fn session_actor_loop(
     mut rx: mpsc::Receiver<SessionCommand>,
     controller: Arc<ExecutionController>,
     session_id: String,
+    max_iterations: usize,
 ) {
     info!("Session actor started for {}", session_id);
 
@@ -542,7 +552,7 @@ async fn session_actor_loop(
                 );
 
                 controller.reset().await;
-                let max_iter = 50;
+                let max_iter = max_iterations;
 
                 let result = if let Some(cb) = payload.progress_cb {
                     payload
@@ -742,6 +752,8 @@ pub struct AcpControlPlane {
     command_tx: mpsc::Sender<AcpCommand>,
     /// Optional session store for persisting subagent run records
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    /// Maximum iterations per ACP execution
+    max_iterations: usize,
 }
 
 /// ACP Session - groups related subagents
@@ -755,9 +767,9 @@ pub struct AcpSession {
 
 impl AcpControlPlane {
     /// Create a new ACP control plane and spawn the actor loop
-    pub fn new() -> Self {
+    pub fn new(max_iterations: usize) -> Self {
         let (command_tx, command_rx) = mpsc::channel(256);
-        tokio::spawn(acp_actor_loop(command_rx));
+        tokio::spawn(acp_actor_loop(command_rx, max_iterations));
         Self {
             subagents: Arc::new(RwLock::new(HashMap::new())),
             threads: Arc::new(RwLock::new(HashMap::new())),
@@ -765,6 +777,7 @@ impl AcpControlPlane {
             default_agent_builder: Arc::new(RwLock::new(None)),
             command_tx,
             store: None,
+            max_iterations,
         }
     }
 
@@ -793,6 +806,34 @@ impl AcpControlPlane {
         let mut guard = self.default_agent_builder.write().await;
         *guard = Some(Arc::new(builder));
         info!("ACP default agent builder configured");
+    }
+
+    /// Load persisted ACP sessions from the store into memory.
+    pub async fn load_persisted_sessions(&self) {
+        let Some(ref store) = self.store else {
+            return;
+        };
+
+        match store.list_acp_sessions().await {
+            Ok(rows) => {
+                let mut sessions = self.sessions.write().await;
+                for (session_id, parent_id, subagent_ids, created_at) in rows {
+                    sessions.insert(
+                        AcpSessionId(session_id.clone()),
+                        AcpSession {
+                            id: AcpSessionId(session_id),
+                            parent_agent_id: parent_id,
+                            subagents: subagent_ids,
+                            created_at,
+                        },
+                    );
+                }
+                info!("Loaded {} persisted ACP sessions", sessions.len());
+            }
+            Err(e) => {
+                warn!("Failed to load persisted ACP sessions: {}", e);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -900,13 +941,26 @@ impl AcpControlPlane {
         let session_id = AcpSessionId::new();
         let session = AcpSession {
             id: session_id.clone(),
-            parent_agent_id,
+            parent_agent_id: parent_agent_id.clone(),
             subagents: vec![],
             created_at: chrono::Utc::now(),
         };
 
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);
+        drop(sessions);
+
+        // Persist session if store is available
+        if let Some(ref store) = self.store {
+            let _ = store
+                .save_acp_session(
+                    &session_id.0,
+                    &parent_agent_id,
+                    &[],
+                    chrono::Utc::now(),
+                )
+                .await;
+        }
 
         info!("Created ACP session {}", session_id);
         session_id
@@ -966,6 +1020,7 @@ impl AcpControlPlane {
         let subagent_id_clone = subagent_id.clone();
         let mode = config.mode;
         let timeout = config.timeout_seconds;
+        let max_iterations = self.max_iterations;
 
         let join_handle = tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
@@ -1009,7 +1064,7 @@ impl AcpControlPlane {
                         });
 
                         controller.reset().await;
-                        let max_iter = 50;
+                        let max_iter = max_iterations;
 
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(timeout.unwrap_or(300)),
@@ -1136,6 +1191,17 @@ impl AcpControlPlane {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(&session_id) {
             session.subagents.push(subagent_id.clone());
+            // Persist updated subagent list
+            if let Some(ref store) = self.store {
+                let ids: Vec<String> = session.subagents.clone();
+                let parent = session.parent_agent_id.clone();
+                let created = session.created_at;
+                let sid = session_id.0.clone();
+                drop(sessions);
+                let _ = store
+                    .save_acp_session(&sid, &parent, &ids, created)
+                    .await;
+            }
         }
 
         // Ensure thread exists
@@ -1346,6 +1412,12 @@ impl AcpControlPlane {
         // Remove session
         let mut sessions = self.sessions.write().await;
         sessions.remove(session_id);
+        drop(sessions);
+
+        // Delete from persistent store
+        if let Some(ref store) = self.store {
+            let _ = store.delete_acp_session(&session_id.0).await;
+        }
 
         info!("Terminated {} subagents in session {}", count, session_id);
         Ok(count)
@@ -1451,7 +1523,7 @@ impl AcpControlPlane {
 
 impl Default for AcpControlPlane {
     fn default() -> Self {
-        Self::new()
+        Self::new(50)
     }
 }
 
@@ -1581,14 +1653,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_control_plane_new() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let subagents = acp.list_subagents().await;
         assert!(subagents.is_empty());
     }
 
     #[tokio::test]
     async fn test_create_session() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let session_id = acp.create_session("parent-1".to_string()).await;
         assert!(!session_id.0.is_empty());
 
@@ -1601,7 +1673,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_info_not_found() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let info = acp
             .get_session_info(&AcpSessionId("nonexistent".to_string()))
             .await;
@@ -1610,7 +1682,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_terminate_session_not_found() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let result = acp
             .terminate_session(&AcpSessionId("nonexistent".to_string()))
             .await;
@@ -1619,7 +1691,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_session_subagents_empty() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let session_id = acp.create_session("parent".to_string()).await;
         let subagents = acp.list_session_subagents(&session_id).await;
         assert!(subagents.is_empty());
@@ -1627,21 +1699,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_subagent_status_not_found() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let status = acp.get_subagent_status("nonexistent").await;
         assert!(status.is_none());
     }
 
     #[tokio::test]
     async fn test_resolve_thread_id_new() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let id = acp.resolve_thread_id(&ThreadBinding::New, "parent").await;
         assert!(id.starts_with("thread-"));
     }
 
     #[tokio::test]
     async fn test_resolve_thread_id_parent() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let id = acp
             .resolve_thread_id(&ThreadBinding::Parent, "parent-1")
             .await;
@@ -1650,7 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_thread_id_specific() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
         let id = acp
             .resolve_thread_id(&ThreadBinding::Thread("my-thread".to_string()), "parent")
             .await;
@@ -1659,7 +1731,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_thread_id_auto() {
-        let acp = AcpControlPlane::new();
+        let acp = AcpControlPlane::new(50);
 
         // Auto without existing thread -> creates fresh UUID thread
         let id1 = acp

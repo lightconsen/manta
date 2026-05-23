@@ -17,7 +17,7 @@ use axum::{
     http::{header, StatusCode},
     middleware::{from_fn, from_fn_with_state, Next},
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -239,6 +239,13 @@ pub struct AcpConfig {
     pub max_subagents: usize,
     /// Default subagent timeout in seconds
     pub default_timeout_seconds: u64,
+    /// Maximum iterations per ACP session execution
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: usize,
+}
+
+fn default_max_iterations() -> usize {
+    50
 }
 
 impl Default for AcpConfig {
@@ -247,6 +254,7 @@ impl Default for AcpConfig {
             enabled: true,
             max_subagents: 10,
             default_timeout_seconds: 300,
+            max_iterations: default_max_iterations(),
         }
     }
 }
@@ -1178,11 +1186,13 @@ impl Gateway {
             };
 
         // Create ACP control plane first (needed for tool registration)
+        let acp_max_iter = config.acp.max_iterations;
         let acp = if let Some(ref store) = session_store {
-            Arc::new(AcpControlPlane::new().with_store(store.clone()))
+            Arc::new(AcpControlPlane::new(acp_max_iter).with_store(store.clone()))
         } else {
-            Arc::new(AcpControlPlane::new())
+            Arc::new(AcpControlPlane::new(acp_max_iter))
         };
+        acp.load_persisted_sessions().await;
 
         // Create the shared MCP manager
         let mcp_manager = Arc::new(McpManager::new());
@@ -1985,6 +1995,26 @@ impl Gateway {
             // Admin redirect — management UI moved to CLI
             .route("/admin", get(admin_redirect_handler));
 
+        // ACP (Agent Control Plane) routes — conditional on config
+        let acp_enabled = state.config.read().await.acp.enabled;
+        let acp_router = if acp_enabled {
+            Router::new()
+                .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
+                .route("/api/v1/acp/spawn", post(acp_spawn_handler))
+                .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
+                .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
+                .route("/api/v1/acp/sessions/:id/status", get(acp_session_status_handler))
+                .route("/api/v1/acp/sessions/:id/pause", post(acp_session_pause_handler))
+                .route("/api/v1/acp/sessions/:id/resume", post(acp_session_resume_handler))
+                .route("/api/v1/acp/sessions/:id/step", post(acp_session_step_handler))
+                .route("/api/v1/acp/sessions/:id/cancel", post(acp_session_cancel_handler))
+                .route("/api/v1/acp/sessions/:id/tree", get(acp_session_tree_handler))
+                .route("/api/v1/acp/execute/session", post(acp_execute_session_handler))
+                .route("/api/v1/acp/execute/run", post(acp_execute_run_handler))
+        } else {
+            Router::new()
+        };
+
         // Deprecated REST API routes (use WebSocket protocol instead).
         // Management endpoints removed per protocol.md v1.0 — management is CLI-only.
         let deprecated_router = Router::new()
@@ -2018,6 +2048,7 @@ impl Gateway {
         // (order matters - applied in reverse)
         let admin_router = essential_router
             .merge(deprecated_router)
+            .merge(acp_router)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
@@ -6252,6 +6283,33 @@ async fn acp_spawn_handler(
 ) -> impl IntoResponse {
     use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
     use crate::channels::IncomingMessage;
+    use crate::security::runtime_audit::AuditEventType;
+    use crate::security::RateLimitResult;
+    use crate::security::UserId;
+
+    // Rate limit: 10 spawns per minute per api-user
+    let actor = "api-user";
+    let rate_result = state
+        .rate_limiter
+        .check_with_cost(
+            &UserId::new(format!("acp:spawn:{}", actor)),
+            1.0,
+        )
+        .await;
+    if !rate_result.is_allowed() {
+        let retry = match rate_result {
+            RateLimitResult::Denied { retry_after_secs } => retry_after_secs,
+            _ => 60,
+        };
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "Rate limit exceeded for ACP spawn",
+                "retry_after": retry,
+            })),
+        )
+            .into_response();
+    }
 
     let session_id = AcpSessionId::new();
     let parent_id = "gateway-api".to_string();
@@ -6261,12 +6319,13 @@ async fn acp_spawn_handler(
         _ => SpawnMode::Run,
     };
 
+    let agent_type = if body.agent_type.is_empty() {
+        "default".to_string()
+    } else {
+        body.agent_type.clone()
+    };
     let config = SubagentConfig {
-        agent_type: if body.agent_type.is_empty() {
-            "default".to_string()
-        } else {
-            body.agent_type
-        },
+        agent_type: agent_type.clone(),
         mode,
         thread_binding: ThreadBinding::Auto,
         system_prompt: None,
@@ -6279,15 +6338,32 @@ async fn acp_spawn_handler(
 
     match state
         .acp
-        .spawn_subagent(session_id.clone(), parent_id, config)
+        .spawn_subagent(session_id.clone(), parent_id.clone(), config)
         .await
     {
         Ok(handle) => {
             let subagent_id = handle.id.clone();
 
+            // Audit log
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpSpawn,
+                    actor,
+                    &subagent_id,
+                    true,
+                    format!("Spawned subagent via API (mode: {:?})", handle.mode),
+                    Some(serde_json::json!({
+                        "session_id": session_id.to_string(),
+                        "parent_id": parent_id,
+                        "agent_type": agent_type,
+                    })),
+                )
+                .await;
+
             // Send task to subagent
             let message =
-                IncomingMessage::new("api-user".to_string(), session_id.to_string(), body.task);
+                IncomingMessage::new(actor.to_string(), session_id.to_string(), body.task);
 
             match state.acp.send_message(&subagent_id, message).await {
                 Ok(response) => {
@@ -6309,6 +6385,19 @@ async fn acp_spawn_handler(
             }
         }
         Err(e) => {
+            // Audit log failed spawn
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpSpawn,
+                    actor,
+                    "",
+                    false,
+                    format!("Failed to spawn subagent: {}", e),
+                    None,
+                )
+                .await;
+
             let error = serde_json::json!({
                 "error": format!("Failed to spawn subagent: {}", e),
             });
@@ -6322,10 +6411,22 @@ async fn terminate_acp_session_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
     use crate::acp::AcpSessionId;
+    use crate::security::runtime_audit::AuditEventType;
 
-    let session_id = AcpSessionId(id);
+    let session_id = AcpSessionId(id.clone());
     match state.acp.terminate_session(&session_id).await {
         Ok(count) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpTerminate,
+                    "api-user",
+                    &id,
+                    true,
+                    format!("Terminated {} subagents in session {}", count, id),
+                    Some(serde_json::json!({ "terminated_count": count })),
+                )
+                .await;
             let response = serde_json::json!({
                 "terminated_count": count,
                 "session_id": session_id.to_string(),
@@ -6333,6 +6434,17 @@ async fn terminate_acp_session_handler(
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpTerminate,
+                    "api-user",
+                    &id,
+                    false,
+                    format!("Failed to terminate session: {}", e),
+                    None,
+                )
+                .await;
             let error = serde_json::json!({
                 "error": format!("Failed to terminate session: {}", e),
             });
@@ -6353,9 +6465,10 @@ async fn acp_session_message_handler(
 ) -> impl IntoResponse {
     use crate::acp::AcpSessionId;
     use crate::channels::IncomingMessage;
+    use crate::security::runtime_audit::AuditEventType;
 
     // Find a subagent in this session
-    let session_id = AcpSessionId(id);
+    let session_id = AcpSessionId(id.clone());
     let subagents = state.acp.list_session_subagents(&session_id).await;
 
     if subagents.is_empty() {
@@ -6372,6 +6485,20 @@ async fn acp_session_message_handler(
 
     match state.acp.send_message(&subagent.id, message).await {
         Ok(response) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpMessage,
+                    "api-user",
+                    &id,
+                    true,
+                    format!("Message sent to subagent {} in session {}", subagent.id, id),
+                    Some(serde_json::json!({
+                        "subagent_id": subagent.id,
+                        "session_id": id,
+                    })),
+                )
+                .await;
             let resp = serde_json::json!({
                 "subagent_id": subagent.id,
                 "session_id": session_id.to_string(),
@@ -6380,6 +6507,17 @@ async fn acp_session_message_handler(
             (StatusCode::OK, Json(resp)).into_response()
         }
         Err(e) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpMessage,
+                    "api-user",
+                    &id,
+                    false,
+                    format!("Failed to send message: {}", e),
+                    None,
+                )
+                .await;
             let error = serde_json::json!({
                 "error": format!("Failed to send message: {}", e),
             });

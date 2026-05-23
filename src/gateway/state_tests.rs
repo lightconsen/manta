@@ -104,7 +104,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
                 .await
                 .expect("plugin manager"),
         ),
-        acp: Arc::new(AcpControlPlane::new()),
+        acp: Arc::new(AcpControlPlane::new(50)),
         vector_memory: RwLock::new(None),
         session_search: RwLock::new(None),
         memory_manager: RwLock::new(None),

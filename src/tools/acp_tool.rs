@@ -602,7 +602,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_spawn_tool_name_and_schema() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSpawnTool::new(acp, None);
         assert_eq!(tool.name(), "acp_spawn");
         let schema = tool.parameters_schema();
@@ -613,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_session_tool_name_and_schema() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSessionTool::new(acp);
         assert_eq!(tool.name(), "acp_session");
         let schema = tool.parameters_schema();
@@ -622,7 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_session_tool_list_empty() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
         let result = tool
@@ -638,7 +638,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_session_tool_get_not_found() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
         let result = tool
@@ -651,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_session_tool_invalid_args() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
@@ -661,7 +661,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_spawn_tool_no_agent_builder() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSpawnTool::new(acp, None);
         let ctx = ToolContext::new("user", "conv");
         let result = tool
@@ -682,7 +682,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_spawn_tool_invalid_args() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSpawnTool::new(acp, None);
         let ctx = ToolContext::new("user", "conv");
         let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
@@ -692,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_acp_session_tool_terminate_not_found() {
-        let acp = Arc::new(AcpControlPlane::new());
+        let acp = Arc::new(AcpControlPlane::new(50));
         let tool = AcpSessionTool::new(acp);
         let ctx = ToolContext::new("user", "conv");
         let result = tool

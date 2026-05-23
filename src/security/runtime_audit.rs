@@ -34,6 +34,12 @@ pub enum AuditEventType {
     ToolDeny,
     /// Generic security event
     Security,
+    /// ACP subagent spawned
+    AcpSpawn,
+    /// ACP session terminated
+    AcpTerminate,
+    /// ACP message sent
+    AcpMessage,
 }
 
 /// A single audit log entry.
