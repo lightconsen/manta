@@ -374,10 +374,18 @@ impl BrowserTool {
             }
 
             BrowserAction::Scroll { direction, amount } => {
+                let (dx, dy) = if direction == "up" {
+                    (0, -(amount as i32))
+                } else if direction == "down" {
+                    (0, amount as i32)
+                } else if direction == "left" {
+                    (-(amount as i32), 0)
+                } else {
+                    (amount as i32, 0)
+                };
                 let script = format!(
-                    r#"() => {{ window.scrollBy({{ {}: {} }}); return window.scrollY; }}"#,
-                    if direction == "up" { "top: -" } else { "top: " },
-                    amount
+                    r#"() => {{ window.scrollBy({}, {}); return window.scrollY; }}"#,
+                    dx, dy
                 );
 
                 match page.evaluate(script.as_str()).await {

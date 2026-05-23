@@ -33,9 +33,9 @@ fn chrome_available() -> bool {
         || std::path::Path::new("/Applications/Chromium.app/Contents/MacOS/Chromium").exists()
 }
 
-/// Detect whether Chrome version is compatible with chromiumoxide 0.7.
-/// Chrome 128+ sends CDP messages that chromiumoxide 0.7 cannot deserialize,
-/// causing "oneshot canceled" / "receiver is gone" errors.
+/// Detect whether Chrome version is compatible with chromiumoxide 0.9.
+/// Very new Chrome versions (200+) may send CDP messages that future
+/// chromiumoxide versions cannot deserialize.
 fn chrome_compatible() -> bool {
     if !chrome_available() {
         return false;
@@ -60,10 +60,10 @@ fn chrome_compatible() -> bool {
                 for part in &parts {
                     if let Some(dot_idx) = part.find('.') {
                         if let Ok(major) = part[..dot_idx].parse::<u32>() {
-                            if major > 127 {
+                            if major > 200 {
                                 eprintln!(
-                                    "Skipping: Chrome {} is too new for chromiumoxide 0.7. \
-                                     Consider upgrading chromiumoxide.",
+                                    "Skipping: Chrome {} may be too new for chromiumoxide 0.9. \
+                                     Consider upgrading chromiumoxide if tests fail.",
                                     major
                                 );
                                 return false;
@@ -226,7 +226,8 @@ async fn test_browser_click() {
     let data = result.data.expect("expected data");
     let results = data.get("results").expect("expected results").as_array().expect("expected array");
     assert_eq!(results.len(), 3);
-    let text = results[2].get("text").and_then(|v| v.as_str()).unwrap_or("");
+    let ok_val = results[2].get("Ok").expect("expected Ok");
+    let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");
     assert!(text.contains("clicked"), "expected 'clicked' in page text, got: {}", text);
 }
 
@@ -253,7 +254,8 @@ async fn test_browser_type() {
     let data = result.data.expect("expected data");
     let results = data.get("results").expect("expected results").as_array().expect("expected array");
     assert_eq!(results.len(), 3);
-    let text = results[2].get("text").and_then(|v| v.as_str()).unwrap_or("");
+    let ok_val = results[2].get("Ok").expect("expected Ok");
+    let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");
     assert!(text.contains("hello"), "expected 'hello' in result, got: {}", text);
 }
 
@@ -280,7 +282,8 @@ async fn test_browser_scroll() {
     let data = result.data.expect("expected data");
     let results = data.get("results").expect("expected results").as_array().expect("expected array");
     assert_eq!(results.len(), 3);
-    let scroll_y = results[2].get("result").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let ok_val = results[2].get("Ok").expect("expected Ok");
+    let scroll_y = ok_val.get("result").and_then(|v| v.as_f64()).unwrap_or(0.0);
     assert!(scroll_y > 0.0, "expected scrollY > 0, got: {}", scroll_y);
 }
 
@@ -308,6 +311,7 @@ async fn test_browser_press() {
     let data = result.data.expect("expected data");
     let results = data.get("results").expect("expected results").as_array().expect("expected array");
     assert_eq!(results.len(), 4);
-    let text = results[3].get("text").and_then(|v| v.as_str()).unwrap_or("");
+    let ok_val = results[3].get("Ok").expect("expected Ok");
+    let text = ok_val.get("text").and_then(|v| v.as_str()).unwrap_or("");
     assert!(text.contains("pressed:a"), "expected 'pressed:a' in result, got: {}", text);
 }

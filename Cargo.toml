@@ -89,7 +89,7 @@ oauth2 = "4.4"
 regex = "1.10"
 
 # Browser automation (optional)
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+chromiumoxide = { version = "0.9", optional = true }
 url = "2.5"
 
 # Shell expansion for paths
@@ -188,7 +188,7 @@ insta = { version = "1.39", features = ["yaml", "json"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 # Browser automation for E2E tests
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+chromiumoxide = { version = "0.9" }
 
 [[bench]]
 name = "message_routing"
