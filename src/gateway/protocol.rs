@@ -204,6 +204,8 @@ pub const SCOPE_WRITE: &str = "write";
 pub const SCOPE_ADMIN: &str = "admin";
 /// Scope: device pairing management
 pub const SCOPE_PAIRING: &str = "pairing";
+/// Scope: ACP (Agent Control Plane) operations
+pub const SCOPE_ACP: &str = "acp";
 
 /// All available scopes
 pub const ALL_SCOPES: &[&str] = &[
@@ -212,6 +214,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_WRITE,
     SCOPE_ADMIN,
     SCOPE_PAIRING,
+    SCOPE_ACP,
 ];
 
 /// Default scopes granted when none are explicitly requested
@@ -229,6 +232,16 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "sessions.subscribe"
         | "sessions.unsubscribe"
         | "commands.execute" => Some(SCOPE_WRITE),
+        "acp.spawn"
+        | "acp.terminate"
+        | "acp.message"
+        | "acp.pause"
+        | "acp.resume"
+        | "acp.step"
+        | "acp.cancel"
+        | "acp.execute.session"
+        | "acp.execute.run" => Some(SCOPE_ACP),
+        "acp.list" | "acp.status" | "acp.tree" => Some(SCOPE_READ),
         "connect" | "ping" => None, // No scope required
         _ => {
             // Admin scope required for unknown methods (default-deny)

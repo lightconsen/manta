@@ -11,6 +11,7 @@
 // Phase 3) but kept in source for reference during the migration window.
 // They will be fully removed in Phase 5 cleanup.
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
@@ -1948,18 +1949,6 @@ impl Gateway {
         Ok(())
     }
 
-    /// Middleware that logs a deprecation warning for REST API endpoints.
-    /// Per protocol.md, these endpoints are deprecated in favor of the WebSocket-native protocol.
-    async fn deprecation_middleware(req: axum::extract::Request, next: Next) -> impl IntoResponse {
-        let method = req.method().clone();
-        let path = req.uri().path().to_string();
-        warn!(
-            "DEPRECATED: {} {} is deprecated and will be removed in v2.0. Use WebSocket protocol instead.",
-            method, path
-        );
-        next.run(req).await
-    }
-
     /// Build the HTTP router
     async fn build_router(&self) -> Router {
         let state = self.state.clone();
@@ -1995,60 +1984,9 @@ impl Gateway {
             // Admin redirect — management UI moved to CLI
             .route("/admin", get(admin_redirect_handler));
 
-        // ACP (Agent Control Plane) routes — conditional on config
-        let acp_enabled = state.config.read().await.acp.enabled;
-        let acp_router = if acp_enabled {
-            Router::new()
-                .route("/api/v1/acp/sessions", get(list_acp_sessions_handler))
-                .route("/api/v1/acp/spawn", post(acp_spawn_handler))
-                .route("/api/v1/acp/sessions/:id", delete(terminate_acp_session_handler))
-                .route("/api/v1/acp/sessions/:id/message", post(acp_session_message_handler))
-                .route("/api/v1/acp/sessions/:id/status", get(acp_session_status_handler))
-                .route("/api/v1/acp/sessions/:id/pause", post(acp_session_pause_handler))
-                .route("/api/v1/acp/sessions/:id/resume", post(acp_session_resume_handler))
-                .route("/api/v1/acp/sessions/:id/step", post(acp_session_step_handler))
-                .route("/api/v1/acp/sessions/:id/cancel", post(acp_session_cancel_handler))
-                .route("/api/v1/acp/sessions/:id/tree", get(acp_session_tree_handler))
-                .route("/api/v1/acp/execute/session", post(acp_execute_session_handler))
-                .route("/api/v1/acp/execute/run", post(acp_execute_run_handler))
-        } else {
-            Router::new()
-        };
-
-        // Deprecated REST API routes (use WebSocket protocol instead).
-        // Management endpoints removed per protocol.md v1.0 — management is CLI-only.
-        let deprecated_router = Router::new()
-            // Simple chat endpoint (backwards compatibility with DaemonClient)
-            .route("/chat", post(chat_handler))
-            // Session messaging with provider override
-            .route("/api/v1/sessions/:id/messages", post(send_message_handler))
-            // Conversation history
-            .route("/api/v1/conversations", get(list_conversations_handler))
-            .route("/api/v1/conversations/:id/messages", get(get_conversation_history_handler))
-            .route("/api/v1/conversations/last", get(get_last_conversation_handler))
-            // Status and diagnostics
-            .route("/api/v1/status", get(status_handler))
-            .route("/api/v1/repair/status", get(repair_status_handler))
-            .route("/api/v1/cost/status", get(cost_status_handler))
-            // Provider management
-            .route("/api/v1/providers", get(list_providers_handler))
-            .route("/api/v1/providers/:id/health", get(get_provider_health_handler))
-            .route("/api/v1/providers/:id/enable", post(enable_provider_handler))
-            .route("/api/v1/providers/:id/disable", post(disable_provider_handler))
-            .route("/api/v1/providers/:id/check", post(check_provider_handler))
-            .route("/api/v1/providers/usage", get(provider_usage_handler))
-            .route("/api/v1/providers/usage/:id", get(provider_usage_by_id_handler))
-            .route("/api/v1/providers/switch", post(switch_model_handler))
-            // Canvas/A2UI
-            .route("/api/v1/canvas", post(create_canvas_handler))
-            .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
-            .layer(from_fn(Self::deprecation_middleware));
-
-        // Merge essential and deprecated routers, then apply security middleware
+        // Apply security middleware to essential router
         // (order matters - applied in reverse)
         let admin_router = essential_router
-            .merge(deprecated_router)
-            .merge(acp_router)
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
@@ -6291,10 +6229,7 @@ async fn acp_spawn_handler(
     let actor = "api-user";
     let rate_result = state
         .rate_limiter
-        .check_with_cost(
-            &UserId::new(format!("acp:spawn:{}", actor)),
-            1.0,
-        )
+        .check_with_cost(&UserId::new(format!("acp:spawn:{}", actor)), 1.0)
         .await;
     if !rate_result.is_allowed() {
         let retry = match rate_result {

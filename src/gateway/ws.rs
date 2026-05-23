@@ -359,6 +359,18 @@ async fn dispatch_method(
         "commands.execute" => {
             crate::gateway::commands::handle_commands_execute(req, conn, state).await
         }
+        "acp.list" => handle_acp_list(req, state).await,
+        "acp.spawn" => handle_acp_spawn(req, conn, state).await,
+        "acp.terminate" => handle_acp_terminate(req, state).await,
+        "acp.message" => handle_acp_message(req, state).await,
+        "acp.status" => handle_acp_status(req, state).await,
+        "acp.pause" => handle_acp_pause(req, state).await,
+        "acp.resume" => handle_acp_resume(req, state).await,
+        "acp.step" => handle_acp_step(req, state).await,
+        "acp.cancel" => handle_acp_cancel(req, state).await,
+        "acp.tree" => handle_acp_tree(req, state).await,
+        "acp.execute.session" => handle_acp_execute_session(req, state).await,
+        "acp.execute.run" => handle_acp_execute_run(req, state).await,
         // Legacy commands (still supported during migration)
         "subscribe" => handle_legacy_subscribe(req, conn, cmd_tx).await,
         "unsubscribe" => handle_legacy_unsubscribe(req, conn, cmd_tx).await,
@@ -468,6 +480,7 @@ async fn finalize_hello_ok(
             "sessions".to_string(),
             "agents".to_string(),
             "tools".to_string(),
+            "acp".to_string(),
         ],
         scopes_granted: granted_scopes,
         server: ServerInfo {
@@ -1112,6 +1125,546 @@ async fn handle_system_presence(req: &WsRequest) -> WsResponse {
             "online": true,
         }),
     )
+}
+
+// ── ACP (Agent Control Plane) Handlers ────────────────────────────────────────
+
+async fn handle_acp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let subagents = state.acp.list_subagents().await;
+    let sessions: Vec<_> = subagents
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "subagent_id": s.id,
+                "session_id": s.session_id.to_string(),
+                "parent_id": s.parent_id,
+                "mode": format!("{:?}", s.mode),
+                "status": format!("{:?}", s.status),
+                "thread_id": s.thread_id,
+            })
+        })
+        .collect();
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "sessions": sessions,
+            "count": sessions.len(),
+        }),
+    )
+}
+
+async fn handle_acp_spawn(
+    req: &WsRequest,
+    conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    use crate::acp::{AcpSessionId, SpawnMode, SubagentConfig, ThreadBinding};
+    use crate::channels::IncomingMessage;
+    use crate::security::runtime_audit::AuditEventType;
+    use crate::security::RateLimitResult;
+
+    #[derive(Debug, Deserialize)]
+    struct SpawnParams {
+        task: String,
+        #[serde(default = "default_acp_mode")]
+        mode: String,
+        #[serde(default)]
+        agent_type: String,
+    }
+
+    fn default_acp_mode() -> String {
+        "run".to_string()
+    }
+
+    let params: SpawnParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let actor = {
+        let cg = conn.read().await;
+        cg.user_id
+            .as_ref()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "anonymous".to_string())
+    };
+
+    // Rate limit: 10 spawns per minute per user
+    let rate_result = state
+        .rate_limiter
+        .check_with_cost(&crate::security::UserId::new(format!("acp:spawn:{}", actor)), 1.0)
+        .await;
+    if !rate_result.is_allowed() {
+        let retry = match rate_result {
+            RateLimitResult::Denied { retry_after_secs } => retry_after_secs,
+            _ => 60,
+        };
+        return WsResponse::err(
+            &req.id,
+            "RATE_LIMITED",
+            format!("Rate limit exceeded for ACP spawn. Retry after {}s", retry),
+        );
+    }
+
+    let session_id = AcpSessionId::new();
+    let parent_id = actor.clone();
+
+    let mode = match params.mode.as_str() {
+        "session" => SpawnMode::Session,
+        _ => SpawnMode::Run,
+    };
+
+    let agent_type = if params.agent_type.is_empty() {
+        "default".to_string()
+    } else {
+        params.agent_type.clone()
+    };
+    let config = SubagentConfig {
+        agent_type: agent_type.clone(),
+        mode,
+        thread_binding: ThreadBinding::Auto,
+        system_prompt: None,
+        max_tokens: None,
+        temperature: None,
+        tools: vec![],
+        context: None,
+        timeout_seconds: Some(300),
+    };
+
+    match state
+        .acp
+        .spawn_subagent(session_id.clone(), parent_id.clone(), config)
+        .await
+    {
+        Ok(handle) => {
+            let subagent_id = handle.id.clone();
+
+            // Audit log
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpSpawn,
+                    &actor,
+                    &subagent_id,
+                    true,
+                    format!("Spawned subagent via WebSocket (mode: {:?})", handle.mode),
+                    Some(serde_json::json!({
+                        "session_id": session_id.to_string(),
+                        "parent_id": parent_id,
+                        "agent_type": agent_type,
+                    })),
+                )
+                .await;
+
+            // Send task to subagent
+            let message = IncomingMessage::new(actor.clone(), session_id.to_string(), params.task);
+
+            match state.acp.send_message(&subagent_id, message).await {
+                Ok(response) => WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({
+                        "subagent_id": subagent_id,
+                        "session_id": session_id.to_string(),
+                        "mode": format!("{:?}", handle.mode),
+                        "response": response,
+                    }),
+                ),
+                Err(e) => {
+                    let _ = state.acp.shutdown_subagent(&subagent_id).await;
+                    WsResponse::err(
+                        &req.id,
+                        "SPAWN_FAILED",
+                        format!("Subagent failed to process task: {}", e),
+                    )
+                }
+            }
+        }
+        Err(e) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpSpawn,
+                    &actor,
+                    "",
+                    false,
+                    format!("Failed to spawn subagent: {}", e),
+                    None,
+                )
+                .await;
+            WsResponse::err(&req.id, "SPAWN_FAILED", format!("Failed to spawn subagent: {}", e))
+        }
+    }
+}
+
+async fn handle_acp_terminate(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    use crate::acp::AcpSessionId;
+    use crate::security::runtime_audit::AuditEventType;
+
+    #[derive(Debug, Deserialize)]
+    struct TerminateParams {
+        session_id: String,
+    }
+
+    let params: TerminateParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let session_id = AcpSessionId(params.session_id.clone());
+    match state.acp.terminate_session(&session_id).await {
+        Ok(count) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpTerminate,
+                    "ws-user",
+                    &params.session_id,
+                    true,
+                    format!("Terminated {} subagents in session {}", count, params.session_id),
+                    Some(serde_json::json!({ "terminated_count": count })),
+                )
+                .await;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "terminated_count": count,
+                    "session_id": params.session_id,
+                }),
+            )
+        }
+        Err(e) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpTerminate,
+                    "ws-user",
+                    &params.session_id,
+                    false,
+                    format!("Failed to terminate session: {}", e),
+                    None,
+                )
+                .await;
+            WsResponse::err(
+                &req.id,
+                "TERMINATE_FAILED",
+                format!("Failed to terminate session: {}", e),
+            )
+        }
+    }
+}
+
+async fn handle_acp_message(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    use crate::acp::AcpSessionId;
+    use crate::channels::IncomingMessage;
+    use crate::security::runtime_audit::AuditEventType;
+
+    #[derive(Debug, Deserialize)]
+    struct MessageParams {
+        session_id: String,
+        message: String,
+    }
+
+    let params: MessageParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let session_id = AcpSessionId(params.session_id.clone());
+    let subagents = state.acp.list_session_subagents(&session_id).await;
+
+    if subagents.is_empty() {
+        return WsResponse::err(&req.id, "NO_ACTIVE_SUBAGENTS", "No active subagents in session");
+    }
+
+    let subagent = &subagents[0];
+    let message =
+        IncomingMessage::new("ws-user".to_string(), session_id.to_string(), params.message);
+
+    match state.acp.send_message(&subagent.id, message).await {
+        Ok(response) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpMessage,
+                    "ws-user",
+                    &params.session_id,
+                    true,
+                    format!(
+                        "Message sent to subagent {} in session {}",
+                        subagent.id, params.session_id
+                    ),
+                    Some(serde_json::json!({
+                        "subagent_id": subagent.id,
+                        "session_id": params.session_id,
+                    })),
+                )
+                .await;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "subagent_id": subagent.id,
+                    "session_id": session_id.to_string(),
+                    "response": response,
+                }),
+            )
+        }
+        Err(e) => {
+            state
+                .audit_log
+                .log(
+                    AuditEventType::AcpMessage,
+                    "ws-user",
+                    &params.session_id,
+                    false,
+                    format!("Failed to send message: {}", e),
+                    None,
+                )
+                .await;
+            WsResponse::err(&req.id, "MESSAGE_FAILED", format!("Failed to send message: {}", e))
+        }
+    }
+}
+
+async fn handle_acp_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct StatusParams {
+        session_id: String,
+    }
+
+    let params: StatusParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    match state.acp.get_status(params.session_id.clone()).await {
+        Some(status) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": status.session_id,
+                "runtime_state": format!("{}", status.runtime_state),
+                "mode": format!("{:?}", status.mode),
+                "current_iteration": status.current_iteration,
+                "max_iterations": status.max_iterations,
+            }),
+        ),
+        None => WsResponse::err(&req.id, "SESSION_NOT_FOUND", "Session not found"),
+    }
+}
+
+async fn handle_acp_pause(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ControlParams {
+        session_id: String,
+    }
+
+    let params: ControlParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    state.acp.pause(params.session_id.clone()).await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "action": "pause",
+            "status": "requested",
+        }),
+    )
+}
+
+async fn handle_acp_resume(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ControlParams {
+        session_id: String,
+    }
+
+    let params: ControlParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    state.acp.resume(params.session_id.clone()).await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "action": "resume",
+            "status": "requested",
+        }),
+    )
+}
+
+async fn handle_acp_step(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ControlParams {
+        session_id: String,
+    }
+
+    let params: ControlParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    state.acp.step(params.session_id.clone()).await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "action": "step",
+            "status": "requested",
+        }),
+    )
+}
+
+async fn handle_acp_cancel(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ControlParams {
+        session_id: String,
+    }
+
+    let params: ControlParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    state.acp.cancel(params.session_id.clone()).await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "action": "cancel",
+            "status": "requested",
+        }),
+    )
+}
+
+async fn handle_acp_tree(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    use crate::acp::AcpSessionId;
+
+    #[derive(Debug, Deserialize)]
+    struct TreeParams {
+        session_id: String,
+    }
+
+    let params: TreeParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let session_id = AcpSessionId(params.session_id.clone());
+    let tree = state.acp.get_subagent_tree(&session_id).await;
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "session_id": params.session_id,
+            "tree": tree,
+        }),
+    )
+}
+
+async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ExecuteParams {
+        message: String,
+        user_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+    }
+
+    let params: ExecuteParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let agent_id = params.agent_id.unwrap_or_else(|| "default".to_string());
+    let agents = state.agents.read().await;
+    let agent_handle = match agents.get(&agent_id) {
+        Some(h) => h.clone(),
+        None => {
+            return WsResponse::err(
+                &req.id,
+                "AGENT_NOT_FOUND",
+                format!("Agent '{}' not found", agent_id),
+            );
+        }
+    };
+    drop(agents);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let incoming = crate::channels::IncomingMessage::new(
+        params.user_id.clone(),
+        session_id.clone(),
+        params.message,
+    );
+
+    match state
+        .acp
+        .execute_session(agent_handle.agent, incoming)
+        .await
+    {
+        Ok(outgoing) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": session_id,
+                "mode": "session",
+                "response": outgoing.content,
+                "usage": outgoing.usage,
+            }),
+        ),
+        Err(e) => WsResponse::err(&req.id, "EXECUTE_FAILED", format!("Execution failed: {}", e)),
+    }
+}
+
+async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ExecuteParams {
+        message: String,
+        user_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+    }
+
+    let params: ExecuteParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let agent_id = params.agent_id.unwrap_or_else(|| "default".to_string());
+    let agents = state.agents.read().await;
+    let agent_handle = match agents.get(&agent_id) {
+        Some(h) => h.clone(),
+        None => {
+            return WsResponse::err(
+                &req.id,
+                "AGENT_NOT_FOUND",
+                format!("Agent '{}' not found", agent_id),
+            );
+        }
+    };
+    drop(agents);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let incoming = crate::channels::IncomingMessage::new(
+        params.user_id.clone(),
+        session_id.clone(),
+        params.message,
+    );
+
+    match state.acp.execute_run(agent_handle.agent, incoming).await {
+        Ok(outgoing) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "session_id": session_id,
+                "mode": "run",
+                "response": outgoing.content,
+                "usage": outgoing.usage,
+            }),
+        ),
+        Err(e) => WsResponse::err(&req.id, "EXECUTE_FAILED", format!("Execution failed: {}", e)),
+    }
 }
 
 // ── Legacy Compatibility ──────────────────────────────────────────────────────
