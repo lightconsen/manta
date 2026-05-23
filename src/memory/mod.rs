@@ -8,14 +8,20 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 pub mod db;
+pub mod dreaming;
+pub mod effectiveness;
+pub mod events;
 pub mod flush;
 pub mod hybrid;
 pub mod manager;
+pub mod multimodal;
 pub mod personality;
 pub mod pipeline;
+pub mod qmd;
 pub mod session_search;
 pub mod soul;
 pub mod sqlite;
+pub mod tier;
 pub mod vector;
 pub mod workspace_state;
 
@@ -25,6 +31,18 @@ pub mod local_embeddings;
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
+pub use dreaming::{
+    DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult, DreamScheduler,
+    DreamSpeed, DreamThinking, KnowledgeEdge, KnowledgeGraph, KnowledgeNode,
+};
+pub use effectiveness::{
+    EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker,
+    RecallEvent,
+};
+pub use events::{
+    append_memory_event, read_memory_events, DreamPhase as EventDreamPhase, MemoryEvent,
+    MemoryEventBuilder, MemoryEventLog, MEMORY_EVENT_LOG_RELATIVE_PATH,
+};
 pub use flush::{
     check_memory_flush, increment_compaction_count, record_flush_in_state,
     resolve_flush_target_path, FlushReason, MemoryFlushDecision,
@@ -34,14 +52,23 @@ pub use hybrid::{
     MmrConfig, TemporalDecayConfig,
 };
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
+pub use multimodal::{
+    build_multimodal_glob, classify_multimodal_file, FileClassification, MemoryMultimodalConfig,
+    MemoryMultimodalModality, MultimodalFileEntry, MultimodalStore,
+    DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES, AUDIO_EXTENSIONS, IMAGE_EXTENSIONS,
+};
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
 pub use pipeline::{
     EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
     PipelineEmbeddingProvider,
 };
+pub use qmd::{QmdExecutor, QmdQueryResult, QmdScope};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use sqlite::SqliteMemoryStore;
+pub use tier::{
+    MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
+};
 pub use vector::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
     EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,

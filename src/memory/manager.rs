@@ -15,9 +15,14 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::{
+    effectiveness::{EffectivenessConfig, EffectivenessTracker},
+    events::{MemoryEventBuilder, MemoryEventLog},
     hybrid::{hybrid_search, HybridSearchConfig},
+    multimodal::{MemoryMultimodalConfig, MultimodalStore},
     pipeline::EmbeddingPipelineHandle,
+    qmd::QmdExecutor,
     session_search::SessionSearch,
+    tier::{TierIndex, TierSystemConfig},
     vector::VectorMemoryService,
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     UnifiedStore,
@@ -33,6 +38,12 @@ pub struct MemoryManagerConfig {
     /// Config for hybrid search (vector + FTS5). Used when both
     /// `vector_service` and `session_search` are attached to the manager.
     pub hybrid_config: HybridSearchConfig,
+    /// Workspace directory for multimodal storage and event logs.
+    pub workspace_dir: Option<std::path::PathBuf>,
+    /// Whether to enable effectiveness tracking.
+    pub track_effectiveness: bool,
+    /// Whether to enable tier management.
+    pub enable_tiers: bool,
 }
 
 impl Default for MemoryManagerConfig {
@@ -41,6 +52,9 @@ impl Default for MemoryManagerConfig {
             max_context_memories: 5,
             use_pipeline: true,
             hybrid_config: HybridSearchConfig::default(),
+            workspace_dir: None,
+            track_effectiveness: true,
+            enable_tiers: true,
         }
     }
 }
@@ -57,6 +71,16 @@ pub struct MemoryManager {
     session_search: Option<Arc<SessionSearch>>,
     /// In-memory cache of the last retrieved context (to avoid repeated DB hits)
     context_cache: RwLock<Option<ContextCache>>,
+    /// Event log for memory operations.
+    event_log: Option<MemoryEventLog>,
+    /// Tier index for memory tier management.
+    tier_index: Option<Arc<TierIndex>>,
+    /// Effectiveness tracker for recall hit rates.
+    effectiveness: Option<Arc<EffectivenessTracker>>,
+    /// Multimodal file store.
+    multimodal_store: Option<Arc<MultimodalStore>>,
+    /// QMD executor for scope-based queries.
+    qmd_executor: Option<Arc<QmdExecutor>>,
 }
 
 impl std::fmt::Debug for MemoryManager {
@@ -68,6 +92,11 @@ impl std::fmt::Debug for MemoryManager {
             .field("vector_service", &self.vector_service.is_some())
             .field("session_search", &self.session_search.is_some())
             .field("context_cache", &self.context_cache)
+            .field("event_log", &self.event_log.is_some())
+            .field("tier_index", &self.tier_index.is_some())
+            .field("effectiveness", &self.effectiveness.is_some())
+            .field("multimodal_store", &self.multimodal_store.is_some())
+            .field("qmd_executor", &self.qmd_executor.is_some())
             .finish()
     }
 }
@@ -95,6 +124,27 @@ impl ContextCache {
 impl MemoryManager {
     /// Create a new MemoryManager with the given store.
     pub fn new(store: Arc<UnifiedStore>, config: MemoryManagerConfig) -> Self {
+        let event_log = config.workspace_dir.as_ref().map(|d| MemoryEventLog::new(d));
+        let tier_index = if config.enable_tiers {
+            Some(Arc::new(TierIndex::new()))
+        } else {
+            None
+        };
+        let effectiveness = if config.track_effectiveness {
+            Some(Arc::new(EffectivenessTracker::new(EffectivenessConfig::default())))
+        } else {
+            None
+        };
+        let multimodal_store = config.workspace_dir.as_ref().map(|d| {
+            Arc::new(MultimodalStore::new(
+                d,
+                MemoryMultimodalConfig::default(),
+            ))
+        });
+        let qmd_executor = config.workspace_dir.as_ref().map(|d| {
+            Arc::new(QmdExecutor::new(d))
+        });
+
         Self {
             store,
             config,
@@ -102,6 +152,11 @@ impl MemoryManager {
             vector_service: None,
             session_search: None,
             context_cache: RwLock::new(None),
+            event_log,
+            tier_index,
+            effectiveness,
+            multimodal_store,
+            qmd_executor,
         }
     }
 
@@ -125,6 +180,55 @@ impl MemoryManager {
     pub fn with_session_search(mut self, ss: Arc<SessionSearch>) -> Self {
         self.session_search = Some(ss);
         self
+    }
+
+    /// Attach a QMD executor for scope-based queries.
+    pub fn with_qmd_executor(mut self, executor: Arc<QmdExecutor>) -> Self {
+        self.qmd_executor = Some(executor);
+        self
+    }
+
+    /// Attach a multimodal store.
+    pub fn with_multimodal_store(mut self, store: Arc<MultimodalStore>) -> Self {
+        self.multimodal_store = Some(store);
+        self
+    }
+
+    /// Attach an effectiveness tracker.
+    pub fn with_effectiveness_tracker(mut self, tracker: Arc<EffectivenessTracker>) -> Self {
+        self.effectiveness = Some(tracker);
+        self
+    }
+
+    /// Attach a tier index.
+    pub fn with_tier_index(mut self, index: Arc<TierIndex>) -> Self {
+        self.tier_index = Some(index);
+        self
+    }
+
+    /// Get the event log (if configured).
+    pub fn event_log(&self) -> Option<&MemoryEventLog> {
+        self.event_log.as_ref()
+    }
+
+    /// Get the tier index (if configured).
+    pub fn tier_index(&self) -> Option<Arc<TierIndex>> {
+        self.tier_index.clone()
+    }
+
+    /// Get the effectiveness tracker (if configured).
+    pub fn effectiveness_tracker(&self) -> Option<Arc<EffectivenessTracker>> {
+        self.effectiveness.clone()
+    }
+
+    /// Get the multimodal store (if configured).
+    pub fn multimodal_store(&self) -> Option<Arc<MultimodalStore>> {
+        self.multimodal_store.clone()
+    }
+
+    /// Get the QMD executor (if configured).
+    pub fn qmd_executor(&self) -> Option<Arc<QmdExecutor>> {
+        self.qmd_executor.clone()
     }
 
     // =============================================================================
@@ -175,7 +279,15 @@ impl MemoryManager {
             memory
         };
 
-        let id = self.store.store(memory).await?;
+        let id = self.store.store(memory.clone()).await?;
+
+        // Register in tier index if enabled
+        if let Some(ref tier_index) = self.tier_index {
+            let entry_tier = super::tier::TierEvaluator::new(TierSystemConfig::default())
+                .entry_tier(importance, 0);
+            tier_index.insert(id.to_string(), entry_tier);
+        }
+
         info!("Memory observed: {}", id);
         Ok(id)
     }
@@ -208,6 +320,8 @@ impl MemoryManager {
             self.vector_service.is_some() && self.session_search.is_some(),
         );
 
+        let memories: Vec<Memory>;
+
         // ── Hybrid path ───────────────────────────────────────────────────────
         if let (Some(ref vs), Some(ref ss)) = (&self.vector_service, &self.session_search) {
             let mut cfg = self.config.hybrid_config.clone();
@@ -215,7 +329,7 @@ impl MemoryManager {
 
             let hybrid_results = hybrid_search(&query_text, vs, ss, &cfg).await;
 
-            let memories: Vec<Memory> = hybrid_results
+            memories = hybrid_results
                 .into_iter()
                 .map(|r| {
                     Memory::new(user_id, r.content, "hybrid")
@@ -227,50 +341,37 @@ impl MemoryManager {
                         }))
                 })
                 .collect();
+        } else {
+            // ── Fallback: DatabaseStore path ──────────────────────────────────────
 
-            // Update cache
-            if let Some(conv_id) = conversation_id {
-                let cache = ContextCache {
-                    user_id: user_id.to_string(),
-                    conversation_id: conv_id.to_string(),
-                    memories: memories.clone(),
-                    cached_at: std::time::Instant::now(),
-                };
-                *self.context_cache.write().await = Some(cache);
-            }
-
-            return Ok(memories);
-        }
-
-        // ── Fallback: DatabaseStore path ──────────────────────────────────────
-
-        // Embed the query if pipeline available
-        let query_embedding = if let Some(ref pipeline) = self.pipeline {
-            match pipeline.embed(&query_text).await {
-                Ok(emb) => Some(emb),
-                Err(e) => {
-                    warn!("Query embedding failed: {}", e);
-                    None
+            // Embed the query if pipeline available
+            let query_embedding = if let Some(ref pipeline) = self.pipeline {
+                match pipeline.embed(&query_text).await {
+                    Ok(emb) => Some(emb),
+                    Err(e) => {
+                        warn!("Query embedding failed: {}", e);
+                        None
+                    }
                 }
+            } else {
+                None
+            };
+
+            // Build and execute query
+            let mut mq = MemoryQuery::new().for_user(user_id).limit(limit);
+
+            if let Some(conv_id) = conversation_id {
+                mq = mq.for_conversation(conv_id);
             }
-        } else {
-            None
-        };
 
-        // Build and execute query
-        let mut mq = MemoryQuery::new().for_user(user_id).limit(limit);
+            if let Some(ref embedding) = query_embedding {
+                mq = mq.with_embedding(embedding.clone());
+            } else {
+                mq = mq.with_content(&query_text);
+            }
 
-        if let Some(conv_id) = conversation_id {
-            mq = mq.for_conversation(conv_id);
+            memories = self.store.search(mq).await?;
         }
-
-        if let Some(ref embedding) = query_embedding {
-            mq = mq.with_embedding(embedding.clone());
-        } else {
-            mq = mq.with_content(&query_text);
-        }
-
-        let memories = self.store.search(mq).await?;
 
         // Update cache
         if let Some(conv_id) = conversation_id {
@@ -281,6 +382,46 @@ impl MemoryManager {
                 cached_at: std::time::Instant::now(),
             };
             *self.context_cache.write().await = Some(cache);
+        }
+
+        // Log recall events and track effectiveness
+        let session_key = conversation_id
+            .map(|c| format!("{}:{}", user_id, c))
+            .unwrap_or_else(|| user_id.to_string());
+
+        for (rank, mem) in memories.iter().enumerate() {
+            // Record access in tier index
+            if let Some(ref tier_index) = self.tier_index {
+                tier_index.record_access(&mem.id.to_string());
+            }
+
+            // Track effectiveness
+            if let Some(ref effectiveness) = self.effectiveness {
+                let recall_id = format!("recall-{}", uuid::Uuid::new_v4());
+                effectiveness
+                    .record_recall(
+                        recall_id.clone(),
+                        &mem.id.to_string(),
+                        &session_key,
+                        &mem.memory_type,
+                        mem.importance_score,
+                        rank,
+                    )
+                    .await;
+            }
+
+            // Log recall event
+            if let Some(ref event_log) = self.event_log {
+                let event = MemoryEventBuilder::new().recall(
+                    &session_key,
+                    format!("recall-{}", uuid::Uuid::new_v4()),
+                    &mem.memory_type,
+                    &mem.content.chars().take(100).collect::<String>(),
+                );
+                if let Err(e) = event_log.append(&event).await {
+                    warn!("Failed to append recall event: {}", e);
+                }
+            }
         }
 
         Ok(memories)
@@ -436,6 +577,21 @@ impl MemoryManager {
             self.store.store(marker).await?;
         }
 
+        let session_key = format!("{}:{}", user_id, conversation_id);
+
+        // Log compact event
+        if let Some(ref event_log) = self.event_log {
+            let event = MemoryEventBuilder::new().compact(
+                &session_key,
+                format!("compact-{}", uuid::Uuid::new_v4()),
+                messages.len() as u32,
+                stored_ids.len() as u32,
+            );
+            if let Err(e) = event_log.append(&event).await {
+                warn!("Failed to append compact event: {}", e);
+            }
+        }
+
         info!("Session {} compacted: {} facts extracted", conversation_id, stored_ids.len());
         Ok(stored_ids)
     }
@@ -502,6 +658,10 @@ pub struct MemoryManagerBuilder {
     pipeline: Option<EmbeddingPipelineHandle>,
     vector_service: Option<Arc<VectorMemoryService>>,
     session_search: Option<Arc<SessionSearch>>,
+    qmd_executor: Option<Arc<QmdExecutor>>,
+    multimodal_store: Option<Arc<MultimodalStore>>,
+    effectiveness_tracker: Option<Arc<EffectivenessTracker>>,
+    tier_index: Option<Arc<TierIndex>>,
 }
 
 impl MemoryManagerBuilder {
@@ -531,6 +691,30 @@ impl MemoryManagerBuilder {
         self
     }
 
+    /// Attach a QMD executor.
+    pub fn qmd_executor(mut self, executor: Arc<QmdExecutor>) -> Self {
+        self.qmd_executor = Some(executor);
+        self
+    }
+
+    /// Attach a multimodal store.
+    pub fn multimodal_store(mut self, store: Arc<MultimodalStore>) -> Self {
+        self.multimodal_store = Some(store);
+        self
+    }
+
+    /// Attach an effectiveness tracker.
+    pub fn effectiveness_tracker(mut self, tracker: Arc<EffectivenessTracker>) -> Self {
+        self.effectiveness_tracker = Some(tracker);
+        self
+    }
+
+    /// Attach a tier index.
+    pub fn tier_index(mut self, index: Arc<TierIndex>) -> Self {
+        self.tier_index = Some(index);
+        self
+    }
+
     pub async fn build(self, database_url: impl AsRef<str>) -> crate::Result<MemoryManager> {
         let store = Arc::new(UnifiedStore::new(database_url.as_ref()).await?);
         let mut mm = MemoryManager::new(store, self.config);
@@ -543,6 +727,18 @@ impl MemoryManagerBuilder {
         }
         if let Some(ss) = self.session_search {
             mm = mm.with_session_search(ss);
+        }
+        if let Some(qmd) = self.qmd_executor {
+            mm = mm.with_qmd_executor(qmd);
+        }
+        if let Some(ms) = self.multimodal_store {
+            mm = mm.with_multimodal_store(ms);
+        }
+        if let Some(et) = self.effectiveness_tracker {
+            mm = mm.with_effectiveness_tracker(et);
+        }
+        if let Some(ti) = self.tier_index {
+            mm = mm.with_tier_index(ti);
         }
 
         Ok(mm)
