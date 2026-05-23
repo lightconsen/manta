@@ -8,6 +8,10 @@
 //! - Auth profile rotation with cooldown
 
 pub mod auth_profile;
+pub mod failure_class;
+pub mod model_catalog;
+pub mod oauth_credential;
+pub mod usage_tracker;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -22,6 +26,10 @@ use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider}
 pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
 };
+pub use failure_class::FailureClass;
+pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
+pub use oauth_credential::Credential;
+pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig};
 
 /// Model alias configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -555,6 +563,10 @@ pub struct ModelRouter {
     fallback_chains: RwLock<HashMap<String, Vec<FallbackEntry>>>,
     /// Auth profile manager for API key rotation
     pub auth_profiles: AuthProfileManager,
+    /// Per-provider usage tracker
+    pub usage_tracker: ProviderUsageTracker,
+    /// Dynamic model catalog with discovery and suppression
+    pub model_catalog: ModelCatalog,
 }
 
 impl Default for ModelRouter {
@@ -572,6 +584,8 @@ impl ModelRouter {
             health: RwLock::new(HashMap::new()),
             fallback_chains: RwLock::new(HashMap::new()),
             auth_profiles: AuthProfileManager::new(),
+            usage_tracker: ProviderUsageTracker::new(UsageTrackerConfig::default()),
+            model_catalog: ModelCatalog::new(),
         }
     }
 
@@ -615,6 +629,21 @@ impl ModelRouter {
                 })
                 .collect();
             chains.insert(alias.clone(), entries);
+        }
+
+        // Initialize model catalog from static aliases
+        let alias_tuples: Vec<(String, String, String)> = config
+            .aliases
+            .values()
+            .map(|a| (a.name.clone(), a.provider.clone(), a.model.clone()))
+            .collect();
+        drop(config); // release read lock before async catalog ops
+
+        self.model_catalog
+            .add_source(Box::new(model_catalog::StaticModelSource::new(alias_tuples)))
+            .await;
+        if let Err(e) = self.model_catalog.discover().await {
+            warn!("Model catalog discovery failed: {}", e);
         }
 
         Ok(())
@@ -770,57 +799,107 @@ impl ModelRouter {
                         // Record success on both health and auth profile
                         self.record_success(&entry.provider, start.elapsed()).await;
                         self.auth_profiles.record_success(&entry.provider).await;
+                        if let Some(usage) = response.usage {
+                            self.usage_tracker
+                                .record(&entry.provider, usage, &alias.model)
+                                .await;
+                        }
                         return Ok(response);
                     }
-                    Err(ref e) if AuthProfileManager::should_rotate(e) => {
+                    Err(ref e) => {
+                        let class = FailureClass::from_error(e, None);
                         warn!(
-                            "Provider {} returned auth/rate-limit error, rotating key: {}",
-                            entry.provider, e
+                            "Provider {} failed with {}: {}",
+                            entry.provider,
+                            class.description(),
+                            e
                         );
                         drop(providers);
 
-                        match self
-                            .rebuild_provider_with_rotated_key(&entry.provider)
-                            .await
-                        {
-                            Ok(()) => {
-                                // Retry once with the new key
-                                let providers = self.providers.read().await;
-                                if let Some(provider) = providers.get(&entry.provider) {
-                                    match provider.complete(request.clone()).await {
-                                        Ok(response) => {
-                                            self.record_success(&entry.provider, start.elapsed())
+                        if class.should_disable_key() {
+                            // Permanently disable the current key
+                            if let Err(disable_err) = self
+                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .await
+                            {
+                                error!(
+                                    "Key disable/rotation failed for provider {}: {}",
+                                    entry.provider, disable_err
+                                );
+                            }
+                            self.record_failure(&entry.provider, Some(class)).await;
+                            last_error = Some(crate::error::MantaError::ExternalService {
+                                source: format!(
+                                    "Provider {} auth disabled: {}",
+                                    entry.provider, e
+                                ),
+                                cause: None,
+                            });
+                            continue;
+                        }
+
+                        if class.should_rotate_key() {
+                            match self
+                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .await
+                            {
+                                Ok(()) => {
+                                    // Retry once with the new key
+                                    let providers = self.providers.read().await;
+                                    if let Some(provider) = providers.get(&entry.provider) {
+                                        match provider.complete(request.clone()).await {
+                                            Ok(response) => {
+                                                self.record_success(
+                                                    &entry.provider,
+                                                    start.elapsed(),
+                                                )
                                                 .await;
-                                            self.auth_profiles
-                                                .record_success(&entry.provider)
+                                                self.auth_profiles
+                                                    .record_success(&entry.provider)
+                                                    .await;
+                                                if let Some(usage) = response.usage {
+                                                    self.usage_tracker
+                                                        .record(
+                                                            &entry.provider,
+                                                            usage,
+                                                            &alias.model,
+                                                        )
+                                                        .await;
+                                                }
+                                                return Ok(response);
+                                            }
+                                            Err(e2) => {
+                                                let class2 = FailureClass::from_error(&e2, None);
+                                                error!(
+                                                    "Provider {} failed after key rotation: {}",
+                                                    entry.provider, e2
+                                                );
+                                                self.record_failure(
+                                                    &entry.provider,
+                                                    Some(class2),
+                                                )
                                                 .await;
-                                            return Ok(response);
-                                        }
-                                        Err(e2) => {
-                                            error!(
-                                                "Provider {} failed after key rotation: {}",
-                                                entry.provider, e2
-                                            );
-                                            self.record_failure(&entry.provider).await;
-                                            last_error = Some(e2);
+                                                last_error = Some(e2);
+                                            }
                                         }
                                     }
                                 }
+                                Err(rotate_err) => {
+                                    error!(
+                                        "Key rotation failed for provider {}: {}",
+                                        entry.provider, rotate_err
+                                    );
+                                    self.record_failure(&entry.provider, Some(class)).await;
+                                    last_error = Some(rotate_err);
+                                }
                             }
-                            Err(rotate_err) => {
-                                error!(
-                                    "Key rotation failed for provider {}: {}",
-                                    entry.provider, rotate_err
-                                );
-                                self.record_failure(&entry.provider).await;
-                                last_error = Some(rotate_err);
-                            }
+                        } else {
+                            self.record_failure(&entry.provider, Some(class)).await;
+                            last_error = Some(crate::error::MantaError::ExternalService {
+                                source: format!("Provider {} failed: {}", entry.provider, e),
+                                cause: None,
+                            });
                         }
-                    }
-                    Err(e) => {
-                        error!("Provider {} failed: {}", entry.provider, e);
-                        self.record_failure(&entry.provider).await;
-                        last_error = Some(e);
                     }
                 }
             }
@@ -1015,8 +1094,11 @@ impl ModelRouter {
         }
     }
 
-    /// Record a failed request
-    async fn record_failure(&self, provider: &str) {
+    /// Record a failed request with optional failure classification.
+    ///
+    /// Uses the classification to make smarter circuit-breaker decisions
+    /// (e.g. rate-limit errors open the circuit faster).
+    async fn record_failure(&self, provider: &str, class: Option<FailureClass>) {
         let config = self.config.read().await;
         let threshold = config.circuit_breaker_threshold;
         drop(config);
@@ -1026,10 +1108,17 @@ impl ModelRouter {
             h.failures += 1;
             h.last_failure = Some(chrono::Utc::now());
 
-            if h.failures >= threshold && h.state == CircuitState::Closed {
+            // Adjust threshold based on failure class
+            let effective_threshold = match class {
+                Some(FailureClass::RateLimit) => threshold.saturating_sub(2).max(1),
+                Some(FailureClass::Overloaded) => threshold.saturating_sub(1).max(1),
+                _ => threshold,
+            };
+
+            if h.failures >= effective_threshold && h.state == CircuitState::Closed {
                 warn!(
-                    "Circuit breaker opened for provider: {} ({} failures)",
-                    provider, h.failures
+                    "Circuit breaker opened for provider: {} ({} failures, class={:?})",
+                    provider, h.failures, class
                 );
                 h.state = CircuitState::Open;
             }
@@ -1085,7 +1174,7 @@ impl ModelRouter {
                     Ok(_) => self.record_success(&name, start.elapsed()).await,
                     Err(e) => {
                         debug!("Health probe failed for {}: {}", name, e);
-                        self.record_failure(&name).await;
+                        self.record_failure(&name, None).await;
                     }
                 }
             }
@@ -1364,7 +1453,7 @@ impl ModelRouter {
                 Ok(true)
             }
             Err(_) => {
-                self.record_failure(name).await;
+                self.record_failure(name, None).await;
                 Ok(false)
             }
         }
@@ -1394,6 +1483,7 @@ impl ModelRouter {
             });
         }
 
+        let model_id = model.clone();
         let request = CompletionRequest {
             model,
             messages,
@@ -1410,57 +1500,85 @@ impl ModelRouter {
             Ok(response) => {
                 self.record_success(provider_name, start.elapsed()).await;
                 self.auth_profiles.record_success(provider_name).await;
+                if let Some(usage) = response.usage {
+                    let model_name = model_id.as_deref().unwrap_or("unknown");
+                    self.usage_tracker.record(provider_name, usage, model_name).await;
+                }
                 Ok(response)
             }
-            Err(ref e) if AuthProfileManager::should_rotate(e) => {
+            Err(ref e) => {
+                let class = FailureClass::from_error(e, None);
                 warn!(
-                    "Provider {} returned auth/rate-limit error, rotating key: {}",
-                    provider_name, e
+                    "Provider {} failed with {}: {}",
+                    provider_name,
+                    class.description(),
+                    e
                 );
 
-                match self.rebuild_provider_with_rotated_key(provider_name).await {
-                    Ok(()) => {
-                        let providers = self.providers.read().await;
-                        if let Some(provider) = providers.get(provider_name) {
-                            match provider.complete(request).await {
-                                Ok(response) => {
-                                    self.record_success(provider_name, start.elapsed()).await;
-                                    self.auth_profiles.record_success(provider_name).await;
-                                    Ok(response)
+                if class.should_disable_key() {
+                    let _ = self.rebuild_provider_with_rotated_key(provider_name).await;
+                    self.record_failure(provider_name, Some(class)).await;
+                    return Err(crate::error::MantaError::ExternalService {
+                        source: format!("Provider {} auth disabled: {}", provider_name, e),
+                        cause: None,
+                    });
+                }
+
+                if class.should_rotate_key() {
+                    match self.rebuild_provider_with_rotated_key(provider_name).await {
+                        Ok(()) => {
+                            let providers = self.providers.read().await;
+                            if let Some(provider) = providers.get(provider_name) {
+                                match provider.complete(request).await {
+                                    Ok(response) => {
+                                        self.record_success(provider_name, start.elapsed())
+                                            .await;
+                                        self.auth_profiles.record_success(provider_name).await;
+                                        if let Some(usage) = response.usage {
+                                            let m = model_id.as_deref().unwrap_or("unknown");
+                                            self.usage_tracker
+                                                .record(provider_name, usage, m)
+                                                .await;
+                                        }
+                                        Ok(response)
+                                    }
+                                    Err(e2) => {
+                                        let class2 = FailureClass::from_error(&e2, None);
+                                        error!(
+                                            "Provider {} failed after key rotation: {}",
+                                            provider_name, e2
+                                        );
+                                        self.record_failure(provider_name, Some(class2)).await;
+                                        Err(e2)
+                                    }
                                 }
-                                Err(e2) => {
-                                    error!(
-                                        "Provider {} failed after key rotation: {}",
-                                        provider_name, e2
-                                    );
-                                    self.record_failure(provider_name).await;
-                                    Err(e2)
+                            } else {
+                                Err(crate::error::ConfigError::InvalidValue {
+                                    key: "provider".to_string(),
+                                    message: format!(
+                                        "Provider '{}' not found after rotation",
+                                        provider_name
+                                    ),
                                 }
+                                .into())
                             }
-                        } else {
-                            Err(crate::error::ConfigError::InvalidValue {
-                                key: "provider".to_string(),
-                                message: format!(
-                                    "Provider '{}' not found after rotation",
-                                    provider_name
-                                ),
-                            }
-                            .into())
+                        }
+                        Err(rotate_err) => {
+                            error!(
+                                "Key rotation failed for provider {}: {}",
+                                provider_name, rotate_err
+                            );
+                            self.record_failure(provider_name, Some(class)).await;
+                            Err(rotate_err)
                         }
                     }
-                    Err(rotate_err) => {
-                        error!(
-                            "Key rotation failed for provider {}: {}",
-                            provider_name, rotate_err
-                        );
-                        self.record_failure(provider_name).await;
-                        Err(rotate_err)
-                    }
+                } else {
+                    self.record_failure(provider_name, Some(class)).await;
+                    Err(crate::error::MantaError::ExternalService {
+                        source: format!("Provider {} failed: {}", provider_name, e),
+                        cause: None,
+                    })
                 }
-            }
-            Err(e) => {
-                self.record_failure(provider_name).await;
-                Err(e)
             }
         }
     }

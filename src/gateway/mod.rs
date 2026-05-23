@@ -2000,6 +2000,15 @@ impl Gateway {
             .route("/api/v1/status", get(status_handler))
             .route("/api/v1/repair/status", get(repair_status_handler))
             .route("/api/v1/cost/status", get(cost_status_handler))
+            // Provider management
+            .route("/api/v1/providers", get(list_providers_handler))
+            .route("/api/v1/providers/:id/health", get(get_provider_health_handler))
+            .route("/api/v1/providers/:id/enable", post(enable_provider_handler))
+            .route("/api/v1/providers/:id/disable", post(disable_provider_handler))
+            .route("/api/v1/providers/:id/check", post(check_provider_handler))
+            .route("/api/v1/providers/usage", get(provider_usage_handler))
+            .route("/api/v1/providers/usage/:id", get(provider_usage_by_id_handler))
+            .route("/api/v1/providers/switch", post(switch_model_handler))
             // Canvas/A2UI
             .route("/api/v1/canvas", post(create_canvas_handler))
             .route("/api/v1/canvas/:id", get(get_canvas_handler).delete(delete_canvas_handler))
@@ -5594,6 +5603,31 @@ async fn check_provider_handler(
     }
 }
 
+// Provider Usage Handlers
+
+async fn provider_usage_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let snapshots = state.model_router.usage_tracker.all_snapshots().await;
+    Json(serde_json::json!({
+        "providers": snapshots,
+        "count": snapshots.len(),
+    }))
+}
+
+async fn provider_usage_by_id_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    match state.model_router.usage_tracker.snapshot(&id).await {
+        Some(snapshot) => (StatusCode::OK, Json(serde_json::json!(snapshot))).into_response(),
+        None => {
+            let error = serde_json::json!({
+                "error": format!("No usage data found for provider '{}'", id),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
 async fn get_fallback_chain_handler(
     Path(alias): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5685,9 +5719,9 @@ async fn list_auth_profiles_handler(State(state): State<Arc<GatewayState>>) -> i
 }
 
 async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let aliases = state.model_router.list_aliases().await;
+    let entries = state.model_router.model_catalog.list().await;
     Json(serde_json::json!({
-        "aliases": aliases,
+        "models": entries,
     }))
 }
 
@@ -7556,15 +7590,15 @@ async fn openai_chat_completions_handler(
 ///
 /// Returns available model aliases in OpenAI wire format.
 async fn openai_list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let aliases = state.model_router.list_aliases().await;
-    let data: Vec<_> = aliases
+    let entries = state.model_router.model_catalog.list().await;
+    let data: Vec<_> = entries
         .iter()
-        .map(|alias| {
+        .map(|entry| {
             serde_json::json!({
-                "id": alias,
+                "id": entry.id.clone(),
                 "object": "model",
                 "created": 0,
-                "owned_by": "manta",
+                "owned_by": entry.provider.clone(),
             })
         })
         .collect();

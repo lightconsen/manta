@@ -428,18 +428,12 @@ impl AuthProfileManager {
             .collect()
     }
 
-    /// Check if an error indicates auth/key rotation should occur
+    /// Check if an error indicates auth/key rotation should occur.
+    ///
+    /// Delegates to [`FailureClass`] for structured classification.
     pub fn should_rotate(error: &crate::error::MantaError) -> bool {
-        let err_str = error.to_string().to_lowercase();
-        err_str.contains("429")
-            || err_str.contains("rate limit")
-            || err_str.contains("too many requests")
-            || err_str.contains("401")
-            || err_str.contains("unauthorized")
-            || err_str.contains("403")
-            || err_str.contains("forbidden")
-            || err_str.contains("invalid api key")
-            || err_str.contains("authentication")
+        use crate::model_router::failure_class::FailureClass;
+        FailureClass::from_error(error, None).should_rotate_key()
     }
 }
 
@@ -639,9 +633,10 @@ mod tests {
     }
 
     #[test]
-    fn test_should_rotate_403() {
+    fn test_should_not_rotate_403() {
+        // 403 is classified as AuthPermanent — should disable key, not rotate
         let err = crate::error::MantaError::Internal("403 forbidden".to_string());
-        assert!(AuthProfileManager::should_rotate(&err));
+        assert!(!AuthProfileManager::should_rotate(&err));
     }
 
     #[test]

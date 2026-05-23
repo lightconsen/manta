@@ -34,6 +34,11 @@ pub enum ProviderCommands {
     },
     /// Show current default model
     Default,
+    /// Show provider usage statistics
+    Usage {
+        /// Provider ID (omit for all providers)
+        id: Option<String>,
+    },
 }
 
 /// Run provider commands
@@ -151,6 +156,24 @@ pub async fn run_provider_command(command: &ProviderCommands) -> Result<()> {
                 Ok(resp) => {
                     let body = resp.text().await.unwrap_or_default();
                     println!("{}", body);
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(MantaError::Internal(e.to_string()));
+                }
+            }
+            Ok(())
+        }
+        ProviderCommands::Usage { id } => {
+            let url = if let Some(ref provider_id) = id {
+                format!("{}/api/v1/providers/usage/{}", DAEMON_URL, provider_id)
+            } else {
+                format!("{}/api/v1/providers/usage", DAEMON_URL)
+            };
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                    println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);

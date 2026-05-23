@@ -324,6 +324,13 @@ pub trait Provider: Send + Sync {
     /// Stream a completion
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream>;
 
+    /// Return the stream family for this provider.
+    ///
+    /// Used by the `StreamFamilyRegistry` to apply provider-specific wrappers.
+    fn stream_family(&self) -> stream_wrappers::ProviderStreamFamily {
+        stream_wrappers::ProviderStreamFamily::Generic
+    }
+
     /// Count tokens in messages (approximate if not provided by API)
     fn count_tokens(&self, messages: &[Message]) -> usize {
         // Simple approximation: 4 chars per token on average
@@ -380,6 +387,7 @@ pub mod anthropic;
 pub mod fallback;
 pub mod openai;
 pub mod sdk;
+pub mod stream_wrappers;
 
 pub use anthropic::AnthropicProvider;
 pub use fallback::{FallbackChainBuilder, FallbackProvider};

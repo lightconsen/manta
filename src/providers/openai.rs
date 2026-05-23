@@ -18,8 +18,8 @@ use tracing::{debug, error, info, instrument, warn};
 /// OpenAI API client
 #[derive(Debug, Clone)]
 pub struct OpenAiProvider {
-    /// API key
-    api_key: String,
+    /// Authentication credential (supports API key, Bearer token, OAuth2)
+    credential: std::sync::Arc<tokio::sync::RwLock<crate::model_router::Credential>>,
     /// Base URL (default: https://api.openai.com/v1)
     base_url: String,
     /// Default model
@@ -29,16 +29,23 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Create a new OpenAI provider
+    /// Create a new OpenAI provider from an API key string (backward-compatible).
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
-        Self::with_base_url(api_key, "https://api.openai.com/v1")
+        Self::with_credential(crate::model_router::Credential::api_key(api_key))
     }
 
-    /// Create with custom base URL (for proxies or Azure)
+    /// Create with a custom base URL from an API key string (backward-compatible).
     pub fn with_base_url(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
     ) -> crate::Result<Self> {
+        let mut this = Self::with_credential(crate::model_router::Credential::api_key(api_key))?;
+        this.base_url = base_url.into();
+        Ok(this)
+    }
+
+    /// Create with a full `Credential` (supports OAuth2, Bearer token, API key).
+    pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         // Mimic curl's User-Agent to avoid API blocks
@@ -57,8 +64,8 @@ impl OpenAiProvider {
             })?;
 
         Ok(Self {
-            api_key: api_key.into(),
-            base_url: base_url.into(),
+            credential: std::sync::Arc::new(tokio::sync::RwLock::new(credential)),
+            base_url: "https://api.openai.com/v1".to_string(),
             default_model: "gpt-4o-mini".to_string(),
             client,
         })
@@ -86,18 +93,26 @@ impl OpenAiProvider {
         &self.base_url
     }
 
-    /// Build headers with authorization
-    fn headers(&self) -> HeaderMap {
+    /// Refresh the credential if it is expired or expiring soon.
+    async fn refresh_auth(&self) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        cred.refresh_if_needed(&self.client).await
+    }
+
+    /// Build headers with authorization (async to read the RwLock).
+    async fn headers(&self) -> HeaderMap {
+        let cred = self.credential.read().await;
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, format!("Bearer {}", self.api_key).parse().unwrap());
+        headers.insert(AUTHORIZATION, cred.authorization_header().parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers
     }
 
-    /// Build headers for streaming SSE requests
-    fn stream_headers(&self) -> HeaderMap {
+    /// Build headers for streaming SSE requests (async to read the RwLock).
+    async fn stream_headers(&self) -> HeaderMap {
+        let cred = self.credential.read().await;
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, format!("Bearer {}", self.api_key).parse().unwrap());
+        headers.insert(AUTHORIZATION, cred.authorization_header().parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers.insert("Accept", "text/event-stream".parse().unwrap());
         headers
@@ -207,8 +222,18 @@ impl Provider for OpenAiProvider {
         }
     }
 
+    fn stream_family(&self) -> crate::providers::stream_wrappers::ProviderStreamFamily {
+        if self.default_model.starts_with("o1") || self.default_model.starts_with("o3") {
+            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAiReasoning
+        } else {
+            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAi
+        }
+    }
+
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
+        self.refresh_auth().await?;
+
         let model = request
             .model
             .clone()
@@ -267,7 +292,7 @@ impl Provider for OpenAiProvider {
             match self
                 .client
                 .post(&request_url)
-                .headers(self.headers())
+                .headers(self.headers().await)
                 .json(&body_value)
                 .send()
                 .await
@@ -324,6 +349,8 @@ impl Provider for OpenAiProvider {
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
+        self.refresh_auth().await?;
+
         debug!("Starting streaming completion from OpenAI");
 
         let model = request.model.unwrap_or_else(|| self.default_model.clone());
@@ -374,7 +401,7 @@ impl Provider for OpenAiProvider {
             match self
                 .client
                 .post(&request_url)
-                .headers(self.stream_headers())
+                .headers(self.stream_headers().await)
                 .json(&body_value)
                 .send()
                 .await
@@ -427,7 +454,7 @@ impl Provider for OpenAiProvider {
         let response = self
             .client
             .get(self.url("/models"))
-            .headers(self.headers())
+            .headers(self.headers().await)
             .send()
             .await
             .map_err(|e| crate::error::MantaError::Http(e))?;

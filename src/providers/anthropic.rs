@@ -15,8 +15,8 @@ use tracing::{debug, error, instrument};
 /// Anthropic API client
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
-    /// API key
-    api_key: String,
+    /// Authentication credential (supports API key, Bearer token, OAuth2)
+    credential: std::sync::Arc<tokio::sync::RwLock<crate::model_router::Credential>>,
     /// Base URL
     base_url: String,
     /// Default model
@@ -148,16 +148,23 @@ struct StreamUsage {
 }
 
 impl AnthropicProvider {
-    /// Create a new Anthropic provider
+    /// Create a new Anthropic provider from an API key string (backward-compatible).
     pub fn new(api_key: impl Into<String>) -> crate::Result<Self> {
-        Self::with_base_url(api_key, "https://api.anthropic.com")
+        Self::with_credential(crate::model_router::Credential::api_key(api_key))
     }
 
-    /// Create with custom base URL
+    /// Create with custom base URL from an API key string (backward-compatible).
     pub fn with_base_url(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
     ) -> crate::Result<Self> {
+        let mut this = Self::with_credential(crate::model_router::Credential::api_key(api_key))?;
+        this.base_url = base_url.into();
+        Ok(this)
+    }
+
+    /// Create with a full `Credential` (supports OAuth2, Bearer token, API key).
+    pub fn with_credential(credential: crate::model_router::Credential) -> crate::Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
@@ -166,8 +173,8 @@ impl AnthropicProvider {
             })?;
 
         Ok(Self {
-            api_key: api_key.into(),
-            base_url: base_url.into(),
+            credential: std::sync::Arc::new(tokio::sync::RwLock::new(credential)),
+            base_url: "https://api.anthropic.com".to_string(),
             default_model: "claude-3-5-sonnet-20241022".to_string(),
             api_version: "2023-06-01".to_string(),
             client,
@@ -185,10 +192,27 @@ impl AnthropicProvider {
         format!("{}/{}", self.base_url.trim_end_matches('/'), path.trim_start_matches('/'))
     }
 
-    /// Build headers with authorization
-    fn headers(&self) -> HeaderMap {
+    /// Refresh the credential if it is expired or expiring soon.
+    async fn refresh_auth(&self) -> crate::Result<()> {
+        let mut cred = self.credential.write().await;
+        cred.refresh_if_needed(&self.client).await
+    }
+
+    /// Build headers with authorization (async to read the RwLock).
+    async fn headers(&self) -> HeaderMap {
+        let cred = self.credential.read().await;
         let mut headers = HeaderMap::new();
-        headers.insert("x-api-key", self.api_key.parse().unwrap());
+        match &*cred {
+            crate::model_router::Credential::ApiKey { key } => {
+                headers.insert("x-api-key", key.parse().unwrap());
+            }
+            _ => {
+                headers.insert(
+                    "Authorization",
+                    cred.authorization_header().parse().unwrap(),
+                );
+            }
+        }
         headers.insert("anthropic-version", self.api_version.parse().unwrap());
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers
@@ -382,8 +406,18 @@ impl Provider for AnthropicProvider {
         &self.default_model
     }
 
+    fn stream_family(&self) -> crate::providers::stream_wrappers::ProviderStreamFamily {
+        if self.default_model.contains("thinking") {
+            crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking
+        } else {
+            crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
+        }
+    }
+
     #[instrument(skip(self, request))]
     async fn complete(&self, request: CompletionRequest) -> crate::Result<CompletionResponse> {
+        self.refresh_auth().await?;
+
         let (system, messages) = Self::to_anthropic_messages(&request.messages);
 
         let tools = request.tools.as_ref().map(|tools| {
@@ -408,7 +442,7 @@ impl Provider for AnthropicProvider {
         let response = self
             .client
             .post(self.url("/v1/messages"))
-            .headers(self.headers())
+            .headers(self.headers().await)
             .json(&anthropic_request)
             .send()
             .await
@@ -441,6 +475,8 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
+        self.refresh_auth().await?;
+
         let (system, messages) = Self::to_anthropic_messages(&request.messages);
 
         let anthropic_request = AnthropicRequest {
@@ -461,7 +497,7 @@ impl Provider for AnthropicProvider {
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
-            .headers(self.headers())
+            .headers(self.headers().await)
             .json(&anthropic_request)
             .send()
             .await

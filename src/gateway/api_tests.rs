@@ -127,7 +127,7 @@ async fn list_models_returns_array() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["aliases"].is_array());
+    assert!(json["models"].is_array());
 }
 
 // ── GET /api/v1/plugins ──

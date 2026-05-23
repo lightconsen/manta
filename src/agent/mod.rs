@@ -1909,7 +1909,10 @@ impl Agent {
         (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
         // Get streaming completion
-        let mut stream = self.provider.stream(request).await?;
+        let raw_stream = self.provider.stream(request).await?;
+        let family = self.provider.stream_family();
+        let registry = crate::providers::stream_wrappers::StreamFamilyRegistry::default();
+        let mut stream = registry.apply(family, raw_stream);
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();

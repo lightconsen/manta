@@ -19,6 +19,7 @@ mod config_cmd;
 mod cron;
 mod daemon;
 mod device;
+mod doctor;
 mod entity;
 mod export;
 mod mcp;
@@ -39,6 +40,7 @@ pub use channel::ChannelCommands;
 pub use config_cmd::ConfigCommands;
 pub use cron::CronCommands;
 pub use device::DeviceCommands;
+pub use doctor::DoctorCommands;
 pub use entity::EntityCommands;
 pub use export::ExportCommands;
 pub use mcp::McpCommands;
@@ -233,6 +235,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
+    /// Diagnostic system (run checks, view reports)
+    Doctor {
+        /// Doctor subcommand
+        #[command(subcommand)]
+        command: DoctorCommands,
+    },
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -355,6 +363,7 @@ impl Cli {
             Commands::Approval { command } => approval::run_approval_command(command).await,
             Commands::Audit { command } => audit::run_audit_command(command).await,
             Commands::Provider { command } => provider::run_provider_command(command).await,
+            Commands::Doctor { command } => doctor::run_doctor_command(command).await,
         }
     }
 }
@@ -486,6 +495,45 @@ mod tests {
     fn parse_with_config_path() {
         let cli = Cli::try_parse_from(["manta", "-c", "/tmp/config.toml", "health"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/config.toml")));
+    }
+
+    #[test]
+    fn parse_doctor_run_command() {
+        let cli = Cli::try_parse_from(["manta", "doctor", "run"]).unwrap();
+        match cli.command {
+            Commands::Doctor { command } => {
+                assert!(matches!(command, DoctorCommands::Run { provider: None, verbose: false }));
+            }
+            _ => panic!("expected Doctor command"),
+        }
+    }
+
+    #[test]
+    fn parse_doctor_run_with_provider_and_verbose() {
+        let cli = Cli::try_parse_from(["manta", "doctor", "run", "--provider", "openai", "--verbose"]).unwrap();
+        match cli.command {
+            Commands::Doctor { command } => {
+                assert!(matches!(
+                    command,
+                    DoctorCommands::Run {
+                        provider: Some(ref p),
+                        verbose: true
+                    } if p == "openai"
+                ));
+            }
+            _ => panic!("expected Doctor command"),
+        }
+    }
+
+    #[test]
+    fn parse_doctor_report_command() {
+        let cli = Cli::try_parse_from(["manta", "doctor", "report"]).unwrap();
+        match cli.command {
+            Commands::Doctor { command } => {
+                assert!(matches!(command, DoctorCommands::Report));
+            }
+            _ => panic!("expected Doctor command"),
+        }
     }
 
     #[test]
