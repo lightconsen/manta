@@ -207,10 +207,7 @@ impl AnthropicProvider {
                 headers.insert("x-api-key", key.parse().unwrap());
             }
             _ => {
-                headers.insert(
-                    "Authorization",
-                    cred.authorization_header().parse().unwrap(),
-                );
+                headers.insert("Authorization", cred.authorization_header().parse().unwrap());
             }
         }
         headers.insert("anthropic-version", self.api_version.parse().unwrap());

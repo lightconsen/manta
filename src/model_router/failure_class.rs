@@ -75,10 +75,7 @@ impl FailureClass {
 
     /// Whether the provider itself should be put on cooldown (circuit breaker).
     pub fn should_cooldown_provider(&self) -> bool {
-        matches!(
-            self,
-            Self::RateLimit | Self::Overloaded | Self::ServerError | Self::Timeout
-        )
+        matches!(self, Self::RateLimit | Self::Overloaded | Self::ServerError | Self::Timeout)
     }
 
     /// Default backoff duration in seconds before retrying this failure type.
@@ -193,7 +190,11 @@ impl FailureClass {
                 let start = pos + prefix.len();
                 let rest = &msg[start..];
                 // Try to parse up to 3 digits
-                let digits: String = rest.chars().take(3).filter(|c| c.is_ascii_digit()).collect();
+                let digits: String = rest
+                    .chars()
+                    .take(3)
+                    .filter(|c| c.is_ascii_digit())
+                    .collect();
                 if digits.len() == 3 {
                     if let Ok(code) = digits.parse::<u16>() {
                         return Some(code);
@@ -352,13 +353,7 @@ mod tests {
 
     #[test]
     fn test_descriptions() {
-        assert_eq!(
-            FailureClass::RateLimit.description(),
-            "rate limit exceeded"
-        );
-        assert_eq!(
-            FailureClass::ContextLength.description(),
-            "context length exceeded"
-        );
+        assert_eq!(FailureClass::RateLimit.description(), "rate limit exceeded");
+        assert_eq!(FailureClass::ContextLength.description(), "context length exceeded");
     }
 }

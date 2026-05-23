@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::providers::{CompletionChunk, CompletionStream, ToolCall};
 
 /// A composable stream wrapper — transforms a `CompletionStream` into another.
-pub type StreamWrapper =
-    Arc<dyn Fn(CompletionStream) -> CompletionStream + Send + Sync>;
+pub type StreamWrapper = Arc<dyn Fn(CompletionStream) -> CompletionStream + Send + Sync>;
 
 /// Stream family classification for providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -50,26 +49,38 @@ pub struct StreamFamilyRegistry {
 impl Default for StreamFamilyRegistry {
     fn default() -> Self {
         let mut registry = Self::empty();
-        registry.register(ProviderStreamFamily::OpenAi, vec![
-            reasoning_content_wrapper(),
-            tool_call_accumulator_wrapper(),
-            usage_extractor_wrapper(),
-        ]);
-        registry.register(ProviderStreamFamily::Anthropic, vec![
-            reasoning_content_wrapper(),
-            tool_call_accumulator_wrapper(),
-            usage_extractor_wrapper(),
-        ]);
-        registry.register(ProviderStreamFamily::OpenAiReasoning, vec![
-            reasoning_content_wrapper(),
-            tool_call_accumulator_wrapper(),
-            usage_extractor_wrapper(),
-        ]);
-        registry.register(ProviderStreamFamily::AnthropicThinking, vec![
-            reasoning_content_wrapper(),
-            tool_call_accumulator_wrapper(),
-            usage_extractor_wrapper(),
-        ]);
+        registry.register(
+            ProviderStreamFamily::OpenAi,
+            vec![
+                reasoning_content_wrapper(),
+                tool_call_accumulator_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
+        registry.register(
+            ProviderStreamFamily::Anthropic,
+            vec![
+                reasoning_content_wrapper(),
+                tool_call_accumulator_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
+        registry.register(
+            ProviderStreamFamily::OpenAiReasoning,
+            vec![
+                reasoning_content_wrapper(),
+                tool_call_accumulator_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
+        registry.register(
+            ProviderStreamFamily::AnthropicThinking,
+            vec![
+                reasoning_content_wrapper(),
+                tool_call_accumulator_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
         registry
     }
 }
@@ -81,11 +92,7 @@ impl StreamFamilyRegistry {
         }
     }
 
-    pub fn register(
-        &mut self,
-        family: ProviderStreamFamily,
-        wrappers: Vec<StreamWrapper>,
-    ) {
+    pub fn register(&mut self, family: ProviderStreamFamily, wrappers: Vec<StreamWrapper>) {
         self.families.insert(family, wrappers);
     }
 
@@ -96,9 +103,7 @@ impl StreamFamilyRegistry {
         stream: CompletionStream,
     ) -> CompletionStream {
         match self.families.get(&family) {
-            Some(wrappers) => {
-                wrappers.iter().fold(stream, |s, w| w(s))
-            }
+            Some(wrappers) => wrappers.iter().fold(stream, |s, w| w(s)),
             None => stream,
         }
     }
@@ -119,7 +124,10 @@ pub fn reasoning_content_wrapper() -> StreamWrapper {
 /// Wrapper that accumulates partial tool_call deltas into complete calls.
 pub fn tool_call_accumulator_wrapper() -> StreamWrapper {
     Arc::new(|stream| {
-        let wrapped = ToolCallAccumulator { inner: stream, buffer: Vec::new() };
+        let wrapped = ToolCallAccumulator {
+            inner: stream,
+            buffer: Vec::new(),
+        };
         Box::pin(wrapped)
     })
 }
@@ -127,7 +135,10 @@ pub fn tool_call_accumulator_wrapper() -> StreamWrapper {
 /// Wrapper that ensures the final chunk carries usage metadata.
 pub fn usage_extractor_wrapper() -> StreamWrapper {
     Arc::new(|stream| {
-        let wrapped = UsageExtractor { inner: stream, seen_usage: false };
+        let wrapped = UsageExtractor {
+            inner: stream,
+            seen_usage: false,
+        };
         Box::pin(wrapped)
     })
 }
@@ -178,7 +189,10 @@ impl Stream for ToolCallAccumulator {
                         if let Some(existing) = self.buffer.iter_mut().find(|c| c.id == call.id) {
                             // Accumulate partial arguments
                             if !call.function.arguments.is_empty() {
-                                existing.function.arguments.push_str(&call.function.arguments);
+                                existing
+                                    .function
+                                    .arguments
+                                    .push_str(&call.function.arguments);
                             }
                         } else {
                             self.buffer.push(call.clone());
@@ -265,15 +279,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_usage_extractor_adds_default_on_missing() {
-        let chunks = vec![
-            CompletionChunk {
-                content: Some("done".to_string()),
-                reasoning_content: None,
-                tool_calls: None,
-                is_done: true,
-                usage: None,
-            },
-        ];
+        let chunks = vec![CompletionChunk {
+            content: Some("done".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            is_done: true,
+            usage: None,
+        }];
         let stream = Box::pin(futures::stream::iter(chunks));
         let mut wrapped = usage_extractor_wrapper()(stream);
 

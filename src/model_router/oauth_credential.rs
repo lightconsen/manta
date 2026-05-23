@@ -96,10 +96,7 @@ impl Credential {
     ///
     /// For `OAuth2`, performs a client-credentials token refresh.
     /// For other variants this is a no-op.
-    pub async fn refresh_if_needed(
-        &mut self,
-        client: &reqwest::Client,
-    ) -> crate::Result<()> {
+    pub async fn refresh_if_needed(&mut self, client: &reqwest::Client) -> crate::Result<()> {
         let needs_refresh = self.is_expired() || self.is_expiring_soon(Duration::minutes(5));
         if !needs_refresh {
             return Ok(());
@@ -143,13 +140,13 @@ impl Credential {
                 });
             }
 
-            let data: TokenResponse = resp
-                .json()
-                .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
-                    source: format!("OAuth2 refresh response invalid: {}", e),
-                    cause: None,
-                })?;
+            let data: TokenResponse =
+                resp.json()
+                    .await
+                    .map_err(|e| crate::error::MantaError::ExternalService {
+                        source: format!("OAuth2 refresh response invalid: {}", e),
+                        cause: None,
+                    })?;
 
             *access_token = data.access_token;
             *expires_at = Utc::now() + Duration::seconds(data.expires_in as i64);
@@ -198,11 +195,7 @@ impl fmt::Display for Credential {
                 } else {
                     "****".to_string()
                 };
-                write!(
-                    f,
-                    "OAuth2(client={} token={} exp={})",
-                    client_id, masked, expires_at
-                )
+                write!(f, "OAuth2(client={} token={} exp={})", client_id, masked, expires_at)
             }
         }
     }

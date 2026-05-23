@@ -100,16 +100,17 @@ impl ProviderUsageTracker {
         let now = Utc::now();
 
         let mut snapshots = self.snapshots.write().await;
-        let snapshot = snapshots
-            .entry(provider.to_string())
-            .or_insert_with(|| ProviderUsageSnapshot {
-                provider: provider.to_string(),
-                windows: Self::build_windows(now),
-                total_requests: 0,
-                total_tokens: Usage::default(),
-                estimated_cost_usd: 0.0,
-                last_updated: now,
-            });
+        let snapshot =
+            snapshots
+                .entry(provider.to_string())
+                .or_insert_with(|| ProviderUsageSnapshot {
+                    provider: provider.to_string(),
+                    windows: Self::build_windows(now),
+                    total_requests: 0,
+                    total_tokens: Usage::default(),
+                    estimated_cost_usd: 0.0,
+                    last_updated: now,
+                });
 
         // Reset any expired windows
         for window in &mut snapshot.windows {
@@ -126,12 +127,7 @@ impl ProviderUsageTracker {
         snapshot.estimated_cost_usd += cost;
         snapshot.last_updated = now;
 
-        trace!(
-            "Recorded usage for {}: {} tokens, ${:.4}",
-            provider,
-            usage.total_tokens,
-            cost
-        );
+        trace!("Recorded usage for {}: {} tokens, ${:.4}", provider, usage.total_tokens, cost);
     }
 
     /// Get the current snapshot for a provider.
@@ -333,7 +329,11 @@ mod tests {
         assert!(snapshot.estimated_cost_usd > 0.0);
 
         assert_eq!(snapshot.windows.len(), 3);
-        let today = snapshot.windows.iter().find(|w| w.label == "today").unwrap();
+        let today = snapshot
+            .windows
+            .iter()
+            .find(|w| w.label == "today")
+            .unwrap();
         assert_eq!(today.requests, 1);
     }
 

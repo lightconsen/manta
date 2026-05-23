@@ -513,12 +513,7 @@ async fn get_or_create_session<'a>(
             mode,
         };
 
-        tokio::spawn(session_actor_loop(
-            rx,
-            ctrl_clone,
-            session_id.to_string(),
-            max_iterations,
-        ));
+        tokio::spawn(session_actor_loop(rx, ctrl_clone, session_id.to_string(), max_iterations));
 
         sessions.insert(session_id.to_string(), handle);
         session_meta.insert(session_id.to_string(), meta);
@@ -953,12 +948,7 @@ impl AcpControlPlane {
         // Persist session if store is available
         if let Some(ref store) = self.store {
             let _ = store
-                .save_acp_session(
-                    &session_id.0,
-                    &parent_agent_id,
-                    &[],
-                    chrono::Utc::now(),
-                )
+                .save_acp_session(&session_id.0, &parent_agent_id, &[], chrono::Utc::now())
                 .await;
         }
 
@@ -1198,9 +1188,7 @@ impl AcpControlPlane {
                 let created = session.created_at;
                 let sid = session_id.0.clone();
                 drop(sessions);
-                let _ = store
-                    .save_acp_session(&sid, &parent, &ids, created)
-                    .await;
+                let _ = store.save_acp_session(&sid, &parent, &ids, created).await;
             }
         }
 

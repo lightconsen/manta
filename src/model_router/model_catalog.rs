@@ -54,7 +54,11 @@ pub struct ModelCatalogEntry {
 
 impl ModelCatalogEntry {
     /// Create a minimal entry with just id, name, and provider.
-    pub fn new(id: impl Into<String>, name: impl Into<String>, provider: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        provider: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -277,7 +281,10 @@ impl ModelCatalog {
     /// Get an entry by alias.
     pub async fn get_by_alias(&self, alias: &str) -> Option<ModelCatalogEntry> {
         let entries = self.entries.read().await;
-        entries.values().find(|e| e.alias.as_deref() == Some(alias)).cloned()
+        entries
+            .values()
+            .find(|e| e.alias.as_deref() == Some(alias))
+            .cloned()
     }
 
     /// List all non-suppressed entries.
@@ -420,8 +427,7 @@ mod tests {
         let catalog = ModelCatalog::new();
         catalog
             .register(
-                ModelCatalogEntry::new("gpt-4o", "GPT-4o", "openai")
-                    .with_capability("vision"),
+                ModelCatalogEntry::new("gpt-4o", "GPT-4o", "openai").with_capability("vision"),
             )
             .await;
         catalog
@@ -436,14 +442,25 @@ mod tests {
     #[tokio::test]
     async fn test_static_source_discovery() {
         let source = StaticModelSource::new(vec![
-            ("default".to_string(), "anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string()),
-            ("fast".to_string(), "anthropic".to_string(), "claude-3-haiku-20240307".to_string()),
+            (
+                "default".to_string(),
+                "anthropic".to_string(),
+                "claude-3-5-sonnet-20241022".to_string(),
+            ),
+            (
+                "fast".to_string(),
+                "anthropic".to_string(),
+                "claude-3-haiku-20240307".to_string(),
+            ),
         ]);
 
         let entries = source.discover().await.unwrap();
         assert_eq!(entries.len(), 2);
 
-        let default = entries.iter().find(|e| e.alias.as_deref() == Some("default")).unwrap();
+        let default = entries
+            .iter()
+            .find(|e| e.alias.as_deref() == Some("default"))
+            .unwrap();
         assert_eq!(default.provider, "anthropic");
         assert!(default.supports_tools);
     }
@@ -452,9 +469,11 @@ mod tests {
     async fn test_catalog_discover() {
         let catalog = ModelCatalog::new();
         catalog
-            .add_source(Box::new(StaticModelSource::new(vec![
-                ("default".to_string(), "anthropic".to_string(), "claude-3-5-sonnet-20241022".to_string()),
-            ])))
+            .add_source(Box::new(StaticModelSource::new(vec![(
+                "default".to_string(),
+                "anthropic".to_string(),
+                "claude-3-5-sonnet-20241022".to_string(),
+            )])))
             .await;
 
         let count = catalog.discover().await.unwrap();

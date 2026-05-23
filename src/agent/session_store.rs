@@ -1420,8 +1420,7 @@ impl SessionStore {
         Ok(row.map(|r| {
             let parent_id: String = r.get("parent_id");
             let ids_json: String = r.get("subagent_ids");
-            let subagent_ids: Vec<String> =
-                serde_json::from_str(&ids_json).unwrap_or_default();
+            let subagent_ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
             let created_at = DateTime::from_timestamp_millis(r.get::<i64, _>("created_at"))
                 .unwrap_or_else(Utc::now);
             (parent_id, subagent_ids, created_at)
@@ -1448,11 +1447,9 @@ impl SessionStore {
                 let session_id: String = r.get("session_id");
                 let parent_id: String = r.get("parent_id");
                 let ids_json: String = r.get("subagent_ids");
-                let subagent_ids: Vec<String> =
-                    serde_json::from_str(&ids_json).unwrap_or_default();
-                let created_at =
-                    DateTime::from_timestamp_millis(r.get::<i64, _>("created_at"))
-                        .unwrap_or_else(Utc::now);
+                let subagent_ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
+                let created_at = DateTime::from_timestamp_millis(r.get::<i64, _>("created_at"))
+                    .unwrap_or_else(Utc::now);
                 (session_id, parent_id, subagent_ids, created_at)
             })
             .collect())

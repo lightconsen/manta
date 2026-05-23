@@ -240,10 +240,8 @@ async fn run_diagnostics(
             ));
         } else if !healthy {
             health = HealthGrade::Critical;
-            recommendation = Some(format!(
-                "Provider '{}' is unhealthy — check API key and network",
-                name
-            ));
+            recommendation =
+                Some(format!("Provider '{}' is unhealthy — check API key and network", name));
         } else if circuit_state == "Open" {
             health = HealthGrade::Degraded;
             recommendation = Some(format!(
@@ -252,10 +250,8 @@ async fn run_diagnostics(
             ));
         } else if auth_status != "ok" {
             health = HealthGrade::Degraded;
-            recommendation = Some(format!(
-                "Provider '{}' auth check failed — verify credentials",
-                name
-            ));
+            recommendation =
+                Some(format!("Provider '{}' auth check failed — verify credentials", name));
         }
 
         if verbose {
@@ -283,8 +279,10 @@ async fn run_diagnostics(
         // Auth diagnostics
         if let Some(body) = auth_body {
             let total_keys = body.get("total_keys").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let available_keys =
-                body.get("available_keys").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let available_keys = body
+                .get("available_keys")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
             let status = if available_keys == 0 && total_keys > 0 {
                 "all_keys_disabled".to_string()
             } else if available_keys < total_keys {
@@ -303,9 +301,15 @@ async fn run_diagnostics(
     }
 
     // Determine overall health
-    let overall_health = if provider_diagnostics.iter().any(|d| d.health == HealthGrade::Critical) {
+    let overall_health = if provider_diagnostics
+        .iter()
+        .any(|d| d.health == HealthGrade::Critical)
+    {
         HealthGrade::Critical
-    } else if provider_diagnostics.iter().any(|d| d.health == HealthGrade::Degraded) {
+    } else if provider_diagnostics
+        .iter()
+        .any(|d| d.health == HealthGrade::Degraded)
+    {
         HealthGrade::Degraded
     } else if provider_diagnostics.is_empty() {
         HealthGrade::Critical
@@ -314,7 +318,8 @@ async fn run_diagnostics(
     };
 
     if provider_diagnostics.is_empty() && filter_provider.is_none() {
-        recommendations.push("No providers configured. Run `manta setup` to configure providers.".to_string());
+        recommendations
+            .push("No providers configured. Run `manta setup` to configure providers.".to_string());
     }
 
     Ok(DoctorReport {

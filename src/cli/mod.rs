@@ -510,7 +510,15 @@ mod tests {
 
     #[test]
     fn parse_doctor_run_with_provider_and_verbose() {
-        let cli = Cli::try_parse_from(["manta", "doctor", "run", "--provider", "openai", "--verbose"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "manta",
+            "doctor",
+            "run",
+            "--provider",
+            "openai",
+            "--verbose",
+        ])
+        .unwrap();
         match cli.command {
             Commands::Doctor { command } => {
                 assert!(matches!(

@@ -829,10 +829,7 @@ impl ModelRouter {
                             }
                             self.record_failure(&entry.provider, Some(class)).await;
                             last_error = Some(crate::error::MantaError::ExternalService {
-                                source: format!(
-                                    "Provider {} auth disabled: {}",
-                                    entry.provider, e
-                                ),
+                                source: format!("Provider {} auth disabled: {}", entry.provider, e),
                                 cause: None,
                             });
                             continue;
@@ -874,11 +871,8 @@ impl ModelRouter {
                                                     "Provider {} failed after key rotation: {}",
                                                     entry.provider, e2
                                                 );
-                                                self.record_failure(
-                                                    &entry.provider,
-                                                    Some(class2),
-                                                )
-                                                .await;
+                                                self.record_failure(&entry.provider, Some(class2))
+                                                    .await;
                                                 last_error = Some(e2);
                                             }
                                         }
@@ -1502,18 +1496,15 @@ impl ModelRouter {
                 self.auth_profiles.record_success(provider_name).await;
                 if let Some(usage) = response.usage {
                     let model_name = model_id.as_deref().unwrap_or("unknown");
-                    self.usage_tracker.record(provider_name, usage, model_name).await;
+                    self.usage_tracker
+                        .record(provider_name, usage, model_name)
+                        .await;
                 }
                 Ok(response)
             }
             Err(ref e) => {
                 let class = FailureClass::from_error(e, None);
-                warn!(
-                    "Provider {} failed with {}: {}",
-                    provider_name,
-                    class.description(),
-                    e
-                );
+                warn!("Provider {} failed with {}: {}", provider_name, class.description(), e);
 
                 if class.should_disable_key() {
                     let _ = self.rebuild_provider_with_rotated_key(provider_name).await;
@@ -1531,8 +1522,7 @@ impl ModelRouter {
                             if let Some(provider) = providers.get(provider_name) {
                                 match provider.complete(request).await {
                                     Ok(response) => {
-                                        self.record_success(provider_name, start.elapsed())
-                                            .await;
+                                        self.record_success(provider_name, start.elapsed()).await;
                                         self.auth_profiles.record_success(provider_name).await;
                                         if let Some(usage) = response.usage {
                                             let m = model_id.as_deref().unwrap_or("unknown");
