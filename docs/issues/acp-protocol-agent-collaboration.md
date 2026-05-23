@@ -2,7 +2,7 @@
 
 ## 背景
 
-本文档追踪 Manta ACP（Agent Control Plane）模块的实现状态，参考 OpenClaw 的 ACP 架构进行对齐。Manta 的 ACP 核心代码位于 `src/acp/`，HTTP API 位于 `src/gateway/mod.rs`（`6214+`），工具接口位于 `src/tools/acp_tool.rs`。
+本文档追踪 Manta ACP（Agent Control Plane）模块的实现状态，参考 OpenClaw 的 ACP 架构进行对齐。Manta 的 ACP 核心代码位于 `src/acp/`，WebSocket 子协议 handler 位于 `src/gateway/ws.rs`（`1132+`），工具接口位于 `src/tools/acp_tool.rs`。
 
 ---
 
@@ -12,14 +12,14 @@
 
 | 能力 | 说明 | 代码位置 |
 |------|------|----------|
-| **Subagent Spawn** | `AcpControlPlane::spawn_subagent()` 支持 `Run` 和 `Session` 两种模式 | `src/acp/mod.rs:929` |
+| **Subagent Spawn** | `AcpControlPlane::spawn_subagent()` 支持 `Run` 和 `Session` 两种模式 | `src/acp/mod.rs:960` |
 | **Session 串行执行队列** | `acp_actor_loop` → `session_actor_loop`，每个 session 一个 `mpsc` 队列保证 turn 串行执行 | `src/acp/mod.rs:344` |
-| **运行时控制** | `pause` / `resume` / `step` / `cancel` 四个控制命令 | `src/acp/mod.rs:802` |
-| **HTTP API** | 12 个 REST 端点已注册到 gateway router，受 `config.acp.enabled` 控制 | `src/gateway/mod.rs:1987` |
-| **Session 持久化** | `acp_sessions` SQLite 表，daemon 重启后自动恢复 session 列表 | `src/agent/session_store.rs:412+` |
-| **审计日志** | `AcpSpawn` / `AcpTerminate` / `AcpMessage` 事件类型，记录到 `audit_log` | `src/security/runtime_audit.rs:37` |
-| **Rate Limiting** | `acp_spawn` 端点限制 10 spawns/分钟/actor | `src/gateway/mod.rs:6288` |
-| **max_iter 可配置** | `AcpConfig.max_iterations`（默认 50），贯穿 actor loop 和 subagent loop | `src/gateway/mod.rs:235` |
+| **运行时控制** | `pause` / `resume` / `step` / `cancel` 四个控制命令 | `src/acp/mod.rs:890` |
+| **WebSocket 子协议** | 12 个 ACP 方法通过 `/ws` WebSocket 调用，需 `acp` scope | `src/gateway/ws.rs:1132` |
+| **Session 持久化** | `acp_sessions` SQLite 表，daemon 重启后自动恢复 session 列表 | `src/agent/session_store.rs:409+` |
+| **审计日志** | `AcpSpawn` / `AcpTerminate` / `AcpMessage` 事件类型，记录到 `audit_log` | `src/security/runtime_audit.rs:16` |
+| **Rate Limiting** | `acp.spawn` WebSocket 方法限制 10 spawns/分钟/用户 | `src/gateway/ws.rs:1193` |
+| **max_iter 可配置** | `AcpConfig.max_iterations`（默认 50），贯穿 actor loop 和 subagent loop | `src/gateway/mod.rs:245` |
 | **Thread Binding** | `New` / `Parent` / `Thread(id)` / `Auto` 四种绑定模式 | `src/acp/mod.rs:64` |
 | **Session 状态机** | `Idle` / `Running` / `Paused` / `Stepping` / `Cancelling` / `Completed` | `src/acp/mod.rs:92` |
 
@@ -42,7 +42,7 @@ acp.execute.session     # acp_execute_session_handler → handle_acp_execute_ses
 acp.execute.run         # acp_execute_run_handler → handle_acp_execute_run
 ```
 
-> 注：所有 `/api/v1/acp/*` REST 端点及 `/chat`、`/api/v1/*` 等 deprecated 路由已从 `build_router()` 中移除，仅保留 WebSocket 协议入口。
+> 注：所有 `/api/v1/acp/*` REST 端点及 `/chat`、`/api/v1/*` 等 deprecated 路由已从 `build_router()` 中移除，仅保留 WebSocket 协议入口。旧 handler 代码以 `#[allow(dead_code)]` 保留在 `src/gateway/mod.rs` 中供参考。
 
 ### 仍缺失 ❌
 
