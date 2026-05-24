@@ -318,93 +318,73 @@ Cron Trigger (每天 3:00 AM)
 
 ## 总结对比
 
-| 机制 | Manta（当前） | OpenClaw |
-|------|-------------|----------|
-| **多模态存储** | 无 | Image + Audio 双模态，10MB 限制，自动分类 |
-| **语义查询** | SQLite + 可选 pgvector | QMD CLI 工具 + 向量搜索 + Scope 访问控制 |
-| **事件追踪** | 无 | JSONL 事件日志（recall/promotion/dream） |
-| **记忆整理** | 无 | Light/Deep/REM 三阶段 Dreaming，Cron 调度 |
-| **访问控制** | 无 | 基于 channel/chatType/keyPrefix 的 QMD Scope |
-| **文件管理** | 无 | 按模态分类存储，Glob 扫描，大小限制 |
+| 机制 | Manta（已实现） | OpenClaw |
+|------|----------------|----------|
+| **多模态存储** | `multimodal.rs` — Image + Audio 双模态，10MB 限制，自动分类 | Image + Audio 双模态，10MB 限制，自动分类 |
+| **语义查询** | `qmd.rs` + `hybrid.rs` — QMD CLI + 向量/FTS5 混合搜索 | QMD CLI 工具 + 向量搜索 + Scope 访问控制 |
+| **事件追踪** | `events.rs` — JSONL 事件日志（recall/promotion/compact/dream） | JSONL 事件日志（recall/promotion/dream） |
+| **记忆整理** | `dreaming.rs` — Light/Deep/REM 三阶段，Cron 调度，embedding 去重 | Light/Deep/REM 三阶段 Dreaming，Cron 调度 |
+| **访问控制** | `QmdScope` — channel/chatType/keyPrefix/allow/deny | 基于 channel/chatType/keyPrefix 的 QMD Scope |
+| **文件管理** | `MultimodalStore` — 按模态分类存储，Glob 扫描，大小限制 | 按模态分类存储，Glob 扫描，大小限制 |
+| **知识图谱** | `KnowledgeGraph` + 磁盘持久化 | REM 阶段知识图谱 |
 
 ---
 
 ## 对 Manta 的借鉴建议
 
-### 短期
+> 以下建议中的 ✅ 标记表示已在 Manta 中实现。
 
-1. **多模态文件存储**
-   - 在 `src/memory/` 中增加 `multimodal.rs` 模块
-   - 支持 image（png/jpg/webp）和 audio（mp3/wav/ogg）的存储和分类
-   - 在 SQLite 中记录文件元数据（路径、模态、大小、创建时间）
-   - 配置文件支持：
-     ```toml
-     [memory.multimodal]
-     enabled = true
-     modalities = ["image", "audio"]
-     max_file_bytes = 10_485_760
-     ```
+### 短期（已实现 ✅）
 
-2. **事件日志系统**
-   - 实现 `MemoryEvent` enum（Recall / Promotion / Compact）
-   - 使用 JSONL 格式追加写入 `~/.manta/memory/events.jsonl`
-   - 提供 `append_memory_event()` 和 `read_memory_events()` 接口
-   - 在以下场景触发事件：
-     - 从记忆中召回内容注入上下文
-     - 记忆因重要性被提升/降低
-     - Session 被 compact/summarize
+1. **多模态文件存储** ✅
+   - `src/memory/multimodal.rs` 已支持 image（7 种格式）和 audio（7 种格式）
+   - 配置项：`MemoryMultimodalConfig`（enabled, modalities, max_file_bytes）
 
-3. **QMD 集成基础**
-   - 封装 `qmd` CLI 调用（如果系统已安装）
-   - 实现 `QmdQueryResult` 结构和结果解析
-   - 在 workspace 级别维护 `qmd` 索引
+2. **事件日志系统** ✅
+   - `MemoryEvent` enum：RecallRecorded / PromotionApplied / CompactCompleted / DreamCompleted
+   - JSONL 追加写入 `memory/.dreams/events.jsonl`
+   - `MemoryEventLog` 提供 `append()` / `read_all()` / `read_by_type()`
+   - 触发场景：recall（`retrieve()`）、promotion（dreaming）、compact（`compact_session()`）、dream（`run_full_cycle()`）
 
-### 中期
+3. **QMD 集成基础** ✅
+   - `QmdExecutor` 封装 `qmd` CLI，含 `is_available()` / `query()`
+   - `QmdQueryResult` 结构完整，已接入 `MemoryManager::retrieve()`
 
-4. **Scope-based 访问控制**
-   - 为 QMD 查询增加 `QmdScope` 配置：
-     ```rust
-     pub struct QmdScope {
-         pub channel: Option<String>,
-         pub chat_type: Option<String>,
-         pub key_prefix: Option<String>,
-         pub allow: Vec<String>,
-         pub deny: Vec<String>,
-     }
-     ```
-   - 在查询前验证 sender 是否有权限访问目标记忆范围
-   - 支持按 channel 隔离不同来源的记忆
+### 中期（已实现 ✅）
 
-5. **基础 Dreaming 机制**
-   - 实现 `DreamEngine` struct，支持配置 Cron 调度
-   - Light Dream 阶段：去重（基于 embedding 相似度 > 0.95）、过期清理
-   - Deep Dream 阶段：主题聚类（k-means 或层次聚类）、自动生成摘要
-   - 使用 `tokio-cron-scheduler` 实现定时触发
-   - 记录 Dream 执行结果到事件日志
+4. **Scope-based 访问控制** ✅
+   - `QmdScope` 含 channel / chat_type / key_prefix / allow / deny
+   - `MemoryManager::retrieve()` 使用 `key_prefix: "{user_id}:"` 做范围隔离
+   - `QmdScope::is_allowed()` 实现 deny 优先 + allow 过滤 + prefix 匹配
 
-6. **多模态召回集成**
-   - 当用户发送图片/音频时，存储到 multimodal 目录
-   - 在会话上下文中引用多模态文件（如 `[Image file: screenshot.png]`）
-   - 支持通过 QMD 查询找到相关的历史图片/音频
+5. **基础 Dreaming 机制** ✅
+   - `DreamEngine` + `DreamScheduler`（cron 调度，`tokio::spawn`）
+   - Light Dream：embedding cosine similarity 去重（>0.95），fallback 文本 hash
+   - Deep Dream：基于共享词的主题聚类 + 摘要生成
+   - 事件日志：每阶段完成后写入 `DreamCompleted`
+
+6. **多模态召回集成** ✅
+   - `MultimodalStore` 按模态分类存储（`memory/images/`、`memory/audio/`）
+   - `session_context()` 自动扫描 multimodal 文件并注入上下文标签
+   - QMD 召回已接入（检索文本相关内容）
 
 ### 长期
 
-7. **完整 Dreaming 体系**
-   - 实现 REM Dream：跨 session 关联、长期模式发现
-   - 构建轻量级知识图谱（实体-关系-实体）
-   - 支持 Dream 结果的人工审核和修正
-   - Dream 执行的可观测性（进度追踪、资源消耗记录）
+7. **完整 Dreaming 体系**（部分实现）
+   - ✅ REM Dream：跨 session 关联、模式发现
+   - ✅ 轻量级知识图谱：`KnowledgeNode` / `KnowledgeEdge` / `KnowledgeGraph`
+   - ✅ 知识图谱持久化：自动保存/加载 `memory/.dreams/knowledge_graph.json`
+   - ⬜ Dream 结果的人工审核和修正
+   - ⬜ 资源消耗记录与可观测性仪表盘
 
-8. **记忆分层系统**
-   - 显式定义记忆层级：working → short-term → long-term → archival
-   - 每层级有不同的存储策略（SQLite / 压缩文件 / 冷存储）
-   - Dreaming 负责层间晋升和降级
-   - 配置各层级的容量上限和保留策略
+8. **记忆分层系统** ✅
+   - `TieredStore`：Working（InMemory）→ ShortTerm（SQLite）→ LongTerm（SQLite）→ Archival（压缩 JSONL）
+   - `TierEvaluator` 负责层间晋升/降级，`TierIndex` 维护内存索引
+   - 每层独立 TTL、容量、最小 importance 阈值
 
 9. **记忆效果评估**
-   - 追踪记忆召回的"命中率"（召回内容是否被 LLM 实际使用）
-   - 分析哪些类型的记忆最容易被召回
-   - 基于使用效果自动调整记忆的权重和层级
+   - ✅ `EffectivenessTracker` 追踪召回命中率（`record_recall()`）
+   - ⬜ 基于使用效果自动调整权重和层级的闭环反馈
 
 ---
 

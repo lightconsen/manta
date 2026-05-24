@@ -51,22 +51,30 @@ pub trait ChatHistoryStore: Send + Sync {
 - `store: Arc<dyn MemoryStore>` — tiered or unified
 - `chat_history: Arc<dyn ChatHistoryStore>` — always SQLite-backed
 - `session_context()` — builds `SessionContext` with recent messages, retrieved memories, and multimodal references
-- `retrieve()` — semantic search with optional embedding
+- `retrieve()` — semantic search with optional embedding; also queries QMD executor (if available) and merges results
 
 ### Dreaming
 
 `DreamScheduler` runs background cycles on a cron schedule:
-- **Light Dream** — deduplication, tag cleanup, expired cleanup
+- **Light Dream** — deduplication (embedding cosine similarity > threshold, fallback to text hash), tag cleanup, expired cleanup. Records `PromotionApplied` events on tier changes.
 - **Deep Dream** — topic clustering, summary generation
-- **REM Dream** — cross-session association, pattern discovery
+- **REM Dream** — cross-session association, pattern discovery, knowledge graph update. Graph is persisted to `memory/.dreams/knowledge_graph.json`.
 
-Started in `Gateway::start()`.
+Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
+
+### Event System
+
+`MemoryEventLog` writes JSONL to `memory/.dreams/events.jsonl`:
+- `RecallRecorded` — when memories are recalled into session context
+- `PromotionApplied` — when memories are promoted/demoted between tiers
+- `CompactCompleted` — when a session is compacted into semantic memories
+- `DreamCompleted` — when a dream phase finishes
 
 ### Subsystems
 
 - **Multimodal** (`multimodal.rs`) — File classification (image/audio), glob scanning, path management
-- **Events** (`events.rs`) — JSONL event log for recall, promotion, and dream events
-- **QMD** (`qmd.rs`) — Query Markdown/Document CLI wrapper for semantic document search
+- **Events** (`events.rs`) — JSONL event log for recall, promotion, compact, and dream events
+- **QMD** (`qmd.rs`) — Query Markdown/Document CLI wrapper with `QmdScope` (channel, chat_type, key_prefix, allow/deny) access control; wired into `retrieve()`
 - **Vector** (`vector.rs`) — Embedding providers (API, cached, local GGUF), text chunking, vector stores
 - **Hybrid Search** (`hybrid.rs`) — Combines semantic + keyword with MMR rerank and temporal decay
 - **Effectiveness** (`effectiveness.rs`) — Tracks recall hit rates to tune memory importance
@@ -74,9 +82,7 @@ Started in `Gateway::start()`.
 
 ## Missing / TODO
 
-- **Partial**: REM Dream cross-session association and knowledge graph are stubbed but not fully implemented.
 - **Missing**: Effectiveness tracker is not yet wired into the memory manager feedback loop.
-- **Missing**: QMD scope-based access control (channel/chatType/keyPrefix filtering) is not enforced in queries.
 - **Missing**: Local embeddings (`local-embeddings` feature) exists but is feature-gated and not validated in CI.
 - **Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
 - **Missing**: Memory export/import for migration between workspaces.
