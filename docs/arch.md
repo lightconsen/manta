@@ -74,3 +74,7 @@ LLM ──▶ Tool Call ──▶ Security Validation ──▶ Execute ──�
 - [`docs/modules/security.md`](modules/security.md) — Security layer
 - [`docs/modules/config.md`](modules/config.md) — Configuration
 - [`docs/modules/core.md`](modules/core.md) — Domain models
+- [`docs/modules/acp.md`](modules/acp.md) — Agent Control Plane (subagent spawning)
+- [`docs/modules/skills.md`](modules/skills.md) — Skill system
+- [`docs/modules/mcp.md`](modules/mcp.md) — Model Context Protocol
+- [`docs/modules/plugins.md`](modules/plugins.md) — Plugin system
