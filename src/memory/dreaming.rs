@@ -16,6 +16,11 @@ use tracing::{info, warn};
 
 use super::tier::{MemoryTier, TierAction, TierEvaluator, TierIndex, TierSystemConfig};
 use super::{Memory, MemoryQuery};
+use chrono::Utc;
+use cron::Schedule as CronSchedule;
+use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::{sleep_until, Instant as TokioInstant};
 
 /// Default cron expression: daily at 3:00 AM.
 pub const DEFAULT_MEMORY_DREAMING_FREQUENCY: &str = "0 3 * * *";
@@ -619,12 +624,17 @@ impl DreamEngine {
 /// A scheduled dreaming service that runs dreams via cron.
 pub struct DreamScheduler {
     engine: Arc<DreamEngine>,
+    /// Handle to the background scheduling task (for cancellation)
+    shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl DreamScheduler {
     /// Create a new scheduler around the given engine.
     pub fn new(engine: Arc<DreamEngine>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            shutdown_tx: None,
+        }
     }
 
     /// Run a one-off dream cycle immediately.
@@ -643,6 +653,96 @@ impl DreamScheduler {
     /// Get the engine configuration.
     pub fn config(&self) -> &DreamConfig {
         &self.engine.config
+    }
+
+    /// Start the background cron scheduler.
+    ///
+    /// Spawns a tokio task that sleeps until the next cron tick, runs the
+    /// appropriate dream phase(s), then re-arms.  Call [`stop()`] to shut down.
+    pub fn start<S>(
+        &mut self,
+        store: Arc<S>,
+        tier_index: Arc<TierIndex>,
+    ) where
+        S: super::MemoryStore + 'static,
+    {
+        if !self.engine.config.enabled {
+            info!("Dreaming is disabled; scheduler not started");
+            return;
+        }
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+        self.shutdown_tx = Some(shutdown_tx);
+
+        let engine = Arc::clone(&self.engine);
+        let frequency = self.engine.config.frequency.clone();
+
+        tokio::spawn(async move {
+            let schedule = match CronSchedule::from_str(&frequency) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Invalid dream cron expression '{}': {}", frequency, e);
+                    return;
+                }
+            };
+
+            loop {
+                // Calculate next execution time
+                let next = match schedule.upcoming(Utc).next() {
+                    Some(dt) => dt,
+                    None => {
+                        warn!("No upcoming dream times for cron '{}'", frequency);
+                        break;
+                    }
+                };
+
+                let now = Utc::now();
+                let delay_ms = if next > now {
+                    (next - now).num_milliseconds().max(0) as u64
+                } else {
+                    0
+                };
+
+                let sleep_deadline = TokioInstant::now() + Duration::from_millis(delay_ms);
+                info!(
+                    "Next dream scheduled at {} (in {} ms)",
+                    next, delay_ms
+                );
+
+                tokio::select! {
+                    _ = sleep_until(sleep_deadline) => {
+                        info!("Running scheduled dream cycle");
+                        let include_rem = engine.config.budget == DreamBudget::Expensive;
+                        match engine.run_full_cycle(store.as_ref(), tier_index.as_ref(), include_rem).await {
+                            Ok(results) => {
+                                for r in &results {
+                                    info!("Dream result: {}", r.summary);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Scheduled dream cycle failed: {}", e);
+                            }
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        info!("Dream scheduler shutting down");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Stop the background scheduler.
+    pub async fn stop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(()).await;
+        }
+    }
+
+    /// Returns true if the scheduler background task is running.
+    pub fn is_running(&self) -> bool {
+        self.shutdown_tx.is_some()
     }
 }
 

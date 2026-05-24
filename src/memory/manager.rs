@@ -452,6 +452,7 @@ impl MemoryManager {
                             .get_conversation_history(conversation_id, 50)
                             .await?,
                         memories: cache.memories.clone(),
+                        multimodal_references: vec![],
                     });
                 }
             }
@@ -476,7 +477,38 @@ impl MemoryManager {
             self.store.search(mq).await?
         };
 
-        Ok(SessionContext { messages, memories })
+        // Multimodal: scan for image/audio files in workspace
+        let mut multimodal_references = Vec::new();
+        if let Some(ref mm_store) = self.multimodal_store {
+            use super::multimodal::MemoryMultimodalModality;
+            for modality in [MemoryMultimodalModality::Image, MemoryMultimodalModality::Audio] {
+                let files = mm_store.scan_modality(modality).await;
+                for entry in files.into_iter().take(5) {
+                    let label = entry.label.unwrap_or_else(|| {
+                        format!("{} file: {}", modality, entry.filename)
+                    });
+                    multimodal_references.push(format!("[{}]", label));
+                }
+            }
+        }
+
+        // Update cache
+        let ctx = SessionContext {
+            messages,
+            memories,
+            multimodal_references,
+        };
+        {
+            let cache = ContextCache {
+                user_id: user_id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                memories: ctx.memories.clone(),
+                cached_at: std::time::Instant::now(),
+            };
+            *self.context_cache.write().await = Some(cache);
+        }
+
+        Ok(ctx)
     }
 
     /// Remember a user message (store in chat history).
@@ -614,6 +646,8 @@ pub struct SessionContext {
     pub messages: Vec<ChatMessage>,
     /// Relevant semantic memories
     pub memories: Vec<Memory>,
+    /// Multimodal file references (e.g. "[Image file: photo.png]")
+    pub multimodal_references: Vec<String>,
 }
 
 impl SessionContext {
@@ -623,6 +657,14 @@ impl SessionContext {
     /// context window before the conversation.
     pub fn format_for_injection(&self) -> String {
         let mut parts = vec![];
+
+        // Multimodal references
+        if !self.multimodal_references.is_empty() {
+            parts.push(format!(
+                "## Attached Files\n{}",
+                self.multimodal_references.join("\n")
+            ));
+        }
 
         // Semantic memories
         if !self.memories.is_empty() {
@@ -821,6 +863,7 @@ mod tests {
                 Memory::new("u1", "Likes coffee", "preference"),
                 Memory::new("u1", "Works remotely", "fact"),
             ],
+            multimodal_references: vec![],
         };
 
         let formatted = ctx.format_for_injection();
@@ -873,6 +916,7 @@ mod tests {
         let ctx = SessionContext {
             messages: vec![],
             memories: vec![],
+            multimodal_references: vec![],
         };
         let formatted = ctx.format_for_injection();
         assert!(!formatted.contains("Relevant Context"));
@@ -893,6 +937,7 @@ mod tests {
         let ctx = SessionContext {
             messages,
             memories: vec![Memory::new("u1", "Likes tea", "preference")],
+            multimodal_references: vec![],
         };
         let formatted = ctx.format_for_injection();
         assert!(formatted.contains("Relevant Context"));

@@ -793,7 +793,7 @@ impl Agent {
                     if memories.is_empty() {
                         None
                     } else {
-                        let ctx = crate::memory::SessionContext { messages: vec![], memories };
+                        let ctx = crate::memory::SessionContext { messages: vec![], memories, multimodal_references: vec![] };
                         Some(ctx.format_for_injection())
                     }
                 }

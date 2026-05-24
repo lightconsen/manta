@@ -44,6 +44,10 @@ pub struct Config {
     #[serde(default)]
     pub browser: BrowserConfig,
 
+    /// Memory subsystem configuration
+    #[serde(default)]
+    pub memory: MemoryConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -232,6 +236,186 @@ impl Default for StorageConfig {
     }
 }
 
+/// Memory subsystem configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Multimodal file storage settings
+    #[serde(default)]
+    pub multimodal: MemoryMultimodalConfig,
+    /// Dreaming engine settings
+    #[serde(default)]
+    pub dreaming: MemoryDreamingConfig,
+    /// Tier system settings
+    #[serde(default)]
+    pub tier: MemoryTierConfig,
+    /// Effectiveness tracking settings
+    #[serde(default)]
+    pub effectiveness: MemoryEffectivenessConfig,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            multimodal: MemoryMultimodalConfig::default(),
+            dreaming: MemoryDreamingConfig::default(),
+            tier: MemoryTierConfig::default(),
+            effectiveness: MemoryEffectivenessConfig::default(),
+        }
+    }
+}
+
+/// Multimodal storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryMultimodalConfig {
+    /// Enable multimodal storage
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Enabled modalities (image, audio)
+    #[serde(default = "default_multimodal_modalities")]
+    pub modalities: Vec<String>,
+    /// Maximum file size in bytes
+    #[serde(default = "default_multimodal_max_bytes")]
+    pub max_file_bytes: u64,
+}
+
+impl Default for MemoryMultimodalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            modalities: default_multimodal_modalities(),
+            max_file_bytes: default_multimodal_max_bytes(),
+        }
+    }
+}
+
+fn default_multimodal_modalities() -> Vec<String> {
+    vec!["image".to_string(), "audio".to_string()]
+}
+
+fn default_multimodal_max_bytes() -> u64 {
+    10 * 1024 * 1024 // 10 MB
+}
+
+/// Dreaming engine configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryDreamingConfig {
+    /// Enable dreaming
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Cron expression for scheduling (default: daily at 3 AM)
+    #[serde(default = "default_dreaming_frequency")]
+    pub frequency: String,
+    /// Speed: fast, balanced, slow
+    #[serde(default = "default_dreaming_speed")]
+    pub speed: String,
+    /// Thinking depth: low, medium, high
+    #[serde(default = "default_dreaming_thinking")]
+    pub thinking: String,
+    /// Budget: cheap, medium, expensive
+    #[serde(default = "default_dreaming_budget")]
+    pub budget: String,
+    /// Similarity threshold for deduplication
+    #[serde(default = "default_dreaming_dedup_threshold")]
+    pub dedup_similarity_threshold: f32,
+}
+
+impl Default for MemoryDreamingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            frequency: default_dreaming_frequency(),
+            speed: default_dreaming_speed(),
+            thinking: default_dreaming_thinking(),
+            budget: default_dreaming_budget(),
+            dedup_similarity_threshold: default_dreaming_dedup_threshold(),
+        }
+    }
+}
+
+fn default_dreaming_frequency() -> String {
+    "0 3 * * *".to_string()
+}
+
+fn default_dreaming_speed() -> String {
+    "balanced".to_string()
+}
+
+fn default_dreaming_thinking() -> String {
+    "medium".to_string()
+}
+
+fn default_dreaming_budget() -> String {
+    "medium".to_string()
+}
+
+fn default_dreaming_dedup_threshold() -> f32 {
+    0.95
+}
+
+/// Memory tier configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTierConfig {
+    /// Enable tier management
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Auto-promote/demote memories
+    #[serde(default = "default_true")]
+    pub auto_promote: bool,
+    /// Maintenance interval in seconds
+    #[serde(default = "default_tier_maintenance_interval")]
+    pub maintenance_interval_secs: u64,
+}
+
+impl Default for MemoryTierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_promote: true,
+            maintenance_interval_secs: default_tier_maintenance_interval(),
+        }
+    }
+}
+
+fn default_tier_maintenance_interval() -> u64 {
+    24 * 60 * 60 // Daily
+}
+
+/// Memory effectiveness tracking configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEffectivenessConfig {
+    /// Enable effectiveness tracking
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Auto-adjust memory importance based on hit rate
+    #[serde(default = "default_true")]
+    pub auto_adjust: bool,
+    /// Hit rate threshold for promotion (0.0-1.0)
+    #[serde(default = "default_effectiveness_promotion_threshold")]
+    pub promotion_threshold: f32,
+    /// Hit rate threshold for demotion (0.0-1.0)
+    #[serde(default = "default_effectiveness_demotion_threshold")]
+    pub demotion_threshold: f32,
+}
+
+impl Default for MemoryEffectivenessConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_adjust: true,
+            promotion_threshold: default_effectiveness_promotion_threshold(),
+            demotion_threshold: default_effectiveness_demotion_threshold(),
+        }
+    }
+}
+
+fn default_effectiveness_promotion_threshold() -> f32 {
+    0.7
+}
+
+fn default_effectiveness_demotion_threshold() -> f32 {
+    0.2
+}
+
 /// External service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
@@ -335,6 +519,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             #[cfg(feature = "browser")]
             browser: BrowserConfig::default(),
+            memory: MemoryConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }
@@ -492,6 +677,41 @@ impl Config {
                     message: format!("Invalid port number: {}", e),
                 })?;
             }
+        }
+
+        // Memory config from env
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_MULTIMODAL_ENABLED", ENV_PREFIX)) {
+            self.memory.multimodal.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "memory.multimodal.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_MULTIMODAL_MAX_BYTES", ENV_PREFIX)) {
+            self.memory.multimodal.max_file_bytes = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "memory.multimodal.max_file_bytes".to_string(),
+                message: format!("Invalid number: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_DREAMING_ENABLED", ENV_PREFIX)) {
+            self.memory.dreaming.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "memory.dreaming.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_DREAMING_FREQUENCY", ENV_PREFIX)) {
+            self.memory.dreaming.frequency = val;
+        }
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_TIER_ENABLED", ENV_PREFIX)) {
+            self.memory.tier.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "memory.tier.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_MEMORY_EFFECTIVENESS_ENABLED", ENV_PREFIX)) {
+            self.memory.effectiveness.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "memory.effectiveness.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
         }
 
         Ok(())
