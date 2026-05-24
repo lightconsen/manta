@@ -110,6 +110,7 @@ subtle = "2.5"
 
 # Secure secret handling
 zeroize = { version = "1.7", features = ["derive"] }
+flate2 = "1.1.9"
 
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]

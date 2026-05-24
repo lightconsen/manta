@@ -272,9 +272,8 @@ impl EffectivenessTracker {
             EffectivenessAction::Boost => {
                 (current_importance + self.config.importance_boost).min(self.config.max_importance)
             }
-            EffectivenessAction::Penalize => {
-                (current_importance - self.config.importance_penalty).max(self.config.min_importance)
-            }
+            EffectivenessAction::Penalize => (current_importance - self.config.importance_penalty)
+                .max(self.config.min_importance),
             EffectivenessAction::NoOp => current_importance,
         }
     }
@@ -438,13 +437,17 @@ mod tests {
 
         // m1: 3/3 hits
         for i in 0..3 {
-            tracker.record_recall(format!("r1-{}", i), "m1", "s1", "fact", 0.5, 0).await;
+            tracker
+                .record_recall(format!("r1-{}", i), "m1", "s1", "fact", 0.5, 0)
+                .await;
             tracker.mark_hit(format!("r1-{}", i)).await;
         }
 
         // m2: 0/3 hits
         for i in 0..3 {
-            tracker.record_recall(format!("r2-{}", i), "m2", "s1", "fact", 0.5, 0).await;
+            tracker
+                .record_recall(format!("r2-{}", i), "m2", "s1", "fact", 0.5, 0)
+                .await;
         }
 
         let top = tracker.top_performers(10).await;

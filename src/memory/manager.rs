@@ -25,7 +25,7 @@ use super::{
     tier::{TierIndex, TierSystemConfig},
     vector::VectorMemoryService,
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
-    UnifiedStore,
+    TieredStore, UnifiedStore,
 };
 
 /// Configuration for the MemoryManager.
@@ -61,7 +61,10 @@ impl Default for MemoryManagerConfig {
 
 /// The MemoryManager orchestrates all memory operations.
 pub struct MemoryManager {
-    store: Arc<UnifiedStore>,
+    /// Primary memory store (may be tiered or unified).
+    store: Arc<dyn MemoryStore>,
+    /// Chat history store (always a DatabaseStore for persistence).
+    chat_history: Arc<dyn ChatHistoryStore>,
     config: MemoryManagerConfig,
     /// Embedding pipeline handle (optional if pipeline not configured)
     pipeline: Option<EmbeddingPipelineHandle>,
@@ -86,7 +89,8 @@ pub struct MemoryManager {
 impl std::fmt::Debug for MemoryManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryManager")
-            .field("store", &self.store)
+            .field("store", &"<dyn MemoryStore>")
+            .field("chat_history", &"<dyn ChatHistoryStore>")
             .field("config", &self.config)
             .field("pipeline", &self.pipeline.is_some())
             .field("vector_service", &self.vector_service.is_some())
@@ -107,6 +111,7 @@ struct ContextCache {
     user_id: String,
     conversation_id: String,
     memories: Vec<Memory>,
+    multimodal_references: Vec<String>,
     cached_at: std::time::Instant,
 }
 
@@ -122,9 +127,20 @@ impl ContextCache {
 }
 
 impl MemoryManager {
-    /// Create a new MemoryManager with the given store.
-    pub fn new(store: Arc<UnifiedStore>, config: MemoryManagerConfig) -> Self {
-        let event_log = config.workspace_dir.as_ref().map(|d| MemoryEventLog::new(d));
+    /// Create a new MemoryManager with the given store and chat history.
+    ///
+    /// When using a unified store, pass the same `Arc` for both arguments.
+    /// When using a tiered store, pass the tiered store as `store` and the
+    /// short-term backend as `chat_history`.
+    pub fn new(
+        store: Arc<dyn MemoryStore>,
+        chat_history: Arc<dyn ChatHistoryStore>,
+        config: MemoryManagerConfig,
+    ) -> Self {
+        let event_log = config
+            .workspace_dir
+            .as_ref()
+            .map(|d| MemoryEventLog::new(d));
         let tier_index = if config.enable_tiers {
             Some(Arc::new(TierIndex::new()))
         } else {
@@ -135,18 +151,18 @@ impl MemoryManager {
         } else {
             None
         };
-        let multimodal_store = config.workspace_dir.as_ref().map(|d| {
-            Arc::new(MultimodalStore::new(
-                d,
-                MemoryMultimodalConfig::default(),
-            ))
-        });
-        let qmd_executor = config.workspace_dir.as_ref().map(|d| {
-            Arc::new(QmdExecutor::new(d))
-        });
+        let multimodal_store = config
+            .workspace_dir
+            .as_ref()
+            .map(|d| Arc::new(MultimodalStore::new(d, MemoryMultimodalConfig::default())));
+        let qmd_executor = config
+            .workspace_dir
+            .as_ref()
+            .map(|d| Arc::new(QmdExecutor::new(d)));
 
         Self {
             store,
+            chat_history,
             config,
             pipeline: None,
             vector_service: None,
@@ -379,6 +395,7 @@ impl MemoryManager {
                 user_id: user_id.to_string(),
                 conversation_id: conv_id.to_string(),
                 memories: memories.clone(),
+                multimodal_references: vec![],
                 cached_at: std::time::Instant::now(),
             };
             *self.context_cache.write().await = Some(cache);
@@ -448,11 +465,11 @@ impl MemoryManager {
                 if cache.is_valid(user_id, conversation_id) {
                     return Ok(SessionContext {
                         messages: self
-                            .store
+                            .chat_history
                             .get_conversation_history(conversation_id, 50)
                             .await?,
                         memories: cache.memories.clone(),
-                        multimodal_references: vec![],
+                        multimodal_references: cache.multimodal_references.clone(),
                     });
                 }
             }
@@ -460,7 +477,7 @@ impl MemoryManager {
 
         // Episodic: recent messages
         let messages = self
-            .store
+            .chat_history
             .get_conversation_history(conversation_id, 50)
             .await?;
 
@@ -481,12 +498,15 @@ impl MemoryManager {
         let mut multimodal_references = Vec::new();
         if let Some(ref mm_store) = self.multimodal_store {
             use super::multimodal::MemoryMultimodalModality;
-            for modality in [MemoryMultimodalModality::Image, MemoryMultimodalModality::Audio] {
+            for modality in [
+                MemoryMultimodalModality::Image,
+                MemoryMultimodalModality::Audio,
+            ] {
                 let files = mm_store.scan_modality(modality).await;
                 for entry in files.into_iter().take(5) {
-                    let label = entry.label.unwrap_or_else(|| {
-                        format!("{} file: {}", modality, entry.filename)
-                    });
+                    let label = entry
+                        .label
+                        .unwrap_or_else(|| format!("{} file: {}", modality, entry.filename));
                     multimodal_references.push(format!("[{}]", label));
                 }
             }
@@ -503,6 +523,7 @@ impl MemoryManager {
                 user_id: user_id.to_string(),
                 conversation_id: conversation_id.to_string(),
                 memories: ctx.memories.clone(),
+                multimodal_references: ctx.multimodal_references.clone(),
                 cached_at: std::time::Instant::now(),
             };
             *self.context_cache.write().await = Some(cache);
@@ -520,7 +541,7 @@ impl MemoryManager {
         content: impl Into<String>,
     ) -> crate::Result<()> {
         let msg = ChatMessage::new(conversation_id, user_id, role, content);
-        self.store.store_message(msg).await
+        self.chat_history.store_message(msg).await
     }
 
     /// Get the last conversation ID for a user.
@@ -528,7 +549,9 @@ impl MemoryManager {
         &self,
         user_id: impl AsRef<str>,
     ) -> crate::Result<Option<String>> {
-        self.store.get_last_conversation(user_id.as_ref()).await
+        self.chat_history
+            .get_last_conversation(user_id.as_ref())
+            .await
     }
 
     /// Forget (delete) a memory by ID.
@@ -550,7 +573,7 @@ impl MemoryManager {
 
         // Get full session history
         let messages = self
-            .store
+            .chat_history
             .get_conversation_history(conversation_id, 1000)
             .await?;
 
@@ -628,9 +651,14 @@ impl MemoryManager {
         Ok(stored_ids)
     }
 
-    /// Get the underlying store for direct access (e.g., for chat history).
-    pub fn store(&self) -> Arc<UnifiedStore> {
+    /// Get the primary memory store.
+    pub fn store(&self) -> Arc<dyn MemoryStore> {
         Arc::clone(&self.store)
+    }
+
+    /// Get the chat history store.
+    pub fn chat_history(&self) -> Arc<dyn ChatHistoryStore> {
+        Arc::clone(&self.chat_history)
     }
 
     /// Get memory statistics.
@@ -660,10 +688,7 @@ impl SessionContext {
 
         // Multimodal references
         if !self.multimodal_references.is_empty() {
-            parts.push(format!(
-                "## Attached Files\n{}",
-                self.multimodal_references.join("\n")
-            ));
+            parts.push(format!("## Attached Files\n{}", self.multimodal_references.join("\n")));
         }
 
         // Semantic memories
@@ -758,8 +783,26 @@ impl MemoryManagerBuilder {
     }
 
     pub async fn build(self, database_url: impl AsRef<str>) -> crate::Result<MemoryManager> {
-        let store = Arc::new(UnifiedStore::new(database_url.as_ref()).await?);
-        let mut mm = MemoryManager::new(store, self.config);
+        let (store, chat_history): (Arc<dyn MemoryStore>, Arc<dyn ChatHistoryStore>);
+
+        if self.config.enable_tiers {
+            if let Some(ref workspace_dir) = self.config.workspace_dir {
+                let tiered = TieredStore::new(workspace_dir.join("memory")).await?;
+                let short_term = tiered.short_term();
+                store = Arc::new(tiered);
+                chat_history = Arc::new(short_term);
+            } else {
+                let db = Arc::new(UnifiedStore::new(database_url.as_ref()).await?);
+                store = db.clone();
+                chat_history = db;
+            }
+        } else {
+            let db = Arc::new(UnifiedStore::new(database_url.as_ref()).await?);
+            store = db.clone();
+            chat_history = db;
+        }
+
+        let mut mm = MemoryManager::new(store, chat_history, self.config);
 
         if let Some(pipeline) = self.pipeline {
             mm = mm.with_pipeline(pipeline);
@@ -798,7 +841,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_observe_and_retrieve() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
 
         // Store some memories
         let id1 = mm
@@ -831,7 +874,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_session_context() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
 
         // Add messages
         mm.remember_message("user1", "conv1", "user", "Hello!")
@@ -884,6 +927,7 @@ mod tests {
             user_id: "u1".to_string(),
             conversation_id: "c1".to_string(),
             memories: vec![],
+            multimodal_references: vec![],
             cached_at: std::time::Instant::now(),
         };
         assert!(cache.is_valid("u1", "c1"));
@@ -895,6 +939,7 @@ mod tests {
             user_id: "u1".to_string(),
             conversation_id: "c1".to_string(),
             memories: vec![],
+            multimodal_references: vec![],
             cached_at: std::time::Instant::now(),
         };
         assert!(!cache.is_valid("u2", "c1"));
@@ -906,6 +951,7 @@ mod tests {
             user_id: "u1".to_string(),
             conversation_id: "c1".to_string(),
             memories: vec![],
+            multimodal_references: vec![],
             cached_at: std::time::Instant::now(),
         };
         assert!(!cache.is_valid("u1", "c2"));
@@ -955,7 +1001,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_debug() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
         let debug = format!("{:?}", mm);
         assert!(debug.contains("MemoryManager"));
     }
@@ -963,7 +1009,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_remember_message_and_last_conversation() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
 
         mm.remember_message("u1", "conv-a", "user", "Hello")
             .await
@@ -979,7 +1025,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_forget() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
 
         let id = mm
             .observe("u1", "forgettable content", "test", 0.5)
@@ -996,7 +1042,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_manager_compact_session_short() {
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
-        let mm = MemoryManager::new(store, MemoryManagerConfig::default());
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default());
 
         // Only 3 messages, less than threshold of 10
         for i in 0..3 {

@@ -166,7 +166,11 @@ impl Credential {
 /// 4. Single `api_key` from config — lowest priority
 ///
 /// This mirrors OpenClaw's credential priority: token > env > config.
-pub fn resolve_from_env_and_config(provider_name: &str, config_api_key: &str, config_api_keys: &[String]) -> Option<Credential> {
+pub fn resolve_from_env_and_config(
+    provider_name: &str,
+    config_api_key: &str,
+    config_api_keys: &[String],
+) -> Option<Credential> {
     let env_key = format!("MANTA_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
 
     // 1. Environment variable (highest priority)
@@ -185,7 +189,9 @@ pub fn resolve_from_env_and_config(provider_name: &str, config_api_key: &str, co
 
     // 3. Single api_key from config
     if !config_api_key.is_empty() {
-        return Some(Credential::ApiKey { key: config_api_key.to_string() });
+        return Some(Credential::ApiKey {
+            key: config_api_key.to_string(),
+        });
     }
 
     None

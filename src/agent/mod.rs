@@ -497,9 +497,9 @@ pub struct Agent {
     /// Memory manager for unified memory operations (retrieval, storage, compaction)
     memory_manager: Option<Arc<crate::memory::MemoryManager>>,
     /// Memory store for persistence (legacy, prefer memory_manager)
-    memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
     /// Chat history store for conversation persistence (legacy, prefer memory_manager)
-    chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    chat_history: Option<Arc<dyn crate::memory::ChatHistoryStore>>,
     /// Session search for conversation history indexing
     session_search: Option<Arc<crate::memory::SessionSearch>>,
     /// Response cache for identical prompts
@@ -639,13 +639,13 @@ impl Agent {
     }
 
     /// Set the memory store
-    pub fn with_memory_store(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+    pub fn with_memory_store(mut self, store: Arc<dyn crate::memory::MemoryStore>) -> Self {
         self.memory_store = Some(store);
         self
     }
 
     /// Set the chat history store
-    pub fn with_chat_history(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+    pub fn with_chat_history(mut self, store: Arc<dyn crate::memory::ChatHistoryStore>) -> Self {
         self.chat_history = Some(store);
         self
     }
@@ -786,19 +786,19 @@ impl Agent {
         // Retrieve relevant memories via MemoryManager and inject into context
         let memory_context = if let Some(ref mm) = self.memory_manager {
             match mm
-                .retrieve(user_id, Some(conversation_id), user_message, Some(5))
+                .session_context(user_id, conversation_id, Some(user_message))
                 .await
             {
-                Ok(memories) => {
-                    if memories.is_empty() {
+                Ok(ctx) => {
+                    let formatted = ctx.format_for_injection();
+                    if formatted.is_empty() {
                         None
                     } else {
-                        let ctx = crate::memory::SessionContext { messages: vec![], memories, multimodal_references: vec![] };
-                        Some(ctx.format_for_injection())
+                        Some(formatted)
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Memory retrieval failed: {}", e);
+                    tracing::warn!("Memory context retrieval failed: {}", e);
                     None
                 }
             }
@@ -2643,8 +2643,8 @@ pub struct AgentBuilder {
     config: Option<AgentConfig>,
     provider: Option<Arc<dyn Provider>>,
     tools: Option<Arc<ToolRegistry>>,
-    memory_store: Option<Arc<crate::memory::SqliteMemoryStore>>,
-    chat_history: Option<Arc<crate::memory::SqliteMemoryStore>>,
+    memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
+    chat_history: Option<Arc<dyn crate::memory::ChatHistoryStore>>,
     session_search: Option<Arc<crate::memory::SessionSearch>>,
     transcript_store: Option<Arc<crate::agent::TranscriptStore>>,
     artifact_store: Option<Arc<crate::agent::ArtifactStore>>,
@@ -2685,13 +2685,13 @@ impl AgentBuilder {
     }
 
     /// Set memory store for persistent memory
-    pub fn memory_store(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+    pub fn memory_store(mut self, store: Arc<dyn crate::memory::MemoryStore>) -> Self {
         self.memory_store = Some(store);
         self
     }
 
     /// Set chat history store for conversation persistence
-    pub fn chat_history(mut self, store: Arc<crate::memory::SqliteMemoryStore>) -> Self {
+    pub fn chat_history(mut self, store: Arc<dyn crate::memory::ChatHistoryStore>) -> Self {
         self.chat_history = Some(store);
         self
     }

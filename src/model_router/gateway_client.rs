@@ -129,7 +129,10 @@ impl HttpGatewayClient {
     }
 
     /// Builder: attach a token-bucket rate limiter to this client.
-    pub fn with_rate_limiter(mut self, limiter: std::sync::Arc<crate::security::RateLimiter>) -> Self {
+    pub fn with_rate_limiter(
+        mut self,
+        limiter: std::sync::Arc<crate::security::RateLimiter>,
+    ) -> Self {
         self.rate_limiter = Some(limiter);
         self
     }
@@ -144,10 +147,7 @@ impl HttpGatewayClient {
     }
 
     /// Execute a request with auth, retry, and optional TLS-fingerprint logging.
-    async fn execute_with_retry<F, Fut>(
-        &self,
-        operation: F,
-    ) -> crate::Result<reqwest::Response>
+    async fn execute_with_retry<F, Fut>(&self, operation: F) -> crate::Result<reqwest::Response>
     where
         F: Fn() -> Fut + Send,
         Fut: std::future::Future<Output = crate::Result<reqwest::Response>> + Send,
@@ -159,10 +159,7 @@ impl HttpGatewayClient {
                 crate::security::RateLimitResult::Allowed { .. } => {}
                 crate::security::RateLimitResult::Denied { retry_after_secs } => {
                     return Err(crate::error::MantaError::ExternalService {
-                        source: format!(
-                            "Rate limited: retry after {} seconds",
-                            retry_after_secs
-                        ),
+                        source: format!("Rate limited: retry after {} seconds", retry_after_secs),
                         cause: None,
                     });
                 }
@@ -330,14 +327,8 @@ mod tests {
             Duration::from_secs(30),
         )
         .unwrap();
-        assert_eq!(
-            client.url("/chat/completions"),
-            "https://api.example.com/v1/chat/completions"
-        );
-        assert_eq!(
-            client.url("https://other.com/path"),
-            "https://other.com/path"
-        );
+        assert_eq!(client.url("/chat/completions"), "https://api.example.com/v1/chat/completions");
+        assert_eq!(client.url("https://other.com/path"), "https://other.com/path");
     }
 
     #[test]

@@ -681,16 +681,18 @@ impl Config {
 
         // Memory config from env
         if let Ok(val) = std::env::var(format!("{}_MEMORY_MULTIMODAL_ENABLED", ENV_PREFIX)) {
-            self.memory.multimodal.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
-                key: "memory.multimodal.enabled".to_string(),
-                message: format!("Invalid boolean: {}", e),
-            })?;
+            self.memory.multimodal.enabled =
+                val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "memory.multimodal.enabled".to_string(),
+                    message: format!("Invalid boolean: {}", e),
+                })?;
         }
         if let Ok(val) = std::env::var(format!("{}_MEMORY_MULTIMODAL_MAX_BYTES", ENV_PREFIX)) {
-            self.memory.multimodal.max_file_bytes = val.parse().map_err(|e| ConfigError::InvalidValue {
-                key: "memory.multimodal.max_file_bytes".to_string(),
-                message: format!("Invalid number: {}", e),
-            })?;
+            self.memory.multimodal.max_file_bytes =
+                val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "memory.multimodal.max_file_bytes".to_string(),
+                    message: format!("Invalid number: {}", e),
+                })?;
         }
         if let Ok(val) = std::env::var(format!("{}_MEMORY_DREAMING_ENABLED", ENV_PREFIX)) {
             self.memory.dreaming.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
@@ -708,10 +710,11 @@ impl Config {
             })?;
         }
         if let Ok(val) = std::env::var(format!("{}_MEMORY_EFFECTIVENESS_ENABLED", ENV_PREFIX)) {
-            self.memory.effectiveness.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
-                key: "memory.effectiveness.enabled".to_string(),
-                message: format!("Invalid boolean: {}", e),
-            })?;
+            self.memory.effectiveness.enabled =
+                val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "memory.effectiveness.enabled".to_string(),
+                    message: format!("Invalid boolean: {}", e),
+                })?;
         }
 
         Ok(())

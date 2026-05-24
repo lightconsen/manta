@@ -51,9 +51,9 @@ impl MemoryTier {
     /// Default retention duration for this tier in seconds.
     pub fn default_ttl_secs(&self) -> u64 {
         match self {
-            MemoryTier::Working => 60 * 60,         // 1 hour
-            MemoryTier::ShortTerm => 7 * 24 * 60 * 60, // 7 days
-            MemoryTier::LongTerm => 90 * 24 * 60 * 60, // 90 days
+            MemoryTier::Working => 60 * 60,             // 1 hour
+            MemoryTier::ShortTerm => 7 * 24 * 60 * 60,  // 7 days
+            MemoryTier::LongTerm => 90 * 24 * 60 * 60,  // 90 days
             MemoryTier::Archival => 365 * 24 * 60 * 60, // 1 year
         }
     }
@@ -206,6 +206,7 @@ pub enum TierAction {
 }
 
 /// Evaluates whether a memory should move between tiers.
+#[derive(Debug, Clone)]
 pub struct TierEvaluator {
     config: TierSystemConfig,
 }
@@ -219,11 +220,7 @@ impl TierEvaluator {
     /// Evaluate a memory and decide its tier action.
     ///
     /// Factors: importance_score, access_count, age in current tier, config thresholds.
-    pub fn evaluate(
-        &self,
-        memory: &super::Memory,
-        tiered: &TieredMemory,
-    ) -> TierAction {
+    pub fn evaluate(&self, memory: &super::Memory, tiered: &TieredMemory) -> TierAction {
         let Some(tier_config) = self.config.tiers.get(&tiered.tier) else {
             return TierAction::Keep;
         };
@@ -407,8 +404,8 @@ mod tests {
         let config = TierSystemConfig::default();
         let evaluator = TierEvaluator::new(config);
 
-        let memory = super::super::Memory::new("u1", "important fact", "fact")
-            .with_importance_score(0.8);
+        let memory =
+            super::super::Memory::new("u1", "important fact", "fact").with_importance_score(0.8);
 
         let tiered = TieredMemory {
             id: "m1".to_string(),
@@ -428,8 +425,7 @@ mod tests {
         let config = TierSystemConfig::default();
         let evaluator = TierEvaluator::new(config);
 
-        let memory = super::super::Memory::new("u1", "trivial", "fact")
-            .with_importance_score(0.1);
+        let memory = super::super::Memory::new("u1", "trivial", "fact").with_importance_score(0.1);
 
         let tiered = TieredMemory {
             id: "m1".to_string(),
@@ -450,8 +446,7 @@ mod tests {
         config.tiers.get_mut(&MemoryTier::Working).unwrap().ttl_secs = 1;
         let evaluator = TierEvaluator::new(config);
 
-        let memory = super::super::Memory::new("u1", "old", "fact")
-            .with_importance_score(0.5);
+        let memory = super::super::Memory::new("u1", "old", "fact").with_importance_score(0.5);
 
         let tiered = TieredMemory {
             id: "m1".to_string(),

@@ -214,14 +214,11 @@ impl DreamEngine {
     /// - Remove expired memories
     /// - Deduplicate by embedding similarity > threshold
     /// - Promote/demote based on tier rules
-    pub async fn run_light<S>(
+    pub async fn run_light(
         &self,
-        store: &S,
+        store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
-    ) -> crate::Result<DreamResult>
-    where
-        S: super::MemoryStore,
-    {
+    ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-light-{}", uuid::Uuid::new_v4());
         info!("Starting Light Dream: {}", dream_id);
@@ -233,7 +230,9 @@ impl DreamEngine {
         let mut errors = Vec::new();
 
         // Fetch all memories
-        let memories = store.search(MemoryQuery::new().limit(self.config.max_memories_per_cycle)).await?;
+        let memories = store
+            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+            .await?;
         info!("Light Dream: processing {} memories", memories.len());
 
         let evaluator = TierEvaluator::new(self.tier_config.clone());
@@ -242,7 +241,12 @@ impl DreamEngine {
         let mut content_map: HashMap<String, Vec<&Memory>> = HashMap::new();
         for mem in &memories {
             // Simple hash: first 50 chars lowercase
-            let key = mem.content.to_lowercase().chars().take(50).collect::<String>();
+            let key = mem
+                .content
+                .to_lowercase()
+                .chars()
+                .take(50)
+                .collect::<String>();
             content_map.entry(key).or_default().push(mem);
         }
 
@@ -321,14 +325,11 @@ impl DreamEngine {
     /// - Cluster memories by embedding similarity
     /// - Generate summary memories for dense clusters
     /// - Link related memories across sessions
-    pub async fn run_deep<S>(
+    pub async fn run_deep(
         &self,
-        store: &S,
+        store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
-    ) -> crate::Result<DreamResult>
-    where
-        S: super::MemoryStore,
-    {
+    ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-deep-{}", uuid::Uuid::new_v4());
         info!("Starting Deep Dream: {}", dream_id);
@@ -337,7 +338,9 @@ impl DreamEngine {
         let mut processed = 0;
         let mut errors = Vec::new();
 
-        let memories = store.search(MemoryQuery::new().limit(self.config.max_memories_per_cycle)).await?;
+        let memories = store
+            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+            .await?;
         info!("Deep Dream: processing {} memories", memories.len());
 
         // Simple clustering: group memories with shared words in content
@@ -349,7 +352,11 @@ impl DreamEngine {
                 .content
                 .split_whitespace()
                 .filter(|w| w.len() > 4)
-                .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                .map(|w| {
+                    w.to_lowercase()
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_string()
+                })
                 .filter(|w| !w.is_empty())
                 .collect();
 
@@ -369,11 +376,7 @@ impl DreamEngine {
                     .map(|m| m.content.chars().take(80).collect::<String>())
                     .collect();
 
-                let summary_content = format!(
-                    "Topic '{}': {}",
-                    topic,
-                    summaries.join("; ")
-                );
+                let summary_content = format!("Topic '{}': {}", topic, summaries.join("; "));
 
                 let summary = Memory::new(
                     unique_memories.iter().next().unwrap().user_id.clone(),
@@ -433,14 +436,11 @@ impl DreamEngine {
     /// - Extract entities and relationships
     /// - Update knowledge graph
     /// - Detect recurring patterns across sessions
-    pub async fn run_rem<S>(
+    pub async fn run_rem(
         &self,
-        store: &S,
+        store: &dyn super::MemoryStore,
         _tier_index: &TierIndex,
-    ) -> crate::Result<DreamResult>
-    where
-        S: super::MemoryStore,
-    {
+    ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-rem-{}", uuid::Uuid::new_v4());
         info!("Starting REM Dream: {}", dream_id);
@@ -449,7 +449,9 @@ impl DreamEngine {
         let mut processed = 0;
         let mut errors = Vec::new();
 
-        let memories = store.search(MemoryQuery::new().limit(self.config.max_memories_per_cycle)).await?;
+        let memories = store
+            .search(MemoryQuery::new().limit(self.config.max_memories_per_cycle))
+            .await?;
         info!("REM Dream: processing {} memories", memories.len());
 
         // Naive entity extraction: capitalize words that appear multiple times
@@ -460,7 +462,13 @@ impl DreamEngine {
                 let clean = word
                     .trim_matches(|c: char| !c.is_alphanumeric())
                     .to_string();
-                if clean.len() > 3 && clean.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                if clean.len() > 3
+                    && clean
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                {
                     *word_counts.entry(clean.clone()).or_insert(0) += 1;
                 }
             }
@@ -499,7 +507,8 @@ impl DreamEngine {
                         from: n1.label.clone(),
                         to: n2.label.clone(),
                         relation: "co_occurs".to_string(),
-                        confidence: (shared.len() as f32 / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
+                        confidence: (shared.len() as f32
+                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
                             .min(1.0),
                     });
                 }
@@ -517,11 +526,14 @@ impl DreamEngine {
 
         // Create pattern memory from the graph
         if node_count > 0 {
-            let pattern_mem = Memory::new("system", format!(
-                "REM Dream discovered {} entities and {} relationships",
-                node_count,
-                edge_count
-            ), "dream_pattern")
+            let pattern_mem = Memory::new(
+                "system",
+                format!(
+                    "REM Dream discovered {} entities and {} relationships",
+                    node_count, edge_count
+                ),
+                "dream_pattern",
+            )
             .with_importance_score(0.8)
             .with_source("dream_rem")
             .with_metadata(serde_json::json!({
@@ -572,15 +584,12 @@ impl DreamEngine {
     }
 
     /// Run a full dream cycle: Light -> Deep -> (optional REM).
-    pub async fn run_full_cycle<S>(
+    pub async fn run_full_cycle(
         &self,
-        store: &S,
+        store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
         include_rem: bool,
-    ) -> crate::Result<Vec<DreamResult>>
-    where
-        S: super::MemoryStore,
-    {
+    ) -> crate::Result<Vec<DreamResult>> {
         if !self.config.enabled {
             return Ok(Vec::new());
         }
@@ -631,23 +640,19 @@ pub struct DreamScheduler {
 impl DreamScheduler {
     /// Create a new scheduler around the given engine.
     pub fn new(engine: Arc<DreamEngine>) -> Self {
-        Self {
-            engine,
-            shutdown_tx: None,
-        }
+        Self { engine, shutdown_tx: None }
     }
 
     /// Run a one-off dream cycle immediately.
-    pub async fn run_now<S>(
+    pub async fn run_now(
         &self,
-        store: &S,
+        store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
         include_rem: bool,
-    ) -> crate::Result<Vec<DreamResult>>
-    where
-        S: super::MemoryStore,
-    {
-        self.engine.run_full_cycle(store, tier_index, include_rem).await
+    ) -> crate::Result<Vec<DreamResult>> {
+        self.engine
+            .run_full_cycle(store, tier_index, include_rem)
+            .await
     }
 
     /// Get the engine configuration.
@@ -659,13 +664,7 @@ impl DreamScheduler {
     ///
     /// Spawns a tokio task that sleeps until the next cron tick, runs the
     /// appropriate dream phase(s), then re-arms.  Call [`stop()`] to shut down.
-    pub fn start<S>(
-        &mut self,
-        store: Arc<S>,
-        tier_index: Arc<TierIndex>,
-    ) where
-        S: super::MemoryStore + 'static,
-    {
+    pub fn start(&mut self, store: Arc<dyn super::MemoryStore>, tier_index: Arc<TierIndex>) {
         if !self.engine.config.enabled {
             info!("Dreaming is disabled; scheduler not started");
             return;
@@ -704,10 +703,7 @@ impl DreamScheduler {
                 };
 
                 let sleep_deadline = TokioInstant::now() + Duration::from_millis(delay_ms);
-                info!(
-                    "Next dream scheduled at {} (in {} ms)",
-                    next, delay_ms
-                );
+                info!("Next dream scheduled at {} (in {} ms)", next, delay_ms);
 
                 tokio::select! {
                     _ = sleep_until(sleep_deadline) => {

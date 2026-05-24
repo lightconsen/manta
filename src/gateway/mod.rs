@@ -1626,6 +1626,7 @@ impl Gateway {
                             })?,
                     );
                     let mm = crate::memory::MemoryManager::new(
+                        store.clone(),
                         store,
                         crate::memory::MemoryManagerConfig::default(),
                     )
@@ -1644,6 +1645,7 @@ impl Gateway {
                             })?,
                     );
                     let mm = crate::memory::MemoryManager::new(
+                        store.clone(),
                         store,
                         crate::memory::MemoryManagerConfig::default(),
                     )
@@ -1863,6 +1865,19 @@ impl Gateway {
 
         // Initialize configured channels
         self.init_channels().await?;
+
+        // Start dream scheduler if memory manager is available
+        if let Some(ref mm) = *self.state.memory_manager.read().await {
+            if let Some(tier_index) = mm.tier_index() {
+                let dream_config = crate::memory::DreamConfig::default();
+                let tier_system_config = crate::memory::TierSystemConfig::default();
+                let engine =
+                    Arc::new(crate::memory::DreamEngine::new(dream_config, tier_system_config));
+                let mut scheduler = crate::memory::DreamScheduler::new(engine);
+                scheduler.start(mm.store(), tier_index);
+                info!("Dream scheduler started");
+            }
+        }
 
         // Start browser bridge server if enabled
         #[cfg(feature = "browser")]
@@ -2099,7 +2114,7 @@ async fn spawn_agent_inner(
     let memory_manager = state.memory_manager.read().await.clone();
     let cost_guard = Arc::clone(&state.cost_guard);
     let agent = if let Some(ref mm) = memory_manager {
-        let chat_history = mm.store();
+        let chat_history = mm.chat_history();
         Arc::new(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model)

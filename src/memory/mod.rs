@@ -7,12 +7,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
+pub mod compressed_store;
 pub mod db;
 pub mod dreaming;
 pub mod effectiveness;
 pub mod events;
 pub mod flush;
 pub mod hybrid;
+pub mod in_memory_store;
 pub mod manager;
 pub mod multimodal;
 pub mod personality;
@@ -22,22 +24,24 @@ pub mod session_search;
 pub mod soul;
 pub mod sqlite;
 pub mod tier;
+pub mod tiered_store;
 pub mod vector;
 pub mod workspace_state;
 
 #[cfg(feature = "local-embeddings")]
 pub mod local_embeddings;
 
+pub use compressed_store::CompressedJsonlStore;
 pub use db::{DatabaseStore, DbStats, QueryBuilder};
+pub use in_memory_store::InMemoryStore;
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
 pub use dreaming::{
-    DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult, DreamScheduler,
-    DreamSpeed, DreamThinking, KnowledgeEdge, KnowledgeGraph, KnowledgeNode,
+    DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult,
+    DreamScheduler, DreamSpeed, DreamThinking, KnowledgeEdge, KnowledgeGraph, KnowledgeNode,
 };
 pub use effectiveness::{
-    EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker,
-    RecallEvent,
+    EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker, RecallEvent,
 };
 pub use events::{
     append_memory_event, read_memory_events, DreamPhase as EventDreamPhase, MemoryEvent,
@@ -54,8 +58,8 @@ pub use hybrid::{
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use multimodal::{
     build_multimodal_glob, classify_multimodal_file, FileClassification, MemoryMultimodalConfig,
-    MemoryMultimodalModality, MultimodalFileEntry, MultimodalStore,
-    DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES, AUDIO_EXTENSIONS, IMAGE_EXTENSIONS,
+    MemoryMultimodalModality, MultimodalFileEntry, MultimodalStore, AUDIO_EXTENSIONS,
+    DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES, IMAGE_EXTENSIONS,
 };
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
 pub use pipeline::{
@@ -69,6 +73,7 @@ pub use sqlite::SqliteMemoryStore;
 pub use tier::{
     MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
 };
+pub use tiered_store::TieredStore;
 pub use vector::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
     EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,

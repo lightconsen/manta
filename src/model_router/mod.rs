@@ -1090,10 +1090,7 @@ impl ModelRouter {
             return alias.clone();
         }
 
-        let entry = self
-            .model_catalog
-            .get(&alias.provider, &alias.model)
-            .await;
+        let entry = self.model_catalog.get(&alias.provider, &alias.model).await;
 
         let compatible = entry.map_or(false, |e| {
             (!request.requires_vision || e.supports_vision)

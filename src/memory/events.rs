@@ -88,7 +88,13 @@ impl MemoryEventBuilder {
         }
     }
 
-    pub fn recall(self, session_key: impl Into<String>, recall_id: impl Into<String>, source: impl Into<String>, content_summary: impl Into<String>) -> MemoryEvent {
+    pub fn recall(
+        self,
+        session_key: impl Into<String>,
+        recall_id: impl Into<String>,
+        source: impl Into<String>,
+        content_summary: impl Into<String>,
+    ) -> MemoryEvent {
         MemoryEvent::RecallRecorded {
             timestamp: self.timestamp,
             session_key: session_key.into(),
@@ -98,7 +104,14 @@ impl MemoryEventBuilder {
         }
     }
 
-    pub fn promotion(self, session_key: impl Into<String>, promotion_id: impl Into<String>, from_level: impl Into<String>, to_level: impl Into<String>, reason: impl Into<String>) -> MemoryEvent {
+    pub fn promotion(
+        self,
+        session_key: impl Into<String>,
+        promotion_id: impl Into<String>,
+        from_level: impl Into<String>,
+        to_level: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> MemoryEvent {
         MemoryEvent::PromotionApplied {
             timestamp: self.timestamp,
             session_key: session_key.into(),
@@ -109,7 +122,13 @@ impl MemoryEventBuilder {
         }
     }
 
-    pub fn compact(self, session_key: impl Into<String>, compact_id: impl Into<String>, messages_processed: u32, memories_created: u32) -> MemoryEvent {
+    pub fn compact(
+        self,
+        session_key: impl Into<String>,
+        compact_id: impl Into<String>,
+        messages_processed: u32,
+        memories_created: u32,
+    ) -> MemoryEvent {
         MemoryEvent::CompactCompleted {
             timestamp: self.timestamp,
             session_key: session_key.into(),
@@ -119,7 +138,14 @@ impl MemoryEventBuilder {
         }
     }
 
-    pub fn dream(self, dream_id: impl Into<String>, phase: DreamPhase, summary: impl Into<String>, memories_processed: u32, memories_created: u32) -> MemoryEvent {
+    pub fn dream(
+        self,
+        dream_id: impl Into<String>,
+        phase: DreamPhase,
+        summary: impl Into<String>,
+        memories_processed: u32,
+        memories_created: u32,
+    ) -> MemoryEvent {
         MemoryEvent::DreamCompleted {
             timestamp: self.timestamp,
             dream_id: dream_id.into(),
@@ -138,13 +164,18 @@ impl Default for MemoryEventBuilder {
 }
 
 /// Append a memory event to the JSONL log.
-pub async fn append_memory_event(workspace_dir: impl AsRef<std::path::Path>, event: &MemoryEvent) -> crate::Result<()> {
+pub async fn append_memory_event(
+    workspace_dir: impl AsRef<std::path::Path>,
+    event: &MemoryEvent,
+) -> crate::Result<()> {
     let path = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_RELATIVE_PATH);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(|e| crate::error::MantaError::Storage {
-            context: format!("Failed to create event log directory: {:?}", parent),
-            details: e.to_string(),
-        })?;
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to create event log directory: {:?}", parent),
+                details: e.to_string(),
+            })?;
     }
 
     let line = serde_json::to_string(event).map_err(|e| crate::error::MantaError::Storage {
@@ -162,29 +193,38 @@ pub async fn append_memory_event(workspace_dir: impl AsRef<std::path::Path>, eve
             details: e.to_string(),
         })?;
 
-    file.write_all(line.as_bytes()).await.map_err(|e| crate::error::MantaError::Storage {
-        context: format!("Failed to write event log: {:?}", path),
-        details: e.to_string(),
-    })?;
-    file.write_all(b"\n").await.map_err(|e| crate::error::MantaError::Storage {
-        context: format!("Failed to write newline to event log: {:?}", path),
-        details: e.to_string(),
-    })?;
+    file.write_all(line.as_bytes())
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: format!("Failed to write event log: {:?}", path),
+            details: e.to_string(),
+        })?;
+    file.write_all(b"\n")
+        .await
+        .map_err(|e| crate::error::MantaError::Storage {
+            context: format!("Failed to write newline to event log: {:?}", path),
+            details: e.to_string(),
+        })?;
 
     Ok(())
 }
 
 /// Read all memory events from the JSONL log.
-pub async fn read_memory_events(workspace_dir: impl AsRef<std::path::Path>) -> crate::Result<Vec<MemoryEvent>> {
+pub async fn read_memory_events(
+    workspace_dir: impl AsRef<std::path::Path>,
+) -> crate::Result<Vec<MemoryEvent>> {
     let path = workspace_dir.as_ref().join(MEMORY_EVENT_LOG_RELATIVE_PATH);
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let content = fs::read_to_string(&path).await.map_err(|e| crate::error::MantaError::Storage {
-        context: format!("Failed to read event log: {:?}", path),
-        details: e.to_string(),
-    })?;
+    let content =
+        fs::read_to_string(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to read event log: {:?}", path),
+                details: e.to_string(),
+            })?;
 
     let mut events = Vec::new();
     for line in content.lines() {
@@ -230,7 +270,10 @@ impl MemoryEventLog {
     /// Read events filtered by type.
     pub async fn read_by_type(&self, event_type: &str) -> crate::Result<Vec<MemoryEvent>> {
         let all = self.read_all().await?;
-        Ok(all.into_iter().filter(|e| e.event_type() == event_type).collect())
+        Ok(all
+            .into_iter()
+            .filter(|e| e.event_type() == event_type)
+            .collect())
     }
 }
 
@@ -256,8 +299,19 @@ mod tests {
         let dir = tempdir().unwrap();
         let log = MemoryEventLog::new(dir.path());
 
-        let event1 = MemoryEventBuilder::new().recall("session:1", "r1", "hybrid_search", "User likes coffee");
-        let event2 = MemoryEventBuilder::new().promotion("session:1", "p1", "short_term", "long_term", "High importance");
+        let event1 = MemoryEventBuilder::new().recall(
+            "session:1",
+            "r1",
+            "hybrid_search",
+            "User likes coffee",
+        );
+        let event2 = MemoryEventBuilder::new().promotion(
+            "session:1",
+            "p1",
+            "short_term",
+            "long_term",
+            "High importance",
+        );
 
         log.append(&event1).await.unwrap();
         log.append(&event2).await.unwrap();

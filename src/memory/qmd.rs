@@ -175,19 +175,17 @@ impl QmdExecutor {
             }
         }
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(self.timeout_secs),
-            cmd.output(),
-        )
-        .await
-        .map_err(|_| crate::error::MantaError::ExternalService {
-            source: "qmd query timed out".to_string(),
-            cause: None,
-        })?
-        .map_err(|e| crate::error::MantaError::ExternalService {
-            source: format!("Failed to run qmd: {}", e),
-            cause: None,
-        })?;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(self.timeout_secs), cmd.output())
+                .await
+                .map_err(|_| crate::error::MantaError::ExternalService {
+                    source: "qmd query timed out".to_string(),
+                    cause: None,
+                })?
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to run qmd: {}", e),
+                    cause: None,
+                })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -215,9 +213,7 @@ mod tests {
 
     #[test]
     fn test_qmd_scope_allow() {
-        let scope = QmdScope::default()
-            .allow("user:alice")
-            .deny("user:bob");
+        let scope = QmdScope::default().allow("user:alice").deny("user:bob");
 
         assert!(scope.is_allowed(Some("user:alice:session1")));
         assert!(!scope.is_allowed(Some("user:bob:session1")));

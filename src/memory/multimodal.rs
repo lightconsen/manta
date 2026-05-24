@@ -56,7 +56,10 @@ impl Default for MemoryMultimodalConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            modalities: vec![MemoryMultimodalModality::Image, MemoryMultimodalModality::Audio],
+            modalities: vec![
+                MemoryMultimodalModality::Image,
+                MemoryMultimodalModality::Audio,
+            ],
             max_file_bytes: DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES,
         }
     }
@@ -129,14 +132,18 @@ pub fn classify_multimodal_file(
 
     let ext_with_dot = format!(".{}", ext);
 
-    if IMAGE_EXTENSIONS.contains(&ext_with_dot.as_str()) && config.modalities.contains(&MemoryMultimodalModality::Image) {
+    if IMAGE_EXTENSIONS.contains(&ext_with_dot.as_str())
+        && config.modalities.contains(&MemoryMultimodalModality::Image)
+    {
         return Some(FileClassification {
             modality: MemoryMultimodalModality::Image,
             extension: ext,
         });
     }
 
-    if AUDIO_EXTENSIONS.contains(&ext_with_dot.as_str()) && config.modalities.contains(&MemoryMultimodalModality::Audio) {
+    if AUDIO_EXTENSIONS.contains(&ext_with_dot.as_str())
+        && config.modalities.contains(&MemoryMultimodalModality::Audio)
+    {
         return Some(FileClassification {
             modality: MemoryMultimodalModality::Audio,
             extension: ext,
@@ -152,7 +159,10 @@ pub fn build_multimodal_glob(modality: MemoryMultimodalModality) -> String {
         MemoryMultimodalModality::Image => IMAGE_EXTENSIONS,
         MemoryMultimodalModality::Audio => AUDIO_EXTENSIONS,
     };
-    let patterns: Vec<String> = exts.iter().map(|e| format!("*{}", e.to_lowercase())).collect();
+    let patterns: Vec<String> = exts
+        .iter()
+        .map(|e| format!("*{}", e.to_lowercase()))
+        .collect();
     format!("{{{}}}", patterns.join(","))
 }
 
@@ -189,13 +199,12 @@ impl MultimodalStore {
         }
 
         let filename = filename.as_ref();
-        let classification = classify_multimodal_file(filename, &self.config)
-            .ok_or_else(|| {
-                crate::error::MantaError::Config(crate::error::ConfigError::InvalidValue {
-                    key: "memory.multimodal.file".to_string(),
-                    message: format!("Unsupported file type: {}", filename),
-                })
-            })?;
+        let classification = classify_multimodal_file(filename, &self.config).ok_or_else(|| {
+            crate::error::MantaError::Config(crate::error::ConfigError::InvalidValue {
+                key: "memory.multimodal.file".to_string(),
+                message: format!("Unsupported file type: {}", filename),
+            })
+        })?;
 
         let size = data.len() as u64;
         if size > self.config.max_file_bytes {
@@ -211,19 +220,23 @@ impl MultimodalStore {
         }
 
         let dir = self.modality_dir(classification.modality);
-        fs::create_dir_all(&dir).await.map_err(|e| crate::error::MantaError::Storage {
-            context: format!("Failed to create multimodal directory: {:?}", dir),
-            details: e.to_string(),
-        })?;
+        fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to create multimodal directory: {:?}", dir),
+                details: e.to_string(),
+            })?;
 
         let id = uuid::Uuid::new_v4().to_string();
         let stored_name = format!("{}_{}", id, filename);
         let stored_path = dir.join(&stored_name);
 
-        fs::write(&stored_path, data).await.map_err(|e| crate::error::MantaError::Storage {
-            context: format!("Failed to write multimodal file: {:?}", stored_path),
-            details: e.to_string(),
-        })?;
+        fs::write(&stored_path, data)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to write multimodal file: {:?}", stored_path),
+                details: e.to_string(),
+            })?;
 
         let relative_path = stored_path
             .strip_prefix(&self.workspace_dir)
@@ -233,7 +246,10 @@ impl MultimodalStore {
 
         let label = format!("{} file: {}", classification.modality, filename);
 
-        info!("Stored multimodal file: {} ({} bytes, {:?})", filename, size, classification.modality);
+        info!(
+            "Stored multimodal file: {} ({} bytes, {:?})",
+            filename, size, classification.modality
+        );
 
         Ok(MultimodalFileEntry {
             id,
@@ -248,15 +264,22 @@ impl MultimodalStore {
     }
 
     /// Scan a modality directory and return all files.
-    pub async fn scan_modality(&self, modality: MemoryMultimodalModality) -> Vec<MultimodalFileEntry> {
+    pub async fn scan_modality(
+        &self,
+        modality: MemoryMultimodalModality,
+    ) -> Vec<MultimodalFileEntry> {
         if !self.config.enabled || !self.config.modalities.contains(&modality) {
             return Vec::new();
         }
 
         let dir = self.modality_dir(modality);
         let exts: HashSet<String> = match modality {
-            MemoryMultimodalModality::Image => IMAGE_EXTENSIONS.iter().map(|e| e.to_lowercase()).collect(),
-            MemoryMultimodalModality::Audio => AUDIO_EXTENSIONS.iter().map(|e| e.to_lowercase()).collect(),
+            MemoryMultimodalModality::Image => {
+                IMAGE_EXTENSIONS.iter().map(|e| e.to_lowercase()).collect()
+            }
+            MemoryMultimodalModality::Audio => {
+                AUDIO_EXTENSIONS.iter().map(|e| e.to_lowercase()).collect()
+            }
         };
 
         let mut entries = Vec::new();
@@ -271,9 +294,17 @@ impl MultimodalStore {
                 let ext_lower = format!(".{}", ext.to_lowercase());
                 if exts.contains(&ext_lower) {
                     if let Ok(metadata) = entry.metadata().await {
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        let filename = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
                         // Extract original filename after UUID prefix
-                        let original = filename.splitn(2, '_').nth(1).unwrap_or(&filename).to_string();
+                        let original = filename
+                            .splitn(2, '_')
+                            .nth(1)
+                            .unwrap_or(&filename)
+                            .to_string();
                         let relative_path = path
                             .strip_prefix(&self.workspace_dir)
                             .unwrap_or(&path)
@@ -287,9 +318,13 @@ impl MultimodalStore {
                             size: metadata.len(),
                             modality,
                             content_type: guess_mime_from_extension(
-                                path.extension().and_then(|e| e.to_str()).unwrap_or("")
+                                path.extension().and_then(|e| e.to_str()).unwrap_or(""),
                             ),
-                            created_at: chrono::DateTime::from(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)),
+                            created_at: chrono::DateTime::from(
+                                metadata
+                                    .modified()
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                            ),
                             label: Some(format!("{} file: {}", modality, original)),
                         });
                     }
@@ -302,25 +337,31 @@ impl MultimodalStore {
 
     /// Get the storage directory for a modality.
     fn modality_dir(&self, modality: MemoryMultimodalModality) -> PathBuf {
-        self.workspace_dir.join("memory").join(modality.to_string().to_lowercase() + "s")
+        self.workspace_dir
+            .join("memory")
+            .join(modality.to_string().to_lowercase() + "s")
     }
 
     /// Read a stored file's bytes.
     pub async fn read_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<Vec<u8>> {
         let path = self.workspace_dir.join(relative_path.as_ref());
-        fs::read(&path).await.map_err(|e| crate::error::MantaError::Storage {
-            context: format!("Failed to read multimodal file: {:?}", path),
-            details: e.to_string(),
-        })
+        fs::read(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to read multimodal file: {:?}", path),
+                details: e.to_string(),
+            })
     }
 
     /// Delete a stored file.
     pub async fn delete_file(&self, relative_path: impl AsRef<Path>) -> crate::Result<()> {
         let path = self.workspace_dir.join(relative_path.as_ref());
-        fs::remove_file(&path).await.map_err(|e| crate::error::MantaError::Storage {
-            context: format!("Failed to delete multimodal file: {:?}", path),
-            details: e.to_string(),
-        })
+        fs::remove_file(&path)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to delete multimodal file: {:?}", path),
+                details: e.to_string(),
+            })
     }
 }
 
@@ -356,7 +397,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = MultimodalStore::new(dir.path(), MemoryMultimodalConfig::default());
 
-        let entry = store.store_file("test.png", b"fake image data", "image/png").await.unwrap();
+        let entry = store
+            .store_file("test.png", b"fake image data", "image/png")
+            .await
+            .unwrap();
         assert_eq!(entry.filename, "test.png");
         assert_eq!(entry.size, 15);
         assert!(entry.label.as_ref().unwrap().contains("image"));
@@ -372,7 +416,9 @@ mod tests {
         config.max_file_bytes = 5;
         let store = MultimodalStore::new(dir.path(), config);
 
-        let result = store.store_file("big.png", b"this is too big", "image/png").await;
+        let result = store
+            .store_file("big.png", b"this is too big", "image/png")
+            .await;
         assert!(result.is_err());
     }
 }
