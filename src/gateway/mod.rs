@@ -1871,8 +1871,15 @@ impl Gateway {
             if let Some(tier_index) = mm.tier_index() {
                 let dream_config = crate::memory::DreamConfig::default();
                 let tier_system_config = crate::memory::TierSystemConfig::default();
-                let engine =
-                    Arc::new(crate::memory::DreamEngine::new(dream_config, tier_system_config));
+                let mut engine = crate::memory::DreamEngine::new(dream_config, tier_system_config);
+                if let Some(ref workspace_dir) = self.config.workspace_dir {
+                    engine = engine.with_workspace_dir(workspace_dir.clone());
+                }
+                if let Some(event_log) = mm.event_log() {
+                    engine = engine.with_event_log(event_log.clone());
+                }
+                engine.initialize().await;
+                let engine = Arc::new(engine);
                 let mut scheduler = crate::memory::DreamScheduler::new(engine);
                 scheduler.start(mm.store(), tier_index);
                 info!("Dream scheduler started");

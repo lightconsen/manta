@@ -20,7 +20,7 @@ use super::{
     hybrid::{hybrid_search, HybridSearchConfig},
     multimodal::{MemoryMultimodalConfig, MultimodalStore},
     pipeline::EmbeddingPipelineHandle,
-    qmd::QmdExecutor,
+    qmd::{QmdExecutor, QmdScope},
     session_search::SessionSearch,
     tier::{TierIndex, TierSystemConfig},
     vector::VectorMemoryService,
@@ -336,7 +336,7 @@ impl MemoryManager {
             self.vector_service.is_some() && self.session_search.is_some(),
         );
 
-        let memories: Vec<Memory>;
+        let mut memories: Vec<Memory>;
 
         // ── Hybrid path ───────────────────────────────────────────────────────
         if let (Some(ref vs), Some(ref ss)) = (&self.vector_service, &self.session_search) {
@@ -387,6 +387,39 @@ impl MemoryManager {
             }
 
             memories = self.store.search(mq).await?;
+        }
+
+        // ── QMD search path ───────────────────────────────────────────────────
+        if let Some(ref qmd) = self.qmd_executor {
+            let scope = QmdScope::default().with_key_prefix(&format!("{}:", user_id));
+            match qmd.query(&query_text, Some(&scope)).await {
+                Ok(qmd_results) => {
+                    let existing: std::collections::HashSet<String> =
+                        memories.iter().map(|m| m.content.clone()).collect();
+                    for qr in qmd_results.into_iter().take(limit) {
+                        if let Some(body) = qr.body.or(qr.snippet) {
+                            if existing.contains(&body) {
+                                continue;
+                            }
+                            let score = qr.score.unwrap_or(0.5) as f32;
+                            memories.push(
+                                Memory::new(user_id, body, "qmd")
+                                    .with_importance_score(score)
+                                    .with_source("qmd"),
+                            );
+                        }
+                    }
+                    memories.sort_by(|a, b| {
+                        b.importance_score
+                            .partial_cmp(&a.importance_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    memories.truncate(limit);
+                }
+                Err(e) => {
+                    warn!("QMD query failed: {}", e);
+                }
+            }
         }
 
         // Update cache

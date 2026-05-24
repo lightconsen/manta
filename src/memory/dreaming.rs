@@ -12,8 +12,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
+use super::events::{MemoryEventBuilder, MemoryEventLog};
 use super::tier::{MemoryTier, TierAction, TierEvaluator, TierIndex, TierSystemConfig};
 use super::{Memory, MemoryQuery};
 use chrono::Utc;
@@ -188,6 +189,46 @@ pub struct KnowledgeGraph {
     pub edges: Vec<KnowledgeEdge>,
 }
 
+impl KnowledgeGraph {
+    /// Save the knowledge graph to disk as JSON.
+    pub async fn save_to_disk(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to serialize knowledge graph".to_string(),
+                details: e.to_string(),
+            })?;
+        if let Some(parent) = path.as_ref().parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                crate::error::MantaError::Storage {
+                    context: format!("Failed to create knowledge graph directory: {:?}", parent),
+                    details: e.to_string(),
+                }
+            })?;
+        }
+        tokio::fs::write(path, json)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to write knowledge graph".to_string(),
+                details: e.to_string(),
+            })?;
+        Ok(())
+    }
+
+    /// Load the knowledge graph from disk.
+    pub async fn load_from_disk(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
+        let json = tokio::fs::read_to_string(path).await.map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to read knowledge graph".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
+            context: "Failed to deserialize knowledge graph".to_string(),
+            details: e.to_string(),
+        })
+    }
+}
+
 /// The dreaming engine orchestrates background memory consolidation.
 pub struct DreamEngine {
     config: DreamConfig,
@@ -196,6 +237,10 @@ pub struct DreamEngine {
     checkpoint: RwLock<DreamCheckpoint>,
     /// Knowledge graph built during REM dreams.
     knowledge_graph: RwLock<KnowledgeGraph>,
+    /// Event log for recording promotions and dream completions.
+    event_log: Option<MemoryEventLog>,
+    /// Workspace directory for knowledge graph persistence.
+    workspace_dir: Option<std::path::PathBuf>,
 }
 
 impl DreamEngine {
@@ -206,7 +251,64 @@ impl DreamEngine {
             tier_config,
             checkpoint: RwLock::new(DreamCheckpoint::default()),
             knowledge_graph: RwLock::new(KnowledgeGraph::default()),
+            event_log: None,
+            workspace_dir: None,
         }
+    }
+
+    /// Attach an event log.
+    pub fn with_event_log(mut self, log: MemoryEventLog) -> Self {
+        self.event_log = Some(log);
+        self
+    }
+
+    /// Attach a workspace directory for knowledge graph persistence.
+    pub fn with_workspace_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.workspace_dir = Some(dir);
+        self
+    }
+
+    /// Initialize the engine: load persisted knowledge graph if available.
+    pub async fn initialize(&self) {
+        if let Some(ref dir) = self.workspace_dir {
+            let kg_path = dir.join("memory/.dreams/knowledge_graph.json");
+            if kg_path.exists() {
+                match KnowledgeGraph::load_from_disk(&kg_path).await {
+                    Ok(kg) => {
+                        *self.knowledge_graph.write().await = kg;
+                        info!("Loaded persisted knowledge graph from {:?}", kg_path);
+                    }
+                    Err(e) => warn!("Failed to load knowledge graph: {}", e),
+                }
+            }
+        }
+    }
+
+    /// Persist the current knowledge graph to disk.
+    async fn save_knowledge_graph(&self) {
+        if let Some(ref dir) = self.workspace_dir {
+            let kg_path = dir.join("memory/.dreams/knowledge_graph.json");
+            let graph = self.knowledge_graph.read().await.clone();
+            if let Err(e) = graph.save_to_disk(&kg_path).await {
+                warn!("Failed to save knowledge graph: {}", e);
+            } else {
+                debug!("Saved knowledge graph to {:?}", kg_path);
+            }
+        }
+    }
+
+    /// Compute cosine similarity between two embedding vectors.
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        dot / (norm_a * norm_b)
     }
 
     /// Run a Light Dream: deduplication, expiry cleanup, basic tier maintenance.
@@ -237,32 +339,55 @@ impl DreamEngine {
 
         let evaluator = TierEvaluator::new(self.tier_config.clone());
 
-        // Deduplication: group by approximate content hash
-        let mut content_map: HashMap<String, Vec<&Memory>> = HashMap::new();
-        for mem in &memories {
-            // Simple hash: first 50 chars lowercase
-            let key = mem
-                .content
-                .to_lowercase()
-                .chars()
-                .take(50)
-                .collect::<String>();
-            content_map.entry(key).or_default().push(mem);
-        }
-
-        for (_key, group) in content_map {
-            if group.len() > 1 {
-                // Potential duplicates — keep the highest importance one
-                let mut sorted = group.to_vec();
-                sorted.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
-                for dup in sorted.iter().skip(1) {
-                    if let Err(e) = store.delete(&dup.id).await {
-                        errors.push(format!("Failed to delete duplicate {}: {}", dup.id, e));
+        // Deduplication: compare embedding cosine similarity; fall back to text hash
+        let mut removed_ids = Vec::new();
+        for (i, mem_i) in memories.iter().enumerate() {
+            if removed_ids.contains(&mem_i.id) {
+                continue;
+            }
+            for mem_j in memories.iter().skip(i + 1) {
+                if removed_ids.contains(&mem_j.id) {
+                    continue;
+                }
+                let similar = match (&mem_i.embedding, &mem_j.embedding) {
+                    (Some(emb_i), Some(emb_j)) => {
+                        Self::cosine_similarity(emb_i, emb_j)
+                            > self.config.dedup_similarity_threshold
+                    }
+                    _ => {
+                        // Fallback: first 50 chars text hash
+                        let key_i = mem_i
+                            .content
+                            .to_lowercase()
+                            .chars()
+                            .take(50)
+                            .collect::<String>();
+                        let key_j = mem_j
+                            .content
+                            .to_lowercase()
+                            .chars()
+                            .take(50)
+                            .collect::<String>();
+                        key_i == key_j
+                    }
+                };
+                if similar {
+                    if mem_i.importance_score >= mem_j.importance_score {
+                        removed_ids.push(mem_j.id.clone());
                     } else {
-                        removed += 1;
-                        tier_index.remove(&dup.id.to_string());
+                        removed_ids.push(mem_i.id.clone());
+                        break;
                     }
                 }
+            }
+        }
+
+        for id in removed_ids {
+            if let Err(e) = store.delete(&id).await {
+                errors.push(format!("Failed to delete duplicate {}: {}", id, e));
+            } else {
+                removed += 1;
+                tier_index.remove(&id.to_string());
             }
         }
 
@@ -270,14 +395,39 @@ impl DreamEngine {
         for mem in &memories {
             processed += 1;
             if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
+                let old_tier = tiered.tier;
                 match evaluator.evaluate(mem, &tiered) {
                     TierAction::Promote(new_tier) => {
                         tier_index.update_tier(&mem.id.to_string(), new_tier);
                         promoted += 1;
+                        if let Some(ref event_log) = self.event_log {
+                            let event = MemoryEventBuilder::new().promotion(
+                                &format!("{}:dream", mem.user_id),
+                                format!("promote-{}", uuid::Uuid::new_v4()),
+                                old_tier.label(),
+                                new_tier.label(),
+                                "Dream tier evaluation",
+                            );
+                            if let Err(e) = event_log.append(&event).await {
+                                warn!("Failed to append promotion event: {}", e);
+                            }
+                        }
                     }
                     TierAction::Demote(new_tier) => {
                         tier_index.update_tier(&mem.id.to_string(), new_tier);
                         demoted += 1;
+                        if let Some(ref event_log) = self.event_log {
+                            let event = MemoryEventBuilder::new().promotion(
+                                &format!("{}:dream", mem.user_id),
+                                format!("demote-{}", uuid::Uuid::new_v4()),
+                                old_tier.label(),
+                                new_tier.label(),
+                                "Dream tier evaluation",
+                            );
+                            if let Err(e) = event_log.append(&event).await {
+                                warn!("Failed to append promotion event: {}", e);
+                            }
+                        }
                     }
                     TierAction::Evict => {
                         if let Err(e) = store.delete(&mem.id).await {
@@ -523,6 +673,7 @@ impl DreamEngine {
         graph.nodes = nodes;
         graph.edges = edges;
         drop(graph);
+        self.save_knowledge_graph().await;
 
         // Create pattern memory from the graph
         if node_count > 0 {
@@ -583,6 +734,15 @@ impl DreamEngine {
         Ok(result)
     }
 
+    /// Convert local DreamPhase to event-log DreamPhase.
+    fn to_event_phase(phase: DreamPhase) -> super::events::DreamPhase {
+        match phase {
+            DreamPhase::Light => super::events::DreamPhase::Light,
+            DreamPhase::Deep => super::events::DreamPhase::Deep,
+            DreamPhase::Rem => super::events::DreamPhase::Rem,
+        }
+    }
+
     /// Run a full dream cycle: Light -> Deep -> (optional REM).
     pub async fn run_full_cycle(
         &self,
@@ -598,20 +758,62 @@ impl DreamEngine {
 
         // Light dream always runs
         match self.run_light(store, tier_index).await {
-            Ok(r) => results.push(r),
+            Ok(r) => {
+                if let Some(ref event_log) = self.event_log {
+                    let event = MemoryEventBuilder::new().dream(
+                        &r.dream_id,
+                        Self::to_event_phase(r.phase),
+                        &r.summary,
+                        r.memories_processed,
+                        r.memories_created,
+                    );
+                    if let Err(e) = event_log.append(&event).await {
+                        warn!("Failed to append dream event: {}", e);
+                    }
+                }
+                results.push(r);
+            }
             Err(e) => warn!("Light dream failed: {}", e),
         }
 
         // Deep dream runs on balanced/slow or if enough memories
         match self.run_deep(store, tier_index).await {
-            Ok(r) => results.push(r),
+            Ok(r) => {
+                if let Some(ref event_log) = self.event_log {
+                    let event = MemoryEventBuilder::new().dream(
+                        &r.dream_id,
+                        Self::to_event_phase(r.phase),
+                        &r.summary,
+                        r.memories_processed,
+                        r.memories_created,
+                    );
+                    if let Err(e) = event_log.append(&event).await {
+                        warn!("Failed to append dream event: {}", e);
+                    }
+                }
+                results.push(r);
+            }
             Err(e) => warn!("Deep dream failed: {}", e),
         }
 
         // REM dream runs only if requested and budget allows
         if include_rem && self.config.budget == DreamBudget::Expensive {
             match self.run_rem(store, tier_index).await {
-                Ok(r) => results.push(r),
+                Ok(r) => {
+                    if let Some(ref event_log) = self.event_log {
+                        let event = MemoryEventBuilder::new().dream(
+                            &r.dream_id,
+                            Self::to_event_phase(r.phase),
+                            &r.summary,
+                            r.memories_processed,
+                            r.memories_created,
+                        );
+                        if let Err(e) = event_log.append(&event).await {
+                            warn!("Failed to append dream event: {}", e);
+                        }
+                    }
+                    results.push(r);
+                }
                 Err(e) => warn!("REM dream failed: {}", e),
             }
         }
