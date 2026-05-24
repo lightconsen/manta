@@ -209,6 +209,7 @@ mod tests {
                 total_tokens: 1000,
             },
             estimated_cost_usd: 0.0042,
+            quota: None,
             last_updated: Utc::now(),
         }
     }

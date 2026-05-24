@@ -8,10 +8,14 @@
 //! - Auth profile rotation with cooldown
 
 pub mod auth_profile;
+pub mod auth_profile_store;
 pub mod failure_class;
 pub mod gateway_client;
 pub mod model_catalog;
+pub mod oauth_callback;
 pub mod oauth_credential;
+pub mod oauth_flow;
+pub mod pkce;
 pub mod usage_fetcher;
 pub mod usage_formatter;
 pub mod usage_tracker;
@@ -30,10 +34,14 @@ use crate::providers::{CompletionRequest, CompletionResponse, CompletionStream, 
 pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
 };
+pub use auth_profile_store::AuthProfileStore;
 pub use failure_class::FailureClass;
 pub use gateway_client::{GatewayClient, HttpGatewayClient};
 pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
+pub use oauth_callback::wait_for_callback;
 pub use oauth_credential::Credential;
+pub use oauth_flow::OAuthFlow;
+pub use pkce::{challenge_from_verifier, generate_verifier};
 pub use usage_formatter::{
     format_provider_snapshot, format_tokens, format_usage_report, format_usage_summary_line,
     format_window, format_window_compact,
@@ -56,6 +64,27 @@ pub struct ModelAlias {
     pub max_tokens: Option<u32>,
 }
 
+/// OAuth 2.0 configuration for a provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthConfig {
+    /// OAuth2 client ID
+    pub client_id: String,
+    /// Authorization endpoint URL
+    pub auth_url: String,
+    /// Token endpoint URL
+    pub token_url: String,
+    /// Optional scope string
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Local redirect callback port (default: 18081)
+    #[serde(default = "default_redirect_port")]
+    pub redirect_port: u16,
+}
+
+fn default_redirect_port() -> u16 {
+    18081
+}
+
 /// Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -70,6 +99,9 @@ pub struct ProviderConfig {
     /// Auth profile configuration (optional, most flexible)
     #[serde(default, alias = "auth_profile")]
     pub auth_profile: Option<AuthProfileConfig>,
+    /// OAuth 2.0 configuration for initial authorization flow
+    #[serde(default, alias = "oauth")]
+    pub oauth: Option<OAuthConfig>,
     /// Base URL (for custom deployments)
     pub base_url: Option<String>,
     /// Request timeout
@@ -579,6 +611,8 @@ pub struct ModelRouter {
     pub model_catalog: ModelCatalog,
     /// Remote usage quota fetchers keyed by provider name.
     pub usage_fetchers: RwLock<UsageFetcherRegistry>,
+    /// Optional SQLite pool for persisting auth profile state across restarts.
+    db_pool: Option<sqlx::Pool<sqlx::Sqlite>>,
 }
 
 impl Default for ModelRouter {
@@ -599,17 +633,30 @@ impl ModelRouter {
             usage_tracker: ProviderUsageTracker::new(UsageTrackerConfig::default()),
             model_catalog: ModelCatalog::new(),
             usage_fetchers: RwLock::new(UsageFetcherRegistry::default()),
+            db_pool: None,
         }
+    }
+
+    /// Attach a SQLite connection pool for persisting auth profile state.
+    pub fn with_db_pool(mut self, pool: sqlx::Pool<sqlx::Sqlite>) -> Self {
+        self.db_pool = Some(pool);
+        self
     }
 
     /// Initialize providers from config
     pub async fn initialize(&self) -> crate::Result<()> {
+        // Wire up persistent store if a database pool is available
+        if let Some(ref pool) = self.db_pool {
+            let store = std::sync::Arc::new(AuthProfileStore::new(pool.clone()));
+            self.auth_profiles.set_store(store).await;
+        }
+
         let config = self.config.read().await;
 
         for (name, provider_config) in &config.providers {
             info!("Initializing provider: {}", name);
 
-            // Register auth profile for this provider
+            // Register auth profile for this provider (loads persisted state if store is set)
             let auth_config = provider_config.derived_auth_profile_config();
             self.auth_profiles
                 .register_from_config(name, &auth_config)
@@ -724,7 +771,14 @@ impl ModelRouter {
     }
 
     /// Rebuild a provider with the current auth profile key after rotation.
-    async fn rebuild_provider_with_rotated_key(&self, provider_name: &str) -> crate::Result<()> {
+    ///
+    /// `cooldown_secs` overrides the default cooldown for this rotation.
+    /// When `None`, the provider's configured cooldown is used.
+    async fn rebuild_provider_with_rotated_key(
+        &self,
+        provider_name: &str,
+        cooldown_secs: Option<u64>,
+    ) -> crate::Result<()> {
         let config = {
             let cfg = self.config.read().await;
             cfg.providers.get(provider_name).cloned().ok_or_else(|| {
@@ -735,8 +789,14 @@ impl ModelRouter {
             })?
         };
 
+        let cooldown = cooldown_secs.unwrap_or_else(|| {
+            config
+                .derived_auth_profile_config()
+                .cooldown_secs
+        });
+
         // Rotate to next key
-        if let Some(new_key) = self.auth_profiles.rotate(provider_name).await {
+        if let Some(new_key) = self.auth_profiles.rotate(provider_name, cooldown).await {
             let mut new_config = config;
             new_config.api_key = new_key.clone();
             new_config.api_keys = vec![new_key];
@@ -764,6 +824,19 @@ impl ModelRouter {
                 cause: None,
             })
         }
+    }
+
+    /// Compute the effective cooldown for a failure class, never below the
+    /// provider's configured minimum.
+    async fn cooldown_for_failure(&self, provider: &str, class: FailureClass) -> u64 {
+        let config = self.config.read().await;
+        let base = config
+            .providers
+            .get(provider)
+            .map(|pc| pc.derived_auth_profile_config().cooldown_secs)
+            .unwrap_or(60);
+        drop(config);
+        class.default_backoff_secs().max(base)
     }
 
     /// Complete a request using the model router
@@ -879,8 +952,9 @@ impl ModelRouter {
 
                         if class.should_disable_key() {
                             // Permanently disable the current key
+                            let cooldown = self.cooldown_for_failure(&entry.provider, class).await;
                             if let Err(disable_err) = self
-                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .rebuild_provider_with_rotated_key(&entry.provider, Some(cooldown))
                                 .await
                             {
                                 error!(
@@ -897,8 +971,9 @@ impl ModelRouter {
                         }
 
                         if class.should_rotate_key() {
+                            let cooldown = self.cooldown_for_failure(&entry.provider, class).await;
                             match self
-                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .rebuild_provider_with_rotated_key(&entry.provider, Some(cooldown))
                                 .await
                             {
                                 Ok(()) => {
@@ -1062,8 +1137,9 @@ impl ModelRouter {
                         }
 
                         if class.should_disable_key() {
+                            let cooldown = self.cooldown_for_failure(&entry.provider, class).await;
                             if let Err(disable_err) = self
-                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .rebuild_provider_with_rotated_key(&entry.provider, Some(cooldown))
                                 .await
                             {
                                 error!(
@@ -1080,8 +1156,9 @@ impl ModelRouter {
                         }
 
                         if class.should_rotate_key() {
+                            let cooldown = self.cooldown_for_failure(&entry.provider, class).await;
                             match self
-                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .rebuild_provider_with_rotated_key(&entry.provider, Some(cooldown))
                                 .await
                             {
                                 Ok(()) => {
@@ -1920,7 +1997,10 @@ impl ModelRouter {
                 warn!("Provider {} failed with {}: {}", provider_name, class.description(), e);
 
                 if class.should_disable_key() {
-                    let _ = self.rebuild_provider_with_rotated_key(provider_name).await;
+                    let cooldown = self.cooldown_for_failure(provider_name, class).await;
+                    let _ = self
+                        .rebuild_provider_with_rotated_key(provider_name, Some(cooldown))
+                        .await;
                     self.record_failure(provider_name, Some(class)).await;
                     return Err(crate::error::MantaError::ExternalService {
                         source: format!("Provider {} auth disabled: {}", provider_name, e),
@@ -1929,7 +2009,11 @@ impl ModelRouter {
                 }
 
                 if class.should_rotate_key() {
-                    match self.rebuild_provider_with_rotated_key(provider_name).await {
+                    let cooldown = self.cooldown_for_failure(provider_name, class).await;
+                    match self
+                        .rebuild_provider_with_rotated_key(provider_name, Some(cooldown))
+                        .await
+                    {
                         Ok(()) => {
                             let providers = self.providers.read().await;
                             if let Some(provider) = providers.get(provider_name) {
@@ -2064,10 +2148,10 @@ impl ModelRouter {
         drop(providers);
 
         // Rotate key
-        match self.auth_profiles.rotate(provider_name).await {
+        match self.auth_profiles.rotate(provider_name, 60).await {
             Some(new_key) => {
                 // Rebuild provider with new key
-                self.rebuild_provider_with_rotated_key(provider_name)
+                self.rebuild_provider_with_rotated_key(provider_name, None)
                     .await?;
                 info!("Manually rotated auth key for provider '{}'", provider_name);
                 Ok(new_key)
@@ -2232,6 +2316,7 @@ mod tests {
             api_key: "test-key".to_string(),
             api_keys: vec![],
             auth_profile: None,
+            oauth: None,
             base_url: None,
             timeout: Duration::from_secs(30),
             max_retries: 3,
@@ -2256,6 +2341,7 @@ mod tests {
             api_key: "test-key".to_string(),
             api_keys: vec![],
             auth_profile: None,
+            oauth: None,
             base_url: None,
             timeout: Duration::from_secs(30),
             max_retries: 3,
@@ -2317,6 +2403,7 @@ mod tests {
             api_key: "single-key".to_string(),
             api_keys: vec!["multi-key".to_string()],
             auth_profile: None,
+            oauth: None,
             base_url: None,
             timeout: Duration::from_secs(30),
             max_retries: 3,
@@ -2352,6 +2439,7 @@ mod tests {
             api_key: "test-key".to_string(),
             api_keys: vec![],
             auth_profile: None,
+            oauth: None,
             base_url: None,
             timeout: Duration::from_secs(30),
             max_retries: 3,
@@ -2391,6 +2479,7 @@ mod tests {
             api_key: "key".to_string(),
             api_keys: vec![],
             auth_profile: None,
+            oauth: None,
             base_url: None,
             timeout: Duration::from_secs(30),
             max_retries: 3,

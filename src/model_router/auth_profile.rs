@@ -8,8 +8,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use crate::model_router::auth_profile_store::AuthProfileStore;
 
 /// Status of an individual API key within a profile
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,10 +163,11 @@ impl AuthProfile {
     }
 
     /// Rotate to the next available key. Returns the new key if found.
-    pub fn rotate(&mut self) -> Option<String> {
+    ///
+    /// `cooldown_secs` overrides the profile default for this rotation.
+    pub fn rotate(&mut self, cooldown_secs: u64) -> Option<String> {
         // Extract scalar values before mutable borrow
         let provider_name = self.provider_name.clone();
-        let cooldown_secs = self.cooldown_secs;
         let max_failures = self.max_failures;
 
         // Mark current key as failed
@@ -239,6 +243,11 @@ impl AuthProfile {
     pub fn available_count(&self) -> usize {
         self.keys.iter().filter(|k| k.is_available()).count()
     }
+
+    /// Get a mutable reference to a key entry by label.
+    pub fn key_entry_mut(&mut self, label: &str) -> Option<&mut KeyEntry> {
+        self.keys.iter_mut().find(|k| k.label == label)
+    }
 }
 
 /// Key status info for API responses
@@ -310,6 +319,7 @@ impl Default for AuthProfileConfig {
 #[derive(Debug, Default)]
 pub struct AuthProfileManager {
     profiles: RwLock<HashMap<String, AuthProfile>>,
+    store: RwLock<Option<Arc<AuthProfileStore>>>,
 }
 
 impl AuthProfileManager {
@@ -317,7 +327,14 @@ impl AuthProfileManager {
     pub fn new() -> Self {
         Self {
             profiles: RwLock::new(HashMap::new()),
+            store: RwLock::new(None),
         }
+    }
+
+    /// Attach a persistent store for saving/loading key state.
+    pub async fn set_store(&self, store: Arc<AuthProfileStore>) {
+        let mut s = self.store.write().await;
+        *s = Some(store);
     }
 
     /// Register a profile for a provider
@@ -332,7 +349,7 @@ impl AuthProfileManager {
         self.register_profile(provider_name, profile).await;
     }
 
-    /// Create and register a profile from config
+    /// Create and register a profile from config, then load any persisted state.
     pub async fn register_from_config(&self, provider_name: &str, config: &AuthProfileConfig) {
         let keys: Vec<(String, String)> = config
             .keys
@@ -351,6 +368,7 @@ impl AuthProfileManager {
         let profile =
             AuthProfile::with_keys(provider_name, keys, config.cooldown_secs, config.max_failures);
         self.register_profile(provider_name, profile).await;
+        self.load(provider_name).await;
     }
 
     /// Get the current active key for a provider
@@ -362,16 +380,57 @@ impl AuthProfileManager {
     }
 
     /// Rotate to the next available key for a provider. Returns the new key.
-    pub async fn rotate(&self, provider_name: &str) -> Option<String> {
+    ///
+    /// `cooldown_secs` is forwarded to the underlying [`AuthProfile::rotate`].
+    /// State is persisted to the store if one is configured.
+    pub async fn rotate(&self, provider_name: &str, cooldown_secs: u64) -> Option<String> {
         let mut profiles = self.profiles.write().await;
-        profiles.get_mut(provider_name).and_then(|p| p.rotate())
+        let result = profiles
+            .get_mut(provider_name)
+            .and_then(|p| p.rotate(cooldown_secs));
+        drop(profiles);
+        if result.is_some() {
+            self.save(provider_name).await;
+        }
+        result
     }
 
-    /// Record success on the current key for a provider
+    /// Record success on the current key for a provider.
+    /// State is persisted to the store if one is configured.
     pub async fn record_success(&self, provider_name: &str) {
         let mut profiles = self.profiles.write().await;
         if let Some(p) = profiles.get_mut(provider_name) {
             p.record_success();
+        }
+        drop(profiles);
+        self.save(provider_name).await;
+    }
+
+    /// Persist the current auth profile state for a provider.
+    async fn save(&self, provider_name: &str) {
+        let store_opt = { self.store.read().await.clone() };
+        if let Some(store) = store_opt {
+            let profiles = self.profiles.read().await;
+            if let Some(profile) = profiles.get(provider_name) {
+                let profile = profile.clone();
+                drop(profiles);
+                if let Err(e) = store.save_profile_state(provider_name, &profile).await {
+                    warn!("Failed to persist auth profile state for {}: {}", provider_name, e);
+                }
+            }
+        }
+    }
+
+    /// Load previously persisted auth profile state for a provider.
+    async fn load(&self, provider_name: &str) {
+        let store_opt = { self.store.read().await.clone() };
+        if let Some(store) = store_opt {
+            let mut profiles = self.profiles.write().await;
+            if let Some(profile) = profiles.get_mut(provider_name) {
+                if let Err(e) = store.load_profile_state(provider_name, profile).await {
+                    warn!("Failed to load auth profile state for {}: {}", provider_name, e);
+                }
+            }
         }
     }
 
@@ -539,12 +598,12 @@ mod tests {
             3,
         );
 
-        let new_key = profile.rotate();
+        let new_key = profile.rotate(60);
         assert_eq!(new_key, Some("key2".to_string()));
         assert_eq!(profile.current_key(), Some("key2"));
 
         // Rotate again — key1 is on cooldown, no available keys
-        let next = profile.rotate();
+        let next = profile.rotate(60);
         assert!(next.is_none());
     }
 
@@ -553,7 +612,7 @@ mod tests {
         let mut profile =
             AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 0, 1);
 
-        profile.rotate();
+        profile.rotate(0);
         let statuses = profile.key_statuses();
         assert_eq!(statuses[0].status, KeyStatus::Disabled);
     }
@@ -616,7 +675,7 @@ mod tests {
         );
         manager.register_profile("openai", profile).await;
 
-        let new_key = manager.rotate("openai").await;
+        let new_key = manager.rotate("openai", 60).await;
         assert_eq!(new_key, Some("key2".to_string()));
     }
 

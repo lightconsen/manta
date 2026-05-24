@@ -39,10 +39,36 @@ pub enum ProviderCommands {
         /// Provider ID (omit for all providers)
         id: Option<String>,
     },
+    /// Authenticate a provider via OAuth 2.0 + PKCE
+    Auth {
+        /// Provider ID (for labeling the resulting credential)
+        id: String,
+        /// OAuth client ID
+        #[arg(short, long)]
+        client_id: String,
+        /// Authorization endpoint URL
+        #[arg(short = 'a', long)]
+        auth_url: String,
+        /// Token endpoint URL
+        #[arg(short = 't', long)]
+        token_url: String,
+        /// Optional OAuth scope
+        #[arg(short, long)]
+        scope: Option<String>,
+        /// Local redirect callback port (default: 18081)
+        #[arg(short = 'p', long, default_value = "18081")]
+        redirect_port: u16,
+        /// Timeout in seconds for the callback (default: 300)
+        #[arg(long, default_value = "300")]
+        timeout: u64,
+        /// Don't open browser automatically
+        #[arg(long)]
+        no_browser: bool,
+    },
 }
 
 /// Run provider commands
-pub async fn run_provider_command(command: &ProviderCommands) -> Result<()> {
+pub async fn run_provider_command(command: &ProviderCommands, config: &crate::config::Config) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
@@ -200,5 +226,123 @@ pub async fn run_provider_command(command: &ProviderCommands) -> Result<()> {
             }
             Ok(())
         }
+        ProviderCommands::Auth {
+            id,
+            client_id,
+            auth_url,
+            token_url,
+            scope,
+            redirect_port,
+            timeout,
+            no_browser,
+        } => {
+            run_auth_command(
+                id,
+                client_id,
+                auth_url,
+                token_url,
+                scope.as_deref(),
+                *redirect_port,
+                *timeout,
+                *no_browser,
+            )
+            .await
+        }
     }
+}
+
+async fn run_auth_command(
+    provider_id: &str,
+    client_id: &str,
+    auth_url: &str,
+    token_url: &str,
+    scope: Option<&str>,
+    redirect_port: u16,
+    timeout_secs: u64,
+    no_browser: bool,
+) -> Result<()> {
+    use crate::model_router::{oauth_callback, OAuthConfig, OAuthFlow};
+
+    let oauth_config = OAuthConfig {
+        client_id: client_id.to_string(),
+        auth_url: auth_url.to_string(),
+        token_url: token_url.to_string(),
+        scope: scope.map(|s| s.to_string()),
+        redirect_port,
+    };
+
+    let flow = OAuthFlow::new();
+    let authorization_url = flow.authorization_url(&oauth_config);
+
+    println!("\n🔐  OAuth Authorization for '{}'\n", provider_id);
+    println!("Open this URL in your browser:\n");
+    println!("  {}\n", authorization_url);
+
+    if !no_browser {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg(&authorization_url).spawn();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(&authorization_url).spawn();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &authorization_url])
+                .spawn();
+        }
+    }
+
+    println!(
+        "Waiting for callback on port {} (timeout: {}s)...\n",
+        redirect_port, timeout_secs
+    );
+
+    let (code, returned_state) =
+        oauth_callback::wait_for_callback(redirect_port, timeout_secs).await?;
+
+    if returned_state != flow.state() {
+        return Err(MantaError::ExternalService {
+            source: "OAuth state mismatch — possible CSRF attack".to_string(),
+            cause: None,
+        });
+    }
+
+    println!("Exchanging authorization code for tokens...\n");
+
+    let credential = flow.exchange_code(&code, &oauth_config).await?;
+
+    println!("✅  Authorization successful for '{}'\n", provider_id);
+    println!("Credential (add to your config):\n");
+
+    match credential {
+        crate::model_router::Credential::OAuth2 {
+            access_token,
+            refresh_token,
+            expires_at,
+            token_url,
+            client_id,
+            scope,
+            ..
+        } => {
+            println!("[providers.{}.auth_profile]", provider_id);
+            if let Some(ref rt) = refresh_token {
+                println!("refresh_token = \"{}\"", rt);
+            }
+            println!("access_token  = \"{}\"", access_token);
+            println!("expires_at    = \"{}\"", expires_at.to_rfc3339());
+            println!("token_url     = \"{}\"", token_url);
+            println!("client_id     = \"{}\"", client_id);
+            if let Some(ref s) = scope {
+                println!("scope         = \"{}\"", s);
+            }
+        }
+        _ => {
+            println!("{:?}", credential);
+        }
+    }
+
+    Ok(())
 }

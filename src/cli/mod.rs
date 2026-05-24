@@ -362,7 +362,7 @@ impl Cli {
             Commands::Device { command } => device::run_device_command(command).await,
             Commands::Approval { command } => approval::run_approval_command(command).await,
             Commands::Audit { command } => audit::run_audit_command(command).await,
-            Commands::Provider { command } => provider::run_provider_command(command).await,
+            Commands::Provider { command } => provider::run_provider_command(command, config).await,
             Commands::Doctor { command } => doctor::run_doctor_command(command).await,
         }
     }
