@@ -12,6 +12,7 @@ pub mod failure_class;
 pub mod gateway_client;
 pub mod model_catalog;
 pub mod oauth_credential;
+pub mod usage_formatter;
 pub mod usage_tracker;
 
 use async_trait::async_trait;
@@ -22,7 +23,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::providers::{CompletionRequest, CompletionResponse, Message, Provider};
+use crate::providers::{CompletionRequest, CompletionResponse, CompletionStream, Message, Provider};
 
 pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
@@ -31,6 +32,10 @@ pub use failure_class::FailureClass;
 pub use gateway_client::{GatewayClient, HttpGatewayClient};
 pub use model_catalog::{ModelCatalog, ModelCatalogEntry, ModelDiscoverySource, ModelPricing};
 pub use oauth_credential::Credential;
+pub use usage_formatter::{
+    format_provider_snapshot, format_tokens, format_usage_report, format_usage_summary_line,
+    format_window, format_window_compact,
+};
 pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig};
 
 /// Model alias configuration
@@ -845,6 +850,17 @@ impl ModelRouter {
                         );
                         drop(providers);
 
+                        // Auto-suppress model on permanent failures or model-not-found
+                        if class == FailureClass::ModelNotFound {
+                            self.model_catalog
+                                .suppress(&entry.provider, &entry.model)
+                                .await;
+                            warn!(
+                                "Auto-suppressed model {}:{}",
+                                entry.provider, entry.model
+                            );
+                        }
+
                         if class.should_disable_key() {
                             // Permanently disable the current key
                             if let Err(disable_err) = self
@@ -902,6 +918,183 @@ impl ModelRouter {
                                                 );
                                                 self.record_failure(&entry.provider, Some(class2))
                                                     .await;
+                                                last_error = Some(e2);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(rotate_err) => {
+                                    error!(
+                                        "Key rotation failed for provider {}: {}",
+                                        entry.provider, rotate_err
+                                    );
+                                    self.record_failure(&entry.provider, Some(class)).await;
+                                    last_error = Some(rotate_err);
+                                }
+                            }
+                        } else {
+                            self.record_failure(&entry.provider, Some(class)).await;
+                            last_error = Some(crate::error::MantaError::ExternalService {
+                                source: format!("Provider {} failed: {}", entry.provider, e),
+                                cause: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| crate::error::MantaError::ExternalService {
+            source: "All providers failed".to_string(),
+            cause: None,
+        }))
+    }
+
+    /// Stream a completion through the router with fallback and key rotation.
+    ///
+    /// Mirrors `complete` but for streaming responses.  Key rotation and
+    /// circuit-breaker logic are applied on stream *startup* failures only.
+    pub async fn stream(
+        &self,
+        alias_or_model: &str,
+        messages: Vec<Message>,
+    ) -> crate::Result<CompletionStream> {
+        let config = self.config.read().await;
+        let alias = config
+            .aliases
+            .get(alias_or_model)
+            .or_else(|| config.aliases.get(&config.default_model))
+            .cloned()
+            .ok_or_else(|| crate::error::ConfigError::InvalidValue {
+                key: "model_alias".to_string(),
+                message: format!("Unknown model alias: {}", alias_or_model),
+            })?;
+        drop(config);
+
+        let mut request = CompletionRequest {
+            model: Some(alias.model.clone()),
+            messages,
+            temperature: alias.temperature,
+            max_tokens: alias.max_tokens,
+            stream: true,
+            tools: None,
+            stop: None,
+            extra: None,
+            requires_vision: false,
+            requires_tools: false,
+            requires_reasoning: false,
+            ..Default::default()
+        };
+
+        // Capability-aware routing
+        let alias = self.resolve_alias_with_capabilities(&alias, &request).await;
+        request.model = Some(alias.model.clone());
+
+        let mut providers_to_try = self.get_provider_chain(&alias).await;
+        for fallback in &request.fallback_models {
+            let config = self.config.read().await;
+            if let Some(fb_alias) = config.aliases.get(fallback).cloned() {
+                drop(config);
+                let fb_chain = self.get_provider_chain(&fb_alias).await;
+                for entry in fb_chain {
+                    if !providers_to_try.iter().any(|e| {
+                        e.provider == entry.provider && e.model == entry.model
+                    }) {
+                        providers_to_try.push(entry);
+                    }
+                }
+            } else {
+                drop(config);
+            }
+        }
+
+        let mut last_error = None;
+
+        for entry in providers_to_try {
+            if !entry.enabled {
+                continue;
+            }
+            if self.is_circuit_open(&entry.provider).await {
+                warn!("Circuit breaker open for provider: {}", entry.provider);
+                continue;
+            }
+
+            let providers = self.providers.read().await;
+            if let Some(provider) = providers.get(&entry.provider) {
+                let start = std::time::Instant::now();
+
+                match provider.stream(request.clone()).await {
+                    Ok(stream) => {
+                        self.record_success(&entry.provider, start.elapsed()).await;
+                        self.auth_profiles.record_success(&entry.provider).await;
+                        return Ok(stream);
+                    }
+                    Err(ref e) => {
+                        let class = FailureClass::from_error(e, None);
+                        warn!(
+                            "Provider {} stream failed with {}: {}",
+                            entry.provider,
+                            class.description(),
+                            e
+                        );
+                        drop(providers);
+
+                        if class == FailureClass::ModelNotFound {
+                            self.model_catalog
+                                .suppress(&entry.provider, &entry.model)
+                                .await;
+                        }
+
+                        if class.should_disable_key() {
+                            if let Err(disable_err) = self
+                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .await
+                            {
+                                error!(
+                                    "Key disable/rotation failed for provider {}: {}",
+                                    entry.provider, disable_err
+                                );
+                            }
+                            self.record_failure(&entry.provider, Some(class)).await;
+                            last_error = Some(crate::error::MantaError::ExternalService {
+                                source: format!("Provider {} auth disabled: {}", entry.provider, e),
+                                cause: None,
+                            });
+                            continue;
+                        }
+
+                        if class.should_rotate_key() {
+                            match self
+                                .rebuild_provider_with_rotated_key(&entry.provider)
+                                .await
+                            {
+                                Ok(()) => {
+                                    let providers = self.providers.read().await;
+                                    if let Some(provider) = providers.get(&entry.provider) {
+                                        match provider.stream(request.clone()).await {
+                                            Ok(stream) => {
+                                                self.record_success(
+                                                    &entry.provider,
+                                                    start.elapsed(),
+                                                )
+                                                .await;
+                                                self.auth_profiles
+                                                    .record_success(&entry.provider)
+                                                    .await;
+                                                return Ok(stream);
+                                            }
+                                            Err(e2) => {
+                                                let class2 =
+                                                    FailureClass::from_error(&e2, None);
+                                                error!(
+                                                    "Provider {} stream failed after key rotation: {}",
+                                                    entry.provider, e2
+                                                );
+                                                self.record_failure(
+                                                    &entry.provider,
+                                                    Some(class2),
+                                                )
+                                                .await;
                                                 last_error = Some(e2);
                                             }
                                         }
@@ -1474,6 +1667,24 @@ impl ModelRouter {
         // Add to config
         let mut router_config = self.config.write().await;
         router_config.providers.insert(name.to_string(), config);
+
+        Ok(())
+    }
+
+    /// Add a pre-built provider instance at runtime (e.g. from a plugin).
+    pub async fn add_provider_instance(
+        &self,
+        name: &str,
+        provider: Arc<dyn crate::providers::Provider + Send + Sync>,
+    ) -> crate::Result<()> {
+        info!("Adding provider instance at runtime: {}", name);
+
+        let mut providers = self.providers.write().await;
+        providers.insert(name.to_string(), provider);
+        drop(providers);
+
+        let mut health = self.health.write().await;
+        health.insert(name.to_string(), ProviderHealth::default());
 
         Ok(())
     }

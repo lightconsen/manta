@@ -173,7 +173,25 @@ pub async fn run_provider_command(command: &ProviderCommands) -> Result<()> {
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    // Try to parse as formatted usage snapshots
+                    if let Ok(snapshots) = serde_json::from_value::<
+                        Vec<crate::model_router::ProviderUsageSnapshot>,
+                    >(body.clone())
+                    {
+                        if id.is_some() {
+                            for snapshot in &snapshots {
+                                println!(
+                                    "{}",
+                                    crate::model_router::format_provider_snapshot(snapshot)
+                                );
+                            }
+                        } else {
+                            println!("{}", crate::model_router::format_usage_report(&snapshots));
+                        }
+                    } else {
+                        // Fallback to pretty-printed JSON
+                        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);

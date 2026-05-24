@@ -838,6 +838,9 @@ pub enum AgentCommand {
         message: String,
         user_id: String,
         channel: String,
+        /// Optional model override (e.g. from OpenAI-compatible API header/query).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model_override: Option<String>,
     },
     /// Cancel current operation
     Cancel,
@@ -1241,6 +1244,32 @@ impl Gateway {
             }
         }
 
+        // Wire plugin manager to register plugin-backed providers with the model router
+        {
+            let mr_register = model_router.clone();
+            let mr_unregister = model_router.clone();
+            plugin_manager
+                .set_provider_callbacks(
+                    Arc::new(move |name: String, provider: Arc<dyn crate::providers::Provider + Send + Sync>| {
+                        let mr = mr_register.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = mr.add_provider_instance(&name, provider).await {
+                                warn!("Failed to register plugin provider '{}': {}", name, e);
+                            }
+                        });
+                    }),
+                    Arc::new(move |name: String| {
+                        let mr = mr_unregister.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = mr.remove_provider(&name).await {
+                                warn!("Failed to unregister plugin provider '{}': {}", name, e);
+                            }
+                        });
+                    }),
+                )
+                .await;
+        }
+
         // Configure ACP default agent builder (needs provider + tools, which are now ready)
         if let Ok(default_provider) = model_router.create_default_provider().await {
             let mut default_agent_config = config.default_agent.clone();
@@ -1251,11 +1280,15 @@ impl Gateway {
             default_agent_config.workspace_only = config.workspace_only;
             let default_tools = tool_registry.clone();
             let provider_clone = default_provider.clone();
+            let model_router_clone = model_router.clone();
+            let default_model = config.model.clone();
             acp.set_agent_builder(move || {
                 crate::agent::AgentBuilder::new()
                     .config(default_agent_config.clone())
                     .provider(provider_clone.clone())
                     .tools(default_tools.clone())
+                    .model_router(model_router_clone.clone())
+                    .model_alias(default_model.clone())
                     .build()
             })
             .await;
@@ -2124,24 +2157,28 @@ async fn spawn_agent_inner(
         let chat_history = mm.chat_history();
         Arc::new(
             Agent::new(config.clone(), provider, tools)
-                .with_model(model)
+                .with_model(model.clone())
                 .with_memory_manager(mm.clone())
                 .with_chat_history(chat_history)
                 .with_cost_guard(cost_guard)
                 .with_transcript_store(Arc::clone(&state.transcript_store))
                 .with_artifact_store(Arc::clone(&state.artifact_store))
                 .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                .with_model_router(Arc::clone(&state.model_router))
+                .with_model_alias(model.clone()),
         )
     } else {
         Arc::new(
             Agent::new(config.clone(), provider, tools)
-                .with_model(model)
+                .with_model(model.clone())
                 .with_cost_guard(cost_guard)
                 .with_transcript_store(Arc::clone(&state.transcript_store))
                 .with_artifact_store(Arc::clone(&state.artifact_store))
                 .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                .with_model_router(Arc::clone(&state.model_router))
+                .with_model_alias(model.clone()),
         )
     };
 
@@ -2195,6 +2232,7 @@ async fn spawn_agent_inner(
                         message,
                         user_id,
                         channel,
+                        model_override,
                     } => {
                         let source_channel = channel;
                         info!("Agent {} processing message for session {}", agent_id, session_id);
@@ -4542,6 +4580,7 @@ async fn chat_handler(
             message: body.message.clone(),
             user_id: "web_user".to_string(),
             channel: "web".to_string(),
+            model_override: None,
         };
 
         if let Err(e) = agent_handle.tx.send(cmd).await {
@@ -4742,7 +4781,7 @@ async fn create_agent_handler(
                 cmd = rx.recv() => {
                 let cmd = match cmd { Some(c) => c, None => break };
                 match cmd {
-                    AgentCommand::ProcessMessage { session_id, message, user_id, channel } => {
+                    AgentCommand::ProcessMessage { session_id, message, user_id, channel, model_override } => {
                         let source_channel = channel;
                         info!("Agent {} processing message for session {}", agent_id_clone, session_id);
 
@@ -4864,9 +4903,13 @@ async fn create_agent_handler(
                             };
                             Some(serde_json::json!({ "thinking": { "type": "enabled", "budget_tokens": budget } }))
                         });
+                        agent_clone.set_model_override(model_override).await;
                         agent_clone.set_extra_params(extra).await;
 
-                        match agent_clone.process_message_with_progress(incoming_msg, progress_cb).await {
+                        let result = agent_clone.process_message_with_progress(incoming_msg, progress_cb).await;
+                        agent_clone.set_model_override(None).await;
+
+                        match result {
                             Ok(mut outgoing) => {
                                 // Apply reasoning visibility filter
                                 let reasoning_vis = {
@@ -6805,6 +6848,7 @@ async fn spawn_discovered_agent_handler(
                             message,
                             user_id,
                             channel,
+                            model_override,
                         } => {
                             let incoming_msg = crate::channels::IncomingMessage::new(
                                 user_id.clone(),
@@ -6812,7 +6856,11 @@ async fn spawn_discovered_agent_handler(
                                 message.clone(),
                             );
 
-                            match agent.process_message(incoming_msg).await {
+                            agent.set_model_override(model_override).await;
+                            let result = agent.process_message(incoming_msg).await;
+                            agent.set_model_override(None).await;
+
+                            match result {
                                 Ok(outgoing) => {
                                     // Route response back to channel
                                     let _ = state_clone.event_tx.send(GatewayEvent::AgentResponse {
@@ -7450,6 +7498,13 @@ struct OpenAiChatRequest {
     stream: bool,
 }
 
+/// Query parameters for model override.
+#[derive(Debug, Deserialize)]
+struct ModelOverrideQuery {
+    #[serde(rename = "model")]
+    model: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct OpenAiChatResponse {
     id: String,
@@ -7488,9 +7543,19 @@ struct OpenAiUsage {
 #[allow(unused_assignments)]
 async fn openai_chat_completions_handler(
     State(state): State<Arc<GatewayState>>,
-    Json(req): Json<OpenAiChatRequest>,
+    Query(query): Query<ModelOverrideQuery>,
+    headers: axum::http::HeaderMap,
+    Json(mut req): Json<OpenAiChatRequest>,
 ) -> axum::response::Response {
     use axum::response::sse::{Event as SseEvt, KeepAlive, Sse};
+
+    // Request-level model override: header X-Model takes precedence,
+    // then query param ?model=..., then JSON body model field.
+    if let Some(header_model) = headers.get("x-model").and_then(|v| v.to_str().ok()) {
+        req.model = header_model.to_string();
+    } else if let Some(query_model) = query.model {
+        req.model = query_model;
+    }
 
     // Extract the last user message.
     let user_message = req
@@ -7540,6 +7605,7 @@ async fn openai_chat_completions_handler(
         message: user_message,
         user_id: "openai_api".to_string(),
         channel: "api".to_string(),
+        model_override: Some(req.model.clone()),
     };
 
     if let Err(e) = handle.tx.send(cmd).await {

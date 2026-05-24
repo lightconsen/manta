@@ -9,6 +9,7 @@
 
 pub mod hooks;
 pub mod manifest;
+pub mod provider_extension;
 pub mod runtime;
 
 pub use hooks::{
@@ -18,6 +19,7 @@ pub use hooks::{
 pub use manifest::{
     PluginArg, PluginCapability, PluginCommand, PluginManifest, PluginPermission, PluginTool,
 };
+pub use provider_extension::{PluginProvider, PluginProviderRegistry};
 pub use runtime::{PluginInstance, PluginRuntime};
 
 use std::path::PathBuf;
@@ -28,6 +30,13 @@ use tracing::{debug, info, warn};
 
 use crate::tools::ToolRegistry;
 
+/// Callback type for registering a plugin-backed provider with the system.
+pub type ProviderRegisterFn =
+    Arc<dyn Fn(String, Arc<dyn crate::providers::Provider + Send + Sync>) + Send + Sync>;
+
+/// Callback type for unregistering a plugin-backed provider.
+pub type ProviderUnregisterFn = Arc<dyn Fn(String) + Send + Sync>;
+
 /// Plugin manager - high-level interface for plugin operations
 #[allow(dead_code)]
 pub struct PluginManager {
@@ -37,6 +46,8 @@ pub struct PluginManager {
     auto_load: bool,
     tool_registry: RwLock<Option<Arc<ToolRegistry>>>,
     trace_enabled: Arc<AtomicBool>,
+    provider_register: RwLock<Option<ProviderRegisterFn>>,
+    provider_unregister: RwLock<Option<ProviderUnregisterFn>>,
 }
 
 impl PluginManager {
@@ -55,7 +66,21 @@ impl PluginManager {
             auto_load: true,
             tool_registry: RwLock::new(None),
             trace_enabled: Arc::new(AtomicBool::new(false)),
+            provider_register: RwLock::new(None),
+            provider_unregister: RwLock::new(None),
         })
+    }
+
+    /// Set callbacks for registering / unregistering plugin-backed providers.
+    pub async fn set_provider_callbacks(
+        &self,
+        register: ProviderRegisterFn,
+        unregister: ProviderUnregisterFn,
+    ) {
+        let mut reg = self.provider_register.write().await;
+        *reg = Some(register);
+        let mut unreg = self.provider_unregister.write().await;
+        *unreg = Some(unregister);
     }
 
     /// Attach a `ToolRegistry` so that plugin tools are automatically
@@ -95,20 +120,22 @@ impl PluginManager {
         Ok(count)
     }
 
-    /// Load a plugin from a directory and register its tools.
+    /// Load a plugin from a directory and register its tools and providers.
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
         let plugin_id = self.runtime.load_plugin(path).await?;
 
         if let Some(plugin) = self.runtime.get_plugin(&plugin_id).await {
             self.register_plugin_tools(&plugin).await;
+            self.register_plugin_providers(&plugin).await;
         }
 
         Ok(plugin_id)
     }
 
-    /// Unload a plugin, unregistering its tools and hooks.
+    /// Unload a plugin, unregistering its tools, providers, and hooks.
     pub async fn unload_plugin(&self, plugin_id: &str) -> crate::Result<bool> {
         self.deregister_plugin_tools(plugin_id).await;
+        self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
         self.runtime.unload_plugin(plugin_id).await
     }
@@ -121,12 +148,14 @@ impl PluginManager {
         info!("Reloading plugin '{}'...", plugin_id);
 
         self.deregister_plugin_tools(plugin_id).await;
+        self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
 
         let reloaded_id = self.runtime.reload_plugin(plugin_id).await?;
 
         if let Some(plugin) = self.runtime.get_plugin(&reloaded_id).await {
             self.register_plugin_tools(&plugin).await;
+            self.register_plugin_providers(&plugin).await;
         }
 
         info!("Plugin '{}' reloaded successfully", reloaded_id);
@@ -164,6 +193,62 @@ impl PluginManager {
                 for tool in plugin.manifest.get_tools() {
                     registry.deregister_dynamic(&tool.name);
                     debug!("Deregistered plugin tool '{}' from plugin '{}'", tool.name, plugin_id);
+                }
+            }
+        }
+    }
+
+    /// Register a plugin's provider capabilities with the system.
+    async fn register_plugin_providers(&self, plugin: &PluginInstance) {
+        let register_fn = self.provider_register.read().await;
+        if let Some(ref register) = *register_fn {
+            if let Some(ref capabilities) = plugin.manifest.capabilities {
+                for cap in capabilities {
+                    if let PluginCapability::Provider {
+                        name,
+                        default_model,
+                        stream_family,
+                        supports_tools,
+                        max_context,
+                    } = cap
+                    {
+                        let family = PluginProvider::parse_stream_family(stream_family);
+                        let provider = Arc::new(PluginProvider::new(
+                            plugin.id().to_string(),
+                            name.clone(),
+                            default_model.clone(),
+                            *supports_tools,
+                            *max_context,
+                            family,
+                            self.runtime.clone(),
+                        ));
+                        register(name.clone(), provider);
+                        info!(
+                            "Registered plugin provider '{}' from plugin '{}'",
+                            name,
+                            plugin.id()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Deregister a plugin's providers from the system.
+    async fn deregister_plugin_providers(&self, plugin_id: &str) {
+        let unregister_fn = self.provider_unregister.read().await;
+        if let Some(ref unregister) = *unregister_fn {
+            if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
+                if let Some(ref capabilities) = plugin.manifest.capabilities {
+                    for cap in capabilities {
+                        if let PluginCapability::Provider { name, .. } = cap {
+                            unregister(name.clone());
+                            debug!(
+                                "Deregistered plugin provider '{}' from plugin '{}'",
+                                name, plugin_id
+                            );
+                        }
+                    }
                 }
             }
         }

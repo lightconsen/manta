@@ -434,13 +434,25 @@ impl Provider for AnthropicProvider {
             stream: Some(request.stream),
         };
 
+        // Merge provider-specific extra parameters
+        let mut body_value = serde_json::to_value(&anthropic_request).unwrap_or_default();
+        if let Some(extra) = request.extra {
+            if let serde_json::Value::Object(ref mut map) = body_value {
+                if let serde_json::Value::Object(extra_map) = extra {
+                    for (k, v) in extra_map {
+                        map.insert(k, v);
+                    }
+                }
+            }
+        }
+
         debug!("Sending request to Anthropic API");
 
         let response = self
             .client
             .post(self.url("/v1/messages"))
             .headers(self.headers().await)
-            .json(&anthropic_request)
+            .json(&body_value)
             .send()
             .await
             .map_err(|e| crate::error::MantaError::Http(e))?;
@@ -491,11 +503,23 @@ impl Provider for AnthropicProvider {
             stream: Some(true),
         };
 
+        // Merge provider-specific extra parameters
+        let mut body_value = serde_json::to_value(&anthropic_request).unwrap_or_default();
+        if let Some(extra) = request.extra {
+            if let serde_json::Value::Object(ref mut map) = body_value {
+                if let serde_json::Value::Object(extra_map) = extra {
+                    for (k, v) in extra_map {
+                        map.insert(k, v);
+                    }
+                }
+            }
+        }
+
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
             .headers(self.headers().await)
-            .json(&anthropic_request)
+            .json(&body_value)
             .send()
             .await
             .map_err(|e| crate::error::MantaError::ExternalService {

@@ -591,6 +591,227 @@ impl PluginRuntime {
         Ok(result)
     }
 
+    // ------------------------------------------------------------------
+    // Provider delegation stubs
+    // ------------------------------------------------------------------
+
+    /// Call a plugin's provider `complete` implementation.
+    ///
+    /// The plugin must export `provider_complete(request_ptr, request_len, out_ptr, out_max) -> i32`.
+    pub async fn call_provider_complete(
+        &self,
+        plugin_id: &str,
+        request: &serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        #[cfg(feature = "plugins")]
+        {
+            let mut plugins = self.plugins.write().await;
+            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
+                crate::error::ConfigError::InvalidValue {
+                    key: "plugin_id".to_string(),
+                    message: format!("Plugin '{}' not found", plugin_id),
+                }
+            })?;
+
+            if !plugin.enabled {
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Plugin '{}' is disabled",
+                    plugin_id
+                )));
+            }
+
+            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
+                (Some(s), Some(i)) => (s, i),
+                _ => {
+                    return Err(crate::error::MantaError::Internal(format!(
+                        "Plugin '{}' has no WASM module loaded",
+                        plugin_id
+                    )));
+                }
+            };
+
+            return Self::invoke_wasm_provider(store, instance, "provider_complete", request);
+        }
+
+        #[cfg(not(feature = "plugins"))]
+        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+    }
+
+    /// Call a plugin's provider `stream` implementation.
+    ///
+    /// The plugin must export `provider_stream(request_ptr, request_len, out_ptr, out_max) -> i32`.
+    /// Returns a JSON array of CompletionChunk objects.
+    pub async fn call_provider_stream(
+        &self,
+        plugin_id: &str,
+        request: &serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        #[cfg(feature = "plugins")]
+        {
+            let mut plugins = self.plugins.write().await;
+            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
+                crate::error::ConfigError::InvalidValue {
+                    key: "plugin_id".to_string(),
+                    message: format!("Plugin '{}' not found", plugin_id),
+                }
+            })?;
+
+            if !plugin.enabled {
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Plugin '{}' is disabled",
+                    plugin_id
+                )));
+            }
+
+            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
+                (Some(s), Some(i)) => (s, i),
+                _ => {
+                    return Err(crate::error::MantaError::Internal(format!(
+                        "Plugin '{}' has no WASM module loaded",
+                        plugin_id
+                    )));
+                }
+            };
+
+            return Self::invoke_wasm_provider(store, instance, "provider_stream", request);
+        }
+
+        #[cfg(not(feature = "plugins"))]
+        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+    }
+
+    /// Call a plugin's provider `health_check` implementation.
+    ///
+    /// The plugin must export `provider_health_check(out_ptr, out_max) -> i32`.
+    pub async fn call_provider_health_check(
+        &self,
+        plugin_id: &str,
+    ) -> crate::Result<serde_json::Value> {
+        #[cfg(feature = "plugins")]
+        {
+            let mut plugins = self.plugins.write().await;
+            let plugin = plugins.get_mut(plugin_id).ok_or_else(|| {
+                crate::error::ConfigError::InvalidValue {
+                    key: "plugin_id".to_string(),
+                    message: format!("Plugin '{}' not found", plugin_id),
+                }
+            })?;
+
+            if !plugin.enabled {
+                return Err(crate::error::MantaError::Validation(format!(
+                    "Plugin '{}' is disabled",
+                    plugin_id
+                )));
+            }
+
+            let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
+                (Some(s), Some(i)) => (s, i),
+                _ => {
+                    return Err(crate::error::MantaError::Internal(format!(
+                        "Plugin '{}' has no WASM module loaded",
+                        plugin_id
+                    )));
+                }
+            };
+
+            return Self::invoke_wasm_provider(
+                store,
+                instance,
+                "provider_health_check",
+                &serde_json::json!({}),
+            );
+        }
+
+        #[cfg(not(feature = "plugins"))]
+        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+    }
+
+    /// Low-level WASM provider invocation.
+    #[cfg(feature = "plugins")]
+    fn invoke_wasm_provider(
+        store: &mut wasmtime::Store<PluginState>,
+        instance: &wasmtime::Instance,
+        export_name: &str,
+        request: &serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        const OUT_MAX: i32 = 256_000; // 256 KiB output buffer
+
+        let request_json = serde_json::to_string(request)
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+        let request_bytes = request_json.as_bytes();
+
+        let memory = instance
+            .get_export(&mut *store, "memory")
+            .and_then(|e| e.into_memory())
+            .ok_or_else(|| {
+                crate::error::MantaError::Internal(
+                    "Plugin WASM module has no 'memory' export".to_string(),
+                )
+            })?;
+
+        let alloc_fn: Option<wasmtime::TypedFunc<i32, i32>> = instance
+            .get_typed_func::<i32, i32>(&mut *store, "alloc")
+            .ok();
+
+        let req_len = request_bytes.len() as i32;
+        let req_ptr = if let Some(ref f) = alloc_fn {
+            f.call(&mut *store, req_len)
+                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+        } else {
+            0i32
+        };
+        if req_ptr != 0 {
+            let data = memory.data_mut(&mut *store);
+            data[req_ptr as usize..req_ptr as usize + request_bytes.len()]
+                .copy_from_slice(request_bytes);
+        }
+
+        let out_ptr = if let Some(ref f) = alloc_fn {
+            f.call(&mut *store, OUT_MAX)
+                .map_err(|e| crate::error::MantaError::Internal(format!("alloc output: {}", e)))?
+        } else {
+            0i32
+        };
+
+        let written: i32 = if let Ok(f) =
+            instance.get_typed_func::<(i32, i32, i32, i32), i32>(&mut *store, export_name)
+        {
+            f.call(&mut *store, (req_ptr, req_len, out_ptr, OUT_MAX))
+                .map_err(|e| {
+                    crate::error::MantaError::Internal(format!("{}: {}", export_name, e))
+                })?
+        } else {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Plugin does not export '{}' function",
+                export_name
+            )));
+        };
+
+        if written < 0 {
+            return Err(crate::error::MantaError::Internal(format!(
+                "Plugin provider '{}' returned error code {}",
+                export_name, written
+            )));
+        }
+
+        let result_bytes = {
+            let data = memory.data(&store);
+            let start = out_ptr as usize;
+            let end = start + written as usize;
+            data[start..end].to_vec()
+        };
+
+        let result_str = std::str::from_utf8(&result_bytes).map_err(|e| {
+            crate::error::MantaError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
+        })?;
+
+        let result: serde_json::Value = serde_json::from_str(result_str)
+            .unwrap_or_else(|_| serde_json::json!({ "output": result_str }));
+
+        debug!("Plugin provider '{}' executed successfully ({} bytes)", export_name, written);
+        Ok(result)
+    }
+
     /// Shutdown all plugins
     pub async fn shutdown(&self) -> crate::Result<()> {
         let mut plugins = self.plugins.write().await;

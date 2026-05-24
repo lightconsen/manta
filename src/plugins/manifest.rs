@@ -63,6 +63,19 @@ pub enum PluginCapability {
         /// List of models provided by this plugin
         models: Vec<PluginModelEntry>,
     },
+    /// Provides a custom LLM provider implementation
+    Provider {
+        /// Provider name identifier
+        name: String,
+        /// Default model for this provider
+        default_model: String,
+        /// Stream family for this provider
+        stream_family: String,
+        /// Whether this provider supports tool calling
+        supports_tools: bool,
+        /// Max context window size
+        max_context: usize,
+    },
 }
 
 /// A model entry declared by a plugin for dynamic model discovery.
@@ -182,6 +195,7 @@ impl PluginManifest {
                     PluginCapability::Hooks { .. } => "hooks",
                     PluginCapability::Commands { .. } => "commands",
                     PluginCapability::Models { .. } => "models",
+                    PluginCapability::Provider { .. } => "provider",
                 };
                 t == capability_type
             })

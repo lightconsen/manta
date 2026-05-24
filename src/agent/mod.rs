@@ -531,6 +531,13 @@ pub struct Agent {
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
     /// Provider-specific extra parameters (e.g. thinking config) injected into completion requests.
     extra_params: Arc<RwLock<Option<serde_json::Value>>>,
+    /// Optional model router for advanced routing, key rotation, and fallback.
+    model_router: Option<Arc<crate::model_router::ModelRouter>>,
+    /// Model alias used when routing through the model router.
+    model_alias: Option<String>,
+    /// Temporary model override set per-request (e.g. from OpenAI-compatible API).
+    /// Takes precedence over `model_alias` and `model`.
+    model_override: Arc<RwLock<Option<String>>>,
 }
 
 impl Agent {
@@ -563,6 +570,9 @@ impl Agent {
             disk_budget: None,
             session_file_manager: None,
             extra_params: Arc::new(RwLock::new(None)),
+            model_router: None,
+            model_alias: None,
+            model_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -571,6 +581,69 @@ impl Agent {
     pub async fn set_extra_params(&self, params: Option<serde_json::Value>) {
         let mut guard = self.extra_params.write().await;
         *guard = params;
+    }
+
+    /// Set a temporary model override for the next provider call.
+    ///
+    /// Cleared automatically after each `process_message` invocation
+    /// so that subsequent requests revert to the default model.
+    pub async fn set_model_override(&self, model: Option<String>) {
+        let mut guard = self.model_override.write().await;
+        *guard = model;
+    }
+
+    /// Patch a [`CompletionRequest`] with provider-specific reasoning parameters
+    /// when the target model is a known reasoning / thinking model and no
+    /// explicit reasoning config has already been supplied via `extra`.
+    fn patch_request_for_reasoning(&self, request: &mut CompletionRequest) {
+        let family = self.provider.stream_family();
+        let model = request
+            .model
+            .as_deref()
+            .or(self.model.as_deref())
+            .unwrap_or_else(|| self.provider.default_model());
+
+        // Skip if user already provided explicit reasoning config in extra
+        let has_reasoning_config = request.extra.as_ref().map_or(false, |v| {
+            v.get("reasoning_effort").is_some()
+                || v.get("thinking").is_some()
+                || v.get("thinkingConfig").is_some()
+        });
+        if has_reasoning_config {
+            return;
+        }
+
+        match family {
+            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAi
+            | crate::providers::stream_wrappers::ProviderStreamFamily::OpenAiReasoning => {
+                // OpenAI o1 / o3 series use `reasoning_effort`
+                if model.starts_with("o1") || model.starts_with("o3") {
+                    request.extra = Some(
+                        serde_json::json!({ "reasoning_effort": "medium", "service_tier": "auto" }),
+                    );
+                }
+            }
+            crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
+            | crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking => {
+                // Anthropic thinking models (claude-3-7-sonnet-thinking, etc.)
+                if model.contains("thinking") || model.contains("-extended-thinking") {
+                    request.extra = Some(
+                        serde_json::json!({
+                            "thinking": { "type": "enabled", "budget_tokens": 16000 }
+                        }),
+                    );
+                }
+            }
+            crate::providers::stream_wrappers::ProviderStreamFamily::GoogleThinking => {
+                // Gemini thinking models
+                if model.contains("thinking") || model.contains("-exp") {
+                    request.extra = Some(
+                        serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }),
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Set the skill trust level for the next process_message invocation.
@@ -712,6 +785,21 @@ impl Agent {
         manager: Arc<crate::agent::SessionFileManager>,
     ) -> Self {
         self.session_file_manager = Some(manager);
+        self
+    }
+
+    /// Attach a `ModelRouter` for advanced routing, key rotation, and fallback.
+    pub fn with_model_router(
+        mut self,
+        router: Arc<crate::model_router::ModelRouter>,
+    ) -> Self {
+        self.model_router = Some(router);
+        self
+    }
+
+    /// Set the model alias used when routing through the model router.
+    pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
+        self.model_alias = Some(alias.into());
         self
     }
 
@@ -1681,6 +1769,7 @@ impl Agent {
             extra,
             ..Default::default()
         };
+        self.patch_request_for_reasoning(&mut request);
 
         if has_tools && self.provider.supports_tools() {
             // Convert FunctionDefinition to ToolDefinition
@@ -1705,8 +1794,19 @@ impl Agent {
             }
         }
 
-        // Get completion
-        let response = self.provider.complete(request).await?;
+        // Get completion — use model router when available for key rotation / fallback
+        let response = if let Some(ref router) = self.model_router {
+            let alias = {
+                let guard = self.model_override.read().await;
+                guard.as_ref().cloned()
+                    .or(self.model_alias.clone())
+                    .or(self.model.clone())
+                    .unwrap_or_else(|| self.provider.default_model().to_string())
+            };
+            router.complete(&alias, request.messages).await?
+        } else {
+            self.provider.complete(request).await?
+        };
 
         // Record token usage in cost guard
         if let Some(ref guard) = self.cost_guard {
@@ -1882,6 +1982,7 @@ impl Agent {
             extra,
             ..Default::default()
         };
+        self.patch_request_for_reasoning(&mut request);
 
         if has_tools && self.provider.supports_tools() {
             let tools: Vec<crate::providers::ToolDefinition> = tool_defs
@@ -1908,9 +2009,21 @@ impl Agent {
         // Notify generating (starting)
         (progress_cb)(ProgressEvent::Generating { content: None }).await;
 
-        // Get streaming completion
-        let raw_stream = self.provider.stream(request).await?;
-        let family = self.provider.stream_family();
+        // Get streaming completion — use model router when available
+        let (raw_stream, family) = if let Some(ref router) = self.model_router {
+            let alias = {
+                let guard = self.model_override.read().await;
+                guard.as_ref().cloned()
+                    .or(self.model_alias.clone())
+                    .or(self.model.clone())
+                    .unwrap_or_else(|| self.provider.default_model().to_string())
+            };
+            let stream = router.stream(&alias, request.messages).await?;
+            // When using model router, fall back to Generic stream family
+            (stream, crate::providers::stream_wrappers::ProviderStreamFamily::Generic)
+        } else {
+            (self.provider.stream(request).await?, self.provider.stream_family())
+        };
         let registry = crate::providers::stream_wrappers::StreamFamilyRegistry::default();
         let mut stream = registry.apply(family, raw_stream);
 
@@ -2650,6 +2763,8 @@ pub struct AgentBuilder {
     artifact_store: Option<Arc<crate::agent::ArtifactStore>>,
     disk_budget: Option<Arc<crate::agent::DiskBudgetManager>>,
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
+    model_router: Option<Arc<crate::model_router::ModelRouter>>,
+    model_alias: Option<String>,
 }
 
 impl AgentBuilder {
@@ -2726,6 +2841,18 @@ impl AgentBuilder {
         self
     }
 
+    /// Set model router for advanced routing, key rotation, and fallback.
+    pub fn model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
+        self.model_router = Some(router);
+        self
+    }
+
+    /// Set model alias used when routing through the model router.
+    pub fn model_alias(mut self, alias: impl Into<String>) -> Self {
+        self.model_alias = Some(alias.into());
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -2762,6 +2889,14 @@ impl AgentBuilder {
 
         if let Some(manager) = self.session_file_manager {
             agent = agent.with_session_file_manager(manager);
+        }
+
+        if let Some(router) = self.model_router {
+            agent = agent.with_model_router(router);
+        }
+
+        if let Some(alias) = self.model_alias {
+            agent = agent.with_model_alias(alias);
         }
 
         Ok(agent)
