@@ -57,5 +57,11 @@ pub struct GatewayState {
 - **Missing**: Full ACP control plane integration — ACP struct exists but protocol handlers are incomplete.
 - **Missing**: Gateway-level metrics and health check endpoint.
 - **Missing**: Multi-instance coordination (distributed mode).
-- **Missing**: Plugin hot-reload with versioning.
 - **Missing**: Send policy enforcement (DM policy, allowlist gate) not fully wired.
+- **Missing**: Gateway Protocol Schema — JSON Schema / OpenAPI spec generation from Rust types (e.g. via `schemars`), multi-language binding generation pipeline.
+- **Missing**: Device identity system — `DeviceIdentity` with device ID, platform, version, persistent storage in SQLite, device pairing (QR code).
+- **Missing**: Multi-auth mode gateway — `token` / `password` / `none` with mode ambiguity detection, credential precedence (`env-first` / `config-first`), Tailscale and trusted proxy auth.
+- **Missing**: TUI client — `ratatui`-based interactive terminal UI with real-time streaming, session management, config editor.
+- **Missing**: Web UI static file serving and WebSocket real-time integration (`web/chat-ui/` exists but may not be fully wired to Gateway WebSocket).
+- **Missing**: Multi-platform native clients — mobile (Tauri Mobile / React Native + Gateway), desktop (Tauri / egui / iced), shared protocol layer (`uniffi` or JSON Schema → Swift/Kotlin/TypeScript).
+- **Missing**: Protocol code generation pipeline — automated Rust Types → JSON Schema → Swift/Kotlin/TypeScript bindings, CI compatibility verification.

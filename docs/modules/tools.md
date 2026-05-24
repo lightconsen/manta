@@ -55,6 +55,13 @@ Capabilities the AI assistant can use to interact with the world.
 
 ## Missing / TODO
 
+- **Missing**: Command registry — `ChatCommandDefinition` with key, aliases, description, args, category, tier (essential/standard/power), scope.
+- **Missing**: Command detection — three-layer detection (control command / command message / inline token), deliberate false-positive bias.
+- **Missing**: Command authorization — provider inference, AllowFrom resolution, owner state machine, sender candidate matching, gateway client scope.
+- **Missing**: Command gating — access groups, multi-authorizer OR logic, dual authorizer support, `resolveControlCommandGate()`.
+- **Missing**: Help system — dynamic help message building with feature flags, category grouping, pagination (8 per page).
+- **Missing**: Tool gating — 30+ option gating (plugin_tool_allowlist, model_has_vision, sender_is_owner, model/provider gating, sandbox policy).
+- **Missing**: Exec approvals — `ask = "never" | "dangerous" | "always"`, `host = "auto" | "node" | "gateway"`, `security = "sandbox" | "normal" | "relaxed"`, shell command safety analysis (rm, curl, etc.), safe bin policy, host env sanitization.
 - **Missing**: Tool SDK for external WASM plugin tools.
 - **Missing**: Full sandbox isolation on non-Unix platforms (Windows sandbox is a no-op).
 - **Missing**: Tool result streaming for long-running operations.

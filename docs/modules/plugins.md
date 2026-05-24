@@ -83,11 +83,22 @@ pub enum HookType {
 
 ## Missing / TODO
 
-- **Missing**: WASM sandbox is declared but the `PluginRuntime` may not fully isolate memory/IO.
+- **Missing**: WASM sandbox may not fully isolate memory/IO — `PluginRuntime` needs WASI capability restrictions (filesystem, network, env) via `wasmtime_wasi::WasiCtxBuilder`.
 - **Missing**: Plugin channels capability is declared but not wired into `ChannelRegistry`.
 - **Missing**: Plugin-to-plugin communication.
-- **Missing**: Plugin marketplace integration beyond local directory loading.
-- **Missing**: Plugin signing and verification.
+- **Missing**: Plugin marketplace / registry — remote install, plugin index format, semver dependency resolution.
+- **Missing**: Plugin signing and verification (ed25519-dalek or similar).
 - **Missing**: Granular permission enforcement at runtime (manifest declares permissions but enforcement is coarse).
 - **Missing**: Plugin state persistence across restarts.
 - **Missing**: Plugin metrics and resource usage monitoring.
+- **Missing**: File-system watcher hot reload — `reload_plugin()` exists but no `notify` watcher for `.wasm` file changes.
+- **Missing**: Plugin registry with SQLite persistence for installed plugin metadata.
+- **Missing**: Activation planner — trigger-based plugin loading (command/provider/channel/route/capability), dependency-ordered activation, diagnostics.
+- **Missing**: Version management — semver compatibility checking (`manta = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
+- **Missing**: Config hot-reload integration — `ConfigWatcher` changes should diff plugin list, safely load/unload changed plugins.
+- **Missing**: Plugin dependency management — auto-download external resources (binaries, models), `dirs`-based data directory.
+- **Missing**: Migration system — plugin data structure changes with SQLite `schema_version` tracking.
+- **Missing**: Modular SDK crates — workspace-based `manta-plugin-sdk-core`, `manta-plugin-sdk-channel`, `manta-plugin-sdk-memory`, `manta-plugin-sdk-provider`, `manta-plugin-sdk-security` to enforce boundary control.
+- **Missing**: SDK boundary lint — CI check that plugins only depend on SDK crates, not internal `src/` modules.
+- **Missing**: Plugin doctor — compatibility and runtime environment diagnostics at load time.
+- **Missing**: WIT interface versioning for WASM plugins.
