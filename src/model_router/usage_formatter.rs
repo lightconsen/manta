@@ -65,6 +65,19 @@ pub fn format_provider_snapshot(snapshot: &ProviderUsageSnapshot) -> String {
         lines.push(format!("    Estimated cost: ${:.4}", snapshot.estimated_cost_usd));
     }
 
+    if let Some(ref quota) = snapshot.quota {
+        lines.push(format!(
+            "    Quota:  ${:.2} remaining / ${:.2} limit  ({})",
+            quota.remaining,
+            quota.limit,
+            match quota.source {
+                crate::model_router::usage_tracker::QuotaSource::Remote => "remote",
+                crate::model_router::usage_tracker::QuotaSource::LocalBudget => "local budget",
+                crate::model_router::usage_tracker::QuotaSource::Unknown => "unknown",
+            }
+        ));
+    }
+
     if !snapshot.windows.is_empty() {
         lines.push(String::new());
         lines.push("    Windows:".to_string());
@@ -87,6 +100,11 @@ pub fn format_usage_summary_line(snapshots: &[ProviderUsageSnapshot]) -> String 
     let parts: Vec<String> = snapshots
         .iter()
         .map(|s| {
+            if let Some(ref quota) = s.quota {
+                if quota.remaining > 0.0 {
+                    return format!("{} ${:.2} left", s.provider, quota.remaining);
+                }
+            }
             let today_cost = s
                 .windows
                 .iter()

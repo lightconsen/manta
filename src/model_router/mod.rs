@@ -12,10 +12,12 @@ pub mod failure_class;
 pub mod gateway_client;
 pub mod model_catalog;
 pub mod oauth_credential;
+pub mod usage_fetcher;
 pub mod usage_formatter;
 pub mod usage_tracker;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,7 +38,8 @@ pub use usage_formatter::{
     format_provider_snapshot, format_tokens, format_usage_report, format_usage_summary_line,
     format_window, format_window_compact,
 };
-pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig};
+pub use usage_fetcher::{LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry};
+pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig, UsageQuota, QuotaSource};
 
 /// Model alias configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,6 +577,8 @@ pub struct ModelRouter {
     pub usage_tracker: ProviderUsageTracker,
     /// Dynamic model catalog with discovery and suppression
     pub model_catalog: ModelCatalog,
+    /// Remote usage quota fetchers keyed by provider name.
+    pub usage_fetchers: RwLock<UsageFetcherRegistry>,
 }
 
 impl Default for ModelRouter {
@@ -593,6 +598,7 @@ impl ModelRouter {
             auth_profiles: AuthProfileManager::new(),
             usage_tracker: ProviderUsageTracker::new(UsageTrackerConfig::default()),
             model_catalog: ModelCatalog::new(),
+            usage_fetchers: RwLock::new(UsageFetcherRegistry::default()),
         }
     }
 
@@ -617,6 +623,16 @@ impl ModelRouter {
 
             let mut health = self.health.write().await;
             health.insert(name.clone(), ProviderHealth::default());
+
+            // Register remote usage fetcher for supported providers
+            if matches!(provider_config.provider_type, ProviderType::OpenAi) {
+                let api_key = provider_config.effective_key();
+                if !api_key.is_empty() {
+                    let fetcher = OpenAiUsageFetcher::new(api_key);
+                    let mut fetchers = self.usage_fetchers.write().await;
+                    fetchers.register(name.clone(), Box::new(fetcher));
+                }
+            }
         }
 
         // Initialize fallback chains
@@ -1267,6 +1283,91 @@ impl ModelRouter {
             cost_aware.daily_spend_usd = 0.0;
             info!("Daily spend counter reset");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Usage snapshot enrichment with remote quota
+    // ------------------------------------------------------------------
+
+    /// Get a usage snapshot enriched with remote quota (if a fetcher is registered).
+    pub async fn snapshot_with_quota(&self, provider: &str) -> Option<ProviderUsageSnapshot> {
+        let mut snapshot = self.usage_tracker.snapshot(provider).await?;
+
+        let fetchers = self.usage_fetchers.read().await;
+        if let Some(fetcher) = fetchers.get(provider) {
+            match fetcher.fetch().await {
+                Ok(Some(quota)) => {
+                    snapshot.quota = Some(quota);
+                }
+                Ok(None) => {
+                    // No remote quota — try local budget fallback
+                    drop(fetchers);
+                    snapshot.quota = self.local_budget_quota(provider).await;
+                }
+                Err(e) => {
+                    debug!("Failed to fetch remote quota for {}: {}", provider, e);
+                    drop(fetchers);
+                    snapshot.quota = self.local_budget_quota(provider).await;
+                }
+            }
+        } else {
+            drop(fetchers);
+            snapshot.quota = self.local_budget_quota(provider).await;
+        }
+
+        snapshot.last_updated = Utc::now();
+        Some(snapshot)
+    }
+
+    /// Get all usage snapshots enriched with remote quota.
+    pub async fn all_snapshots_with_quota(&self) -> Vec<ProviderUsageSnapshot> {
+        let base_snapshots = self.usage_tracker.all_snapshots().await;
+        let mut enriched = Vec::with_capacity(base_snapshots.len());
+
+        for mut snapshot in base_snapshots {
+            let provider = snapshot.provider.clone();
+            let quota = {
+                let fetchers = self.usage_fetchers.read().await;
+                if let Some(fetcher) = fetchers.get(&provider) {
+                    match fetcher.fetch().await {
+                        Ok(Some(q)) => Some(q),
+                        _ => self.local_budget_quota(&provider).await,
+                    }
+                } else {
+                    drop(fetchers);
+                    self.local_budget_quota(&provider).await
+                }
+            };
+            snapshot.quota = quota;
+            snapshot.last_updated = Utc::now();
+            enriched.push(snapshot);
+        }
+
+        enriched
+    }
+
+    /// Build a local-budget quota when no remote fetcher is available.
+    async fn local_budget_quota(&self, provider: &str) -> Option<UsageQuota> {
+        let snapshot = self.usage_tracker.snapshot(provider).await?;
+        let config = self.usage_tracker.config();
+
+        let today_cost: f64 = snapshot
+            .windows
+            .iter()
+            .filter(|w| w.label == "today")
+            .map(|w| w.estimated_cost_usd)
+            .sum();
+
+        let month_cost: f64 = snapshot
+            .windows
+            .iter()
+            .filter(|w| w.label == "this_month")
+            .map(|w| w.estimated_cost_usd)
+            .sum();
+
+        let fetcher =
+            LocalBudgetFetcher::new(provider, config.daily_budget_usd, config.monthly_budget_usd, today_cost, month_cost);
+        fetcher.fetch().await.ok().flatten()
     }
 
     /// Resolve an alias, upgrading to a capability-compatible model if needed.

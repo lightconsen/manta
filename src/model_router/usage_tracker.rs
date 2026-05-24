@@ -15,6 +15,33 @@ use tracing::{debug, trace};
 
 use crate::providers::Usage;
 
+/// Remote usage quota fetched from a provider's API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageQuota {
+    /// Estimated remaining budget / quota (in USD or tokens, provider-dependent).
+    pub remaining: f64,
+    /// Total quota limit.
+    pub limit: f64,
+    /// When the quota window resets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_at: Option<DateTime<Utc>>,
+    /// Unit of the quota values: "usd", "tokens", "requests".
+    pub unit: String,
+    /// Where this quota came from.
+    pub source: QuotaSource,
+}
+
+/// Source of a usage quota reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuotaSource {
+    /// Quota was fetched from the provider's remote API.
+    Remote,
+    /// Quota was derived from local budget configuration.
+    LocalBudget,
+    /// No quota information available.
+    Unknown,
+}
+
 /// A single usage window (e.g. "today", "this_hour").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageWindow {
@@ -59,6 +86,9 @@ pub struct ProviderUsageSnapshot {
     pub total_requests: u64,
     pub total_tokens: Usage,
     pub estimated_cost_usd: f64,
+    /// Optional remote quota information (remaining budget / limit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<UsageQuota>,
     pub last_updated: DateTime<Utc>,
 }
 
@@ -94,6 +124,11 @@ impl ProviderUsageTracker {
         }
     }
 
+    /// Access the tracker configuration.
+    pub fn config(&self) -> &UsageTrackerConfig {
+        &self.config
+    }
+
     /// Record usage for a provider.
     pub async fn record(&self, provider: &str, usage: Usage, model: &str) {
         let cost = Self::estimate_cost(usage, model);
@@ -109,6 +144,7 @@ impl ProviderUsageTracker {
                     total_requests: 0,
                     total_tokens: Usage::default(),
                     estimated_cost_usd: 0.0,
+                    quota: None,
                     last_updated: now,
                 });
 

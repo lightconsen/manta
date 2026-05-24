@@ -2034,6 +2034,8 @@ impl Gateway {
             // OpenAI-compatible API
             .route("/v1/chat/completions", post(openai_chat_completions_handler))
             .route("/v1/models", get(openai_list_models_handler))
+            // Internal model catalog API
+            .route("/api/v1/models", get(list_models_handler))
             // Manta as MCP server – Streamable-HTTP endpoint
             .route("/mcp", post(manta_as_mcp_server_handler))
             // Admin redirect — management UI moved to CLI
@@ -5640,7 +5642,7 @@ async fn check_provider_handler(
 // Provider Usage Handlers
 
 async fn provider_usage_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let snapshots = state.model_router.usage_tracker.all_snapshots().await;
+    let snapshots = state.model_router.all_snapshots_with_quota().await;
     Json(serde_json::json!({
         "providers": snapshots,
         "count": snapshots.len(),
@@ -5651,7 +5653,7 @@ async fn provider_usage_by_id_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    match state.model_router.usage_tracker.snapshot(&id).await {
+    match state.model_router.snapshot_with_quota(&id).await {
         Some(snapshot) => (StatusCode::OK, Json(serde_json::json!(snapshot))).into_response(),
         None => {
             let error = serde_json::json!({
