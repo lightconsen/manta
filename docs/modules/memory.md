@@ -87,3 +87,6 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 - **Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
 - **Missing**: Memory export/import for migration between workspaces.
 - **Missing**: Soul/personality file auto-generation from conversation patterns.
+- **Missing**: Dream result human review — summaries and knowledge graph mutations are auto-applied without user confirmation.
+- **Missing**: Dream observability dashboard — no CPU/memory/LLM token metrics are collected during dream cycles.
+- **Missing**: Effectiveness closed-loop feedback — recall hit-rate data is recorded but not used to auto-adjust memory importance or tier.
