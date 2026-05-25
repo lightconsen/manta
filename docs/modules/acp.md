@@ -82,9 +82,9 @@ Gateway ──▶ AcpControlPlane ──▶ ACP Actor Loop
 
 ## Missing / TODO
 
-- **Missing**: Full ACP protocol handlers in gateway are incomplete (transitional per protocol.md v1.0 Phase 3).
-- **Missing**: Session store persistence — `store` field exists but is not wired to disk.
-- **Missing**: Subagent registry is not used for active routing decisions in the agent.
-- **Missing**: Thread context switching and migration between threads.
-- **Missing**: Subagent crash recovery (watchdog detects `Crashed` status but does not auto-restart).
-- **Missing**: Cross-session subagent communication beyond parent-child.
+- **📝 Partial**: Full ACP protocol handlers — `ExecutionController` with RuntimeState machine (Idle/Running/Paused/Stepping/Cancelled) is fully implemented and checked between LLM iterations. WS RPC handlers exist for execute/pause/resume/step/cancel. Protocol handlers are transitional per protocol.md v1.0 Phase 3. See `src/acp/mod.rs:1833-1845`, `src/acp/mod.rs:2049-2062`, `src/gateway/ws.rs`.
+- **📝 Partial**: Session store persistence — `store: Option<Arc<SessionStore>>` exists and `load_persisted_sessions()` is implemented, but the store is optional and may not always be wired at initialization. See `src/acp/mod.rs:829-854`.
+- **📝 Partial**: Subagent registry routing — `SubagentRegistry` has full lifecycle tracking (spawn/complete/wait/kill) with persist/load, but is not actively consulted by `DelegateTool` for routing decisions. See `src/agent/subagent_registry.rs`.
+- **📝 Partial**: Subagent crash recovery — watchdog task detects panics and marks `SubagentStatus::Crashed`, but does not auto-restart crashed subagents. See `src/acp/mod.rs:1204-1215`.
+- **❌ Missing**: Thread context switching and migration between threads — `ThreadBinding` enum exists (New/Parent/Thread/Auto) and `resolve_thread_id()` resolves bindings, but no active migration of running context between threads.
+- **❌ Missing**: Cross-session subagent communication beyond parent-child — no message passing bus or shared state between unrelated ACP sessions.

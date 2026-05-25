@@ -82,11 +82,11 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 
 ## Missing / TODO
 
-- **Missing**: Effectiveness tracker is not yet wired into the memory manager feedback loop.
-- **Missing**: Local embeddings (`local-embeddings` feature) exists but is feature-gated and not validated in CI.
-- **Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
-- **Missing**: Memory export/import for migration between workspaces.
-- **Missing**: Soul/personality file auto-generation from conversation patterns.
-- **Missing**: Dream result human review — summaries and knowledge graph mutations are auto-applied without user confirmation.
-- **Missing**: Dream observability dashboard — no CPU/memory/LLM token metrics are collected during dream cycles.
-- **Missing**: Effectiveness closed-loop feedback — recall hit-rate data is recorded but not used to auto-adjust memory importance or tier.
+- **✅ Implemented**: Effectiveness tracker — `MemoryManager::new()` creates an `EffectivenessTracker` and `retrieve()` calls `record_recall()` for every recalled memory. See `src/memory/manager.rs:149-153` and `src/memory/manager.rs:448-460`.
+- **📝 Partial**: Effectiveness closed-loop feedback — recall hit-rate data is recorded but not yet used to auto-adjust memory importance or trigger tier promotions/demotions.
+- **❌ Missing**: Local embeddings (`local-embeddings` feature) exists but is feature-gated and not validated in CI.
+- **❌ Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
+- **❌ Missing**: Memory export/import for migration between workspaces.
+- **❌ Missing**: Soul/personality file auto-generation from conversation patterns.
+- **❌ Missing**: Dream result human review — summaries and knowledge graph mutations are auto-applied without user confirmation.
+- **❌ Missing**: Dream observability dashboard — no CPU/memory/LLM token metrics are collected during dream cycles.

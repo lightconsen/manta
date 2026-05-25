@@ -25,6 +25,6 @@ impl Id {
 
 ## Missing / TODO
 
-- **Missing**: Domain event system for cross-module communication.
-- **Missing**: Structured logging context propagation through the engine.
-- **Missing**: Metrics instrumentation hooks.
+- **❌ Missing**: Domain event system for cross-module communication. (Note: memory-specific events exist in `src/memory/events.rs`.)
+- **📝 Partial**: Structured logging context propagation — `tracing` with JSON/Pretty/Compact formats and `#[instrument]` attributes are used (`src/utils/logging.rs:1-294`, `src/core/engine.rs`). Missing: explicit context propagation (e.g., `session_id`, `entity_id`) consistently across async boundaries.
+- **📝 Partial**: Metrics instrumentation hooks — `ChannelMetrics`/`MetricsManager` (`src/channels/metrics.rs:1-439`) and `Profiler` (`src/utils/profiling.rs:1-610`) exist. Missing: instrumentation hooks inside `src/core/` engine operations.

@@ -81,10 +81,10 @@ pub struct SkillTrigger {
 
 ## Missing / TODO
 
-- **Missing**: Skill activation in the agent prompt builder — skills are parsed and stored but not dynamically injected into system prompts during conversation.
-- **Missing**: Remote skill installation from registry (`install.rs` exists but integration with agent is not complete).
-- **Missing**: Skill dependency chain resolution at runtime (`DependencyGraph` exists but not wired into agent startup).
-- **Missing**: Slash command integration with channels — command triggers are defined but not wired to channel message handlers.
-- **Missing**: Skill file watcher hot reload — `SkillWatcher` exists but is not started in `Gateway::start()`.
-- **Missing**: Token optimization (path compaction, size limits) for skill prompts.
-- **Missing**: Skill version resolution and semver compatibility enforcement.
+- **✅ Implemented**: Skill activation in agent prompt builder — `Agent::build_fresh_context()` calls `SkillManager::prefilter_skills()` and injects matching skill bodies via `Skill::to_prompt_section()`. See `src/agent/mod.rs:910-920`.
+- **✅ Implemented**: Slash command integration — `Skill::matches()` handles `TriggerType::Command` with `/prefix` patterns. Messages starting with `/command` flow through the normal inbound pipeline and trigger skill matching. See `src/skills/mod.rs:273`.
+- **✅ Implemented**: Skill file watcher hot reload — `SkillManager::initialize()` starts the watcher via `start_watcher()` which monitors all storage paths. See `src/skills/mod.rs:538-544` and `src/skills/watcher.rs`.
+- **📝 Partial**: Remote skill installation — `src/skills/install.rs` has multi-package-manager install logic, but the end-to-end flow from ClawHub registry to active skill is not fully wired.
+- **📝 Partial**: Skill dependency chain resolution — `DependencyGraph` exists with topological sort (`src/skills/dependencies.rs`), but is not wired into `SkillManager::load_all()` or agent startup.
+- **❌ Missing**: Token optimization (path compaction, size limits) for skill prompts.
+- **❌ Missing**: Skill version resolution and semver compatibility enforcement.

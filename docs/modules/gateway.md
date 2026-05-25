@@ -53,15 +53,15 @@ pub struct GatewayState {
 
 ## Missing / TODO
 
-- **Missing**: Management REST handlers are transitional (kept in source but not routed per protocol.md v1.0 Phase 3).
-- **Missing**: Full ACP control plane integration — ACP struct exists but protocol handlers are incomplete.
-- **Missing**: Gateway-level metrics and health check endpoint.
-- **Missing**: Multi-instance coordination (distributed mode).
-- **Missing**: Send policy enforcement (DM policy, allowlist gate) not fully wired.
-- **Missing**: Gateway Protocol Schema — JSON Schema / OpenAPI spec generation from Rust types (e.g. via `schemars`), multi-language binding generation pipeline.
-- **Missing**: Device identity system — `DeviceIdentity` with device ID, platform, version, persistent storage in SQLite, device pairing (QR code).
-- **Missing**: Multi-auth mode gateway — `token` / `password` / `none` with mode ambiguity detection, credential precedence (`env-first` / `config-first`), Tailscale and trusted proxy auth.
-- **Missing**: TUI client — `ratatui`-based interactive terminal UI with real-time streaming, session management, config editor.
-- **Missing**: Web UI static file serving and WebSocket real-time integration (`web/chat-ui/` exists but may not be fully wired to Gateway WebSocket).
-- **Missing**: Multi-platform native clients — mobile (Tauri Mobile / React Native + Gateway), desktop (Tauri / egui / iced), shared protocol layer (`uniffi` or JSON Schema → Swift/Kotlin/TypeScript).
-- **Missing**: Protocol code generation pipeline — automated Rust Types → JSON Schema → Swift/Kotlin/TypeScript bindings, CI compatibility verification.
+- **✅ Implemented**: Gateway health check endpoints — `/health`, `/ready`, and `/live` are routed and fully implemented with subsystem status checks. See `src/gateway/mod.rs:2035-2037` (routing) and `src/gateway/mod.rs:4356-4414` (handlers).
+- **✅ Implemented**: Send policy enforcement — DM policy (Open/Pairing/Allowlist) and mention gating are evaluated in the inbound dispatch pipeline. See `src/inbound/dispatch.rs:91-103` and `src/gateway/mod.rs:690-769`.
+- **📝 Partial**: Management REST handlers — handlers exist in `src/gateway/mod.rs` but are not fully routed per protocol.md v1.0 Phase 3.
+- **📝 Partial**: Full ACP control plane integration — `ExecutionController` with pause/resume/step/cancel is wired into the agent tool loop (`src/acp/mod.rs:1833-1845`), but protocol handlers are transitional.
+- **📝 Partial**: Device identity system — `DevicePairingStore` exists in `GatewayState` (`src/gateway/mod.rs:598,1418-1419`) with 5-character codes and 1h TTL. Missing: QR-code pairing, 8-character codes, max pending limit.
+- **📝 Partial**: Multi-auth mode gateway — `AuthMode` enum exists (`src/gateway/mod.rs:316`) with None/Token/Device/Tailscale variants. Missing: mode ambiguity detection at startup, Tailscale `whois` verification, trusted proxy auth.
+- **📝 Partial**: Web UI — static file serving is wired (`src/gateway/mod.rs:1114-1117` serves `web/dist/assets`), and WebSocket handlers exist. May need verification of end-to-end real-time integration.
+- **❌ Missing**: Multi-instance coordination (distributed mode).
+- **❌ Missing**: Gateway Protocol Schema — JSON Schema / OpenAPI spec generation from Rust types (e.g. via `schemars`), multi-language binding generation pipeline.
+- **❌ Missing**: TUI client — `ratatui`-based interactive terminal UI with real-time streaming, session management, config editor.
+- **❌ Missing**: Multi-platform native clients — mobile (Tauri Mobile / React Native + Gateway), desktop (Tauri / egui / iced), shared protocol layer (`uniffi` or JSON Schema → Swift/Kotlin/TypeScript).
+- **❌ Missing**: Protocol code generation pipeline — automated Rust Types → JSON Schema → Swift/Kotlin/TypeScript bindings, CI compatibility verification.

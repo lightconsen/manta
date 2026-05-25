@@ -84,18 +84,18 @@ pub enum HookType {
 ## Missing / TODO
 
 - **Missing**: WASM sandbox may not fully isolate memory/IO — `PluginRuntime` needs WASI capability restrictions (filesystem, network, env) via `wasmtime_wasi::WasiCtxBuilder`.
-- **Missing**: Plugin channels capability is declared but not wired into `ChannelRegistry`.
+- **📝 Partial**: Plugin channels capability — `PluginCapability::Channel` exists in manifest, `PluginChannel` implements `Channel` trait (`src/channels/plugin_host.rs:797-965`). Missing: `PluginManager` does not wire channel plugins into `ChannelRegistry`.
 - **Missing**: Plugin-to-plugin communication.
 - **Missing**: Plugin marketplace / registry — remote install, plugin index format, semver dependency resolution.
 - **Missing**: Plugin signing and verification (ed25519-dalek or similar).
-- **Missing**: Granular permission enforcement at runtime (manifest declares permissions but enforcement is coarse).
-- **Missing**: Plugin state persistence across restarts.
+- **Missing**: Granular permission enforcement at runtime — `PluginPermission` enum is fully declared (`src/plugins/manifest.rs:154-170`) but not enforced by `PluginRuntime` host functions.
+- **📝 Partial**: Plugin state persistence across restarts — `PluginState` memory is preserved across `reload_plugin()` in-memory (`src/plugins/runtime.rs:40-64`). Missing: disk persistence (no serde save/load).
 - **Missing**: Plugin metrics and resource usage monitoring.
-- **Missing**: File-system watcher hot reload — `reload_plugin()` exists but no `notify` watcher for `.wasm` file changes.
+- **Missing**: File-system watcher hot reload — `reload_plugin()` exists but no `notify` watcher for `.wasm` or `plugin.json` changes.
 - **Missing**: Plugin registry with SQLite persistence for installed plugin metadata.
 - **Missing**: Activation planner — trigger-based plugin loading (command/provider/channel/route/capability), dependency-ordered activation, diagnostics.
 - **Missing**: Version management — semver compatibility checking (`manta = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
-- **Missing**: Config hot-reload integration — `ConfigWatcher` changes should diff plugin list, safely load/unload changed plugins.
+- **Missing**: Config hot-reload integration — no `ConfigChangeEvent` handling in plugin code to auto diff/load/unload.
 - **Missing**: Plugin dependency management — auto-download external resources (binaries, models), `dirs`-based data directory.
 - **Missing**: Migration system — plugin data structure changes with SQLite `schema_version` tracking.
 - **Missing**: Modular SDK crates — workspace-based `manta-plugin-sdk-core`, `manta-plugin-sdk-channel`, `manta-plugin-sdk-memory`, `manta-plugin-sdk-provider`, `manta-plugin-sdk-security` to enforce boundary control.

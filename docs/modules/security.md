@@ -20,12 +20,12 @@ Input validation, access control, and sandboxing.
 
 - **Missing**: Full allowlist system with multi-dimensional matching — 10+ match sources (id, username, name, tag, e164, prefixed-id, prefixed-user, prefixed-name, slug, localpart), compiled `HashSet` cache, wildcard `*` support, account-scoped storage with file locking.
 - **Missing**: Auth mode ambiguity detection — when token and password both configured but mode unset, assert explicit mode selection at startup / `manta doctor`.
-- **Missing**: SecretRef resolution system — three providers (`env` with optional allowlist, `file` with path security assertions and JSON Pointer, `exec` with stdin/stdout JSON protocol), batch resolution with concurrency limits, per-provider caching.
-- **Missing**: Multi-scope rate limiting — auth-specific scopes (default, shared_secret, device_token, hook_auth) with sliding window + lockout, attempt serialization anti-race (`withSerializedAttempt`), control-plane write limiter (fixed window), loopback exemption.
-- **Missing**: Device pairing challenge — 8-character code excluding `0/O/1/I`, TTL (1h), max pending (3), store-backed allowlist merge, setup code (base64url URL + bootstrap token), QR-code pairing.
+- **✅ Implemented**: SecretRef resolution system — three providers (`env`, `file`, `exec`) with `SecretResolver::resolve()`. See `src/secrets.rs:85-298`. Missing advanced features: env allowlist, JSON Pointer for file, JSON protocol for exec, batch resolution.
+- **📝 Partial**: Multi-scope rate limiting — `MultiTierRateLimiter` with `global`/`per_user`/`per_ip`/`per_endpoint` tiers and sliding window algorithm exist (`src/gateway/rate_limit.rs:82-95`, `src/security/sliding_window.rs:108-120`). Missing: auth-specific scopes (shared_secret, device_token, hook_auth), lockout, attempt serialization, control-plane write limiter, loopback exemption.
+- **📝 Partial**: Device pairing challenge — `DevicePairingStore` with 5-character unambiguous codes, 1h TTL exists (`src/security/device_pairing.rs:67-88`). Missing: 8-character codes, max pending limit, QR-code pairing, setup code with base64url URL.
 - **Missing**: Tailscale authentication — `tailscale whois` reverse lookup verification.
 - **Missing**: Trusted proxy authentication — IP whitelist, required headers, user extraction, allowUsers whitelist.
 - **Missing**: Credential precedence — `env-first` vs `config-first` for token/password sources.
-- **Missing**: Secret resolution cache — per-provider payload cache, per-ref result cache, TTL and manual refresh.
-- **Missing**: Audit logging for auth events and tool execution.
+- **📝 Partial**: Secret resolution cache — `SecretsSnapshot` with TTL and degraded-mode fallback exists (`src/secrets.rs:182-237`). Missing: per-provider payload cache, per-ref result cache, manual refresh.
+- **📝 Partial**: Audit logging for auth events and tool execution — `RuntimeAuditLog` / `PersistentAuditLog` record `ToolInvocation`, `ToolDeny`, `AccessCheck`, `Security`, and pairing events (`src/security/runtime_audit.rs:16-43`). Missing: fine-grained auth events (login, logout, token validation).
 - **Missing**: Secret scanning in tool outputs (prevent credential leakage).

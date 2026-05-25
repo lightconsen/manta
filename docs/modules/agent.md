@@ -40,8 +40,8 @@ pub struct Agent {
 
 ## Missing / TODO
 
-- **Missing**: Full ACP session lifecycle integration — ACP bindings exist but channel-level auto-bind is not wired.
-- **Missing**: Subagent delegation is implemented in `delegate_tool.rs` but the registry is not actively used for routing decisions.
-- **Missing**: Planner results are not persisted across restarts.
-- **Missing**: Advanced retry/fallback at the agent level when a provider fails mid-conversation.
-- **Missing**: Group chat participant tracking for multi-user sessions.
+- **✅ Implemented**: Advanced retry/fallback — `ModelRouter` maintains `fallback_chains` and `get_provider_chain()` for sequential failover across providers. See `src/model_router/mod.rs`.
+- **✅ Implemented**: Group chat participant tracking — `GroupSession` with `GroupRole` enum (Owner/Admin/Member/Observer), member management, and `GroupSessionManager`. See `src/agent/group.rs`.
+- **📝 Partial**: Full ACP session lifecycle — `ExecutionController::check_and_wait()` is inserted between LLM iterations in the agent tool loop, but pause/resume/step/cancel are exposed as tools rather than lifecycle hooks. See `src/acp/mod.rs:1833-1845` and `src/agent/mod.rs:1971-1992`.
+- **📝 Partial**: Subagent delegation — `SubagentRegistry` has spawn/complete/wait/kill with persist/load (`src/agent/subagent_registry.rs`), but `DelegateTool` does not consult the registry for routing decisions.
+- **❌ Missing**: Planner results are not persisted across restarts — `TaskPlanner` creates plans in memory with no `plan_store` or save/load methods.

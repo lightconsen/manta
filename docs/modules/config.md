@@ -45,7 +45,7 @@ pub struct HotReloadManager {
 
 ## Missing / TODO
 
-- **Missing**: Config schema validation beyond serde deserialization.
+- **📝 Partial**: Config schema validation beyond serde — `Config::validate()` performs manual checks (port != 0, log level enum, etc.). See `src/config.rs:724-755`. Missing: JSON Schema validation, cross-field validation.
 - **Missing**: Config migration system for version upgrades.
 - **Missing**: Encrypted secrets in config (currently uses separate secrets module).
-- **Missing**: Environment variable interpolation in config files.
+- **📝 Partial**: Environment variable interpolation — `load_from_env()` overrides specific fields via `MANTA_*` environment variables (`src/config.rs:614-721`). Missing: general interpolation syntax inside config files (e.g., `host = "${HOST}"`).
