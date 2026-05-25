@@ -83,6 +83,7 @@ pub use group::{
 };
 pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
+pub use planner::PersistedPlan;
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use route_resolution::{
     BindingCache, BindingMode, ConversationScope, ResolvedBinding, RouteResolution, RouteResolver,
@@ -541,6 +542,8 @@ pub struct Agent {
     /// Temporary model override set per-request (e.g. from OpenAI-compatible API).
     /// Takes precedence over `model_alias` and `model`.
     model_override: Arc<RwLock<Option<String>>>,
+    /// Directory for persisting active plans (JSON files).
+    plans_dir: Option<std::path::PathBuf>,
 }
 
 impl Agent {
@@ -577,6 +580,7 @@ impl Agent {
             model_router: None,
             model_alias: None,
             model_override: Arc::new(RwLock::new(None)),
+            plans_dir: None,
         }
     }
 
@@ -749,6 +753,49 @@ impl Agent {
     pub fn with_skill_manager(mut self, manager: Arc<RwLock<crate::skills::SkillManager>>) -> Self {
         self.skill_manager = Some(manager);
         self
+    }
+
+    /// Set the directory for persisting active plans.
+    pub fn with_plans_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.plans_dir = Some(dir);
+        self
+    }
+
+    /// Persist all active plans to disk.
+    pub async fn save_all_plans(&self) -> crate::Result<()> {
+        let Some(ref dir) = self.plans_dir else {
+            return Ok(());
+        };
+        let plans = self.active_plans.read().await;
+        for (conv_id, active) in plans.iter() {
+            let snapshot = PersistedPlan::from_active(active);
+            let path = dir.join(format!("{}.json", conv_id));
+            if let Err(e) = snapshot.persist_to(&path).await {
+                warn!("Failed to persist plan for {}: {}", conv_id, e);
+            }
+        }
+        debug!("Persisted {} plans to {:?}", plans.len(), dir);
+        Ok(())
+    }
+
+    /// Load previously persisted plans from disk and restore them.
+    pub async fn load_plans(&self) -> crate::Result<usize> {
+        let Some(ref dir) = self.plans_dir else {
+            return Ok(0);
+        };
+        let persisted = planner::load_all_plans(dir).await?;
+        let mut plans = self.active_plans.write().await;
+        let mut count = 0;
+        for pp in persisted {
+            let conv_id = pp.plan.id.clone();
+            let active = pp.into_active(&self.task_planner);
+            plans.insert(conv_id, active);
+            count += 1;
+        }
+        if count > 0 {
+            info!("Restored {} plans from {:?}", count, dir);
+        }
+        Ok(count)
     }
 
     /// Attach a `TranscriptStore` for conversation recording.
@@ -1109,6 +1156,18 @@ impl Agent {
                     let mut plans = self.active_plans.write().await;
                     plans.insert(conversation_id.clone(), active_plan);
                     drop(plans);
+
+                    // Persist the plan if plans_dir is configured
+                    if let Some(ref dir) = self.plans_dir {
+                        let plans = self.active_plans.read().await;
+                        if let Some(active) = plans.get(&conversation_id) {
+                            let snapshot = PersistedPlan::from_active(active);
+                            let path = dir.join(format!("{}.json", conversation_id));
+                            if let Err(e) = snapshot.persist_to(&path).await {
+                                warn!("Failed to persist plan: {}", e);
+                            }
+                        }
+                    }
 
                     // Return the plan to the user
                     return Ok(OutgoingMessage::new(

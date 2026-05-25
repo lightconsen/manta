@@ -47,6 +47,9 @@ pub struct TaskSpec {
     pub allowed_tools: Vec<String>,
     /// Context to pass to child
     pub context: HashMap<String, serde_json::Value>,
+    /// Target agent type for routing (e.g., "coder", "reviewer"). Defaults to "delegate".
+    #[serde(default)]
+    pub target_agent: Option<String>,
 }
 
 /// Child agent handle
@@ -289,8 +292,12 @@ impl DelegateTool {
         // Spawn via the registry so it participates in depth/metrics tracking.
         // We use the registry's lower-level complete_run to report outcomes.
         let registry_for_spawn = Arc::clone(&registry);
+        let agent_type = reg_task
+            .target_agent
+            .clone()
+            .unwrap_or_else(|| "delegate".to_string());
         let _ = registry_for_spawn
-            .spawn(&parent_id, "delegate", &task.prompt, move |run_id, _task_str| async move {
+            .spawn(&parent_id, &agent_type, &task.prompt, move |run_id, _task_str| async move {
                 execute_child_task(
                     reg_child_id,
                     reg_task,
@@ -562,6 +569,7 @@ impl DelegateTool {
                     max_iterations: task_json["max_iterations"].as_u64().map(|v| v as usize),
                     allowed_tools,
                     context: HashMap::new(),
+                    target_agent: task_json["target_agent"].as_str().map(String::from),
                 };
 
                 let child = self
@@ -683,6 +691,7 @@ mod tests {
             max_iterations: Some(10),
             allowed_tools: vec!["file_read".to_string()],
             context: HashMap::new(),
+            target_agent: None,
         };
         assert_eq!(task.prompt, "Test task");
     }
@@ -722,6 +731,7 @@ mod tests {
                     max_iterations: None,
                     allowed_tools: vec![],
                     context: HashMap::new(),
+                    target_agent: None,
                 },
                 status: ChildStatus::Pending,
                 created_at: chrono::Utc::now(),
@@ -748,6 +758,7 @@ mod tests {
                 max_iterations: None,
                 allowed_tools: vec![],
                 context: HashMap::new(),
+                target_agent: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),
@@ -777,6 +788,7 @@ mod tests {
                 max_iterations: None,
                 allowed_tools: vec![],
                 context: HashMap::new(),
+                target_agent: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),
@@ -804,6 +816,7 @@ mod tests {
                 max_iterations: None,
                 allowed_tools: vec![],
                 context: HashMap::new(),
+                target_agent: None,
             },
             status: ChildStatus::Running,
             created_at: chrono::Utc::now(),
@@ -832,6 +845,7 @@ mod tests {
                 max_iterations: None,
                 allowed_tools: vec![],
                 context: HashMap::new(),
+                target_agent: None,
             },
             status: ChildStatus::Running,
             created_at: chrono::Utc::now(),
@@ -861,6 +875,7 @@ mod tests {
                     max_iterations: None,
                     allowed_tools: vec![],
                     context: HashMap::new(),
+                    target_agent: None,
                 },
                 status: ChildStatus::Pending,
                 created_at: chrono::Utc::now(),
@@ -887,6 +902,7 @@ mod tests {
                 max_iterations: None,
                 allowed_tools: vec![],
                 context: HashMap::new(),
+                target_agent: None,
             },
             status: ChildStatus::Pending,
             created_at: chrono::Utc::now(),

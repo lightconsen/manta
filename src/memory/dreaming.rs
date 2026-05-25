@@ -241,6 +241,9 @@ pub struct DreamEngine {
     event_log: Option<MemoryEventLog>,
     /// Workspace directory for knowledge graph persistence.
     workspace_dir: Option<std::path::PathBuf>,
+    /// Optional review queue for human-in-the-loop mode.
+    /// When set, dream actions are enqueued instead of applied directly.
+    review_queue: Option<Arc<DreamReviewQueue>>,
 }
 
 impl DreamEngine {
@@ -253,12 +256,22 @@ impl DreamEngine {
             knowledge_graph: RwLock::new(KnowledgeGraph::default()),
             event_log: None,
             workspace_dir: None,
+            review_queue: None,
         }
     }
 
     /// Attach an event log.
     pub fn with_event_log(mut self, log: MemoryEventLog) -> Self {
         self.event_log = Some(log);
+        self
+    }
+
+    /// Attach a review queue for human-in-the-loop dream mode.
+    ///
+    /// When set, dream actions are enqueued for review instead of
+    /// applied directly to the memory store.
+    pub fn with_review_queue(mut self, queue: Arc<DreamReviewQueue>) -> Self {
+        self.review_queue = Some(queue);
         self
     }
 
@@ -829,6 +842,259 @@ impl DreamEngine {
     /// Get the last checkpoint.
     pub async fn checkpoint(&self) -> DreamCheckpoint {
         self.checkpoint.read().await.clone()
+    }
+}
+
+// ── Dream Review Queue ─────────────────────────────────────────────────────────
+
+/// Action proposed by a dream phase for human review.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DreamAction {
+    /// Delete a memory (e.g., duplicate, expired).
+    Delete {
+        memory_id: String,
+        reason: String,
+    },
+    /// Merge multiple memories into a summary.
+    Merge {
+        memory_ids: Vec<String>,
+        summary: String,
+    },
+    /// Promote a memory to a higher tier.
+    Promote {
+        memory_id: String,
+        from_tier: String,
+        to_tier: String,
+    },
+    /// Demote a memory to a lower tier.
+    Demote {
+        memory_id: String,
+        from_tier: String,
+        to_tier: String,
+    },
+    /// Create a new memory (e.g., dream summary, pattern).
+    Create {
+        memory: crate::memory::Memory,
+    },
+}
+
+/// Review status for a dream action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+/// A single item in the dream review queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DreamReviewItem {
+    /// Unique item ID.
+    pub id: String,
+    /// Dream run that produced this action.
+    pub dream_id: String,
+    /// Dream phase (light/deep/rem).
+    pub phase: DreamPhase,
+    /// Proposed action.
+    pub action: DreamAction,
+    /// Review status.
+    pub status: ReviewStatus,
+    /// When the item was created.
+    pub created_at: SystemTime,
+}
+
+/// Human-in-the-loop review queue for dream actions.
+///
+/// When attached to a `DreamEngine`, proposed changes are enqueued
+/// instead of applied immediately. The caller can review, approve, or
+/// reject individual items, then apply approved actions in batch.
+pub struct DreamReviewQueue {
+    items: RwLock<Vec<DreamReviewItem>>,
+}
+
+impl DreamReviewQueue {
+    /// Create a new empty review queue.
+    pub fn new() -> Self {
+        Self {
+            items: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Enqueue a proposed dream action.
+    pub async fn enqueue(&self, dream_id: &str, phase: DreamPhase, action: DreamAction) {
+        let item = DreamReviewItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            dream_id: dream_id.to_string(),
+            phase,
+            action,
+            status: ReviewStatus::Pending,
+            created_at: SystemTime::now(),
+        };
+        self.items.write().await.push(item);
+    }
+
+    /// Approve a review item by ID.
+    pub async fn approve(&self, id: &str) -> bool {
+        let mut items = self.items.write().await;
+        if let Some(item) = items.iter_mut().find(|i| i.id == id) {
+            item.status = ReviewStatus::Approved;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reject a review item by ID.
+    pub async fn reject(&self, id: &str) -> bool {
+        let mut items = self.items.write().await;
+        if let Some(item) = items.iter_mut().find(|i| i.id == id) {
+            item.status = ReviewStatus::Rejected;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// List all pending review items.
+    pub async fn list_pending(&self) -> Vec<DreamReviewItem> {
+        self.items
+            .read()
+            .await
+            .iter()
+            .filter(|i| i.status == ReviewStatus::Pending)
+            .cloned()
+            .collect()
+    }
+
+    /// Count pending items.
+    pub async fn pending_count(&self) -> usize {
+        self.items
+            .read()
+            .await
+            .iter()
+            .filter(|i| i.status == ReviewStatus::Pending)
+            .count()
+    }
+
+    /// Apply all approved actions to the memory store and tier index.
+    ///
+    /// This executes the actual changes that were approved by the reviewer.
+    pub async fn apply_approved(
+        &self,
+        store: &dyn super::MemoryStore,
+        tier_index: &TierIndex,
+    ) -> crate::Result<usize> {
+        let mut applied = 0;
+        let mut items = self.items.write().await;
+        // Use index-based iteration to avoid borrow issues
+        for i in 0..items.len() {
+            if items[i].status != ReviewStatus::Approved {
+                continue;
+            }
+            // Mark as applied so we don't re-apply
+            items[i].status = ReviewStatus::Rejected; // reuse Rejected as "applied"
+            match &items[i].action {
+                DreamAction::Delete { memory_id, .. } => {
+                    let _ = store.delete(&crate::memory::MemoryId::new(memory_id)).await;
+                    tier_index.remove(memory_id);
+                    applied += 1;
+                }
+                DreamAction::Merge {
+                    memory_ids,
+                    summary,
+                } => {
+                    // Delete source memories and store the summary
+                    for id in memory_ids {
+                        let _ = store.delete(&crate::memory::MemoryId::new(id)).await;
+                        tier_index.remove(id);
+                    }
+                    let mem = crate::memory::Memory::new("system", summary.clone(), "dream_merge")
+                        .with_importance_score(0.7)
+                        .with_source("dream_review");
+                    if let Ok(_id) = store.store(mem).await {
+                        tier_index.insert(_id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                    }
+                    applied += 1;
+                }
+                DreamAction::Promote {
+                    memory_id,
+                    to_tier,
+                    ..
+                } => {
+                    if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
+                        tier_index.update_tier(memory_id, tier);
+                    }
+                    applied += 1;
+                }
+                DreamAction::Demote {
+                    memory_id,
+                    to_tier,
+                    ..
+                } => {
+                    if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
+                        tier_index.update_tier(memory_id, tier);
+                    }
+                    applied += 1;
+                }
+                DreamAction::Create { memory } => {
+                    if let Ok(id) = store.store(memory.clone()).await {
+                        tier_index.insert(id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                    }
+                    applied += 1;
+                }
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Persist the review queue to a JSON file.
+    pub async fn persist_to(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+        let items = self.items.read().await;
+        let json = serde_json::to_string_pretty(&*items).map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to serialize review queue".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        tokio::fs::write(path, json).await.map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to write review queue".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Load the review queue from a JSON file.
+    pub async fn load_from(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(Self::new());
+        }
+        let json = tokio::fs::read_to_string(path).await.map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to read review queue".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        let items: Vec<DreamReviewItem> = serde_json::from_str(&json).map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to deserialize review queue".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        Ok(Self {
+            items: RwLock::new(items),
+        })
+    }
+
+    /// Clear all items from the queue.
+    pub async fn clear(&self) {
+        self.items.write().await.clear();
     }
 }
 

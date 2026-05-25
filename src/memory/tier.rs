@@ -77,6 +77,20 @@ impl MemoryTier {
             MemoryTier::Archival => "archival",
         }
     }
+
+    /// Parse a tier from its label string.
+    pub fn from_label(s: &str) -> crate::Result<Self> {
+        match s {
+            "working" => Ok(MemoryTier::Working),
+            "short_term" => Ok(MemoryTier::ShortTerm),
+            "long_term" => Ok(MemoryTier::LongTerm),
+            "archival" => Ok(MemoryTier::Archival),
+            _ => Err(crate::error::MantaError::Validation(format!(
+                "Unknown memory tier: {}",
+                s
+            ))),
+        }
+    }
 }
 
 impl std::fmt::Display for MemoryTier {

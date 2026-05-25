@@ -7,6 +7,7 @@ use super::todo::TodoStore;
 use crate::providers::{CompletionRequest, Message, Provider};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
 /// A planned task with dependencies
@@ -497,6 +498,136 @@ impl ActivePlan {
             )
         })
     }
+}
+
+// ── Persistence ──────────────────────────────────────────────────────────
+
+/// Serializable snapshot of an ActivePlan for disk persistence.
+///
+/// We don't persist the full `ActivePlan` because `TodoStore` isn't serializable.
+/// Instead, `PersistedPlan` captures the plan state and completed task IDs;
+/// the `TodoStore` is reconstructed on load via `TaskPlanner::plan_to_todos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedPlan {
+    /// The serializable task plan.
+    pub plan: TaskPlan,
+    /// IDs of tasks that have been completed.
+    pub completed_tasks: Vec<String>,
+    /// Wall-clock time of the last persistence.
+    pub persisted_at: SystemTime,
+}
+
+impl PersistedPlan {
+    /// Create a persisted snapshot from an active plan.
+    pub fn from_active(active: &ActivePlan) -> Self {
+        Self {
+            plan: active.plan.clone(),
+            completed_tasks: active.completed_tasks.clone(),
+            persisted_at: SystemTime::now(),
+        }
+    }
+
+    /// Reconstruct an ActivePlan from persisted state.
+    ///
+    /// The `TodoStore` is rebuilt from the plan via `TaskPlanner::plan_to_todos`,
+    /// then completed tasks are marked.
+    pub fn into_active(self, planner: &TaskPlanner) -> ActivePlan {
+        let mut todos = planner.plan_to_todos(&self.plan);
+
+        // Mark completed tasks
+        for task_id in &self.completed_tasks {
+            if let Some(todo) = todos.get_mut(task_id) {
+                todo.complete();
+            }
+        }
+
+        ActivePlan {
+            plan: self.plan,
+            todos,
+            completed_tasks: self.completed_tasks,
+        }
+    }
+
+    /// Persist this plan to a JSON file at `path`.
+    pub async fn persist_to(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                crate::error::MantaError::Storage {
+                    context: format!("Failed to create plans directory: {:?}", parent),
+                    details: e.to_string(),
+                }
+            })?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to serialize plan".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        tokio::fs::write(path, json).await.map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: format!("Failed to write plan file: {:?}", path),
+                details: e.to_string(),
+            }
+        })?;
+        debug!("Plan persisted to {:?}", path);
+        Ok(())
+    }
+
+    /// Load a persisted plan from a JSON file.
+    pub async fn load_from(path: impl AsRef<std::path::Path>) -> crate::Result<Option<Self>> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let json = tokio::fs::read_to_string(path).await.map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: format!("Failed to read plan file: {:?}", path),
+                details: e.to_string(),
+            }
+        })?;
+        let plan: Self = serde_json::from_str(&json).map_err(|e| {
+            crate::error::MantaError::Storage {
+                context: "Failed to deserialize plan".to_string(),
+                details: e.to_string(),
+            }
+        })?;
+        Ok(Some(plan))
+    }
+}
+
+/// Load all persisted plans from a directory.
+///
+/// Returns a list of `PersistedPlan`s that can be reconstructed into
+/// `ActivePlan`s via `PersistedPlan::into_active()`.
+pub async fn load_all_plans(dir: impl AsRef<std::path::Path>) -> crate::Result<Vec<PersistedPlan>> {
+    let dir = dir.as_ref();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut plans = Vec::new();
+    let mut entries = tokio::fs::read_dir(dir).await.map_err(|e| {
+        crate::error::MantaError::Storage {
+            context: format!("Failed to read plans directory: {:?}", dir),
+            details: e.to_string(),
+        }
+    })?;
+    while let Some(entry) = entries.next_entry().await.map_err(|e| {
+        crate::error::MantaError::Storage {
+            context: "Failed to read plans directory entry".to_string(),
+            details: e.to_string(),
+        }
+    })? {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            if let Some(plan) = PersistedPlan::load_from(&path).await? {
+                plans.push(plan);
+            }
+        }
+    }
+    info!("Loaded {} persisted plans from {:?}", plans.len(), dir);
+    Ok(plans)
 }
 
 #[cfg(test)]

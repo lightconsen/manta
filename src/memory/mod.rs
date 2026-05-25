@@ -37,8 +37,9 @@ pub use in_memory_store::InMemoryStore;
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
 pub use dreaming::{
-    DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult,
-    DreamScheduler, DreamSpeed, DreamThinking, KnowledgeEdge, KnowledgeGraph, KnowledgeNode,
+    DreamAction, DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult,
+    DreamReviewItem, DreamReviewQueue, DreamScheduler, DreamSpeed, DreamThinking, KnowledgeEdge,
+    KnowledgeGraph, KnowledgeNode, ReviewStatus,
 };
 pub use effectiveness::{
     EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker, RecallEvent,
