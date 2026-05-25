@@ -85,6 +85,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
 
     GatewayState {
         config: Arc::new(RwLock::new(config)),
+        start_time: std::time::Instant::now(),
         channels: Arc::new(RwLock::new(HashMap::new())),
         agents: Arc::new(RwLock::new(HashMap::new())),
         session_routing: Arc::new(RwLock::new(HashMap::new())),

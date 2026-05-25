@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
@@ -548,6 +549,8 @@ impl ChannelConfig {
 pub struct GatewayState {
     /// Configuration
     pub config: Arc<RwLock<GatewayConfig>>,
+    /// Gateway startup time for uptime calculations
+    pub start_time: Instant,
     /// Active channels
     pub channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
     /// Active agents by ID
@@ -1393,6 +1396,7 @@ impl Gateway {
         // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
+            start_time: Instant::now(),
             config_path: config_path.clone(),
             channels: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
@@ -2043,6 +2047,9 @@ impl Gateway {
             .route("/v1/models", get(openai_list_models_handler))
             // Internal model catalog API
             .route("/api/v1/models", get(list_models_handler))
+            // Versioned health and metrics endpoints
+            .route("/api/v1/health", get(health_handler))
+            .route("/api/v1/metrics", get(metrics_handler))
             // Manta as MCP server – Streamable-HTTP endpoint
             .route("/mcp", post(manta_as_mcp_server_handler))
             // Admin redirect — management UI moved to CLI
@@ -4411,6 +4418,166 @@ async fn live_handler() -> impl IntoResponse {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         })),
     )
+}
+
+/// Metrics endpoint — returns Prometheus text format metrics.
+async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let metrics = build_prometheus_metrics(&state).await;
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics,
+    )
+}
+
+/// Build Prometheus text format metrics from GatewayState.
+async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
+    let mut lines = Vec::new();
+
+    // Helper to emit a gauge
+    let mut gauge = |name: &str, value: f64, help: &str| {
+        lines.push(format!("# HELP {name} {help}"));
+        lines.push(format!("# TYPE {name} gauge"));
+        lines.push(format!("{name} {value}"));
+    };
+
+    // Uptime
+    let uptime_secs = state.start_time.elapsed().as_secs() as f64;
+    gauge(
+        "manta_uptime_seconds",
+        uptime_secs,
+        "Number of seconds since the gateway started",
+    );
+
+    // Agents
+    let agents = state.agents.read().await;
+    let agent_count = agents.len() as f64;
+    drop(agents);
+    gauge(
+        "manta_agents_active",
+        agent_count,
+        "Number of active agents",
+    );
+
+    // Channels
+    let channels = state.channels.read().await;
+    let channel_count = channels.len() as f64;
+    drop(channels);
+    gauge(
+        "manta_channels_configured",
+        channel_count,
+        "Number of configured channels",
+    );
+
+    // Providers
+    let router_health = state.model_router.get_health_status().await;
+    let healthy_providers = router_health
+        .values()
+        .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
+        .count() as f64;
+    let total_providers = router_health.len() as f64;
+    gauge(
+        "manta_providers_healthy",
+        healthy_providers,
+        "Number of healthy LLM providers",
+    );
+    gauge(
+        "manta_providers_total",
+        total_providers,
+        "Total number of configured LLM providers",
+    );
+
+    // Memory subsystems
+    let vector_memory_ready = if state.vector_memory.read().await.is_some() {
+        1.0
+    } else {
+        0.0
+    };
+    let memory_manager_ready = if state.memory_manager.read().await.is_some() {
+        1.0
+    } else {
+        0.0
+    };
+    gauge(
+        "manta_vector_memory_ready",
+        vector_memory_ready,
+        "Whether vector memory is initialized (1 = ready, 0 = not)",
+    );
+    gauge(
+        "manta_memory_manager_ready",
+        memory_manager_ready,
+        "Whether memory manager is initialized (1 = ready, 0 = not)",
+    );
+
+    // Cron
+    let cron_ready = if state.cron_scheduler.read().await.is_some() {
+        1.0
+    } else {
+        0.0
+    };
+    gauge(
+        "manta_cron_ready",
+        cron_ready,
+        "Whether cron scheduler is running (1 = ready, 0 = not)",
+    );
+
+    // Plugins
+    let plugin_count = state.plugin_manager.list_plugins().await.len() as f64;
+    gauge(
+        "manta_plugins_loaded",
+        plugin_count,
+        "Number of loaded plugins",
+    );
+
+    // MCP
+    let mcp_count = state.mcp_manager.list_servers().await.len() as f64;
+    gauge(
+        "manta_mcp_servers_connected",
+        mcp_count,
+        "Number of connected MCP servers",
+    );
+
+    // Storage
+    let storage_healthy = match state.storage.read().await.health_check().await {
+        Ok(_) => 1.0,
+        Err(_) => 0.0,
+    };
+    gauge(
+        "manta_storage_healthy",
+        storage_healthy,
+        "Whether storage backend is healthy (1 = healthy, 0 = not)",
+    );
+
+    // Cost guard
+    let daily_spend = state.cost_guard.daily_spend_cents() as f64;
+    let hourly_actions = state.cost_guard.hourly_action_count() as f64;
+    let budget_exceeded = if state.cost_guard.is_exceeded() { 1.0 } else { 0.0 };
+    gauge(
+        "manta_cost_daily_spend_cents",
+        daily_spend,
+        "Daily LLM spend in cents",
+    );
+    gauge(
+        "manta_cost_hourly_actions",
+        hourly_actions,
+        "Number of LLM actions in the current hour",
+    );
+    gauge(
+        "manta_cost_budget_exceeded",
+        budget_exceeded,
+        "Whether cost budget is exceeded (1 = yes, 0 = no)",
+    );
+
+    // Audit log
+    let audit_entries = state.audit_log.persisted_count().await as f64;
+    gauge(
+        "manta_audit_log_entries",
+        audit_entries,
+        "Total number of audit log entries",
+    );
+
+    lines.push(String::new());
+    lines.join("\n")
 }
 
 /// Build a comprehensive health report covering all subsystems.

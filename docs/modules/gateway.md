@@ -53,7 +53,7 @@ pub struct GatewayState {
 
 ## Missing / TODO
 
-- **✅ Implemented**: Gateway health check endpoints — `/health`, `/ready`, and `/live` are routed and fully implemented with subsystem status checks. See `src/gateway/mod.rs:2035-2037` (routing) and `src/gateway/mod.rs:4356-4414` (handlers).
+- **✅ Implemented**: Gateway health check endpoints — `/health`, `/ready`, `/live`, `/api/v1/health`, and `/api/v1/metrics` are routed and fully implemented. `/health` and `/api/v1/health` return a comprehensive `HealthReport` with subsystem statuses. `/api/v1/metrics` returns Prometheus text format with uptime, agent/channel/provider counts, memory readiness, cost guard, and audit log metrics. See `src/gateway/mod.rs:2035-2037` (routing) and `src/gateway/mod.rs:4356-4530` (handlers).
 - **✅ Implemented**: Send policy enforcement — DM policy (Open/Pairing/Allowlist) and mention gating are evaluated in the inbound dispatch pipeline. See `src/inbound/dispatch.rs:91-103` and `src/gateway/mod.rs:690-769`.
 - **📝 Partial**: Management REST handlers — handlers exist in `src/gateway/mod.rs` but are not fully routed per protocol.md v1.0 Phase 3.
 - **📝 Partial**: Full ACP control plane integration — `ExecutionController` with pause/resume/step/cancel is wired into the agent tool loop (`src/acp/mod.rs:1833-1845`), but protocol handlers are transitional.
