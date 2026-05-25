@@ -6522,6 +6522,8 @@ async fn acp_spawn_handler(
         tools: vec![],
         context: None,
         timeout_seconds: Some(300),
+        retry_on_crash: false,
+        max_crash_retries: 3,
     };
 
     match state

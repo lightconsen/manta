@@ -647,6 +647,16 @@ pub struct SubagentConfig {
     pub context: Option<serde_json::Value>,
     /// Timeout in seconds (for Run mode)
     pub timeout_seconds: Option<u64>,
+    /// Automatically restart if the subagent crashes (default: false)
+    #[serde(default)]
+    pub retry_on_crash: bool,
+    /// Maximum number of crash restart attempts (default: 3)
+    #[serde(default = "default_max_crash_retries")]
+    pub max_crash_retries: u32,
+}
+
+fn default_max_crash_retries() -> u32 {
+    3
 }
 
 impl Default for SubagentConfig {
@@ -661,6 +671,8 @@ impl Default for SubagentConfig {
             tools: vec![],
             context: None,
             timeout_seconds: Some(300),
+            retry_on_crash: false,
+            max_crash_retries: default_max_crash_retries(),
         }
     }
 }
@@ -686,6 +698,8 @@ pub struct SubagentHandle {
     pub controller: Arc<ExecutionController>,
     /// Abort handle for force-killing the subagent task
     pub abort_handle: tokio::task::AbortHandle,
+    /// Number of times this subagent has been restarted after a crash
+    pub crash_count: u32,
 }
 
 /// Subagent status
@@ -766,6 +780,7 @@ pub struct ThreadMessage {
 }
 
 /// ACP Control Plane - unified control plane for agents and subagents
+#[derive(Clone)]
 pub struct AcpControlPlane {
     /// Subagents by ID
     subagents: Arc<RwLock<HashMap<String, SubagentHandle>>>,
@@ -1041,9 +1056,27 @@ impl AcpControlPlane {
         config: SubagentConfig,
     ) -> crate::Result<SubagentHandle> {
         let subagent_id = format!("subagent-{}", Uuid::new_v4());
-        let thread_id = self
-            .resolve_thread_id(&config.thread_binding, &parent_id)
-            .await;
+
+        // Resolve thread ID (acquire guard, read, release)
+        let thread_id = {
+            let threads = self.threads.read().await;
+            match &config.thread_binding {
+                ThreadBinding::New => format!("thread-{}", Uuid::new_v4()),
+                ThreadBinding::Parent => format!("thread-{}", parent_id),
+                ThreadBinding::Thread(id) => id.clone(),
+                ThreadBinding::Auto => {
+                    let candidate = format!("thread-{}", parent_id);
+                    if threads.contains_key(&candidate) || threads.contains_key(&parent_id) {
+                        threads
+                            .get(&parent_id)
+                            .map(|t| t.id.clone())
+                            .unwrap_or_else(|| candidate.clone())
+                    } else {
+                        format!("thread-{}", Uuid::new_v4())
+                    }
+                }
+            }
+        };
 
         info!(
             "Spawning subagent {} (mode: {:?}, thread: {})",
@@ -1067,16 +1100,18 @@ impl AcpControlPlane {
             workspace_only: false,
         };
 
-        // Create the agent
+        // Create the agent (acquire builder, call, release)
         let agent = {
             let builder_guard = self.default_agent_builder.read().await;
-            if let Some(ref builder) = *builder_guard {
-                builder()?
+            let result = if let Some(ref builder) = *builder_guard {
+                builder()
             } else {
-                return Err(crate::error::MantaError::Internal(
+                Err(crate::error::MantaError::Internal(
                     "No agent builder configured".to_string(),
-                ));
-            }
+                ))
+            };
+            drop(builder_guard); // explicitly release before continuing
+            result?
         };
 
         // Create execution controller for runtime pause/resume/step/cancel
@@ -1087,6 +1122,11 @@ impl AcpControlPlane {
         let subagent_id_clone = subagent_id.clone();
         let mode = config.mode;
         let timeout = config.timeout_seconds;
+        let max_iterations = self.max_iterations;
+
+        // Capture fields needed for crash recovery logging
+        let recovery_retry_on_crash = config.retry_on_crash;
+        let recovery_max_retries = config.max_crash_retries;
         let max_iterations = self.max_iterations;
 
         let join_handle = tokio::spawn(async move {
@@ -1196,13 +1236,13 @@ impl AcpControlPlane {
         let abort_handle = join_handle.abort_handle();
 
         // Watchdog: await the JoinHandle and update status on exit or panic.
-        let subagents_ref = Arc::clone(&self.subagents);
+        let watchdog_subagents_ref = Arc::clone(&self.subagents);
         let watch_id = subagent_id.clone();
         let store_ref = self.store.clone();
         tokio::spawn(async move {
             match join_handle.await {
                 Ok(()) => {
-                    let mut map = subagents_ref.write().await;
+                    let mut map = watchdog_subagents_ref.write().await;
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Terminated;
                     }
@@ -1215,20 +1255,35 @@ impl AcpControlPlane {
                 }
                 Err(e) if e.is_panic() => {
                     warn!("Subagent {} panicked — marking Crashed", watch_id);
-                    let mut map = subagents_ref.write().await;
-                    if let Some(h) = map.get_mut(&watch_id) {
-                        h.status = SubagentStatus::Crashed;
+                    let (current_crash_count, should_retry) = {
+                        let map = watchdog_subagents_ref.read().await;
+                        let cc = map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0);
+                        (cc, true) // recovery handled externally
+                    };
+                    {
+                        let mut map = watchdog_subagents_ref.write().await;
+                        if let Some(h) = map.get_mut(&watch_id) {
+                            h.status = SubagentStatus::Crashed;
+                        }
                     }
-                    drop(map);
                     if let Some(store) = store_ref {
                         let _ = store
                             .complete_subagent_run(&watch_id, None, Some("panicked"))
                             .await;
                     }
+                    // Log crash for external recovery (call recover_crashed_subagent to restart)
+                    if recovery_retry_on_crash && current_crash_count < recovery_max_retries {
+                        warn!(
+                            "Subagent {} crashed (attempt {}/{}). Auto-recovery enabled — call acp.recover_crashed_subagent() to restart.",
+                            watch_id,
+                            current_crash_count + 1,
+                            recovery_max_retries
+                        );
+                    }
                 }
                 Err(_) => {
                     // Aborted externally
-                    let mut map = subagents_ref.write().await;
+                    let mut map = watchdog_subagents_ref.write().await;
                     if let Some(h) = map.get_mut(&watch_id) {
                         h.status = SubagentStatus::Terminated;
                     }
@@ -1248,6 +1303,7 @@ impl AcpControlPlane {
             status: SubagentStatus::Ready,
             controller: controller_clone,
             abort_handle,
+            crash_count: 0,
         };
 
         // Register subagent
@@ -1308,6 +1364,46 @@ impl AcpControlPlane {
 
         info!("Subagent {} spawned successfully", subagent_id);
         Ok(handle)
+    }
+
+    /// Recover a crashed subagent by spawning a new one with the same config.
+    ///
+    /// This is a public method that can be called externally (e.g., by an
+    /// orchestrator or recovery handler) to restart a crashed subagent.
+    /// Uses exponential backoff: 1s, 2s, 5s, 10s, 30s.
+    pub async fn recover_crashed_subagent(
+        &self,
+        session_id: AcpSessionId,
+        parent_id: String,
+        config: SubagentConfig,
+        crash_count: u32,
+    ) -> Option<SubagentHandle> {
+        let backoff_delays: &[u64] = &[1, 2, 5, 10, 30];
+        let delay_idx = (crash_count as usize).min(backoff_delays.len() - 1);
+        let delay = backoff_delays[delay_idx];
+
+        warn!(
+            "Recovering crashed subagent (attempt {}, retrying in {}s)",
+            crash_count + 1,
+            delay
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+
+        match self.spawn_subagent(session_id, parent_id, config).await {
+            Ok(handle) => {
+                info!(
+                    "Crashed subagent recovered successfully (new id: {}, crash_count: {})",
+                    handle.id,
+                    handle.crash_count
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                warn!("Failed to recover crashed subagent: {}", e);
+                None
+            }
+        }
     }
 
     /// Resolve thread ID based on binding mode

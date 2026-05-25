@@ -16,9 +16,20 @@ pub const DEFAULT_CONFIG_FILE: &str = "manta.toml";
 /// Environment variable prefix
 pub const ENV_PREFIX: &str = "MANTA";
 
+/// Current configuration schema version.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+fn current_schema_version() -> u32 {
+    CURRENT_SCHEMA_VERSION
+}
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Configuration schema version for migration support
+    #[serde(default = "current_schema_version")]
+    pub schema_version: u32,
+
     /// Application metadata
     #[serde(skip)]
     pub app: AppConfig,
@@ -513,6 +524,7 @@ fn default_false() -> bool {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
             app: AppConfig::default(),
             server: ServerConfig::default(),
             logging: LoggingConfig::default(),
@@ -559,6 +571,11 @@ impl Config {
                     warn!(path = %path.display(), error = %e, "Failed to load config file");
                 }
             }
+        }
+
+        // Migrate config if schema version is outdated
+        if config.schema_version < CURRENT_SCHEMA_VERSION {
+            config = Self::migrate(config)?;
         }
 
         // Override with environment variables
@@ -718,6 +735,26 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Migrate configuration from an older schema version to the current one.
+    ///
+    /// This applies sequential migrations (v0→v1, v1→v2, etc.) so that
+    /// configs loaded from older files are brought up to date before use.
+    fn migrate(mut config: Self) -> Result<Self> {
+        let from_version = config.schema_version;
+        let target = CURRENT_SCHEMA_VERSION;
+
+        // v0 → v1: no breaking changes, just establishes the framework
+        // (future migrations would be added here as new schema versions are introduced)
+        if from_version == 0 {
+            // No structural changes needed for v0→v1
+        }
+
+        config.schema_version = target;
+        info!("Migrated configuration from schema v{} to v{}", from_version, target);
+
+        Ok(config)
     }
 
     /// Validate the configuration
@@ -1326,6 +1363,37 @@ mod tests {
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.logging.level, "info");
+        assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_schema_version_from_toml() {
+        let toml_str = r#"
+schema_version = 0
+
+[server]
+host = "0.0.0.0"
+port = 3000
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.schema_version, 0);
+    }
+
+    #[test]
+    fn test_migrate_v0_to_v1() {
+        let mut config = Config::default();
+        config.schema_version = 0;
+        let migrated = Config::migrate(config).unwrap();
+        assert_eq!(migrated.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_no_migrate_needed() {
+        let config = Config::default();
+        assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+        // migrate is a no-op when already at current version
+        let migrated = Config::migrate(config).unwrap();
+        assert_eq!(migrated.schema_version, CURRENT_SCHEMA_VERSION);
     }
 
     #[test]

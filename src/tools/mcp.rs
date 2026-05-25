@@ -149,6 +149,49 @@ struct McpServerInfo {
     version: String,
 }
 
+/// Server capabilities returned in the MCP `initialize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpServerCapabilities {
+    /// Tool support (presence of `tools` key means tools are supported)
+    #[serde(default)]
+    pub tools: Option<serde_json::Value>,
+    /// Resource support
+    #[serde(default)]
+    pub resources: Option<serde_json::Value>,
+    /// Prompt support
+    #[serde(default)]
+    pub prompts: Option<serde_json::Value>,
+    /// Any additional capabilities
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+impl McpServerCapabilities {
+    /// Returns true if the server supports tools.
+    pub fn supports_tools(&self) -> bool {
+        self.tools.is_some()
+    }
+
+    /// Returns true if the server supports resources.
+    pub fn supports_resources(&self) -> bool {
+        self.resources.is_some()
+    }
+
+    /// Returns true if the server supports prompts.
+    pub fn supports_prompts(&self) -> bool {
+        self.prompts.is_some()
+    }
+}
+
+/// Full result of an MCP `initialize` handshake.
+#[derive(Debug, Clone, Deserialize)]
+struct McpInitializeResult {
+    #[serde(rename = "serverInfo")]
+    server_info: McpServerInfo,
+    #[serde(default)]
+    capabilities: McpServerCapabilities,
+}
+
 // ─────────────────────────────────────────────
 // Tool definition
 // ─────────────────────────────────────────────
@@ -203,6 +246,8 @@ pub struct McpClient {
     request_tx: Option<mpsc::UnboundedSender<McpRequest>>,
     /// Server metadata returned during `initialize`
     server_info: Option<McpServerInfo>,
+    /// Server capabilities returned during `initialize`
+    server_capabilities: Option<McpServerCapabilities>,
     /// Tools discovered via `tools/list`
     tools: Vec<McpToolDefinition>,
     /// Monotonically increasing JSON-RPC ID
@@ -224,6 +269,7 @@ impl McpClient {
             process: None,
             request_tx: None,
             server_info: None,
+            server_capabilities: None,
             tools: Vec::new(),
             request_id: AtomicU64::new(1),
             response_channels: Arc::new(RwLock::new(HashMap::new())),
@@ -628,9 +674,13 @@ impl McpClient {
         let response = self.send_request(request).await?;
 
         if let Some(result) = response.result {
-            if let Ok(info) = serde_json::from_value::<McpServerInfo>(result) {
-                info!("MCP server: {} v{}", info.name, info.version);
-                self.server_info = Some(info);
+            if let Ok(init_result) = serde_json::from_value::<McpInitializeResult>(result) {
+                info!(
+                    "MCP server: {} v{}",
+                    init_result.server_info.name, init_result.server_info.version
+                );
+                self.server_info = Some(init_result.server_info);
+                self.server_capabilities = Some(init_result.capabilities);
             }
         }
 
@@ -780,6 +830,11 @@ impl McpClient {
     /// Get discovered tools.
     pub fn get_tools(&self) -> &[McpToolDefinition] {
         &self.tools
+    }
+
+    /// Get the server capabilities returned during initialization.
+    pub fn server_capabilities(&self) -> Option<&McpServerCapabilities> {
+        self.server_capabilities.as_ref()
     }
 
     /// Disconnect from the MCP server.
@@ -1238,6 +1293,27 @@ mod tests {
         };
         let wrapper = McpToolWrapper::new(client, "filesystem", &def);
         assert_eq!(wrapper.name(), "mcp__filesystem__read_file");
+    }
+
+    #[test]
+    fn test_server_capabilities_deserialization() {
+        let caps: McpServerCapabilities = serde_json::from_value(json!({
+            "tools": {},
+            "resources": {}
+        })).unwrap();
+        assert!(caps.supports_tools());
+        assert!(caps.supports_resources());
+        assert!(!caps.supports_prompts());
+    }
+
+    #[test]
+    fn test_initialize_result_deserialization() {
+        let result: McpInitializeResult = serde_json::from_value(json!({
+            "serverInfo": { "name": "test-server", "version": "1.0.0" },
+            "capabilities": { "tools": {} }
+        })).unwrap();
+        assert_eq!(result.server_info.name, "test-server");
+        assert!(result.capabilities.supports_tools());
     }
 
     #[test]
