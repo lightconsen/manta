@@ -57,8 +57,7 @@ pub fn extract_session_cookie(req: &Request, cookie_name: &str) -> Option<String
 
     for cookie in cookie_str.split(';') {
         let (name, value) = cookie.trim().split_once('=')?;
-        
-        
+
         if name == cookie_name {
             return Some(value.to_string());
         }
@@ -132,8 +131,7 @@ pub async fn session_cookie_middleware(
 }
 
 /// OAuth provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OAuthConfig {
     /// Enable OAuth authentication
     pub enabled: bool,
@@ -142,7 +140,6 @@ pub struct OAuthConfig {
     /// Google OAuth configuration
     pub google: Option<OAuthProviderConfig>,
 }
-
 
 /// Single OAuth provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,6 +15,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::providers::{CompletionRequest, Message, Provider};
+
 use super::{
     effectiveness::{EffectivenessConfig, EffectivenessTracker},
     events::{MemoryEventBuilder, MemoryEventLog},
@@ -100,6 +102,8 @@ pub struct MemoryManager {
     recent_recalls: RwLock<HashMap<String, Vec<RecentRecall>>>,
     /// Last time effectiveness adjustments were applied (rate limiting).
     last_adjustment: RwLock<Option<std::time::Instant>>,
+    /// Optional LLM provider for session compaction and fact extraction.
+    llm_provider: Option<Arc<dyn Provider>>,
 }
 
 impl std::fmt::Debug for MemoryManager {
@@ -118,6 +122,7 @@ impl std::fmt::Debug for MemoryManager {
             .field("multimodal_store", &self.multimodal_store.is_some())
             .field("qmd_executor", &self.qmd_executor.is_some())
             .field("recent_recalls", &"<HashMap>")
+            .field("llm_provider", &self.llm_provider.as_ref().map(|p| p.name()))
             .finish()
     }
 }
@@ -154,10 +159,7 @@ impl MemoryManager {
         chat_history: Arc<dyn ChatHistoryStore>,
         config: MemoryManagerConfig,
     ) -> Self {
-        let event_log = config
-            .workspace_dir
-            .as_ref()
-            .map(MemoryEventLog::new);
+        let event_log = config.workspace_dir.as_ref().map(MemoryEventLog::new);
         let tier_index = if config.enable_tiers {
             Some(Arc::new(TierIndex::new()))
         } else {
@@ -192,6 +194,7 @@ impl MemoryManager {
             qmd_executor,
             recent_recalls: RwLock::new(HashMap::new()),
             last_adjustment: RwLock::new(None),
+            llm_provider: None,
         }
     }
 
@@ -238,6 +241,12 @@ impl MemoryManager {
     /// Attach a tier index.
     pub fn with_tier_index(mut self, index: Arc<TierIndex>) -> Self {
         self.tier_index = Some(index);
+        self
+    }
+
+    /// Attach an LLM provider for session compaction and fact extraction.
+    pub fn with_llm_provider(mut self, provider: Arc<dyn Provider>) -> Self {
+        self.llm_provider = Some(provider);
         self
     }
 
@@ -627,10 +636,14 @@ impl MemoryManager {
     ///
     /// This is called when a session is closed or exceeds thresholds
     /// (>50 turns or >7 days old).
+    ///
+    /// When an LLM provider is attached, uses the model to extract facts,
+    /// preferences, decisions, and important context.  Falls back to naive
+    /// sampling when no provider is configured.
     pub async fn compact_session(
         &self,
         conversation_id: impl AsRef<str>,
-        _model: Option<&str>,
+        model: Option<&str>,
     ) -> crate::Result<Vec<MemoryId>> {
         let conversation_id = conversation_id.as_ref();
         info!("Compacting session: {}", conversation_id);
@@ -646,37 +659,18 @@ impl MemoryManager {
             return Ok(vec![]);
         }
 
-        // Simple extraction: just take every Nth user message as a key fact
-        // In production, this would use an LLM to extract facts
-        let mut stored_ids = vec![];
         let user_id = messages
             .iter()
             .find(|m| !m.user_id.is_empty())
             .map(|m| m.user_id.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        for (i, msg) in messages.iter().enumerate() {
-            if msg.role != "user" {
-                continue;
-            }
-            // Sample every 5th message
-            if i % 5 != 0 {
-                continue;
-            }
-            let fact = msg.content.clone();
-            if fact.len() < 20 {
-                continue;
-            }
-
-            let id = self
-                .observe(
-                    &user_id, fact, "semantic", // Memory type: extracted fact
-                    0.6,        // Medium importance
-                )
-                .await?;
-
-            stored_ids.push(id);
-        }
+        let stored_ids = if let Some(ref provider) = self.llm_provider {
+            self.compact_with_llm(provider, model, &user_id, conversation_id, &messages)
+                .await?
+        } else {
+            self.compact_naive(&user_id, &messages).await?
+        };
 
         // Mark session as compacted
         if !stored_ids.is_empty() {
@@ -712,6 +706,127 @@ impl MemoryManager {
         }
 
         info!("Session {} compacted: {} facts extracted", conversation_id, stored_ids.len());
+        Ok(stored_ids)
+    }
+
+    /// Compact a session using an LLM to extract facts, preferences, decisions,
+    /// and important context from the conversation history.
+    async fn compact_with_llm(
+        &self,
+        provider: &Arc<dyn Provider>,
+        model: Option<&str>,
+        user_id: &str,
+        conversation_id: &str,
+        messages: &[ChatMessage],
+    ) -> crate::Result<Vec<MemoryId>> {
+        let transcript: String = messages
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let prompt = format!(
+            "You are an expert memory extraction assistant. \
+            Analyze the following conversation and extract key facts, preferences, decisions, \
+            and important context that should be remembered for future interactions.\n\n\
+            Return your findings as a JSON array of objects, each with:\n\
+            - \"content\": the fact/preference/decision as a concise statement\n\
+            - \"type\": one of \"fact\", \"preference\", \"decision\", \"context\"\n\
+            - \"importance\": a score from 0.0 to 1.0\n\n\
+            Only extract information that is clearly stated or strongly implied. \
+            Do not invent information. Return ONLY the JSON array, no other text.\n\n\
+            Conversation:\n{transcript}"
+        );
+
+        let request = CompletionRequest {
+            messages: vec![
+                Message::system(
+                    "You are a helpful assistant that extracts and structures \
+                    information from conversations. Return only valid JSON.",
+                ),
+                Message::user(prompt),
+            ],
+            model: model.map(String::from),
+            temperature: Some(0.3),
+            max_tokens: Some(4096),
+            stream: false,
+            ..Default::default()
+        };
+
+        let response = match provider.complete(request).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                warn!("LLM compaction failed, falling back to naive extraction: {}", e);
+                return self.compact_naive(user_id, messages).await;
+            }
+        };
+
+        let extracted: Vec<serde_json::Value> =
+            match serde_json::from_str(&response.message.content) {
+                Ok(vals) => vals,
+                Err(e) => {
+                    warn!("Failed to parse LLM extraction JSON, falling back: {}", e);
+                    return self.compact_naive(user_id, messages).await;
+                }
+            };
+
+        let mut stored_ids = Vec::new();
+        for item in extracted {
+            let content = item.get("content").and_then(|v| v.as_str());
+            let memory_type = item
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("semantic");
+            let importance = item
+                .get("importance")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5) as f32;
+
+            if let Some(content) = content {
+                if content.len() >= 5 {
+                    if let Ok(id) = self
+                        .observe(user_id, content, memory_type, importance)
+                        .await
+                    {
+                        stored_ids.push(id);
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "LLM extraction yielded {} memories from session {}",
+            stored_ids.len(),
+            conversation_id
+        );
+        Ok(stored_ids)
+    }
+
+    /// Fallback naive compaction: sample every 5th user message.
+    async fn compact_naive(
+        &self,
+        user_id: &str,
+        messages: &[ChatMessage],
+    ) -> crate::Result<Vec<MemoryId>> {
+        let mut stored_ids = vec![];
+
+        for (i, msg) in messages.iter().enumerate() {
+            if msg.role != "user" {
+                continue;
+            }
+            if i % 5 != 0 {
+                continue;
+            }
+            let fact = msg.content.clone();
+            if fact.len() < 20 {
+                continue;
+            }
+
+            let id = self.observe(user_id, fact, "semantic", 0.6).await?;
+
+            stored_ids.push(id);
+        }
+
         Ok(stored_ids)
     }
 
@@ -758,7 +873,7 @@ impl MemoryManager {
             let probe = recall
                 .memory_content
                 .chars()
-                .take(30)
+                .take(80)
                 .collect::<String>()
                 .to_lowercase();
             if probe.len() < 3 {
@@ -807,12 +922,17 @@ impl MemoryManager {
 
         for memory_id in memory_ids {
             // Get current memory to read importance score
-            let Ok(Some(memory)) = self.store.get(&crate::memory::MemoryId::new(&memory_id)).await
+            let Ok(Some(memory)) = self
+                .store
+                .get(&crate::memory::MemoryId::new(&memory_id))
+                .await
             else {
                 continue;
             };
 
-            let action = effectiveness.evaluate(&memory_id, memory.importance_score).await;
+            let action = effectiveness
+                .evaluate(&memory_id, memory.importance_score)
+                .await;
             if action == crate::memory::effectiveness::EffectivenessAction::NoOp {
                 continue;
             }

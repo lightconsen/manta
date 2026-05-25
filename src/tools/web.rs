@@ -320,8 +320,7 @@ pub struct WebSearchTool {
 }
 
 /// Search provider configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum SearchProvider {
     /// DuckDuckGo (HTML scraping)
     #[default]
@@ -343,7 +342,6 @@ pub enum SearchProvider {
         result_parser: Option<fn(&str, usize) -> Vec<SearchResult>>,
     },
 }
-
 
 impl Default for WebSearchTool {
     fn default() -> Self {

@@ -83,8 +83,8 @@ impl CompressedJsonlStore {
         self.ensure_dir().await?;
 
         let shard = self.today_shard();
-        let line = serde_json::to_string(memory)
-            .map_err(crate::error::MantaError::Serialization)?;
+        let line =
+            serde_json::to_string(memory).map_err(crate::error::MantaError::Serialization)?;
 
         // Read existing content if file exists
         let mut existing = Vec::new();

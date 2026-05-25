@@ -145,7 +145,6 @@ pub enum EmbeddingProviderType {
     LocalGguf,
 }
 
-
 /// Vector memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorMemoryConfig {
@@ -280,8 +279,7 @@ impl Default for CronConfig {
 ///
 /// Set `daily_limit_cents` and/or `hourly_action_limit` to non-zero values to
 /// enable limits.  Zero means unlimited (default).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CostGuardConfig {
     /// Maximum daily LLM spend in cents (0 = unlimited).
     /// Example: 500 = $5.00/day cap.
@@ -291,7 +289,6 @@ pub struct CostGuardConfig {
     #[serde(default)]
     pub hourly_action_limit: u64,
 }
-
 
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4040,7 +4037,8 @@ async fn web_terminal_html_handler() -> Html<String> {
     let html = tokio::fs::read_to_string("web/dist/index.html")
         .await
         .unwrap_or_else(|_| {
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>".to_string()
+            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
+                .to_string()
         });
     Html(html.replace("{VERSION}", crate::VERSION))
 }
@@ -4238,10 +4236,11 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
                 error!("Agent {} exceeded max restarts ({}), abandoning", agent_id, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
-            } else { !rec
-                .last_restart_at
-                .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
-                .unwrap_or(false) }
+            } else {
+                !rec.last_restart_at
+                    .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
+                    .unwrap_or(false)
+            }
         };
         if !should_restart {
             continue;
@@ -4319,10 +4318,11 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
                 error!("Channel {} exceeded max restarts ({}), abandoning", name, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
-            } else { !rec
-                .last_restart_at
-                .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
-                .unwrap_or(false) }
+            } else {
+                !rec.last_restart_at
+                    .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
+                    .unwrap_or(false)
+            }
         };
         if !should_restart {
             continue;
@@ -7852,9 +7852,7 @@ async fn openai_chat_completions_handler(
             let _ = tx
                 .send(Ok(SseEvt::default().data(final_chunk.to_string())))
                 .await;
-            let _ = tx
-                .send(Ok(SseEvt::default().data("[DONE]")))
-                .await;
+            let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
         });
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);

@@ -161,7 +161,6 @@ impl std::fmt::Debug for FallbackChainBuilder {
     }
 }
 
-
 impl FallbackChainBuilder {
     /// Create a new builder
     pub fn new() -> Self {
@@ -442,7 +441,10 @@ mod tests {
     fn test_fallback_chain_builder_add() {
         let p1 = Arc::new(MockProvider::new("p1"));
         let p2 = Arc::new(MockProvider::new("p2"));
-        let fallback = FallbackChainBuilder::new().with_provider(p1).with_provider(p2).build("chain");
+        let fallback = FallbackChainBuilder::new()
+            .with_provider(p1)
+            .with_provider(p2)
+            .build("chain");
         assert_eq!(fallback.chain(), vec!["p1", "p2"]);
     }
 

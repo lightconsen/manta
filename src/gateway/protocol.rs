@@ -274,8 +274,7 @@ pub fn scopes_allow(granted: &[String], method: &str) -> bool {
 // ── Auth Mode ─────────────────────────────────────────────────────────────────
 
 /// Gateway authentication mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AuthMode {
     /// No authentication (development only)
     #[serde(rename = "none")]
@@ -291,7 +290,6 @@ pub enum AuthMode {
     #[serde(rename = "tailscale")]
     Tailscale,
 }
-
 
 // ── Connection State ──────────────────────────────────────────────────────────
 

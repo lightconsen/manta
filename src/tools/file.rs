@@ -252,9 +252,7 @@ impl Tool for FileWriteTool {
             .await
             .map_err(crate::error::MantaError::Io)?;
 
-        file.flush()
-            .await
-            .map_err(crate::error::MantaError::Io)?;
+        file.flush().await.map_err(crate::error::MantaError::Io)?;
 
         info!("Wrote {} bytes to {}", content.len(), path.display());
 

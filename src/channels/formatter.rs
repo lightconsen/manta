@@ -214,7 +214,6 @@ impl MessageFormatter for DiscordFormatter {
     fn format(&self, text: &str) -> String {
         // Discord supports standard markdown well
         // We just need to handle some edge cases
-        
 
         // Strikethrough: ~~text~~ (Discord supports this natively)
         // Underline: __text__ (Discord supports this natively)

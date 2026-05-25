@@ -41,8 +41,7 @@ use tracing::debug;
 // ── Permission levels ─────────────────────────────────────────────────────────
 
 /// The access level granted to a user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum UserLevel {
     /// Chat-only — can send messages but cannot invoke commands.
     #[default]
@@ -52,7 +51,6 @@ pub enum UserLevel {
     /// Administrator — full access including admin-only commands.
     Admin = 2,
 }
-
 
 impl std::fmt::Display for UserLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

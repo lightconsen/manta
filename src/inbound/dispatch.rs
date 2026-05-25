@@ -45,15 +45,13 @@ impl DispatchResult {
 }
 
 /// Configuration for the auto-reply dispatch layer.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AutoReplyDispatchConfig {
     /// Send policy engine (if None, no policy checks are applied).
     pub send_policy: Option<SendPolicy>,
     /// Whether to suppress delivery in group chats unless the bot is mentioned.
     pub suppress_unless_mentioned_in_groups: bool,
 }
-
 
 /// Auto-reply dispatch orchestrator.
 ///

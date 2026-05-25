@@ -1335,10 +1335,7 @@ impl SessionStore {
                 details: e.to_string(),
             })?;
 
-        Ok(rows
-            .iter()
-            .map(Self::row_to_subagent_run_record)
-            .collect())
+        Ok(rows.iter().map(Self::row_to_subagent_run_record).collect())
     }
 
     fn row_to_subagent_run_record(row: &sqlx::sqlite::SqliteRow) -> SubagentRunRecord {

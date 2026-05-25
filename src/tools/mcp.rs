@@ -1300,7 +1300,8 @@ mod tests {
         let caps: McpServerCapabilities = serde_json::from_value(json!({
             "tools": {},
             "resources": {}
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(caps.supports_tools());
         assert!(caps.supports_resources());
         assert!(!caps.supports_prompts());
@@ -1311,7 +1312,8 @@ mod tests {
         let result: McpInitializeResult = serde_json::from_value(json!({
             "serverInfo": { "name": "test-server", "version": "1.0.0" },
             "capabilities": { "tools": {} }
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(result.server_info.name, "test-server");
         assert!(result.capabilities.supports_tools());
     }

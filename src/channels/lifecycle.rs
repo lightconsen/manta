@@ -291,15 +291,14 @@ impl ChannelLifecycle {
 
         // Reset restart count if enough time has passed
         if let Some(last_restart) = state.last_restart {
-            if last_restart.elapsed() > self.policy.reset_after
-                && state.restart_count > 0 {
-                    info!(
-                        "Channel {} restart count reset after {}s of stability",
-                        self.name,
-                        self.policy.reset_after.as_secs()
-                    );
-                    state.restart_count = 0;
-                }
+            if last_restart.elapsed() > self.policy.reset_after && state.restart_count > 0 {
+                info!(
+                    "Channel {} restart count reset after {}s of stability",
+                    self.name,
+                    self.policy.reset_after.as_secs()
+                );
+                state.restart_count = 0;
+            }
         }
     }
 }

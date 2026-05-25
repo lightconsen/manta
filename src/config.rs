@@ -248,8 +248,7 @@ impl Default for StorageConfig {
 }
 
 /// Memory subsystem configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemoryConfig {
     /// Multimodal file storage settings
     #[serde(default)]
@@ -264,7 +263,6 @@ pub struct MemoryConfig {
     #[serde(default)]
     pub effectiveness: MemoryEffectivenessConfig,
 }
-
 
 /// Multimodal storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -920,6 +918,7 @@ impl ConfigWatcher {
 pub struct ReloadableConfig {
     config: std::sync::Arc<tokio::sync::RwLock<Config>>,
     _watcher: ConfigWatcher,
+    config_tx: tokio::sync::broadcast::Sender<Config>,
 }
 
 impl ReloadableConfig {
@@ -931,17 +930,21 @@ impl ReloadableConfig {
         let config_arc = std::sync::Arc::new(tokio::sync::RwLock::new(config));
         let config_for_callback = config_arc.clone();
 
+        let (config_tx, _) = tokio::sync::broadcast::channel::<Config>(16);
+        let tx_for_callback = config_tx.clone();
+
         let (watcher, mut _change_rx) = ConfigWatcher::watch(
             &config_path,
             &config_path,
             Box::new(move |new_config: &Config| {
-                // Update the shared config
                 let rt = tokio::runtime::Handle::current();
                 let config = config_for_callback.clone();
+                let tx = tx_for_callback.clone();
                 let new_config = new_config.clone();
                 rt.spawn(async move {
                     let mut guard = config.write().await;
-                    *guard = new_config;
+                    *guard = new_config.clone();
+                    let _ = tx.send(new_config);
                 });
             }),
         )?;
@@ -949,12 +952,23 @@ impl ReloadableConfig {
         Ok(ReloadableConfig {
             config: config_arc,
             _watcher: watcher,
+            config_tx,
         })
     }
 
     /// Get the current configuration
     pub async fn get(&self) -> Config {
         self.config.read().await.clone()
+    }
+
+    /// Subscribe to configuration changes.
+    ///
+    /// Returns a [`tokio::sync::broadcast::Receiver`] that receives the new
+    /// [`Config`] each time the config file is reloaded.  The channel has a
+    /// capacity of 16 messages; slow consumers may lag behind if they do not
+    /// drain the receiver promptly.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Config> {
+        self.config_tx.subscribe()
     }
 
     /// Find the config file path

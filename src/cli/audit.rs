@@ -44,10 +44,7 @@ pub async fn run_audit_command(command: &AuditCommands) -> Result<()> {
                             println!("No audit log entries.");
                         } else {
                             println!("Audit Log:");
-                            println!(
-                                "{:<20} {:<15} {:<20} Details",
-                                "Timestamp", "Event", "User"
-                            );
+                            println!("{:<20} {:<15} {:<20} Details", "Timestamp", "Event", "User");
                             println!("{}", "-".repeat(90));
                             for entry in entries {
                                 println!(

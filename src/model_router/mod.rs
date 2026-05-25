@@ -1761,7 +1761,9 @@ impl ModelRouter {
         let health = self.health.read().await;
         let config = self.config.read().await;
 
-        providers.keys().map(|name| {
+        providers
+            .keys()
+            .map(|name| {
                 let h = health.get(name).cloned().unwrap_or_default();
                 let provider_config = config.providers.get(name).cloned();
 

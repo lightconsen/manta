@@ -94,7 +94,6 @@ impl std::str::FromStr for Status {
     }
 }
 
-
 /// Metadata attached to entities
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {

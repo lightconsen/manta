@@ -423,9 +423,8 @@ impl Allowlist {
             }
 
             let file = File::create(path)?;
-            let lock_result = unsafe {
-                libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
-            };
+            let lock_result =
+                unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
             if lock_result != 0 {
                 warn!("Could not acquire file lock on {:?}, proceeding anyway", path);
             }

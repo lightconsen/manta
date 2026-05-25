@@ -300,7 +300,9 @@ impl MultimodalStore {
                             .to_string_lossy()
                             .to_string();
                         // Extract original filename after UUID prefix
-                        let original = filename.split_once('_').map(|x| x.1)
+                        let original = filename
+                            .split_once('_')
+                            .map(|x| x.1)
                             .unwrap_or(&filename)
                             .to_string();
                         let relative_path = path

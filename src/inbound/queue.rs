@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Queue mode for message handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueueMode {
     /// Interrupt the current agent execution and start a new turn.
     Interrupt,
@@ -33,7 +32,6 @@ pub enum QueueMode {
     #[default]
     Normal,
 }
-
 
 /// Per-session tracking for queue-mode heuristics.
 #[derive(Debug, Clone)]

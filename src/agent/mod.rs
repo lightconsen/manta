@@ -82,8 +82,8 @@ pub use group::{
     GroupManagerStats, GroupMember, GroupRole, GroupSession, GroupSessionError, GroupSessionManager,
 };
 pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
-pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use planner::PersistedPlan;
+pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};
 pub use route_resolution::{
     BindingCache, BindingMode, ConversationScope, ResolvedBinding, RouteResolution, RouteResolver,
@@ -1683,18 +1683,17 @@ impl Agent {
         }
 
         // Only cache the response if it should be cached
-        if should_cache
-            && are_tools_cacheable(&tools_used_this_turn) {
-                self.response_cache
-                    .set(
-                        &user_id,
-                        &conversation_id,
-                        &content,
-                        response.message.content.clone(),
-                        tools_used_this_turn,
-                    )
-                    .await;
-            }
+        if should_cache && are_tools_cacheable(&tools_used_this_turn) {
+            self.response_cache
+                .set(
+                    &user_id,
+                    &conversation_id,
+                    &content,
+                    response.message.content.clone(),
+                    tools_used_this_turn,
+                )
+                .await;
+        }
 
         // Notify completed
         let response_content = response.message.content.clone();

@@ -335,9 +335,7 @@ impl SkillRegistry {
         let mut updates = Vec::new();
 
         // List installed skills
-        let mut entries = fs::read_dir(&skill_dir)
-            .await
-            .map_err(MantaError::Io)?;
+        let mut entries = fs::read_dir(&skill_dir).await.map_err(MantaError::Io)?;
 
         while let Some(entry) = entries.next_entry().await.map_err(MantaError::Io)? {
             let path = entry.path();

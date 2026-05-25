@@ -904,11 +904,7 @@ impl SkillManager {
 
     /// Enable/disable a skill in config
     pub async fn set_skill_enabled(&mut self, name: &str, enabled: bool) -> crate::Result<()> {
-        let entry = self
-            .config
-            .entries
-            .entry(name.to_string())
-            .or_default();
+        let entry = self.config.entries.entry(name.to_string()).or_default();
         entry.enabled = enabled;
         self.config.save().await?;
 

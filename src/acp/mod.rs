@@ -54,7 +54,6 @@ pub enum SpawnMode {
     Session,
 }
 
-
 /// Thread binding mode for subagents
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +69,6 @@ pub enum ThreadBinding {
     #[default]
     Auto,
 }
-
 
 /// Execution mode for an ACP command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1101,9 +1099,7 @@ impl AcpControlPlane {
             let result = if let Some(ref builder) = *builder_guard {
                 builder()
             } else {
-                Err(crate::error::MantaError::Internal(
-                    "No agent builder configured".to_string(),
-                ))
+                Err(crate::error::MantaError::Internal("No agent builder configured".to_string()))
             };
             drop(builder_guard); // explicitly release before continuing
             result?
@@ -1387,8 +1383,7 @@ impl AcpControlPlane {
             Ok(handle) => {
                 info!(
                     "Crashed subagent recovered successfully (new id: {}, crash_count: {})",
-                    handle.id,
-                    handle.crash_count
+                    handle.id, handle.crash_count
                 );
                 Some(handle)
             }

@@ -56,12 +56,15 @@ pub struct ProviderMetadata {
 #[derive(Default)]
 pub enum ProviderHealth {
     Healthy,
-    Degraded { reason: String },
-    Unhealthy { reason: String },
+    Degraded {
+        reason: String,
+    },
+    Unhealthy {
+        reason: String,
+    },
     #[default]
     Unknown,
 }
-
 
 /// A "provider pack" — a bundle of related providers shipped as a unit.
 ///

@@ -196,7 +196,6 @@ impl DiscordChannel {
     /// Convert markdown to Discord markdown (Discord uses standard markdown mostly)
     fn format_for_discord(text: &str) -> String {
         // Discord supports standard markdown well, but we need to handle some specifics
-        
 
         // Discord uses triple backticks for code blocks with language
         // Already supported in standard markdown

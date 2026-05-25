@@ -393,7 +393,6 @@ impl LarkChannel {
     fn format_for_lark(text: &str) -> String {
         // Lark supports standard markdown in post messages
         // For text messages, it uses a simplified format
-        
 
         // Bold: **text** is supported
         // Italic: *text* is supported

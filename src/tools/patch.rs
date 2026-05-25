@@ -5,6 +5,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
+use std::time::Duration;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 
@@ -85,6 +86,28 @@ impl Tool for ApplyPatchTool {
             std::path::PathBuf::from(&args.directory)
         };
 
+        // Path sandboxing: validate that target_dir stays within working_directory
+        let canonical_workdir = std::fs::canonicalize(&context.working_directory).ok();
+        let canonical_target = if target_dir.is_absolute() {
+            std::fs::canonicalize(&target_dir).ok()
+        } else {
+            std::fs::canonicalize(context.working_directory.join(&target_dir)).ok()
+        };
+        if let (Some(ref workdir), Some(ref target)) = (&canonical_workdir, &canonical_target) {
+            if !target.starts_with(workdir) {
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!(
+                        "Patch target directory is outside the working directory: {}",
+                        target.display()
+                    )),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+        }
+
         let patch_file = target_dir.join(format!("manta_patch_{}.diff", uuid::Uuid::new_v4()));
         match tokio::fs::write(&patch_file, &args.patch).await {
             Ok(_) => {}
@@ -99,48 +122,77 @@ impl Tool for ApplyPatchTool {
             }
         }
 
-        let result = tokio::process::Command::new("git")
-            .args(["apply", "--check", patch_file.to_str().unwrap_or("")])
-            .current_dir(&target_dir)
-            .output()
-            .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new("git")
+                .args(["apply", "--check", patch_file.to_str().unwrap_or("")])
+                .current_dir(&target_dir)
+                .output(),
+        )
+        .await;
 
-        let check_ok = match result {
-            Ok(output) => output.status.success(),
-            Err(_) => false,
-        };
-
-        if !check_ok {
-            let _ = tokio::fs::remove_file(&patch_file).await;
-            return Ok(ToolExecutionResult {
-                success: false,
-                output: String::new(),
-                error: Some(
-                    "Patch does not apply cleanly. Check the patch format and target files."
-                        .to_string(),
-                ),
-                data: None,
-                execution_time: start.elapsed(),
-            });
+        match result {
+            Ok(Ok(output)) if output.status.success() => {}
+            Ok(Ok(output)) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stderr_msg = if stderr.is_empty() {
+                    String::from(
+                        "Patch does not apply cleanly. Check the patch format and target files.",
+                    )
+                } else {
+                    stderr.into_owned()
+                };
+                let _ = tokio::fs::remove_file(&patch_file).await;
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(stderr_msg),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+            Ok(Err(e)) => {
+                let _ = tokio::fs::remove_file(&patch_file).await;
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Patch execution failed: {}", e)),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
+            Err(_) => {
+                let _ = tokio::fs::remove_file(&patch_file).await;
+                return Ok(ToolExecutionResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Patch check timed out.".to_string()),
+                    data: None,
+                    execution_time: start.elapsed(),
+                });
+            }
         }
 
-        let apply_result = tokio::process::Command::new("git")
-            .args(["apply", patch_file.to_str().unwrap_or("")])
-            .current_dir(&target_dir)
-            .output()
-            .await;
+        let apply_result = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new("git")
+                .args(["apply", patch_file.to_str().unwrap_or("")])
+                .current_dir(&target_dir)
+                .output(),
+        )
+        .await;
 
         let _ = tokio::fs::remove_file(&patch_file).await;
 
         match apply_result {
-            Ok(output) if output.status.success() => Ok(ToolExecutionResult {
+            Ok(Ok(output)) if output.status.success() => Ok(ToolExecutionResult {
                 success: true,
                 output: "Patch applied successfully".to_string(),
                 error: None,
                 data: None,
                 execution_time: start.elapsed(),
             }),
-            Ok(output) => Ok(ToolExecutionResult {
+            Ok(Ok(output)) => Ok(ToolExecutionResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!(
@@ -150,10 +202,17 @@ impl Tool for ApplyPatchTool {
                 data: None,
                 execution_time: start.elapsed(),
             }),
-            Err(e) => Ok(ToolExecutionResult {
+            Ok(Err(e)) => Ok(ToolExecutionResult {
                 success: false,
                 output: String::new(),
                 error: Some(format!("Failed to run git apply: {}", e)),
+                data: None,
+                execution_time: start.elapsed(),
+            }),
+            Err(_) => Ok(ToolExecutionResult {
+                success: false,
+                output: String::new(),
+                error: Some("Patch application timed out".to_string()),
                 data: None,
                 execution_time: start.elapsed(),
             }),

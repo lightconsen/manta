@@ -85,10 +85,7 @@ impl MemoryTier {
             "short_term" => Ok(MemoryTier::ShortTerm),
             "long_term" => Ok(MemoryTier::LongTerm),
             "archival" => Ok(MemoryTier::Archival),
-            _ => Err(crate::error::MantaError::Validation(format!(
-                "Unknown memory tier: {}",
-                s
-            ))),
+            _ => Err(crate::error::MantaError::Validation(format!("Unknown memory tier: {}", s))),
         }
     }
 }

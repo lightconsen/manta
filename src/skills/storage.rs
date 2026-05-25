@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Skill storage levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StorageLevel {
     /// Built-in skills (highest priority for availability)
     Bundled,
@@ -24,7 +23,6 @@ pub enum StorageLevel {
     /// Project-level skills in ./.manta/skills/ (highest override priority)
     Project,
 }
-
 
 impl std::fmt::Display for StorageLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

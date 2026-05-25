@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Anthropic API client
 #[derive(Debug, Clone)]
@@ -448,39 +448,76 @@ impl Provider for AnthropicProvider {
 
         debug!("Sending request to Anthropic API");
 
-        let response = self
-            .client
-            .post(self.url("/v1/messages"))
-            .headers(self.headers().await)
-            .json(&body_value)
-            .send()
-            .await
-            .map_err(crate::error::MantaError::Http)?;
+        let request_url = self.url("/v1/messages");
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(crate::error::MantaError::Http)?;
+        // Retry logic for transient errors
+        let mut retries = 0;
+        let max_retries = 3;
 
-        if !status.is_success() {
-            error!("Anthropic API error: {} - {}", status, body);
-            let error_msg = format!("Anthropic API error {}: {}", status, body);
-            return Err(crate::error::MantaError::ExternalService {
-                source: error_msg,
-                cause: None,
-            });
+        loop {
+            info!("Sending HTTP request (attempt {})", retries + 1);
+            match self
+                .client
+                .post(&request_url)
+                .headers(self.headers().await)
+                .json(&body_value)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let text = response.text().await.unwrap_or_default();
+                        error!("Anthropic API error: {} - {}", status, text);
+                        return Err(crate::error::MantaError::ExternalService {
+                            source: format!("Anthropic API error {}: {}", status, text),
+                            cause: None,
+                        });
+                    }
+
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(crate::error::MantaError::Http)?;
+
+                    debug!("Received response from Anthropic API");
+
+                    let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
+                        .map_err(|e| crate::error::MantaError::ExternalService {
+                            source: format!("Failed to parse Anthropic response: {}", e),
+                            cause: Some(Box::new(e)),
+                        })?;
+
+                    return Ok(Self::from_anthropic_response(anthropic_response));
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    error!("HTTP request failed (attempt {}): {}", retries + 1, error_msg);
+
+                    // Check if it's a retryable error
+                    let is_retryable = error_msg.contains("connection closed")
+                        || error_msg.contains("timeout")
+                        || error_msg.contains("reset")
+                        || error_msg.contains("broken pipe")
+                        || error_msg.contains("Connection reset")
+                        || error_msg.contains("unexpected EOF");
+
+                    if is_retryable && retries < max_retries {
+                        retries += 1;
+                        // Exponential backoff: 1s, 2s, 4s
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        warn!(
+                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+
+                    return Err(crate::error::MantaError::Http(e));
+                }
+            }
         }
-
-        debug!("Received response from Anthropic API");
-
-        let anthropic_response: AnthropicResponse =
-            serde_json::from_str(&body).map_err(|e| crate::error::MantaError::ExternalService {
-                source: format!("Failed to parse Anthropic response: {}", e),
-                cause: Some(Box::new(e)),
-            })?;
-
-        Ok(Self::from_anthropic_response(anthropic_response))
     }
 
     async fn stream(&self, request: CompletionRequest) -> crate::Result<CompletionStream> {
@@ -515,47 +552,81 @@ impl Provider for AnthropicProvider {
             }
         }
 
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .headers(self.headers().await)
-            .json(&body_value)
-            .send()
-            .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
-                source: format!("Anthropic streaming request failed: {}", e),
-                cause: Some(Box::new(e)),
-            })?;
+        let request_url = format!("{}/v1/messages", self.base_url);
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!("Anthropic API error: {} - {}", status, body);
-            return Err(crate::error::MantaError::ExternalService {
-                source: format!("Anthropic API error {}: {}", status, body),
-                cause: None,
-            });
-        }
+        // Retry logic for transient errors
+        let mut retries = 0;
+        let max_retries = 3;
 
-        // Process the stream as SSE events
-        let body_stream = response.bytes_stream();
-        let stream = async_stream::stream! {
-            for await chunk in body_stream {
-                match chunk {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        for event in Self::parse_sse_events(&text) {
-                            yield event;
+        loop {
+            match self
+                .client
+                .post(&request_url)
+                .headers(self.headers().await)
+                .json(&body_value)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let body = response.text().await.unwrap_or_default();
+                        error!("Anthropic API error: {} - {}", status, body);
+                        return Err(crate::error::MantaError::ExternalService {
+                            source: format!("Anthropic API error {}: {}", status, body),
+                            cause: None,
+                        });
+                    }
+
+                    // Process the stream as SSE events
+                    let body_stream = response.bytes_stream();
+                    let stream = async_stream::stream! {
+                        for await chunk in body_stream {
+                            match chunk {
+                                Ok(bytes) => {
+                                    let text = String::from_utf8_lossy(&bytes);
+                                    for event in Self::parse_sse_events(&text) {
+                                        yield event;
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Stream error: {}", e);
+                                }
+                            }
                         }
+                    };
+
+                    return Ok(Box::pin(stream));
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    error!("HTTP stream request failed (attempt {}): {}", retries + 1, error_msg);
+
+                    let is_retryable = error_msg.contains("connection closed")
+                        || error_msg.contains("timeout")
+                        || error_msg.contains("reset")
+                        || error_msg.contains("broken pipe")
+                        || error_msg.contains("Connection reset")
+                        || error_msg.contains("unexpected EOF");
+
+                    if is_retryable && retries < max_retries {
+                        retries += 1;
+                        let delay = std::time::Duration::from_secs(2_u64.pow(retries as u32 - 1));
+                        warn!(
+                            "Retryable error detected, retrying after {:?}... (attempt {}/{})",
+                            delay, retries, max_retries
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
                     }
-                    Err(e) => {
-                        error!("Stream error: {}", e);
-                    }
+
+                    return Err(crate::error::MantaError::ExternalService {
+                        source: format!("Anthropic streaming request failed: {}", e),
+                        cause: Some(Box::new(e)),
+                    });
                 }
             }
-        };
-
-        Ok(Box::pin(stream))
+        }
     }
 
     fn supports_tools(&self) -> bool {

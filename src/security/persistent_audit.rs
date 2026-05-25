@@ -37,7 +37,6 @@ impl PersistentAuditLog {
 
     /// Create with SQLite persistence
     pub fn with_pool(pool: sqlx::SqlitePool) -> Self {
-        
         Self {
             memory: Arc::new(RwLock::new(Vec::new())),
             pool: Some(pool),

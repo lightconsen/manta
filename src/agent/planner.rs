@@ -559,18 +559,17 @@ impl PersistedPlan {
                 }
             })?;
         }
-        let json = serde_json::to_string_pretty(self).map_err(|e| {
-            crate::error::MantaError::Storage {
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Storage {
                 context: "Failed to serialize plan".to_string(),
                 details: e.to_string(),
-            }
-        })?;
-        tokio::fs::write(path, json).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            })?;
+        tokio::fs::write(path, json)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
                 context: format!("Failed to write plan file: {:?}", path),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
         debug!("Plan persisted to {:?}", path);
         Ok(())
     }
@@ -587,12 +586,11 @@ impl PersistedPlan {
                 details: e.to_string(),
             }
         })?;
-        let plan: Self = serde_json::from_str(&json).map_err(|e| {
-            crate::error::MantaError::Storage {
+        let plan: Self =
+            serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
                 context: "Failed to deserialize plan".to_string(),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(Some(plan))
     }
 }
@@ -607,18 +605,22 @@ pub async fn load_all_plans(dir: impl AsRef<std::path::Path>) -> crate::Result<V
         return Ok(Vec::new());
     }
     let mut plans = Vec::new();
-    let mut entries = tokio::fs::read_dir(dir).await.map_err(|e| {
-        crate::error::MantaError::Storage {
-            context: format!("Failed to read plans directory: {:?}", dir),
-            details: e.to_string(),
-        }
-    })?;
-    while let Some(entry) = entries.next_entry().await.map_err(|e| {
-        crate::error::MantaError::Storage {
-            context: "Failed to read plans directory entry".to_string(),
-            details: e.to_string(),
-        }
-    })? {
+    let mut entries =
+        tokio::fs::read_dir(dir)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: format!("Failed to read plans directory: {:?}", dir),
+                details: e.to_string(),
+            })?;
+    while let Some(entry) =
+        entries
+            .next_entry()
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
+                context: "Failed to read plans directory entry".to_string(),
+                details: e.to_string(),
+            })?
+    {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
             if let Some(plan) = PersistedPlan::load_from(&path).await? {

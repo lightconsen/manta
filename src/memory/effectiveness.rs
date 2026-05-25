@@ -117,6 +117,8 @@ pub struct EffectivenessTracker {
     config: EffectivenessConfig,
     /// memory_id -> recall events
     events: RwLock<HashMap<String, Vec<RecallEvent>>>,
+    /// recall_id -> (memory_id, index in the events vec)
+    recall_index: RwLock<HashMap<String, (String, usize)>>,
     /// memory_type -> aggregated stats
     type_stats: RwLock<HashMap<String, EffectivenessStats>>,
     /// memory_id -> aggregated stats (computed on demand)
@@ -129,6 +131,7 @@ impl EffectivenessTracker {
         Self {
             config,
             events: RwLock::new(HashMap::new()),
+            recall_index: RwLock::new(HashMap::new()),
             type_stats: RwLock::new(HashMap::new()),
             memory_stats_cache: RwLock::new(HashMap::new()),
         }
@@ -150,7 +153,7 @@ impl EffectivenessTracker {
         let memory_type = memory_type.into();
 
         let event = RecallEvent {
-            recall_id,
+            recall_id: recall_id.clone(),
             memory_id: memory_id.clone(),
             session_key,
             recalled_at: SystemTime::now(),
@@ -162,11 +165,15 @@ impl EffectivenessTracker {
 
         // Store event
         let mut events_guard = self.events.write().await;
-        events_guard
-            .entry(memory_id.clone())
-            .or_default()
-            .push(event);
+        let events = events_guard.entry(memory_id.clone()).or_default();
+        let index = events.len();
+        events.push(event);
         drop(events_guard);
+
+        // Update O(1) recall index
+        let mut index_guard = self.recall_index.write().await;
+        index_guard.insert(recall_id.to_string(), (memory_id.clone(), index));
+        drop(index_guard);
 
         // Invalidate cache for this memory
         let mut cache_guard = self.memory_stats_cache.write().await;
@@ -177,19 +184,28 @@ impl EffectivenessTracker {
     /// Mark a recall as a "hit" (the memory was useful in the response).
     pub async fn mark_hit(&self, recall_id: impl AsRef<str>) {
         let recall_id = recall_id.as_ref();
+
+        // Use O(1) index lookup
+        let (memory_id, index) = {
+            let index_guard = self.recall_index.read().await;
+            match index_guard.get(recall_id) {
+                Some(entry) => entry.clone(),
+                None => return, // Recall ID not found; skip
+            }
+        };
+
+        // Update the specific event directly
         let mut events_guard = self.events.write().await;
-        for events in events_guard.values_mut() {
-            for event in events.iter_mut() {
-                if event.recall_id == recall_id {
-                    event.hit = true;
-                    break;
-                }
+        if let Some(events) = events_guard.get_mut(&memory_id) {
+            if let Some(event) = events.get_mut(index) {
+                event.hit = true;
             }
         }
-        // Clear cache since stats changed
         drop(events_guard);
+
+        // Invalidate cache for this memory
         let mut cache_guard = self.memory_stats_cache.write().await;
-        cache_guard.clear();
+        cache_guard.remove(&memory_id);
     }
 
     /// Get stats for a specific memory.
@@ -252,14 +268,16 @@ impl EffectivenessTracker {
         }
 
         if stats.hit_rate >= self.config.promotion_threshold
-            && current_importance < self.config.max_importance {
-                return EffectivenessAction::Boost;
-            }
+            && current_importance < self.config.max_importance
+        {
+            return EffectivenessAction::Boost;
+        }
 
         if stats.hit_rate <= self.config.demotion_threshold
-            && current_importance > self.config.min_importance {
-                return EffectivenessAction::Penalize;
-            }
+            && current_importance > self.config.min_importance
+        {
+            return EffectivenessAction::Penalize;
+        }
 
         EffectivenessAction::NoOp
     }

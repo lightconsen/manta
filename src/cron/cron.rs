@@ -83,7 +83,6 @@ pub enum SessionTarget {
     Isolated,
 }
 
-
 /// Delivery mode for job results
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -895,16 +894,60 @@ impl CronScheduler {
             DeliveryMode::Webhook { url, headers } => {
                 info!("Delivering result to webhook: {}", url);
 
-                let client = reqwest::Client::new();
-                let mut request = client.post(url).body(output.to_string());
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .build()
+                    .map_err(|e| {
+                        MantaError::Internal(format!("Failed to create HTTP client: {}", e))
+                    })?;
 
-                for (key, value) in headers {
-                    request = request.header(key, value);
+                const MAX_ATTEMPTS: u32 = 3;
+                let mut last_error = String::new();
+
+                for attempt in 1..=MAX_ATTEMPTS {
+                    let mut request = client.post(url).body(output.to_string());
+
+                    for (key, value) in headers {
+                        request = request.header(key, value);
+                    }
+
+                    match request.send().await {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                debug!("Webhook delivery succeeded on attempt {}", attempt);
+                                return Ok(());
+                            }
+                            let status = response.status();
+                            last_error = format!("HTTP {}", status);
+                            warn!(
+                                "Webhook delivery failed on attempt {}/{}: status {}",
+                                attempt, MAX_ATTEMPTS, status
+                            );
+                        }
+                        Err(e) => {
+                            last_error = e.to_string();
+                            warn!(
+                                "Webhook delivery failed on attempt {}/{}: {}",
+                                attempt, MAX_ATTEMPTS, e
+                            );
+                        }
+                    }
+
+                    if attempt < MAX_ATTEMPTS {
+                        let delay = Duration::from_secs(1 << (attempt - 1));
+                        debug!(
+                            "Retrying webhook delivery in {:?} (attempt {})",
+                            delay,
+                            attempt + 1
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
                 }
 
-                request.send().await.map_err(MantaError::Http)?;
-
-                Ok(())
+                Err(MantaError::Internal(format!(
+                    "Webhook delivery failed after {} attempts: {}",
+                    MAX_ATTEMPTS, last_error
+                )))
             }
         }
     }

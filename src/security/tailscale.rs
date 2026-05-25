@@ -70,10 +70,7 @@ impl TailscaleAuthenticator {
             whois_cli(ip)
         })?;
 
-        debug!(
-            "Tailscale auth verified: {} ({})",
-            user.login_name, user.node_name
-        );
+        debug!("Tailscale auth verified: {} ({})", user.login_name, user.node_name);
 
         // Cache the result
         let mut cache = self.cache.write().await;

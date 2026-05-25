@@ -23,6 +23,14 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::{sleep_until, Instant as TokioInstant};
 
+/// Async callback for LLM-based entity extraction in REM dreams.
+/// Takes a prompt string and returns the LLM's response text.
+pub type LlmCallback = Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Default cron expression: daily at 3:00 AM.
 pub const DEFAULT_MEMORY_DREAMING_FREQUENCY: &str = "0 3 * * *";
 
@@ -229,6 +237,71 @@ impl KnowledgeGraph {
     }
 }
 
+/// Heuristic entity extraction fallback when LLM is unavailable.
+/// Extracts capitalized words appearing 3+ times as entities.
+fn extract_entities_heuristic(memories: &[Memory]) -> (Vec<KnowledgeNode>, Vec<KnowledgeEdge>) {
+    let mut word_counts: HashMap<String, u32> = HashMap::new();
+    let processed = memories.len() as u32;
+
+    for mem in memories {
+        for word in mem.content.split_whitespace() {
+            let clean = word
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string();
+            if clean.len() > 3
+                && clean
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            {
+                *word_counts.entry(clean.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    for (word, count) in &word_counts {
+        if *count >= 3 {
+            let node = KnowledgeNode {
+                label: word.clone(),
+                node_type: "concept".to_string(),
+                memory_ids: memories
+                    .iter()
+                    .filter(|m| m.content.contains(word))
+                    .map(|m| m.id.to_string())
+                    .collect(),
+                confidence: (*count as f32 / processed as f32).min(1.0),
+            };
+            nodes.push(node);
+        }
+    }
+
+    for (i, n1) in nodes.iter().enumerate() {
+        for n2 in nodes.iter().skip(i + 1) {
+            let shared: Vec<_> = n1
+                .memory_ids
+                .iter()
+                .filter(|id| n2.memory_ids.contains(id))
+                .collect();
+            if !shared.is_empty() {
+                edges.push(KnowledgeEdge {
+                    from: n1.label.clone(),
+                    to: n2.label.clone(),
+                    relation: "co_occurs".to_string(),
+                    confidence: (shared.len() as f32
+                        / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
+                        .min(1.0),
+                });
+            }
+        }
+    }
+
+    (nodes, edges)
+}
+
 /// The dreaming engine orchestrates background memory consolidation.
 pub struct DreamEngine {
     config: DreamConfig,
@@ -322,6 +395,14 @@ impl DreamEngine {
             return 0.0;
         }
         dot / (norm_a * norm_b)
+    }
+
+    /// Compute the centroid of two vectors by averaging.
+    fn merge_centroids(a: &[f32], b: &[f32]) -> Vec<f32> {
+        if a.len() != b.len() || a.is_empty() {
+            return Vec::new();
+        }
+        a.iter().zip(b.iter()).map(|(x, y)| (x + y) / 2.0).collect()
     }
 
     /// Run a Light Dream: deduplication, expiry cleanup, basic tier maintenance.
@@ -498,7 +579,6 @@ impl DreamEngine {
         info!("Starting Deep Dream: {}", dream_id);
 
         let mut created = 0;
-        let mut processed = 0;
         let mut errors = Vec::new();
 
         let memories = store
@@ -506,11 +586,82 @@ impl DreamEngine {
             .await?;
         info!("Deep Dream: processing {} memories", memories.len());
 
-        // Simple clustering: group memories with shared words in content
+        // Agglomerative clustering by embedding cosine similarity.
+        // Memories with embeddings are clustered using cosine similarity;
+        // memories without embeddings fall back to word-based grouping.
+        let (with_embeddings, without_embeddings): (Vec<&Memory>, Vec<&Memory>) =
+            memories.iter().partition(|m| m.embedding.is_some());
+
         let mut clusters: HashMap<String, Vec<&Memory>> = HashMap::new();
-        for mem in &memories {
-            processed += 1;
-            // Extract key words (naive: words > 4 chars)
+
+        // Cluster memories with embeddings using simple agglomerative clustering
+        if !with_embeddings.is_empty() {
+            // Each memory starts as its own cluster
+            let mut cluster_centroids: Vec<(String, Vec<f32>)> = with_embeddings
+                .iter()
+                .filter_map(|m| {
+                    m.embedding
+                        .as_ref()
+                        .map(|emb| (m.id.0.clone(), emb.clone()))
+                })
+                .collect();
+
+            let mut assignments: Vec<String> =
+                with_embeddings.iter().map(|m| m.id.0.clone()).collect();
+
+            // Merge clusters when centroid cosine similarity > 0.7
+            let merge_threshold = 0.7;
+            let mut changed = true;
+            while changed {
+                changed = false;
+                let mut to_merge: Option<(usize, usize)> = None;
+                for i in 0..cluster_centroids.len() {
+                    if cluster_centroids[i].0.is_empty() {
+                        continue; // already merged
+                    }
+                    for j in (i + 1)..cluster_centroids.len() {
+                        if cluster_centroids[j].0.is_empty() {
+                            continue;
+                        }
+                        let sim = Self::cosine_similarity(
+                            &cluster_centroids[i].1,
+                            &cluster_centroids[j].1,
+                        );
+                        if sim > merge_threshold {
+                            to_merge = Some((i, j));
+                            break;
+                        }
+                    }
+                    if to_merge.is_some() {
+                        break;
+                    }
+                }
+                if let Some((i, j)) = to_merge {
+                    // Merge j into i
+                    let new_centroid =
+                        Self::merge_centroids(&cluster_centroids[i].1, &cluster_centroids[j].1);
+                    cluster_centroids[i].1 = new_centroid;
+                    // Update assignments
+                    let target_id = cluster_centroids[i].0.clone();
+                    let source_id = cluster_centroids[j].0.clone();
+                    cluster_centroids[j].0.clear(); // mark as merged
+                    for aid in &mut assignments {
+                        if *aid == source_id {
+                            *aid = target_id.clone();
+                        }
+                    }
+                    changed = true;
+                }
+            }
+
+            // Group memories by cluster assignment
+            for (mem, assigned_id) in with_embeddings.iter().zip(assignments.iter()) {
+                clusters.entry(assigned_id.clone()).or_default().push(mem);
+            }
+        }
+
+        // Fall back to word-based clustering for memories without embeddings
+        for mem in &without_embeddings {
             let words: Vec<String> = mem
                 .content
                 .split_whitespace()
@@ -528,7 +679,7 @@ impl DreamEngine {
             }
         }
 
-        // Generate summary memories for clusters with > 2 members
+        // Generate summary memories for clusters with >= 3 members
         for (topic, cluster) in clusters {
             let mut unique_memories: Vec<&Memory> = cluster;
             unique_memories.sort_by_key(|m| &m.id.0);
@@ -567,12 +718,13 @@ impl DreamEngine {
         }
 
         let finished_at = SystemTime::now();
+        let processed = memories.len();
         let result = DreamResult {
             dream_id,
             phase: DreamPhase::Deep,
             started_at,
             finished_at,
-            memories_processed: processed,
+            memories_processed: processed as u32,
             memories_created: created,
             memories_removed: 0,
             memories_promoted: 0,
@@ -596,20 +748,20 @@ impl DreamEngine {
 
     /// Run a REM Dream: cross-session pattern discovery, knowledge graph update.
     ///
-    /// - Extract entities and relationships
+    /// - Extract entities and relationships via LLM-based NER (when callback provided)
     /// - Update knowledge graph
     /// - Detect recurring patterns across sessions
     pub async fn run_rem(
         &self,
         store: &dyn super::MemoryStore,
         _tier_index: &TierIndex,
+        llm_callback: Option<&LlmCallback>,
     ) -> crate::Result<DreamResult> {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-rem-{}", uuid::Uuid::new_v4());
         info!("Starting REM Dream: {}", dream_id);
 
         let mut created = 0;
-        let mut processed = 0;
         let mut errors = Vec::new();
 
         let memories = store
@@ -617,69 +769,131 @@ impl DreamEngine {
             .await?;
         info!("REM Dream: processing {} memories", memories.len());
 
-        // Naive entity extraction: capitalize words that appear multiple times
-        let mut word_counts: HashMap<String, u32> = HashMap::new();
-        for mem in &memories {
-            processed += 1;
-            for word in mem.content.split_whitespace() {
-                let clean = word
-                    .trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_string();
-                if clean.len() > 3
-                    && clean
-                        .chars()
-                        .next()
-                        .map(|c| c.is_uppercase())
-                        .unwrap_or(false)
-                {
-                    *word_counts.entry(clean.clone()).or_insert(0) += 1;
+        // LLM-based entity extraction when callback is available
+        let (nodes, edges) = if let Some(llm) = llm_callback {
+            // Build combined content for NER
+            let combined_content: Vec<String> =
+                memories.iter().map(|m| m.content.clone()).collect();
+            let content_for_prompt = combined_content.join("\n---\n");
+
+            let prompt = format!(
+                "Extract entities (people, places, organizations, concepts) and their relationships \
+                 from the following memory content. Each memory is separated by '---'.\n\n\
+                 Return ONLY a JSON object with this schema:\n\
+                 {{\n  \"entities\": [{{\"label\": \"name\", \"type\": \"person|place|organization|concept\", \"confidence\": 0.9}}],\n  \
+                 \"relationships\": [{{\"from\": \"entity_label\", \"to\": \"entity_label\", \"relation\": \"verb_phrase\", \"confidence\": 0.8}}]\n\
+                 }}\n\n\
+                 Memory content:\n{}\n\n\
+                 JSON:",
+                content_for_prompt.chars().take(8000).collect::<String>()
+            );
+
+            let response = llm(prompt).await;
+
+            // Parse JSON response
+            #[derive(Deserialize)]
+            struct NerResponse {
+                entities: Vec<NerEntity>,
+                #[serde(default)]
+                relationships: Vec<NerRelationship>,
+            }
+            #[derive(Deserialize)]
+            struct NerEntity {
+                label: String,
+                #[serde(rename = "type")]
+                entity_type: String,
+                #[serde(default = "default_confidence")]
+                confidence: f32,
+            }
+            #[derive(Deserialize)]
+            struct NerRelationship {
+                from: String,
+                to: String,
+                relation: String,
+                #[serde(default = "default_confidence")]
+                confidence: f32,
+            }
+            fn default_confidence() -> f32 {
+                0.5
+            }
+
+            match serde_json::from_str::<NerResponse>(&response) {
+                Ok(parsed) => {
+                    let mut nodes = Vec::new();
+                    let mut edges = Vec::new();
+
+                    for entity in &parsed.entities {
+                        let memory_ids: Vec<String> = memories
+                            .iter()
+                            .filter(|m| {
+                                m.content
+                                    .to_lowercase()
+                                    .contains(&entity.label.to_lowercase())
+                            })
+                            .map(|m| m.id.to_string())
+                            .collect();
+                        if !memory_ids.is_empty() {
+                            nodes.push(KnowledgeNode {
+                                label: entity.label.clone(),
+                                node_type: entity.entity_type.clone(),
+                                memory_ids,
+                                confidence: entity.confidence,
+                            });
+                        }
+                    }
+
+                    for rel in parsed.relationships {
+                        edges.push(KnowledgeEdge {
+                            from: rel.from,
+                            to: rel.to,
+                            relation: rel.relation,
+                            confidence: rel.confidence,
+                        });
+                    }
+
+                    // Fall back to co-occurrence edges if LLM didn't provide relationships
+                    if edges.is_empty() {
+                        for (i, n1) in nodes.iter().enumerate() {
+                            for n2 in nodes.iter().skip(i + 1) {
+                                let shared: Vec<_> = n1
+                                    .memory_ids
+                                    .iter()
+                                    .filter(|id| n2.memory_ids.contains(id))
+                                    .collect();
+                                if !shared.is_empty() {
+                                    edges.push(KnowledgeEdge {
+                                        from: n1.label.clone(),
+                                        to: n2.label.clone(),
+                                        relation: "co_occurs".to_string(),
+                                        confidence: (shared.len() as f32
+                                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
+                                            .min(1.0),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    (nodes, edges)
+                }
+                Err(e) => {
+                    errors.push(format!("Failed to parse LLM NER response: {}", e));
+                    debug!(
+                        "LLM NER response (first 500 chars): {}",
+                        response.chars().take(500).collect::<String>()
+                    );
+                    // Fall back to heuristic extraction
+                    extract_entities_heuristic(&memories)
                 }
             }
-        }
-
-        // Build/update knowledge graph with frequent entities
-        let mut nodes = Vec::new();
-        let mut edges = Vec::new();
-
-        for (word, count) in &word_counts {
-            if *count >= 3 {
-                let node = KnowledgeNode {
-                    label: word.clone(),
-                    node_type: "concept".to_string(),
-                    memory_ids: memories
-                        .iter()
-                        .filter(|m| m.content.contains(word))
-                        .map(|m| m.id.to_string())
-                        .collect(),
-                    confidence: (*count as f32 / processed as f32).min(1.0),
-                };
-                nodes.push(node);
-            }
-        }
-
-        // Create edges between co-occurring entities
-        for (i, n1) in nodes.iter().enumerate() {
-            for n2 in nodes.iter().skip(i + 1) {
-                let shared: Vec<_> = n1
-                    .memory_ids
-                    .iter()
-                    .filter(|id| n2.memory_ids.contains(id))
-                    .collect();
-                if !shared.is_empty() {
-                    edges.push(KnowledgeEdge {
-                        from: n1.label.clone(),
-                        to: n2.label.clone(),
-                        relation: "co_occurs".to_string(),
-                        confidence: (shared.len() as f32
-                            / n1.memory_ids.len().max(n2.memory_ids.len()) as f32)
-                            .min(1.0),
-                    });
-                }
-            }
-        }
+        } else {
+            // No LLM callback: use heuristic extraction
+            extract_entities_heuristic(&memories)
+        };
 
         let node_count = nodes.len();
         let edge_count = edges.len();
+        let processed = memories.len();
 
         // Store knowledge graph
         let mut graph = self.knowledge_graph.write().await;
@@ -722,7 +936,7 @@ impl DreamEngine {
             phase: DreamPhase::Rem,
             started_at,
             finished_at,
-            memories_processed: processed,
+            memories_processed: processed as u32,
             memories_created: created,
             memories_removed: 0,
             memories_promoted: 0,
@@ -762,6 +976,7 @@ impl DreamEngine {
         store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
         include_rem: bool,
+        llm_callback: Option<&LlmCallback>,
     ) -> crate::Result<Vec<DreamResult>> {
         if !self.config.enabled {
             return Ok(Vec::new());
@@ -811,7 +1026,7 @@ impl DreamEngine {
 
         // REM dream runs only if requested and budget allows
         if include_rem && self.config.budget == DreamBudget::Expensive {
-            match self.run_rem(store, tier_index).await {
+            match self.run_rem(store, tier_index, llm_callback).await {
                 Ok(r) => {
                     if let Some(ref event_log) = self.event_log {
                         let event = MemoryEventBuilder::new().dream(
@@ -851,10 +1066,7 @@ impl DreamEngine {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DreamAction {
     /// Delete a memory (e.g., duplicate, expired).
-    Delete {
-        memory_id: String,
-        reason: String,
-    },
+    Delete { memory_id: String, reason: String },
     /// Merge multiple memories into a summary.
     Merge {
         memory_ids: Vec<String>,
@@ -873,9 +1085,7 @@ pub enum DreamAction {
         to_tier: String,
     },
     /// Create a new memory (e.g., dream summary, pattern).
-    Create {
-        memory: crate::memory::Memory,
-    },
+    Create { memory: crate::memory::Memory },
 }
 
 /// Review status for a dream action.
@@ -998,10 +1208,7 @@ impl DreamReviewQueue {
                     tier_index.remove(memory_id);
                     applied += 1;
                 }
-                DreamAction::Merge {
-                    memory_ids,
-                    summary,
-                } => {
+                DreamAction::Merge { memory_ids, summary } => {
                     // Delete source memories and store the summary
                     for id in memory_ids {
                         let _ = store.delete(&crate::memory::MemoryId::new(id)).await;
@@ -1011,25 +1218,18 @@ impl DreamReviewQueue {
                         .with_importance_score(0.7)
                         .with_source("dream_review");
                     if let Ok(_id) = store.store(mem).await {
-                        tier_index.insert(_id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                        tier_index
+                            .insert(_id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
                     }
                     applied += 1;
                 }
-                DreamAction::Promote {
-                    memory_id,
-                    to_tier,
-                    ..
-                } => {
+                DreamAction::Promote { memory_id, to_tier, .. } => {
                     if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
                         tier_index.update_tier(memory_id, tier);
                     }
                     applied += 1;
                 }
-                DreamAction::Demote {
-                    memory_id,
-                    to_tier,
-                    ..
-                } => {
+                DreamAction::Demote { memory_id, to_tier, .. } => {
                     if let Ok(tier) = crate::memory::tier::MemoryTier::from_label(to_tier) {
                         tier_index.update_tier(memory_id, tier);
                     }
@@ -1037,7 +1237,8 @@ impl DreamReviewQueue {
                 }
                 DreamAction::Create { memory } => {
                     if let Ok(id) = store.store(memory.clone()).await {
-                        tier_index.insert(id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
+                        tier_index
+                            .insert(id.to_string(), crate::memory::tier::MemoryTier::LongTerm);
                     }
                     applied += 1;
                 }
@@ -1059,12 +1260,12 @@ impl DreamReviewQueue {
                 details: e.to_string(),
             }
         })?;
-        tokio::fs::write(path, json).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+        tokio::fs::write(path, json)
+            .await
+            .map_err(|e| crate::error::MantaError::Storage {
                 context: "Failed to write review queue".to_string(),
                 details: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 
@@ -1080,15 +1281,12 @@ impl DreamReviewQueue {
                 details: e.to_string(),
             }
         })?;
-        let items: Vec<DreamReviewItem> = serde_json::from_str(&json).map_err(|e| {
-            crate::error::MantaError::Storage {
+        let items: Vec<DreamReviewItem> =
+            serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
                 context: "Failed to deserialize review queue".to_string(),
                 details: e.to_string(),
-            }
-        })?;
-        Ok(Self {
-            items: RwLock::new(items),
-        })
+            })?;
+        Ok(Self { items: RwLock::new(items) })
     }
 
     /// Clear all items from the queue.
@@ -1116,9 +1314,10 @@ impl DreamScheduler {
         store: &dyn super::MemoryStore,
         tier_index: &TierIndex,
         include_rem: bool,
+        llm_callback: Option<&LlmCallback>,
     ) -> crate::Result<Vec<DreamResult>> {
         self.engine
-            .run_full_cycle(store, tier_index, include_rem)
+            .run_full_cycle(store, tier_index, include_rem, llm_callback)
             .await
     }
 
@@ -1176,7 +1375,7 @@ impl DreamScheduler {
                     _ = sleep_until(sleep_deadline) => {
                         info!("Running scheduled dream cycle");
                         let include_rem = engine.config.budget == DreamBudget::Expensive;
-                        match engine.run_full_cycle(store.as_ref(), tier_index.as_ref(), include_rem).await {
+                        match engine.run_full_cycle(store.as_ref(), tier_index.as_ref(), include_rem, None).await {
                             Ok(results) => {
                                 for r in &results {
                                     info!("Dream result: {}", r.summary);
@@ -1282,7 +1481,10 @@ mod tests {
             tier_index.insert(id.to_string(), MemoryTier::LongTerm);
         }
 
-        let result = engine.run_rem(store.as_ref(), &tier_index).await.unwrap();
+        let result = engine
+            .run_rem(store.as_ref(), &tier_index, None)
+            .await
+            .unwrap();
         assert_eq!(result.phase, DreamPhase::Rem);
         assert!(result.memories_processed >= 5);
 

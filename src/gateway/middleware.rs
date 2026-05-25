@@ -21,8 +21,7 @@ use crate::gateway::GatewayState;
 use crate::security::UserId;
 
 /// Allowed network origins for admin APIs
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum AllowedOrigin {
     /// Only localhost
     #[default]
@@ -36,7 +35,6 @@ pub enum AllowedOrigin {
     /// Any origin (disable restriction)
     Any,
 }
-
 
 /// Check if an IP address is allowed based on origin policy
 #[allow(dead_code)]

@@ -39,7 +39,7 @@ pub type UnifiedStore = DatabaseStore;
 pub use dreaming::{
     DreamAction, DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult,
     DreamReviewItem, DreamReviewQueue, DreamScheduler, DreamSpeed, DreamThinking, KnowledgeEdge,
-    KnowledgeGraph, KnowledgeNode, ReviewStatus,
+    KnowledgeGraph, KnowledgeNode, LlmCallback, ReviewStatus,
 };
 pub use effectiveness::{
     EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker, RecallEvent,
@@ -77,8 +77,9 @@ pub use tier::{
 pub use tiered_store::TieredStore;
 pub use vector::{
     ApiEmbeddingProvider, BatchEmbeddingProcessor, CachedEmbeddingProvider, EmbeddedChunk,
-    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore, TextChunker,
-    VectorBackend, VectorMemoryService, VectorStore, VectorStoreStats,
+    EmbeddingConfig, EmbeddingProvider, LocalGgufEmbeddingProvider, MemoryVectorStore,
+    SqliteVectorStore, TextChunker, VectorBackend, VectorMemoryService, VectorStore,
+    VectorStoreStats,
 };
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
