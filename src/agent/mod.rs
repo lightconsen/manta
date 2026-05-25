@@ -517,7 +517,7 @@ pub struct Agent {
     /// Skill manager for deterministic skill prefiltering.
     /// When set, skills are dynamically filtered based on user message triggers
     /// before being included in the system prompt.
-    skill_manager: Option<Arc<crate::skills::SkillManager>>,
+    skill_manager: Option<Arc<RwLock<crate::skills::SkillManager>>>,
     /// Optional execution controller for pause/resume/step/cancel.
     /// Set by the ACP before dispatching a command; cleared afterward.
     execution_controller: Arc<RwLock<Option<Arc<ExecutionController>>>>,
@@ -749,7 +749,7 @@ impl Agent {
     /// (regex, keywords, commands) before including them in the system prompt.
     /// This reduces token usage and improves relevance by only including skills
     /// that match the user's message.
-    pub fn with_skill_manager(mut self, manager: Arc<crate::skills::SkillManager>) -> Self {
+    pub fn with_skill_manager(mut self, manager: Arc<RwLock<crate::skills::SkillManager>>) -> Self {
         self.skill_manager = Some(manager);
         self
     }
@@ -909,26 +909,15 @@ impl Agent {
 
             // Add dynamically filtered skills based on user message
             if let Some(ref skill_manager) = self.skill_manager {
-                let matching_skills = skill_manager.prefilter_skills(user_message, 5).await;
+                let mgr = skill_manager.read().await;
+                let matching_skills = mgr.prefilter_skills(user_message, 5).await;
                 if !matching_skills.is_empty() {
                     let skills_text = matching_skills
                         .iter()
-                        .map(|s| {
-                            let triggers: Vec<String> = s
-                                .triggers
-                                .iter()
-                                .map(|t| format!("{:?}: {}", t.trigger_type, t.pattern))
-                                .collect();
-                            format!(
-                                "- {}: {} (triggers: {})",
-                                s.name,
-                                s.description,
-                                triggers.join(", ")
-                            )
-                        })
+                        .map(|s| s.to_prompt_section())
                         .collect::<Vec<_>>()
-                        .join("\n");
-                    prompt = format!("{}\n\n## Available Skills\n\n{}", prompt, skills_text);
+                        .join("\n\n");
+                    prompt = format!("{}\n\n## Active Skills\n\n{}", prompt, skills_text);
                 }
             } else if let Some(ref static_skills) = self.config.skills_prompt {
                 // Fallback to static skills prompt if skill_manager not set

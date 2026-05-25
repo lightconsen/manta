@@ -2168,6 +2168,7 @@ async fn spawn_agent_inner(
                 .with_disk_budget(Arc::clone(&state.disk_budget))
                 .with_session_file_manager(Arc::clone(&state.session_file_manager))
                 .with_model_router(Arc::clone(&state.model_router))
+                .with_skill_manager(Arc::clone(&state.skills_manager))
                 .with_model_alias(model.clone()),
         )
     } else {
@@ -2175,6 +2176,7 @@ async fn spawn_agent_inner(
             Agent::new(config.clone(), provider, tools)
                 .with_model(model.clone())
                 .with_cost_guard(cost_guard)
+                .with_skill_manager(Arc::clone(&state.skills_manager))
                 .with_transcript_store(Arc::clone(&state.transcript_store))
                 .with_artifact_store(Arc::clone(&state.artifact_store))
                 .with_disk_budget(Arc::clone(&state.disk_budget))
@@ -4741,7 +4743,8 @@ async fn create_agent_handler(
                 .with_transcript_store(Arc::clone(&state.transcript_store))
                 .with_artifact_store(Arc::clone(&state.artifact_store))
                 .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                .with_skill_manager(Arc::clone(&state.skills_manager)),
         )
     } else {
         Arc::new(
@@ -4750,7 +4753,8 @@ async fn create_agent_handler(
                 .with_transcript_store(Arc::clone(&state.transcript_store))
                 .with_artifact_store(Arc::clone(&state.artifact_store))
                 .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                .with_skill_manager(Arc::clone(&state.skills_manager)),
         )
     };
 
@@ -6798,7 +6802,8 @@ async fn spawn_discovered_agent_handler(
                     .with_transcript_store(Arc::clone(&state.transcript_store))
                     .with_artifact_store(Arc::clone(&state.artifact_store))
                     .with_disk_budget(Arc::clone(&state.disk_budget))
-                    .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                    .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                    .with_skill_manager(Arc::clone(&state.skills_manager)),
             )
         } else {
             Arc::new(
@@ -6807,7 +6812,8 @@ async fn spawn_discovered_agent_handler(
                     .with_transcript_store(Arc::clone(&state.transcript_store))
                     .with_artifact_store(Arc::clone(&state.artifact_store))
                     .with_disk_budget(Arc::clone(&state.disk_budget))
-                    .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                    .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                    .with_skill_manager(Arc::clone(&state.skills_manager)),
             )
         };
 
@@ -6986,7 +6992,8 @@ async fn spawn_all_discovered_agents_handler(
                             .with_transcript_store(Arc::clone(&state.transcript_store))
                             .with_artifact_store(Arc::clone(&state.artifact_store))
                             .with_disk_budget(Arc::clone(&state.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                            .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                            .with_skill_manager(Arc::clone(&state.skills_manager)),
                     )
                 } else {
                     Arc::new(
@@ -6995,7 +7002,8 @@ async fn spawn_all_discovered_agents_handler(
                             .with_transcript_store(Arc::clone(&state.transcript_store))
                             .with_artifact_store(Arc::clone(&state.artifact_store))
                             .with_disk_budget(Arc::clone(&state.disk_budget))
-                            .with_session_file_manager(Arc::clone(&state.session_file_manager)),
+                            .with_session_file_manager(Arc::clone(&state.session_file_manager))
+                            .with_skill_manager(Arc::clone(&state.skills_manager)),
                     )
                 };
 
