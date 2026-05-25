@@ -129,7 +129,7 @@ impl HookRegistry {
     /// Register a hook handler
     pub async fn register(&self, handler: HookHandler) {
         let mut handlers = self.handlers.write().await;
-        let entry = handlers.entry(handler.hook_type.clone()).or_default();
+        let entry = handlers.entry(handler.hook_type).or_default();
         entry.push(handler);
         // Sort by priority
         entry.sort_by_key(|h| h.priority);
@@ -199,7 +199,7 @@ impl HookRegistry {
             .map(|(hook_type, handlers_list)| {
                 let plugin_ids: Vec<String> =
                     handlers_list.iter().map(|h| h.plugin_id.clone()).collect();
-                (hook_type.clone(), plugin_ids)
+                (*hook_type, plugin_ids)
             })
             .collect()
     }

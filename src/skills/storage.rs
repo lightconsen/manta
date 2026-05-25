@@ -12,10 +12,12 @@ use tracing::{debug, info, warn};
 
 /// Skill storage levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum StorageLevel {
     /// Built-in skills (highest priority for availability)
     Bundled,
     /// User-level skills in ~/.manta/skills/
+    #[default]
     User,
     /// Workspace-level skills
     Workspace,
@@ -23,11 +25,6 @@ pub enum StorageLevel {
     Project,
 }
 
-impl Default for StorageLevel {
-    fn default() -> Self {
-        StorageLevel::User
-    }
-}
 
 impl std::fmt::Display for StorageLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -156,20 +153,20 @@ impl SkillStorage {
     pub async fn ensure_user_dir(&self) -> crate::Result<()> {
         tokio::fs::create_dir_all(&self.user_dir)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
         Ok(())
     }
 
     /// Ensure project skills directory exists
     pub async fn ensure_project_dir(&self) -> crate::Result<PathBuf> {
         let dir = std::env::current_dir()
-            .map_err(|e| crate::error::MantaError::Io(e))?
+            .map_err(crate::error::MantaError::Io)?
             .join(".manta")
             .join("skills");
 
         tokio::fs::create_dir_all(&dir)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         Ok(dir)
     }
@@ -281,7 +278,7 @@ impl SkillStorage {
         if dest.exists() {
             tokio::fs::remove_dir_all(&dest)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
         }
 
         // Copy directory
@@ -303,7 +300,7 @@ impl SkillStorage {
 
         tokio::fs::remove_dir_all(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         info!("Uninstalled skill '{}' from {:?}", name, path);
         Ok(())
@@ -406,11 +403,11 @@ impl Default for SkillStorage {
 async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
     tokio::fs::create_dir_all(dst)
         .await
-        .map_err(|e| crate::error::MantaError::Io(e))?;
+        .map_err(crate::error::MantaError::Io)?;
 
     let mut entries = tokio::fs::read_dir(src)
         .await
-        .map_err(|e| crate::error::MantaError::Io(e))?;
+        .map_err(crate::error::MantaError::Io)?;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let src_path = entry.path();
@@ -421,7 +418,7 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
         } else {
             tokio::fs::copy(&src_path, &dst_path)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
         }
     }
 

@@ -172,15 +172,16 @@ impl HttpGatewayClient {
             match operation().await {
                 Ok(resp) => {
                     // Log TLS fingerprint on first successful connection
-                    if attempt == 0 && self.tls_fingerprint.is_some() {
-                        // Note: reqwest doesn't expose peer certificate
-                        // digest without a custom connector.  This is a
-                        // placeholder that logs the configured expectation.
-                        debug!(
-                            "TLS fingerprint configured for {}: expected={}",
-                            self.base_url,
-                            self.tls_fingerprint.as_ref().unwrap()
-                        );
+                    if attempt == 0 {
+                        if let Some(ref fp) = self.tls_fingerprint {
+                            // Note: reqwest doesn't expose peer certificate
+                            // digest without a custom connector.  This is a
+                            // placeholder that logs the configured expectation.
+                            debug!(
+                                "TLS fingerprint configured for {}: expected={}",
+                                self.base_url, fp
+                            );
+                        }
                     }
                     return Ok(resp);
                 }

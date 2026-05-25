@@ -48,8 +48,10 @@ impl AsRef<Uuid> for Id {
 /// Status of an entity or operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Status {
     /// Entity is pending initialization
+    #[default]
     Pending,
     /// Entity is active and operational
     Active,
@@ -92,11 +94,6 @@ impl std::str::FromStr for Status {
     }
 }
 
-impl Default for Status {
-    fn default() -> Self {
-        Status::Pending
-    }
-}
 
 /// Metadata attached to entities
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -162,7 +162,7 @@ A query should NOT be cached if:
 User query: "{}"
 
 Reply with ONLY "CACHE" or "NOCACHE"."#,
-        message.replace('"', "\"")
+        message.replace('\"', "\\\"")
     );
 
     let request = CompletionRequest {
@@ -612,7 +612,7 @@ impl Agent {
             .unwrap_or_else(|| self.provider.default_model());
 
         // Skip if user already provided explicit reasoning config in extra
-        let has_reasoning_config = request.extra.as_ref().map_or(false, |v| {
+        let has_reasoning_config = request.extra.as_ref().is_some_and(|v| {
             v.get("reasoning_effort").is_some()
                 || v.get("thinking").is_some()
                 || v.get("thinkingConfig").is_some()
@@ -863,7 +863,6 @@ impl Agent {
         limit: usize,
     ) -> crate::Result<Vec<crate::memory::ChatMessage>> {
         if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatHistoryStore;
             store.get_conversation_history(conversation_id, limit).await
         } else {
             Ok(Vec::new())
@@ -873,7 +872,6 @@ impl Agent {
     /// Get the last conversation ID for a user
     pub async fn get_last_conversation(&self, user_id: &str) -> crate::Result<Option<String>> {
         if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatHistoryStore;
             store.get_last_conversation(user_id).await
         } else {
             Ok(None)
@@ -1045,7 +1043,7 @@ impl Agent {
 
                 // Store user message in chat history
                 if let Some(ref store) = self.chat_history {
-                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    use crate::memory::ChatMessage;
                     let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store user message: {}", e);
@@ -1054,7 +1052,7 @@ impl Agent {
 
                 // Store cached assistant response in chat history
                 if let Some(ref store) = self.chat_history {
-                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    use crate::memory::ChatMessage;
                     let chat_msg =
                         ChatMessage::new(&conversation_id, &user_id, "assistant", &cached.response);
                     if let Err(e) = store.store_message(chat_msg).await {
@@ -1084,7 +1082,7 @@ impl Agent {
         }
 
         if let Some(ref store) = self.chat_history {
-            use crate::memory::{ChatHistoryStore, ChatMessage};
+            use crate::memory::ChatMessage;
             let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
             // Clone message_id before moving chat_msg
             let msg_id = chat_msg.id.clone();
@@ -1338,7 +1336,7 @@ impl Agent {
         }
 
         if let Some(ref store) = self.chat_history {
-            use crate::memory::{ChatHistoryStore, ChatMessage};
+            use crate::memory::ChatMessage;
             let chat_msg = ChatMessage::new(
                 &conversation_id,
                 &user_id,
@@ -1402,7 +1400,7 @@ impl Agent {
             response.message.content.clone(),
         );
         if let Some(ref usage) = response.usage {
-            outgoing.usage = Some(usage.clone());
+            outgoing.usage = Some(*usage);
         }
 
         Ok(outgoing)
@@ -1454,7 +1452,7 @@ impl Agent {
 
                 // Store user message in chat history
                 if let Some(ref store) = self.chat_history {
-                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    use crate::memory::ChatMessage;
                     let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
                     if let Err(e) = store.store_message(chat_msg).await {
                         error!("Failed to store user message: {}", e);
@@ -1463,7 +1461,7 @@ impl Agent {
 
                 // Store cached assistant response in chat history
                 if let Some(ref store) = self.chat_history {
-                    use crate::memory::{ChatHistoryStore, ChatMessage};
+                    use crate::memory::ChatMessage;
                     let chat_msg =
                         ChatMessage::new(&conversation_id, &user_id, "assistant", &cached.response);
                     if let Err(e) = store.store_message(chat_msg).await {
@@ -1488,7 +1486,7 @@ impl Agent {
         // Store user message in chat history and index for search
         let message_id = uuid::Uuid::new_v4().to_string();
         if let Some(ref store) = self.chat_history {
-            use crate::memory::{ChatHistoryStore, ChatMessage};
+            use crate::memory::ChatMessage;
             let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
             let msg_id = chat_msg.id.clone();
             if let Err(e) = store.store_message(chat_msg).await {
@@ -1644,7 +1642,7 @@ impl Agent {
         }
 
         if let Some(ref store) = self.chat_history {
-            use crate::memory::{ChatHistoryStore, ChatMessage};
+            use crate::memory::ChatMessage;
             let chat_msg = ChatMessage::new(
                 &conversation_id,
                 &user_id,
@@ -1685,8 +1683,8 @@ impl Agent {
         }
 
         // Only cache the response if it should be cached
-        if should_cache {
-            if are_tools_cacheable(&tools_used_this_turn) {
+        if should_cache
+            && are_tools_cacheable(&tools_used_this_turn) {
                 self.response_cache
                     .set(
                         &user_id,
@@ -1697,7 +1695,6 @@ impl Agent {
                     )
                     .await;
             }
-        }
 
         // Notify completed
         let response_content = response.message.content.clone();

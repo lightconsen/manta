@@ -41,7 +41,7 @@ impl DaemonManager {
         }
 
         // Get the current executable path
-        let exe_path = std::env::current_exe().map_err(|e| crate::error::MantaError::Io(e))?;
+        let exe_path = std::env::current_exe().map_err(crate::error::MantaError::Io)?;
 
         // Get log file path
         let log_path = crate::logs::log_file_path();
@@ -56,7 +56,7 @@ impl DaemonManager {
             .create(true)
             .append(true)
             .open(&log_path)
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         // Spawn the daemon process with output redirected to log file
         let child = Command::new(&exe_path)
@@ -70,11 +70,11 @@ impl DaemonManager {
             .stdout(
                 log_file_std
                     .try_clone()
-                    .map_err(|e| crate::error::MantaError::Io(e))?,
+                    .map_err(crate::error::MantaError::Io)?,
             )
             .stderr(log_file_std)
             .spawn()
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         let pid = child.id().expect("Failed to get child PID");
 
@@ -104,7 +104,7 @@ impl DaemonManager {
             println!("📁 Creating Manta directory at {:?}...", manta_dir);
             tokio::fs::create_dir_all(&manta_dir)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
         }
 
         if !config_path.exists() {
@@ -168,7 +168,7 @@ workspace_only = true
 "#;
             tokio::fs::write(&config_path, default_config)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
             println!("✅ Default config created. Edit {:?} to customize.", config_path);
         }
 
@@ -483,12 +483,12 @@ workspace_only = true
         if let Some(parent) = self.config.pid_file.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
         }
 
         tokio::fs::write(&self.config.pid_file, pid.to_string())
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         Ok(())
     }

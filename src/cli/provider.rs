@@ -70,7 +70,7 @@ pub enum ProviderCommands {
 /// Run provider commands
 pub async fn run_provider_command(
     command: &ProviderCommands,
-    config: &crate::config::Config,
+    _config: &crate::config::Config,
 ) -> Result<()> {
     let client = reqwest::Client::new();
 
@@ -82,7 +82,7 @@ pub async fn run_provider_command(
                     let body: serde_json::Value = resp.json().await.unwrap_or_default();
                     if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
                         println!("Providers:");
-                        println!("{:<20} {:<10} {:<10} {}", "ID", "Enabled", "Healthy", "Name");
+                        println!("{:<20} {:<10} {:<10} Name", "ID", "Enabled", "Healthy");
                         println!("{}", "-".repeat(60));
                         for p in providers {
                             println!(
@@ -254,6 +254,7 @@ pub async fn run_provider_command(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_auth_command(
     provider_id: &str,
     client_id: &str,

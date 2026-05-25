@@ -103,7 +103,7 @@ async fn download_from_hf(repo_id: &str, filename: &str) -> crate::Result<PathBu
         .map(|h| h.join(HF_CACHE_DIR))
         .unwrap_or_else(|| PathBuf::from(HF_CACHE_DIR));
 
-    std::fs::create_dir_all(&cache_dir).map_err(|e| crate::error::MantaError::Io(e))?;
+    std::fs::create_dir_all(&cache_dir).map_err(crate::error::MantaError::Io)?;
 
     // Use hf-hub for download
     let api = hf_hub::api::tokio::Api::new().map_err(|e| {
@@ -234,7 +234,7 @@ impl LazyEmbeddingModel {
         })?;
 
         // Convert to Vec<f32> and normalize
-        let mut vec: Vec<f32> = embedding.iter().map(|x| *x as f32).collect();
+        let mut vec: Vec<f32> = embedding.to_vec();
 
         // Normalize to unit vector
         let magnitude: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -282,6 +282,7 @@ impl LazyEmbeddingModel {
 }
 
 /// Embedding provider that supports lazy initialization and fallback
+#[allow(clippy::large_enum_variant)]
 pub enum LocalEmbeddingProvider {
     /// Full GGUF embedding model
     Gguf(LazyEmbeddingModel),

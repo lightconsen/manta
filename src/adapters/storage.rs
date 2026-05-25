@@ -1014,7 +1014,7 @@ impl MemoryStore for SqliteStorage {
 
         let embedding_bytes = memory.embedding.as_ref().map(|e| serialize_embedding(e));
 
-        let expires_at = memory.expires_at.map(|t| system_time_to_secs(t));
+        let expires_at = memory.expires_at.map(system_time_to_secs);
 
         sqlx::query(
             r#"
@@ -1061,7 +1061,7 @@ impl MemoryStore for SqliteStorage {
 
                 let expires_at = row
                     .get::<Option<i64>, _>("expires_at")
-                    .and_then(|s| secs_to_system_time(s));
+                    .and_then(secs_to_system_time);
 
                 let embedding = row
                     .get::<Option<Vec<u8>>, _>("embedding")
@@ -1159,7 +1159,7 @@ impl MemoryStore for SqliteStorage {
 
                 let expires_at = row
                     .get::<Option<i64>, _>("expires_at")
-                    .and_then(|s| secs_to_system_time(s));
+                    .and_then(secs_to_system_time);
 
                 let embedding = row
                     .get::<Option<Vec<u8>>, _>("embedding")

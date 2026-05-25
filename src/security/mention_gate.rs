@@ -75,8 +75,10 @@ fn default_true() -> bool {
 /// Mention gating policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MentionPolicy {
     /// Allow all mentions (no restriction).
+    #[default]
     Allow,
     /// Block all mentions.
     Block,
@@ -86,11 +88,6 @@ pub enum MentionPolicy {
     Blocklist,
 }
 
-impl Default for MentionPolicy {
-    fn default() -> Self {
-        MentionPolicy::Allow
-    }
-}
 
 impl std::fmt::Display for MentionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -309,12 +306,10 @@ fn pattern_matches(pattern: &str, text: &str) -> bool {
         let inner = &pattern[1..pattern.len() - 1];
         return text.contains(inner);
     }
-    if pattern.starts_with('*') {
-        let suffix = &pattern[1..];
+    if let Some(suffix) = pattern.strip_prefix('*') {
         return text.ends_with(suffix);
     }
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         return text.starts_with(prefix);
     }
     pattern == text

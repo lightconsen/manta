@@ -249,6 +249,7 @@ impl Default for StorageConfig {
 
 /// Memory subsystem configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MemoryConfig {
     /// Multimodal file storage settings
     #[serde(default)]
@@ -264,16 +265,6 @@ pub struct MemoryConfig {
     pub effectiveness: MemoryEffectivenessConfig,
 }
 
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            multimodal: MemoryMultimodalConfig::default(),
-            dreaming: MemoryDreamingConfig::default(),
-            tier: MemoryTierConfig::default(),
-            effectiveness: MemoryEffectivenessConfig::default(),
-        }
-    }
-}
 
 /// Multimodal storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -513,10 +504,11 @@ impl Default for BrowserConfig {
     }
 }
 
+#[cfg(feature = "browser")]
 fn default_bridge_port() -> u16 {
     18800
 }
-
+#[cfg(feature = "browser")]
 fn default_false() -> bool {
     false
 }
@@ -558,7 +550,7 @@ impl Config {
         let config_path = path
             .as_ref()
             .map(|p| p.as_ref().to_path_buf())
-            .or_else(|| Self::find_config_file());
+            .or_else(Self::find_config_file);
 
         if let Some(path) = config_path {
             debug!(path = %path.display(), "Loading config from file");
@@ -985,7 +977,6 @@ impl ReloadableConfig {
     }
 }
 
-/// Hot reload module for runtime configuration reloading
 pub mod hot_reload {
     //! Hot Config Reload System
     //!
@@ -1130,7 +1121,7 @@ pub mod hot_reload {
                                     let event = ConfigChangeEvent {
                                         path: path.clone(),
                                         config_type,
-                                        change_type: change_type.clone(),
+                                        change_type,
                                     };
 
                                     if let Err(e) = change_tx.try_send(event) {

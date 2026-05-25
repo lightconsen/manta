@@ -820,7 +820,7 @@ mod tests {
     }
 }
 
-/// Device fingerprinting for security tracking
+// Device fingerprinting for security tracking
 
 /// Secret scanning for detecting sensitive data leaks
 pub mod secrets {

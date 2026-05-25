@@ -95,7 +95,7 @@ impl TailscaleAuthenticator {
             return true;
         }
 
-        allowed_tailnets.iter().any(|t| user.tailnet == *t)
+        allowed_tailnets.contains(&user.tailnet)
     }
 
     /// Clear the authentication cache.
@@ -110,9 +110,6 @@ impl TailscaleAuthenticator {
 async fn whois_local_api(ip: &str) -> Option<TailscaleUser> {
     #[cfg(unix)]
     {
-        use std::os::unix::net::UnixStream;
-        use tokio::net::UnixStream as TokioUnixStream;
-
         // Try to connect to the Tailscale daemon socket
         let socket_path = "/var/run/tailscale/tailscaled.sock";
         let stream = std::fs::metadata(socket_path).ok()?;

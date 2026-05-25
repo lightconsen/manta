@@ -466,7 +466,7 @@ impl PluginRuntime {
                 }
             };
 
-            return Self::invoke_wasm_tool(store, instance, tool_name, params);
+            Self::invoke_wasm_tool(store, instance, tool_name, params)
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -630,7 +630,7 @@ impl PluginRuntime {
                 }
             };
 
-            return Self::invoke_wasm_provider(store, instance, "provider_complete", request);
+            Self::invoke_wasm_provider(store, instance, "provider_complete", request)
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -673,7 +673,7 @@ impl PluginRuntime {
                 }
             };
 
-            return Self::invoke_wasm_provider(store, instance, "provider_stream", request);
+            Self::invoke_wasm_provider(store, instance, "provider_stream", request)
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -714,12 +714,12 @@ impl PluginRuntime {
                 }
             };
 
-            return Self::invoke_wasm_provider(
+            Self::invoke_wasm_provider(
                 store,
                 instance,
                 "provider_health_check",
                 &serde_json::json!({}),
-            );
+            )
         }
 
         #[cfg(not(feature = "plugins"))]

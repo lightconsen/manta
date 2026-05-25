@@ -105,7 +105,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if !response.status().is_success() {
             return Err(MantaError::ExternalService {
@@ -114,7 +114,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
 
         info!("Found {} skills matching '{}'", listings.len(), query);
         Ok(listings)
@@ -132,7 +132,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if !response.status().is_success() {
             return Err(MantaError::ExternalService {
@@ -141,7 +141,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
 
         Ok(listings)
     }
@@ -158,7 +158,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(MantaError::NotFound {
@@ -173,7 +173,7 @@ impl SkillRegistry {
             });
         }
 
-        let listing: SkillListing = response.json().await.map_err(|e| MantaError::Http(e))?;
+        let listing: SkillListing = response.json().await.map_err(MantaError::Http)?;
 
         Ok(listing)
     }
@@ -204,7 +204,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(MantaError::NotFound {
@@ -219,18 +219,18 @@ impl SkillRegistry {
             });
         }
 
-        let content = response.bytes().await.map_err(|e| MantaError::Http(e))?;
+        let content = response.bytes().await.map_err(MantaError::Http)?;
 
         // Create skill directory
         fs::create_dir_all(&skill_dir)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         // Write SKILL.md
         let skill_file = skill_dir.join("SKILL.md");
         fs::write(&skill_file, content)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         info!("Skill '{}' installed to {:?}", name, skill_dir);
         Ok(skill_dir)
@@ -248,7 +248,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if !response.status().is_success() {
             return Err(MantaError::ExternalService {
@@ -257,18 +257,18 @@ impl SkillRegistry {
             });
         }
 
-        let content = response.bytes().await.map_err(|e| MantaError::Http(e))?;
+        let content = response.bytes().await.map_err(MantaError::Http)?;
 
         let skill_dir = dirs::skills_dir().join(name);
 
         fs::create_dir_all(&skill_dir)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         let skill_file = skill_dir.join("SKILL.md");
         fs::write(&skill_file, content)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         info!("Skill '{}' v{} installed", name, version);
         Ok(skill_dir)
@@ -291,7 +291,7 @@ impl SkillRegistry {
         let skill_file = skill_dir.join("SKILL.md");
         let current_content = fs::read_to_string(&skill_file)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         // Parse current skill to get version
         let current_skill = SkillFile::parse(&current_content, skill_file.clone())
@@ -337,9 +337,9 @@ impl SkillRegistry {
         // List installed skills
         let mut entries = fs::read_dir(&skill_dir)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| MantaError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(MantaError::Io)? {
             let path = entry.path();
             if path.is_dir() {
                 let skill_file = path.join("SKILL.md");
@@ -379,7 +379,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if !response.status().is_success() {
             return Err(MantaError::ExternalService {
@@ -388,7 +388,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
 
         Ok(listings)
     }
@@ -403,7 +403,7 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| MantaError::Http(e))?;
+            .map_err(MantaError::Http)?;
 
         if !response.status().is_success() {
             return Err(MantaError::ExternalService {
@@ -412,7 +412,7 @@ impl SkillRegistry {
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(|e| MantaError::Http(e))?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
 
         Ok(listings)
     }
@@ -432,7 +432,7 @@ impl SkillRegistry {
 
         fs::remove_dir_all(&skill_dir)
             .await
-            .map_err(|e| MantaError::Io(e))?;
+            .map_err(MantaError::Io)?;
 
         info!("Skill '{}' uninstalled", name);
         Ok(())

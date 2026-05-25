@@ -105,7 +105,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                                 if results.is_empty() {
                                     println!("No results found.");
                                 } else {
-                                    println!("{:<4} {:<10} {}", "#", "Score", "Content");
+                                    println!("{:<4} {:<10} Content", "#", "Score");
                                     println!("{}", "-".repeat(80));
                                     for (i, r) in results.iter().enumerate() {
                                         let score =

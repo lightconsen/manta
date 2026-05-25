@@ -142,6 +142,11 @@ impl RuntimeAuditLog {
         self.entries.read().await.len()
     }
 
+    /// Returns true if no entries are stored.
+    pub async fn is_empty(&self) -> bool {
+        self.entries.read().await.is_empty()
+    }
+
     /// Clear all entries.
     pub async fn clear(&self) {
         self.entries.write().await.clear();

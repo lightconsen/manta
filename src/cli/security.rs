@@ -132,8 +132,8 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                             } else {
                                 println!("Pending Pairing Requests:");
                                 println!(
-                                    "{:<12} {:<15} {:<20} {}",
-                                    "Code", "Channel", "User ID", "Created"
+                                    "{:<12} {:<15} {:<20} Created",
+                                    "Code", "Channel", "User ID"
                                 );
                                 println!("{}", "-".repeat(70));
                                 for req in requests {
@@ -513,7 +513,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                             if levels.is_empty() {
                                 println!("No custom gate levels configured.");
                             } else {
-                                println!("{:<20} {}", "User ID", "Level");
+                                println!("{:<20} Level", "User ID");
                                 println!("{}", "-".repeat(40));
                                 for (user, level) in levels {
                                     println!("{:<20} {}", user, level.as_str().unwrap_or("?"));

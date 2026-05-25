@@ -166,14 +166,10 @@ impl ModelDiscoverySource for StaticModelSource {
 fn apply_known_model_metadata(mut entry: ModelCatalogEntry, model_id: &str) -> ModelCatalogEntry {
     let id_lower = model_id.to_lowercase();
 
-    if id_lower.contains("claude-3-opus") {
-        entry.context_window = Some(200_000);
-        entry.supports_vision = true;
-        entry.supports_tools = true;
-        entry.supports_reasoning = true;
-        entry.input_modalities = vec!["text".to_string(), "image".to_string()];
-        entry.capabilities = vec!["long_context".to_string(), "vision".to_string()];
-    } else if id_lower.contains("claude-3-5-sonnet") || id_lower.contains("claude-3.5-sonnet") {
+    if id_lower.contains("claude-3-opus")
+        || id_lower.contains("claude-3-5-sonnet")
+        || id_lower.contains("claude-3.5-sonnet")
+    {
         entry.context_window = Some(200_000);
         entry.supports_vision = true;
         entry.supports_tools = true;
@@ -185,12 +181,7 @@ fn apply_known_model_metadata(mut entry: ModelCatalogEntry, model_id: &str) -> M
         entry.supports_vision = true;
         entry.supports_tools = true;
         entry.input_modalities = vec!["text".to_string(), "image".to_string()];
-    } else if id_lower.contains("gpt-4o") {
-        entry.context_window = Some(128_000);
-        entry.supports_vision = true;
-        entry.supports_tools = true;
-        entry.input_modalities = vec!["text".to_string(), "image".to_string()];
-    } else if id_lower.contains("gpt-4-turbo") {
+    } else if id_lower.contains("gpt-4o") || id_lower.contains("gpt-4-turbo") {
         entry.context_window = Some(128_000);
         entry.supports_vision = true;
         entry.supports_tools = true;

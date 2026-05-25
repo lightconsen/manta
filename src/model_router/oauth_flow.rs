@@ -134,6 +134,7 @@ impl Default for OAuthFlow {
 
 /// OAuth2 token endpoint response (authorization_code flow).
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct TokenResponse {
     access_token: String,
     #[serde(default = "default_expires_in")]

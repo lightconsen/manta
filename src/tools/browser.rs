@@ -5,11 +5,9 @@
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
-use tracing::{debug, info};
 
 #[cfg(feature = "browser")]
 use chromiumoxide::page::ScreenshotParamsBuilder;
@@ -929,6 +927,7 @@ impl BrowserTool {
     }
 
     /// Build response from action results
+    #[cfg(feature = "browser")]
     fn build_result(
         results: Vec<Result<serde_json::Value, String>>,
         screenshot_data: Option<String>,

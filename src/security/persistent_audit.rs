@@ -37,12 +37,12 @@ impl PersistentAuditLog {
 
     /// Create with SQLite persistence
     pub fn with_pool(pool: sqlx::SqlitePool) -> Self {
-        let s = Self {
+        
+        Self {
             memory: Arc::new(RwLock::new(Vec::new())),
             pool: Some(pool),
             memory_capacity: 1000,
-        };
-        s
+        }
     }
 
     /// Initialize the audit table (call once at startup)
@@ -244,6 +244,11 @@ impl PersistentAuditLog {
     /// Current entry count in memory
     pub async fn len(&self) -> usize {
         self.memory.read().await.len()
+    }
+
+    /// Returns true if no entries are in memory.
+    pub async fn is_empty(&self) -> bool {
+        self.memory.read().await.is_empty()
     }
 
     /// Clear memory buffer

@@ -353,7 +353,7 @@ impl Team {
                 .next_entry()
                 .await
                 .map_err(|e| crate::error::MantaError::Storage {
-                    context: format!("Failed to read directory entry"),
+                    context: "Failed to read directory entry".to_string(),
                     details: e.to_string(),
                 })?
         {
@@ -375,7 +375,7 @@ impl Team {
     pub fn export(&self, format: &str) -> crate::Result<String> {
         match format.to_lowercase().as_str() {
             "json" => serde_json::to_string_pretty(self)
-                .map_err(|e| crate::error::MantaError::Serialization(e)),
+                .map_err(crate::error::MantaError::Serialization),
             "yaml" | "yml" => serde_yaml::to_string(self).map_err(|e| {
                 crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML serialization error: {}",
@@ -393,7 +393,7 @@ impl Team {
     pub fn import(data: &str, format: &str, rename: Option<String>) -> crate::Result<Self> {
         let mut team: Team = match format.to_lowercase().as_str() {
             "json" => serde_json::from_str(data)
-                .map_err(|e| crate::error::MantaError::Serialization(e))?,
+                .map_err(crate::error::MantaError::Serialization)?,
             "yaml" | "yml" => serde_yaml::from_str(data).map_err(|e| {
                 crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML deserialization error: {}",

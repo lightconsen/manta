@@ -109,6 +109,7 @@ pub struct AuthProfile {
     /// Currently active key index
     current_index: usize,
     /// Cooldown duration after a failure (seconds)
+    #[allow(dead_code)]
     cooldown_secs: u64,
     /// Max failures before disabling a key permanently
     max_failures: u32,

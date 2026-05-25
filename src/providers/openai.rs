@@ -149,6 +149,7 @@ impl OpenAiProvider {
     }
 
     /// Convert OpenAI response to internal format
+    #[allow(clippy::wrong_self_convention)]
     fn from_openai_response(&self, resp: OpenAiResponse) -> crate::Result<CompletionResponse> {
         let choice = resp.choices.into_iter().next().ok_or_else(|| {
             crate::error::MantaError::ExternalService {
@@ -457,7 +458,7 @@ impl Provider for OpenAiProvider {
             .headers(self.headers().await)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Http(e))?;
+            .map_err(crate::error::MantaError::Http)?;
 
         Ok(response.status().is_success())
     }

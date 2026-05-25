@@ -396,10 +396,7 @@ impl CanvasWebSocketHandler {
 
     /// Get next update to send to client
     pub async fn next_update(&mut self) -> Option<CanvasUpdate> {
-        match self.update_rx.recv().await {
-            Ok(update) => Some(update),
-            Err(_) => None,
-        }
+        self.update_rx.recv().await.ok()
     }
 
     /// Get canvas ID

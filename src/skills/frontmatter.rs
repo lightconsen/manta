@@ -288,7 +288,7 @@ impl SkillFile {
     pub async fn load(path: &std::path::Path) -> crate::Result<Self> {
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         Self::parse(&content, path.to_path_buf())
     }

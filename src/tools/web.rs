@@ -321,8 +321,10 @@ pub struct WebSearchTool {
 
 /// Search provider configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum SearchProvider {
     /// DuckDuckGo (HTML scraping)
+    #[default]
     DuckDuckGo,
     /// Bing Web Search API (requires key)
     /// https://www.microsoft.com/en-us/bing/apis/bing-web-search-api
@@ -342,11 +344,6 @@ pub enum SearchProvider {
     },
 }
 
-impl Default for SearchProvider {
-    fn default() -> Self {
-        SearchProvider::DuckDuckGo
-    }
-}
 
 impl Default for WebSearchTool {
     fn default() -> Self {

@@ -771,8 +771,8 @@ impl SecurityAuditor {
             // Check for potentially sensitive data in error messages
             for pattern in &sensitive_patterns {
                 // Check if sensitive variable names appear in format strings
-                if content.contains(&format!("{}: {:?}", pattern, "").trim_end_matches('"'))
-                    || content.contains(&format!("{}: {}", pattern, "").trim_end_matches('"'))
+                if content.contains(format!("{}: {:?}", pattern, "").trim_end_matches('"'))
+                    || content.contains(format!("{}: {}", pattern, "").trim_end_matches('"'))
                 {
                     return Some(PotentialLeak {
                         category: LeakCategory::ErrorLeak,
@@ -860,6 +860,7 @@ impl SecurityAuditor {
     }
 
     /// Document security boundaries
+    #[allow(clippy::field_reassign_with_default)]
     async fn document_boundaries(&self) -> SecurityBoundaries {
         debug!("Documenting security boundaries");
         let mut boundaries = SecurityBoundaries::default();
@@ -1049,14 +1050,14 @@ impl SecurityAuditor {
         let mut score: u8 = 100;
 
         // Deduct for permission issues
-        for (_, comp) in &permissions.components {
+        for comp in permissions.components.values() {
             if !comp.missing.is_empty() {
                 score = score.saturating_sub(5 * comp.missing.len() as u8);
             }
         }
 
         // Deduct for tool issues
-        for (_, tool) in &tools.tool_results {
+        for tool in tools.tool_results.values() {
             match tool.risk_level {
                 RiskLevel::Critical => score = score.saturating_sub(25),
                 RiskLevel::High => score = score.saturating_sub(15),

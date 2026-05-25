@@ -133,7 +133,7 @@ impl<T> ResultExt<T, std::io::Error> for std::result::Result<T, std::io::Error> 
         F: FnOnce() -> C,
         C: Into<String>,
     {
-        self.map_err(|e| MantaError::Io(e))
+        self.map_err(MantaError::Io)
     }
 }
 

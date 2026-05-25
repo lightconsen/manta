@@ -455,13 +455,13 @@ impl Provider for AnthropicProvider {
             .json(&body_value)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Http(e))?;
+            .map_err(crate::error::MantaError::Http)?;
 
         let status = response.status();
         let body = response
             .text()
             .await
-            .map_err(|e| crate::error::MantaError::Http(e))?;
+            .map_err(crate::error::MantaError::Http)?;
 
         if !status.is_success() {
             error!("Anthropic API error: {} - {}", status, body);

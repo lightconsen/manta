@@ -266,7 +266,7 @@ impl Default for TemporalDecayConfig {
 /// unchanged (evergreen).
 ///
 /// This function is a no-op when `config.enabled == false`.
-pub fn apply_temporal_decay(results: &mut Vec<HybridSearchResult>, config: &TemporalDecayConfig) {
+pub fn apply_temporal_decay(results: &mut [HybridSearchResult], config: &TemporalDecayConfig) {
     if !config.enabled {
         return;
     }

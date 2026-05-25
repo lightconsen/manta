@@ -136,24 +136,24 @@ impl FromStr for VersionReq {
         }
 
         // Check for operators
-        let (op_str, version_str) = if s.starts_with("^=") {
-            ("^", &s[2..])
-        } else if s.starts_with("~=") {
-            ("~", &s[2..])
-        } else if s.starts_with(">=") {
-            (">=", &s[2..])
-        } else if s.starts_with("<=") {
-            ("<=", &s[2..])
-        } else if s.starts_with('^') {
-            ("^", &s[1..])
-        } else if s.starts_with('~') {
-            ("~", &s[1..])
-        } else if s.starts_with('>') {
-            (">", &s[1..])
-        } else if s.starts_with('<') {
-            ("<", &s[1..])
-        } else if s.starts_with('=') {
-            ("=", &s[1..])
+        let (op_str, version_str) = if let Some(rest) = s.strip_prefix("^=") {
+            ("^", rest)
+        } else if let Some(rest) = s.strip_prefix("~=") {
+            ("~", rest)
+        } else if let Some(rest) = s.strip_prefix(">=") {
+            (">=", rest)
+        } else if let Some(rest) = s.strip_prefix("<=") {
+            ("<=", rest)
+        } else if let Some(rest) = s.strip_prefix('^') {
+            ("^", rest)
+        } else if let Some(rest) = s.strip_prefix('~') {
+            ("~", rest)
+        } else if let Some(rest) = s.strip_prefix('>') {
+            (">", rest)
+        } else if let Some(rest) = s.strip_prefix('<') {
+            ("<", rest)
+        } else if let Some(rest) = s.strip_prefix('=') {
+            ("=", rest)
         } else {
             ("=", s)
         };

@@ -23,7 +23,7 @@ pub async fn show_logs(n: usize) -> crate::Result<()> {
 
     let file = File::open(&log_path)
         .await
-        .map_err(|e| crate::error::MantaError::Io(e))?;
+        .map_err(crate::error::MantaError::Io)?;
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
@@ -64,7 +64,7 @@ pub async fn tail_logs(n: usize) -> crate::Result<()> {
 
     let file = File::open(&log_path)
         .await
-        .map_err(|e| crate::error::MantaError::Io(e))?;
+        .map_err(crate::error::MantaError::Io)?;
 
     let mut reader = BufReader::new(file);
 
@@ -134,7 +134,7 @@ impl LogWriter {
             .append(true)
             .open(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         Ok(Self { file: Some(file), path })
     }

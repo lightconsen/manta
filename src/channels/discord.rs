@@ -196,7 +196,7 @@ impl DiscordChannel {
     /// Convert markdown to Discord markdown (Discord uses standard markdown mostly)
     fn format_for_discord(text: &str) -> String {
         // Discord supports standard markdown well, but we need to handle some specifics
-        let result = text.to_string();
+        
 
         // Discord uses triple backticks for code blocks with language
         // Already supported in standard markdown
@@ -206,7 +206,7 @@ impl DiscordChannel {
 
         // Mentions: @user or @role - Discord handles these automatically
 
-        result
+        text.to_string()
     }
 
     /// Create a serenity embed from our DiscordEmbed
@@ -909,7 +909,7 @@ impl EventHandler for DiscordHandler {
             let session_id = self.get_or_create_session(channel_id).await;
 
             let incoming = IncomingMessage::new(
-                &msg.author.id.get().to_string(),
+                msg.author.id.get().to_string(),
                 &session_id, // Use UUID session instead of channel_id
                 content,
             )
@@ -961,7 +961,7 @@ impl EventHandler for DiscordHandler {
                 format!("reaction_add:{}", reaction_emoji_name(&add_reaction.emoji));
             let incoming = IncomingMessage::new(
                 &user_id_str,
-                &add_reaction.channel_id.get().to_string(),
+                add_reaction.channel_id.get().to_string(),
                 reaction_content,
             )
             .with_metadata(
@@ -991,11 +991,11 @@ impl EventHandler for DiscordHandler {
         let reaction_content =
             format!("reaction_remove:{}", reaction_emoji_name(&removed_reaction.emoji));
         let incoming = IncomingMessage::new(
-            &removed_reaction
+            removed_reaction
                 .user_id
                 .map(|id| id.get().to_string())
                 .unwrap_or_default(),
-            &removed_reaction.channel_id.get().to_string(),
+            removed_reaction.channel_id.get().to_string(),
             reaction_content,
         )
         .with_metadata(
@@ -1022,7 +1022,7 @@ impl EventHandler for DiscordHandler {
 
         let incoming = IncomingMessage::new(
             "system",
-            &channel_id.get().to_string(),
+            channel_id.get().to_string(),
             "reaction_remove_all".to_string(),
         )
         .with_metadata(

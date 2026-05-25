@@ -48,8 +48,10 @@ use tracing::{debug, info, warn};
 /// DM access policy for channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DmPolicy {
     /// Anyone can DM the bot (no restrictions).
+    #[default]
     Open,
     /// Users must request access; admin approves by code.
     Pairing,
@@ -57,11 +59,6 @@ pub enum DmPolicy {
     Allowlist,
 }
 
-impl Default for DmPolicy {
-    fn default() -> Self {
-        DmPolicy::Open
-    }
-}
 
 impl std::fmt::Display for DmPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

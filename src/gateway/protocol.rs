@@ -193,15 +193,15 @@ pub struct ServerInfo {
 }
 
 // ── Scopes (Operator Scope system) ────────────────────────────────────────────
-///
-/// Manta uses an Operator Scope model aligned with OpenClaw's
-/// `method-scopes.ts`. Each WebSocket method declares a required scope;
-/// the gateway verifies the connection's granted scopes before dispatch.
-///
-/// Scope hierarchy (least to most privileged):
-///   read < chat < write < acp < pairing < admin
+//
+// Manta uses an Operator Scope model aligned with OpenClaw's
+// `method-scopes.ts`. Each WebSocket method declares a required scope;
+// the gateway verifies the connection's granted scopes before dispatch.
+//
+// Scope hierarchy (least to most privileged):
+//   read < chat < write < acp < pairing < admin
 
-/// Scope: chat operations (send, history, abort)
+// Scope: chat operations (send, history, abort)
 pub const SCOPE_CHAT: &str = "chat";
 /// Scope: read-only queries
 pub const SCOPE_READ: &str = "read";
@@ -275,9 +275,11 @@ pub fn scopes_allow(granted: &[String], method: &str) -> bool {
 
 /// Gateway authentication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum AuthMode {
     /// No authentication (development only)
     #[serde(rename = "none")]
+    #[default]
     None,
     /// Shared secret token
     #[serde(rename = "token")]
@@ -290,11 +292,6 @@ pub enum AuthMode {
     Tailscale,
 }
 
-impl Default for AuthMode {
-    fn default() -> Self {
-        AuthMode::None
-    }
-}
 
 // ── Connection State ──────────────────────────────────────────────────────────
 

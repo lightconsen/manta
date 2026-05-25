@@ -338,8 +338,8 @@ async fn execute_child_task(
     if let Some(agent) = agent {
         // Create incoming message for the child task
         let message = crate::channels::IncomingMessage::new(
-            &format!("child:{}", child_id),
-            &format!("delegation:{}", child_id),
+            format!("child:{}", child_id),
+            format!("delegation:{}", child_id),
             &task.prompt,
         )
         .with_metadata(

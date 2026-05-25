@@ -73,7 +73,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
         }
         Ok(Err(e)) => {
             error!("OAuth callback processing failed: {}", e);
-            Err(e.into())
+            Err(e)
         }
         Err(_) => {
             warn!("OAuth callback timed out after {}s", timeout_secs);

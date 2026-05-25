@@ -159,20 +159,28 @@ impl TelegramChannel {
 }
 
 /// Pre-compiled regex patterns for markdown parsing
+#[allow(clippy::incompatible_msrv)]
 static RE_BOLD_DOUBLE_STAR: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\*\*(.+?)\*\*").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_BOLD_DOUBLE_UNDERSCORE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"__(.+?)__").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_ITALIC_STAR: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_ITALIC_UNDERSCORE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"_([^_]+)_").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_CODE_INLINE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"`([^`]+)`").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_CODE_BLOCK: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_STRIKETHROUGH: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"~~(.+?)~~").unwrap());
+#[allow(clippy::incompatible_msrv)]
 static RE_LINK: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 
@@ -433,7 +441,7 @@ impl Channel for TelegramChannel {
             let telegram_msg_id = sent.id.0;
             {
                 let mut map = self.message_map.write().await;
-                map.insert(internal_id.clone(), (chat_id, telegram_msg_id));
+                map.insert(internal_id, (chat_id, telegram_msg_id));
             }
 
             Ok(internal_id)
@@ -701,7 +709,7 @@ impl Channel for TelegramChannel {
                 .parse()
                 .map_err(|_| crate::error::MantaError::Validation("Invalid chat ID".to_string()))?;
 
-            let poll_options: Vec<String> = options.into_iter().map(|o| o.into()).collect();
+            let poll_options: Vec<String> = options.into_iter().collect();
 
             let sent = bot
                 .send_poll(ChatId(chat_id), question, poll_options)
@@ -714,7 +722,7 @@ impl Channel for TelegramChannel {
             let telegram_msg_id = sent.id.0;
             {
                 let mut map = self.message_map.write().await;
-                map.insert(internal_id.clone(), (chat_id, telegram_msg_id));
+                map.insert(internal_id, (chat_id, telegram_msg_id));
             }
 
             Ok(internal_id)
@@ -729,6 +737,7 @@ impl Channel for TelegramChannel {
 }
 
 #[cfg(feature = "telegram")]
+#[allow(clippy::too_many_arguments)]
 async fn handle_message_with_sender(
     bot: Bot,
     msg: Message,
@@ -852,8 +861,7 @@ async fn handle_message_with_sender(
         if !allowed_usernames.is_empty() {
             let is_allowed = user
                 .as_ref()
-                .map(|u| u.username.as_ref())
-                .flatten()
+                .and_then(|u| u.username.as_ref())
                 .map(|u| allowed_usernames.iter().any(|a| a.eq_ignore_ascii_case(u)))
                 .unwrap_or(false);
 

@@ -9,4 +9,5 @@
 //! - **CronJob** (`cron::CronJob`): Job definition (schedule, target, delivery)
 //! - **CronTool** (`crate::tools::cron_tool`): AI-facing tool interface
 
+#[allow(clippy::module_inception)]
 pub mod cron;

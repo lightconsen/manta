@@ -17,21 +17,18 @@ use super::{Memory, MemoryId};
 
 /// Configuration for vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum VectorBackend {
     /// SQLite with vector extension
     Sqlite { path: String },
     /// In-memory storage (for testing/small datasets)
+    #[default]
     Memory,
     /// QMD-style: query-model database (future)
     #[cfg(feature = "pgvector")]
     Postgres { url: String, table: String },
 }
 
-impl Default for VectorBackend {
-    fn default() -> Self {
-        VectorBackend::Memory
-    }
-}
 
 /// Configuration for embedding model
 #[derive(Debug, Clone, Serialize, Deserialize)]

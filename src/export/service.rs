@@ -149,10 +149,11 @@ impl ExportService {
                 })?;
         }
 
-        // Get conversations to export
         let conversation_ids = self.get_conversation_ids(options).await?;
-        let mut stats = ExportStats::default();
-        stats.conversation_count = conversation_ids.len();
+        let mut stats = ExportStats {
+            conversation_count: conversation_ids.len(),
+            ..Default::default()
+        };
 
         match options.format {
             ExportFormat::Markdown => {
@@ -204,8 +205,10 @@ impl ExportService {
         }
 
         let memories = self.get_memories(options).await?;
-        let mut stats = ExportStats::default();
-        stats.memory_count = memories.len();
+        let mut stats = ExportStats {
+            memory_count: memories.len(),
+            ..Default::default()
+        };
 
         match options.format {
             ExportFormat::Json => {

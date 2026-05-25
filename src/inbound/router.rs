@@ -60,6 +60,7 @@ pub trait BindingStore: Send + Sync {
 }
 
 /// In-memory binding store (default, non-persistent).
+#[allow(clippy::type_complexity)]
 pub struct InMemoryBindingStore {
     data: Arc<RwLock<HashMap<String, (String, Option<String>)>>>,
 }
@@ -273,10 +274,10 @@ impl AgentRouter {
     /// Resolution order:
     /// 1. Explicit `@agent_name` mention in message content
     /// 2. Existing session binding (by conversation_id)
-    /// 2b. Existing session binding (by derived `{channel}:{user_id}` key)
-    /// 3. Channel-specific default
-    /// 4. Workspace-specific default
-    /// 5. Global default agent
+    /// 3. Existing session binding (by derived `{channel}:{user_id}` key)
+    /// 4. Channel-specific default
+    /// 5. Workspace-specific default
+    /// 6. Global default agent
     pub async fn route(
         &self,
         message: &IncomingMessage,

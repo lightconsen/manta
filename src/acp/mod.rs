@@ -45,22 +45,20 @@ impl std::fmt::Display for AcpSessionId {
 /// Subagent spawn mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SpawnMode {
     /// One-shot execution (run and terminate)
+    #[default]
     Run,
     /// Persistent session (long-running)
     Session,
 }
 
-impl Default for SpawnMode {
-    fn default() -> Self {
-        SpawnMode::Run
-    }
-}
 
 /// Thread binding mode for subagents
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ThreadBinding {
     /// New isolated thread
     New,
@@ -69,14 +67,10 @@ pub enum ThreadBinding {
     /// Bind to specific thread ID
     Thread(String),
     /// Automatic based on context
+    #[default]
     Auto,
 }
 
-impl Default for ThreadBinding {
-    fn default() -> Self {
-        ThreadBinding::Auto
-    }
-}
 
 /// Execution mode for an ACP command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -789,6 +783,7 @@ pub struct AcpControlPlane {
     /// ACP sessions
     sessions: Arc<RwLock<HashMap<AcpSessionId, AcpSession>>>,
     /// Default agent builder (set after initialization when provider/tools are ready)
+    #[allow(clippy::type_complexity)]
     default_agent_builder: Arc<RwLock<Option<Arc<dyn Fn() -> crate::Result<Agent> + Send + Sync>>>>,
     /// Command channel to the ACP actor loop
     command_tx: mpsc::Sender<AcpCommand>,
@@ -1127,7 +1122,6 @@ impl AcpControlPlane {
         // Capture fields needed for crash recovery logging
         let recovery_retry_on_crash = config.retry_on_crash;
         let recovery_max_retries = config.max_crash_retries;
-        let max_iterations = self.max_iterations;
 
         let join_handle = tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
@@ -1255,10 +1249,9 @@ impl AcpControlPlane {
                 }
                 Err(e) if e.is_panic() => {
                     warn!("Subagent {} panicked — marking Crashed", watch_id);
-                    let (current_crash_count, should_retry) = {
+                    let current_crash_count = {
                         let map = watchdog_subagents_ref.read().await;
-                        let cc = map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0);
-                        (cc, true) // recovery handled externally
+                        map.get(&watch_id).map(|h| h.crash_count).unwrap_or(0)
                     };
                     {
                         let mut map = watchdog_subagents_ref.write().await;
@@ -1406,29 +1399,9 @@ impl AcpControlPlane {
         }
     }
 
-    /// Resolve thread ID based on binding mode
-    async fn resolve_thread_id(&self, binding: &ThreadBinding, parent_id: &str) -> String {
-        match binding {
-            ThreadBinding::New => format!("thread-{}", Uuid::new_v4()),
-            ThreadBinding::Parent => format!("thread-{}", parent_id),
-            ThreadBinding::Thread(id) => id.clone(),
-            ThreadBinding::Auto => {
-                // Auto mode: reuse parent thread if it already exists in the active
-                // thread registry; otherwise create a fresh thread.
-                let threads = self.threads.read().await;
-                let candidate = format!("thread-{}", parent_id);
-                if threads.contains_key(&candidate) || threads.contains_key(parent_id) {
-                    threads
-                        .get(parent_id)
-                        .map(|t| t.id.clone())
-                        .unwrap_or_else(|| candidate.clone())
-                } else {
-                    format!("thread-{}", Uuid::new_v4())
-                }
-            }
-        }
-    }
-
+    // ------------------------------------------------------------------
+    // Thread management
+    // ------------------------------------------------------------------
     /// Send a message to a subagent
     pub async fn send_message(
         &self,
@@ -1863,63 +1836,6 @@ mod tests {
         let acp = AcpControlPlane::new(50);
         let status = acp.get_subagent_status("nonexistent").await;
         assert!(status.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_resolve_thread_id_new() {
-        let acp = AcpControlPlane::new(50);
-        let id = acp.resolve_thread_id(&ThreadBinding::New, "parent").await;
-        assert!(id.starts_with("thread-"));
-    }
-
-    #[tokio::test]
-    async fn test_resolve_thread_id_parent() {
-        let acp = AcpControlPlane::new(50);
-        let id = acp
-            .resolve_thread_id(&ThreadBinding::Parent, "parent-1")
-            .await;
-        assert!(id.contains("parent-1"));
-    }
-
-    #[tokio::test]
-    async fn test_resolve_thread_id_specific() {
-        let acp = AcpControlPlane::new(50);
-        let id = acp
-            .resolve_thread_id(&ThreadBinding::Thread("my-thread".to_string()), "parent")
-            .await;
-        assert_eq!(id, "my-thread");
-    }
-
-    #[tokio::test]
-    async fn test_resolve_thread_id_auto() {
-        let acp = AcpControlPlane::new(50);
-
-        // Auto without existing thread -> creates fresh UUID thread
-        let id1 = acp
-            .resolve_thread_id(&ThreadBinding::Auto, "parent-1")
-            .await;
-        assert!(id1.starts_with("thread-"));
-        assert_ne!(id1, "thread-parent-1");
-
-        // Register a thread for parent-1
-        {
-            let mut threads = acp.threads.write().await;
-            threads.insert(
-                "thread-parent-1".to_string(),
-                ThreadContext {
-                    id: "thread-parent-1".to_string(),
-                    active_subagent: None,
-                    queue: vec![],
-                    created_at: chrono::Utc::now(),
-                },
-            );
-        }
-
-        // Auto with existing thread -> reuses it
-        let id2 = acp
-            .resolve_thread_id(&ThreadBinding::Auto, "parent-1")
-            .await;
-        assert_eq!(id2, "thread-parent-1");
     }
 
     #[tokio::test]

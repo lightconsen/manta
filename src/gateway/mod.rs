@@ -136,18 +136,15 @@ fn default_model_provider() -> String {
 /// Embedding provider type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum EmbeddingProviderType {
     /// OpenAI API (requires API key)
+    #[default]
     OpenAi,
     /// Local GGUF model (direct loading, no external service)
     LocalGguf,
 }
 
-impl Default for EmbeddingProviderType {
-    fn default() -> Self {
-        EmbeddingProviderType::OpenAi
-    }
-}
 
 /// Vector memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +281,7 @@ impl Default for CronConfig {
 /// Set `daily_limit_cents` and/or `hourly_action_limit` to non-zero values to
 /// enable limits.  Zero means unlimited (default).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CostGuardConfig {
     /// Maximum daily LLM spend in cents (0 = unlimited).
     /// Example: 500 = $5.00/day cap.
@@ -294,14 +292,6 @@ pub struct CostGuardConfig {
     pub hourly_action_limit: u64,
 }
 
-impl Default for CostGuardConfig {
-    fn default() -> Self {
-        Self {
-            daily_limit_cents: 0,
-            hourly_action_limit: 0,
-        }
-    }
-}
 
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -856,6 +846,7 @@ pub enum AgentCommand {
 /// Query messages that require a typed response via oneshot channel.
 /// Kept separate from AgentCommand because oneshot::Sender<T> cannot implement
 /// the Clone/Serialize/Deserialize derives that AgentCommand carries.
+#[allow(clippy::type_complexity)]
 pub enum AgentQuery {
     /// Return all thread summaries for this agent's session store.
     GetThreadSummaries {
@@ -1028,6 +1019,12 @@ pub struct RepairState {
     pub loop_running: std::sync::atomic::AtomicBool,
 }
 
+impl Default for RepairState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RepairState {
     pub fn new() -> Self {
         Self {
@@ -1166,6 +1163,7 @@ impl Gateway {
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
         // Initialize storage adapter and shared SQLite pool early (needed for session_store → tool_registry)
+        #[allow(clippy::type_complexity)]
         let (storage, unified_vector_store, sqlite_pool): (
             Arc<RwLock<dyn crate::adapters::Storage>>,
             Option<Arc<dyn crate::memory::VectorStore>>,
@@ -1264,8 +1262,10 @@ impl Gateway {
         };
 
         // Create model router config with custom model settings
-        let mut model_router_config = crate::model_router::ModelRouterConfig::default();
-        model_router_config.default_model = "default".to_string();
+        let mut model_router_config = crate::model_router::ModelRouterConfig {
+            default_model: "default".to_string(),
+            ..Default::default()
+        };
         // Update the default alias to use the configured model and provider
         if let Some(default_alias) = model_router_config.aliases.get_mut("default") {
             default_alias.provider = config.model_provider.clone();
@@ -1320,7 +1320,7 @@ impl Gateway {
             default_agent_config.workspace_dir = config
                 .workspace_dir
                 .as_ref()
-                .map(|d| crate::dirs::resolve_tilde(d));
+                .map(crate::dirs::resolve_tilde);
             default_agent_config.workspace_only = config.workspace_only;
             let default_tools = tool_registry.clone();
             let provider_clone = default_provider.clone();
@@ -2286,7 +2286,7 @@ async fn spawn_agent_inner(
                         message,
                         user_id,
                         channel,
-                        model_override,
+                        model_override: _,
                     } => {
                         let source_channel = channel;
                         info!("Agent {} processing message for session {}", agent_id, session_id);
@@ -4040,9 +4040,7 @@ async fn web_terminal_html_handler() -> Html<String> {
     let html = tokio::fs::read_to_string("web/dist/index.html")
         .await
         .unwrap_or_else(|_| {
-            format!(
-                "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
-            )
+            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>".to_string()
         });
     Html(html.replace("{VERSION}", crate::VERSION))
 }
@@ -4240,15 +4238,10 @@ async fn run_agent_watchdog_cycle(state: &Arc<GatewayState>) {
                 error!("Agent {} exceeded max restarts ({}), abandoning", agent_id, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
-            } else if rec
+            } else { !rec
                 .last_restart_at
                 .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
-                .unwrap_or(false)
-            {
-                false
-            } else {
-                true
-            }
+                .unwrap_or(false) }
         };
         if !should_restart {
             continue;
@@ -4326,15 +4319,10 @@ async fn run_channel_watchdog_cycle(state: &Arc<GatewayState>) {
                 error!("Channel {} exceeded max restarts ({}), abandoning", name, MAX_RESTARTS);
                 rec.abandoned = true;
                 false
-            } else if rec
+            } else { !rec
                 .last_restart_at
                 .map(|t| (chrono::Utc::now() - t).num_seconds() < COOLDOWN_SECS)
-                .unwrap_or(false)
-            {
-                false
-            } else {
-                true
-            }
+                .unwrap_or(false) }
         };
         if !should_restart {
             continue;
@@ -7865,7 +7853,7 @@ async fn openai_chat_completions_handler(
                 .send(Ok(SseEvt::default().data(final_chunk.to_string())))
                 .await;
             let _ = tx
-                .send(Ok(SseEvt::default().data("[DONE]".to_string())))
+                .send(Ok(SseEvt::default().data("[DONE]")))
                 .await;
         });
 

@@ -272,12 +272,12 @@ impl TodoStore {
 
     /// Serialize to JSON
     pub fn to_json(&self) -> crate::Result<String> {
-        serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Serialization(e))
+        serde_json::to_string_pretty(self).map_err(crate::error::MantaError::Serialization)
     }
 
     /// Deserialize from JSON
     pub fn from_json(json: &str) -> crate::Result<Self> {
-        serde_json::from_str(json).map_err(|e| crate::error::MantaError::Serialization(e))
+        serde_json::from_str(json).map_err(crate::error::MantaError::Serialization)
     }
 }
 

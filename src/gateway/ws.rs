@@ -68,7 +68,7 @@ pub async fn ws_handler(
     // Extract auth mode
     let auth_mode = {
         let config = state.config.read().await;
-        config.security.auth_mode.clone()
+        config.security.auth_mode
     };
 
     ws.on_upgrade(move |socket| handle_websocket(socket, state, query, auth_mode))
@@ -1737,6 +1737,7 @@ async fn handle_legacy_unsubscribe(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::result_large_err)]
 fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, WsResponse> {
     match &req.params {
         Some(p) => match serde_json::from_value::<T>(p.clone()) {

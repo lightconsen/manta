@@ -251,17 +251,15 @@ impl EffectivenessTracker {
             return EffectivenessAction::NoOp;
         }
 
-        if stats.hit_rate >= self.config.promotion_threshold {
-            if current_importance < self.config.max_importance {
+        if stats.hit_rate >= self.config.promotion_threshold
+            && current_importance < self.config.max_importance {
                 return EffectivenessAction::Boost;
             }
-        }
 
-        if stats.hit_rate <= self.config.demotion_threshold {
-            if current_importance > self.config.min_importance {
+        if stats.hit_rate <= self.config.demotion_threshold
+            && current_importance > self.config.min_importance {
                 return EffectivenessAction::Penalize;
             }
-        }
 
         EffectivenessAction::NoOp
     }

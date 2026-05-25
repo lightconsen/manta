@@ -74,18 +74,15 @@ impl ExecutionTarget {
 /// Session target - where to execute
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SessionTarget {
     /// Run in main session (has conversation context)
     Main,
     /// Run in isolated session (clean state: cron:{job_id})
+    #[default]
     Isolated,
 }
 
-impl Default for SessionTarget {
-    fn default() -> Self {
-        Self::Isolated
-    }
-}
 
 /// Delivery mode for job results
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -151,7 +148,7 @@ impl Schedule {
                 // Parse cron expression
                 // The cron crate v0.14 expects 6 fields (with seconds), so we need to
                 // convert 5-field expressions to 6-field by prepending "0" for seconds
-                let normalized = if expression.trim().split_whitespace().count() == 5 {
+                let normalized = if expression.split_whitespace().count() == 5 {
                     format!("0 {}", expression.trim())
                 } else {
                     expression.clone()
@@ -363,6 +360,7 @@ const MAX_TIMER_DELAY_MS: u64 = 60_000;
 const MIN_REFIRE_GAP_MS: u64 = 2_000;
 
 /// Commands for the scheduler
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum CronCommand {
     Add(CronJob),
@@ -904,7 +902,7 @@ impl CronScheduler {
                     request = request.header(key, value);
                 }
 
-                request.send().await.map_err(|e| MantaError::Http(e))?;
+                request.send().await.map_err(MantaError::Http)?;
 
                 Ok(())
             }
@@ -1016,8 +1014,6 @@ impl CronScheduler {
 
         Ok(())
     }
-
-    /// Public API methods
 
     /// Add a job
     pub async fn add_job(&self, job: CronJob) -> Result<()> {

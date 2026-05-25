@@ -46,6 +46,7 @@ impl DispatchResult {
 
 /// Configuration for the auto-reply dispatch layer.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct AutoReplyDispatchConfig {
     /// Send policy engine (if None, no policy checks are applied).
     pub send_policy: Option<SendPolicy>,
@@ -53,14 +54,6 @@ pub struct AutoReplyDispatchConfig {
     pub suppress_unless_mentioned_in_groups: bool,
 }
 
-impl Default for AutoReplyDispatchConfig {
-    fn default() -> Self {
-        Self {
-            send_policy: None,
-            suppress_unless_mentioned_in_groups: false,
-        }
-    }
-}
 
 /// Auto-reply dispatch orchestrator.
 ///

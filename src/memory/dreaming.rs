@@ -415,7 +415,7 @@ impl DreamEngine {
                         promoted += 1;
                         if let Some(ref event_log) = self.event_log {
                             let event = MemoryEventBuilder::new().promotion(
-                                &format!("{}:dream", mem.user_id),
+                                format!("{}:dream", mem.user_id),
                                 format!("promote-{}", uuid::Uuid::new_v4()),
                                 old_tier.label(),
                                 new_tier.label(),
@@ -431,7 +431,7 @@ impl DreamEngine {
                         demoted += 1;
                         if let Some(ref event_log) = self.event_log {
                             let event = MemoryEventBuilder::new().promotion(
-                                &format!("{}:dream", mem.user_id),
+                                format!("{}:dream", mem.user_id),
                                 format!("demote-{}", uuid::Uuid::new_v4()),
                                 old_tier.label(),
                                 new_tier.label(),
@@ -542,7 +542,7 @@ impl DreamEngine {
                 let summary_content = format!("Topic '{}': {}", topic, summaries.join("; "));
 
                 let summary = Memory::new(
-                    unique_memories.iter().next().unwrap().user_id.clone(),
+                    unique_memories.first().unwrap().user_id.clone(),
                     summary_content,
                     "dream_summary",
                 )
@@ -908,6 +908,7 @@ pub struct DreamReviewItem {
 /// When attached to a `DreamEngine`, proposed changes are enqueued
 /// instead of applied immediately. The caller can review, approve, or
 /// reject individual items, then apply approved actions in batch.
+#[derive(Default)]
 pub struct DreamReviewQueue {
     items: RwLock<Vec<DreamReviewItem>>,
 }
@@ -915,9 +916,7 @@ pub struct DreamReviewQueue {
 impl DreamReviewQueue {
     /// Create a new empty review queue.
     pub fn new() -> Self {
-        Self {
-            items: RwLock::new(Vec::new()),
-        }
+        Self::default()
     }
 
     /// Enqueue a proposed dream action.

@@ -11,6 +11,12 @@ use super::{Tool, ToolContext, ToolExecutionResult};
 /// Apply a unified diff patch to files.
 pub struct ApplyPatchTool;
 
+impl Default for ApplyPatchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApplyPatchTool {
     pub fn new() -> Self {
         Self

@@ -1465,7 +1465,7 @@ impl ModelRouter {
 
         let entry = self.model_catalog.get(&alias.provider, &alias.model).await;
 
-        let compatible = entry.map_or(false, |e| {
+        let compatible = entry.is_some_and(|e| {
             (!request.requires_vision || e.supports_vision)
                 && (!request.requires_tools || e.supports_tools)
                 && (!request.requires_reasoning || e.supports_reasoning)
@@ -1761,9 +1761,7 @@ impl ModelRouter {
         let health = self.health.read().await;
         let config = self.config.read().await;
 
-        providers
-            .iter()
-            .map(|(name, _)| {
+        providers.keys().map(|name| {
                 let h = health.get(name).cloned().unwrap_or_default();
                 let provider_config = config.providers.get(name).cloned();
 

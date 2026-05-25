@@ -148,6 +148,7 @@ impl Provider for FallbackProvider {
 }
 
 /// Builder for creating fallback chains
+#[derive(Default)]
 pub struct FallbackChainBuilder {
     providers: Vec<Arc<dyn Provider>>,
 }
@@ -160,11 +161,6 @@ impl std::fmt::Debug for FallbackChainBuilder {
     }
 }
 
-impl Default for FallbackChainBuilder {
-    fn default() -> Self {
-        Self { providers: Vec::new() }
-    }
-}
 
 impl FallbackChainBuilder {
     /// Create a new builder
@@ -173,7 +169,7 @@ impl FallbackChainBuilder {
     }
 
     /// Add a provider to the chain
-    pub fn add(mut self, provider: Arc<dyn Provider>) -> Self {
+    pub fn with_provider(mut self, provider: Arc<dyn Provider>) -> Self {
         self.providers.push(provider);
         self
     }
@@ -446,7 +442,7 @@ mod tests {
     fn test_fallback_chain_builder_add() {
         let p1 = Arc::new(MockProvider::new("p1"));
         let p2 = Arc::new(MockProvider::new("p2"));
-        let fallback = FallbackChainBuilder::new().add(p1).add(p2).build("chain");
+        let fallback = FallbackChainBuilder::new().with_provider(p1).with_provider(p2).build("chain");
         assert_eq!(fallback.chain(), vec!["p1", "p2"]);
     }
 

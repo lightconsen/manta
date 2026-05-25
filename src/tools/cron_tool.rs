@@ -151,7 +151,7 @@ impl Tool for CronTool {
                 // Parse cron schedule using the cron crate
                 // The cron crate v0.14 expects 6 fields (with seconds), so we need to
                 // convert 5-field expressions to 6-field by prepending "0" for seconds
-                let normalized_schedule = if schedule_str.trim().split_whitespace().count() == 5 {
+                let normalized_schedule = if schedule_str.split_whitespace().count() == 5 {
                     format!("0 {}", schedule_str.trim())
                 } else {
                     schedule_str.to_string()
@@ -164,7 +164,7 @@ impl Tool for CronTool {
                         stagger_ms: None,
                     },
                     Err(e) => {
-                        return Ok(ToolExecutionResult::error(&format!(
+                        return Ok(ToolExecutionResult::error(format!(
                             "Invalid cron expression '{}': {}",
                             schedule_str, e
                         )));
@@ -203,7 +203,7 @@ impl Tool for CronTool {
                 info!("Created cron job '{}' with schedule '{}'", name, schedule_str);
 
                 Ok(ToolExecutionResult::success(
-                    &format!("✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active and will run automatically according to the schedule.", name, schedule_str, command)
+                    format!("✅ Created cron job '{}'\nSchedule: {}\nCommand: {}\n\nThe job is now active and will run automatically according to the schedule.", name, schedule_str, command)
                 ))
             }
             "list" => {
@@ -305,10 +305,10 @@ impl Tool for CronTool {
                 if let Some(job) = jobs.iter().find(|j| j.name == name) {
                     guard.set_job_enabled(&job.id, true).await?;
                     drop(guard);
-                    Ok(ToolExecutionResult::success(&format!("✅ Enabled cron job '{}'", name)))
+                    Ok(ToolExecutionResult::success(format!("✅ Enabled cron job '{}'", name)))
                 } else {
                     drop(guard);
-                    Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
+                    Ok(ToolExecutionResult::error(format!("Job '{}' not found", name)))
                 }
             }
             "disable" => {
@@ -323,10 +323,10 @@ impl Tool for CronTool {
                 if let Some(job) = jobs.iter().find(|j| j.name == name) {
                     guard.set_job_enabled(&job.id, false).await?;
                     drop(guard);
-                    Ok(ToolExecutionResult::success(&format!("✅ Disabled cron job '{}'", name)))
+                    Ok(ToolExecutionResult::success(format!("✅ Disabled cron job '{}'", name)))
                 } else {
                     drop(guard);
-                    Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
+                    Ok(ToolExecutionResult::error(format!("Job '{}' not found", name)))
                 }
             }
             "remove" | "delete" => {
@@ -341,10 +341,10 @@ impl Tool for CronTool {
                 if let Some(job) = jobs.iter().find(|j| j.name == name) {
                     guard.remove_job(&job.id).await?;
                     drop(guard);
-                    Ok(ToolExecutionResult::success(&format!("✅ Removed cron job '{}'", name)))
+                    Ok(ToolExecutionResult::success(format!("✅ Removed cron job '{}'", name)))
                 } else {
                     drop(guard);
-                    Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
+                    Ok(ToolExecutionResult::error(format!("Job '{}' not found", name)))
                 }
             }
             "run" => {
@@ -359,13 +359,13 @@ impl Tool for CronTool {
                 if let Some(job) = jobs.iter().find(|j| j.name == name) {
                     guard.trigger_job(&job.id).await?;
                     drop(guard);
-                    Ok(ToolExecutionResult::success(&format!("🔄 Triggered cron job '{}'", name)))
+                    Ok(ToolExecutionResult::success(format!("🔄 Triggered cron job '{}'", name)))
                 } else {
                     drop(guard);
-                    Ok(ToolExecutionResult::error(&format!("Job '{}' not found", name)))
+                    Ok(ToolExecutionResult::error(format!("Job '{}' not found", name)))
                 }
             }
-            _ => Ok(ToolExecutionResult::error(&format!(
+            _ => Ok(ToolExecutionResult::error(format!(
                 "Unknown action: {}. Use: create, list, enable, disable, remove, run",
                 action
             ))),

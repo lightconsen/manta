@@ -191,7 +191,7 @@ impl LarkChannel {
         user_id: &str,
         user_name: Option<&str>,
     ) -> (bool, Option<String>) {
-        let policy = self.dm_policy.read().await.clone();
+        let policy = *self.dm_policy.read().await;
         match policy {
             DmPolicy::Open => (true, None),
             DmPolicy::Allowlist => {
@@ -393,13 +393,13 @@ impl LarkChannel {
     fn format_for_lark(text: &str) -> String {
         // Lark supports standard markdown in post messages
         // For text messages, it uses a simplified format
-        let result = text.to_string();
+        
 
         // Bold: **text** is supported
         // Italic: *text* is supported
         // Links: [text](url) is supported
 
-        result
+        text.to_string()
     }
 
     /// Build message content based on type

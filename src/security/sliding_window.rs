@@ -129,11 +129,6 @@ impl SlidingWindowRateLimiter {
         }
     }
 
-    /// Create with default settings (100 requests per minute)
-    pub fn default() -> Self {
-        Self::new(Duration::from_secs(60), 100)
-    }
-
     /// Check if a request is allowed without recording it
     pub fn check(&self, key: &RateLimitKey) -> RateLimitResult {
         let now = Instant::now();

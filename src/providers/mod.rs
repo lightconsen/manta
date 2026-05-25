@@ -617,10 +617,23 @@ mod tests {
             4096
         }
         async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
-            unimplemented!()
+            Ok(CompletionResponse {
+                message: Message::assistant("mock completion response".to_string()),
+                model: "mock-model".to_string(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+            })
         }
         async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
-            unimplemented!()
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = tx.send(CompletionChunk {
+                content: Some("mock streaming response".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                is_done: true,
+                usage: None,
+            });
+            Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
         }
         async fn health_check(&self) -> crate::Result<bool> {
             Ok(true)

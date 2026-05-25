@@ -169,7 +169,7 @@ impl Context {
         }
 
         // Multi-part tasks (indicated by "and", "then", commas)
-        let parts = message_content.split(|c| c == ',' || c == ';').count();
+        let parts = message_content.split([',', ';']).count();
         complexity += parts.saturating_sub(1) * 2;
 
         // Tasks with explicit multiple steps

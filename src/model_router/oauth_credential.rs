@@ -75,7 +75,7 @@ impl Credential {
         match self {
             Credential::ApiKey { .. } => false,
             Credential::BearerToken { expires_at, .. } => {
-                expires_at.map_or(false, |t| Utc::now() >= t)
+                expires_at.is_some_and(|t| Utc::now() >= t)
             }
             Credential::OAuth2 { expires_at, .. } => Utc::now() >= *expires_at,
         }
@@ -86,7 +86,7 @@ impl Credential {
         match self {
             Credential::ApiKey { .. } => false,
             Credential::BearerToken { expires_at, .. } => {
-                expires_at.map_or(false, |t| Utc::now() + margin >= t)
+                expires_at.is_some_and(|t| Utc::now() + margin >= t)
             }
             Credential::OAuth2 { expires_at, .. } => Utc::now() + margin >= *expires_at,
         }
@@ -130,7 +130,7 @@ impl Credential {
                 .form(&params)
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::Http(e))?;
+                .map_err(crate::error::MantaError::Http)?;
 
             if !resp.status().is_success() {
                 let body = resp.text().await.unwrap_or_default();
@@ -242,6 +242,7 @@ impl fmt::Display for Credential {
 
 /// OAuth2 token endpoint response.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct TokenResponse {
     access_token: String,
     #[serde(default = "default_expires_in")]

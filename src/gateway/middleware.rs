@@ -22,8 +22,10 @@ use crate::security::UserId;
 
 /// Allowed network origins for admin APIs
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum AllowedOrigin {
     /// Only localhost
+    #[default]
     Localhost,
     /// Tailscale network (100.64.0.0/10 CGNAT range)
     Tailscale,
@@ -35,12 +37,6 @@ pub enum AllowedOrigin {
     Any,
 }
 
-impl Default for AllowedOrigin {
-    fn default() -> Self {
-        // Default: localhost and Tailscale
-        AllowedOrigin::Localhost
-    }
-}
 
 /// Check if an IP address is allowed based on origin policy
 #[allow(dead_code)]
@@ -201,8 +197,7 @@ pub async fn auth_middleware(
     match auth_header {
         Some(header_value) => {
             if let Ok(header_str) = header_value.to_str() {
-                if header_str.starts_with("Bearer ") {
-                    let token = &header_str[7..];
+                if let Some(token) = header_str.strip_prefix("Bearer ") {
                     // Validate session
                     if state.auth_manager.validate_session(token).await.is_some() {
                         debug!("Valid auth token, allowing request");
@@ -245,8 +240,7 @@ pub async fn rate_limit_middleware(
         let auth_header = req.headers().get("authorization");
         if let Some(header_value) = auth_header {
             if let Ok(header_str) = header_value.to_str() {
-                if header_str.starts_with("Bearer ") {
-                    let token = &header_str[7..];
+                if let Some(token) = header_str.strip_prefix("Bearer ") {
                     if let Some(session) = state.auth_manager.validate_session(token).await {
                         session.user_id
                     } else {

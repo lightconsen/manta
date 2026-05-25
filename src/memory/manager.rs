@@ -157,7 +157,7 @@ impl MemoryManager {
         let event_log = config
             .workspace_dir
             .as_ref()
-            .map(|d| MemoryEventLog::new(d));
+            .map(MemoryEventLog::new);
         let tier_index = if config.enable_tiers {
             Some(Arc::new(TierIndex::new()))
         } else {
@@ -410,7 +410,7 @@ impl MemoryManager {
 
         // ── QMD search path ───────────────────────────────────────────────────
         if let Some(ref qmd) = self.qmd_executor {
-            let scope = QmdScope::default().with_key_prefix(&format!("{}:", user_id));
+            let scope = QmdScope::default().with_key_prefix(format!("{}:", user_id));
             match qmd.query(&query_text, Some(&scope)).await {
                 Ok(qmd_results) => {
                     let existing: std::collections::HashSet<String> =
@@ -497,7 +497,7 @@ impl MemoryManager {
                     &session_key,
                     format!("recall-{}", uuid::Uuid::new_v4()),
                     &mem.memory_type,
-                    &mem.content.chars().take(100).collect::<String>(),
+                    mem.content.chars().take(100).collect::<String>(),
                 );
                 if let Err(e) = event_log.append(&event).await {
                     warn!("Failed to append recall event: {}", e);
@@ -848,9 +848,7 @@ impl MemoryManager {
 
     /// Collect memory IDs that have been tracked by the effectiveness system.
     async fn collect_tracked_memory_ids(&self) -> Option<Vec<String>> {
-        let Some(ref effectiveness) = self.effectiveness else {
-            return None;
-        };
+        let effectiveness = self.effectiveness.as_ref()?;
 
         // Get top and under performers that qualify for adjustment
         let mut ids = Vec::new();

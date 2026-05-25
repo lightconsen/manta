@@ -109,7 +109,7 @@ impl SessionStore {
             .connect(database_url)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to connect to database"),
+                context: "Failed to connect to database".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -141,7 +141,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to enable WAL mode"),
+                context: "Failed to enable WAL mode".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -150,7 +150,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to enable foreign keys"),
+                context: "Failed to enable foreign keys".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -159,7 +159,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to set synchronous mode"),
+                context: "Failed to set synchronous mode".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -192,7 +192,7 @@ impl SessionStore {
         .execute(&self.pool)
         .await
         .map_err(|e| MantaError::Storage {
-            context: format!("Failed to create sessions table"),
+            context: "Failed to create sessions table".to_string(),
             details: e.to_string(),
         })?;
 
@@ -232,7 +232,7 @@ impl SessionStore {
         .execute(&self.pool)
         .await
         .map_err(|e| MantaError::Storage {
-            context: format!("Failed to create messages table"),
+            context: "Failed to create messages table".to_string(),
             details: e.to_string(),
         })?;
 
@@ -474,7 +474,7 @@ impl SessionStore {
         .bind(&metadata.transcript_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to save session"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage { context: "Failed to save session".to_string(), details: e.to_string() })?;
 
         // Update cache
         let mut cache = self.cache.write().await;
@@ -497,7 +497,7 @@ impl SessionStore {
         .bind(session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: format!("Failed to load session"), details: e.to_string() })?;
+        .map_err(|e| MantaError::Storage { context: "Failed to load session".to_string(), details: e.to_string() })?;
 
         match row {
             Some(row) => {
@@ -599,7 +599,7 @@ impl SessionStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to find sessions"),
+                context: "Failed to find sessions".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -643,6 +643,7 @@ impl SessionStore {
     }
 
     /// Append a message to session history. Returns the inserted row id.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, content))]
     pub async fn append_message(
         &self,
@@ -689,7 +690,7 @@ impl SessionStore {
         .execute(&self.pool)
         .await
         .map_err(|e| MantaError::Storage {
-            context: format!("Failed to append message"),
+            context: "Failed to append message".to_string(),
             details: e.to_string(),
         })?;
 
@@ -708,6 +709,7 @@ impl SessionStore {
 
     /// Get messages for a session, ordered oldest first.
     /// Returns `(id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id)`.
+    #[allow(clippy::type_complexity)]
     #[instrument(skip(self))]
     pub async fn get_messages(
         &self,
@@ -743,7 +745,7 @@ impl SessionStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| MantaError::Storage {
-            context: format!("Failed to get messages"),
+            context: "Failed to get messages".to_string(),
             details: e.to_string(),
         })?;
 
@@ -775,7 +777,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to update session status"),
+                context: "Failed to update session status".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -791,7 +793,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to update session name"),
+                context: "Failed to update session name".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -805,7 +807,7 @@ impl SessionStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to get session name"),
+                context: "Failed to get session name".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -821,7 +823,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to delete session messages"),
+                context: "Failed to delete session messages".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -830,7 +832,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to delete session"),
+                context: "Failed to delete session".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -853,7 +855,7 @@ impl SessionStore {
             .execute(&self.pool)
             .await
             .map_err(|e| MantaError::Storage {
-                context: format!("Failed to cleanup sessions"),
+                context: "Failed to cleanup sessions".to_string(),
                 details: e.to_string(),
             })?;
 
@@ -1129,6 +1131,7 @@ pub struct SubagentRunRecord {
 
 impl SessionStore {
     /// Save a subagent run record when it is spawned.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn save_subagent_run(
         &self,
@@ -1334,7 +1337,7 @@ impl SessionStore {
 
         Ok(rows
             .iter()
-            .map(|r| Self::row_to_subagent_run_record(r))
+            .map(Self::row_to_subagent_run_record)
             .collect())
     }
 

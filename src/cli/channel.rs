@@ -982,44 +982,45 @@ async fn run_channel_status(
     let config = load_gateway_config().await;
 
     // If --agent is specified without a channel, show all channels for that agent
-    if channel.is_none() && agent_filter.is_some() {
-        let agent_name = agent_filter.unwrap();
-        println!("📱 Channels for Agent: {}", agent_name);
-        println!("{}", "=".repeat(30 + agent_name.len()));
-        println!();
+    if channel.is_none() {
+        if let Some(ref agent_name) = agent_filter {
+            println!("📱 Channels for Agent: {}", agent_name);
+            println!("{}", "=".repeat(30 + agent_name.len()));
+            println!();
 
-        if let Some(ref cfg) = config {
-            let channels = [
-                ("telegram", "Telegram"),
-                ("discord", "Discord"),
-                ("slack", "Slack"),
-                ("whatsapp", "WhatsApp"),
-                ("qq", "QQ"),
-                ("feishu", "Feishu/Lark"),
-                ("websocket", "WebSocket"),
-            ];
+            if let Some(ref cfg) = config {
+                let channels = [
+                    ("telegram", "Telegram"),
+                    ("discord", "Discord"),
+                    ("slack", "Slack"),
+                    ("whatsapp", "WhatsApp"),
+                    ("qq", "QQ"),
+                    ("feishu", "Feishu/Lark"),
+                    ("websocket", "WebSocket"),
+                ];
 
-            let mut found = false;
-            for (key, name) in &channels {
-                if let Some(channel_config) = cfg.channels.get(*key) {
-                    let channel_agent = channel_config.agent_id.as_deref().unwrap_or("default");
-                    if channel_agent == agent_name {
-                        let status = if channel_config.enabled {
-                            "🟢 enabled"
-                        } else {
-                            "🟡 disabled"
-                        };
-                        println!("{:12}: {}", name, status);
-                        found = true;
+                let mut found = false;
+                for (key, name) in &channels {
+                    if let Some(channel_config) = cfg.channels.get(*key) {
+                        let channel_agent = channel_config.agent_id.as_deref().unwrap_or("default");
+                        if channel_agent == agent_name {
+                            let status = if channel_config.enabled {
+                                "🟢 enabled"
+                            } else {
+                                "🟡 disabled"
+                            };
+                            println!("{:12}: {}", name, status);
+                            found = true;
+                        }
                     }
                 }
-            }
 
-            if !found {
-                println!("No channels configured for agent '{}'", agent_name);
+                if !found {
+                    println!("No channels configured for agent '{}'", agent_name);
+                }
+            } else {
+                println!("No Gateway configuration found.");
             }
-        } else {
-            println!("No Gateway configuration found.");
         }
         return Ok(());
     }

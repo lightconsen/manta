@@ -98,6 +98,7 @@ pub fn compute_context_hash(messages: &[(String, String)]) -> String {
 }
 
 /// Check if flush already ran for current compaction cycle
+#[allow(clippy::too_many_arguments)]
 pub fn should_run_memory_flush(
     total_tokens: usize,
     context_window: usize,

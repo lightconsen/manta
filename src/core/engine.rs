@@ -72,14 +72,13 @@ impl Engine {
             }
 
             // Check for duplicate names if not allowed
-            if !self.config.allow_duplicate_names {
-                if entities.values().any(|e| e.name == request.name) {
+            if !self.config.allow_duplicate_names
+                && entities.values().any(|e| e.name == request.name) {
                     return Err(MantaError::Validation(format!(
                         "Entity with name '{}' already exists",
                         request.name
                     )));
                 }
-            }
         }
 
         let entity = request.into_entity();
@@ -197,12 +196,11 @@ impl Engine {
             .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
 
         for entity in entities.values_mut() {
-            if entity.is_terminal() && entity.metadata.updated_at < cutoff {
-                if entity.status != Status::Archived {
+            if entity.is_terminal() && entity.metadata.updated_at < cutoff
+                && entity.status != Status::Archived {
                     entity.set_status(Status::Archived);
                     archived_count += 1;
                 }
-            }
         }
 
         info!(count = archived_count, "Archived old entities");

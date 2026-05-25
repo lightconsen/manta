@@ -108,7 +108,7 @@ impl Tool for FileReadTool {
         // Check file size
         let metadata = tokio_fs::metadata(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         if metadata.len() > MAX_FILE_SIZE {
             return Ok(ToolExecutionResult::error(format!(
@@ -124,7 +124,7 @@ impl Tool for FileReadTool {
         // Read file
         let data = tokio_fs::read(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         // Check if binary
         if Self::is_binary(&data) {
@@ -240,21 +240,21 @@ impl Tool for FileWriteTool {
         if let Some(parent) = path.parent() {
             tokio_fs::create_dir_all(parent)
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
         }
 
         // Write file
         let mut file = tokio_fs::File::create(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         file.write_all(content.as_bytes())
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         file.flush()
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         info!("Wrote {} bytes to {}", content.len(), path.display());
 
@@ -346,7 +346,7 @@ impl Tool for FileEditTool {
         // Read file
         let content = tokio_fs::read_to_string(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         // Check if old_string exists
         if !content.contains(old_string) {
@@ -363,7 +363,7 @@ impl Tool for FileEditTool {
         // Write back
         tokio_fs::write(&path, new_content)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         info!("Made {} replacement(s) in {}", replacements, path.display());
 

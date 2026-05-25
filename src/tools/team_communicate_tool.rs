@@ -100,7 +100,7 @@ Examples:
         let sender = context.conversation_id.clone();
         // In a real implementation, you'd map conversation_id to agent name
         // For now, we'll use a simplified approach
-        let sender_agent = sender.split(':').last().unwrap_or(&sender).to_string();
+        let sender_agent = sender.split(':').next_back().unwrap_or(&sender).to_string();
 
         let mesh_manager = get_team_mesh_manager().await;
 

@@ -95,9 +95,9 @@ pub fn agent_data_dir(agent_id: &str) -> PathBuf {
 pub fn resolve_tilde(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     if let Some(path_str) = path.to_str() {
-        if path_str.starts_with("~/") {
+        if let Some(rest) = path_str.strip_prefix("~/") {
             if let Some(home) = home_dir() {
-                return home.join(&path_str[2..]);
+                return home.join(rest);
             }
         } else if path_str == "~" {
             if let Some(home) = home_dir() {

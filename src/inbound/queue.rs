@@ -5,7 +5,7 @@
 //!
 //! - `Interrupt` — New message stops the current agent turn and starts fresh.
 //! - `Steer`     — New message is injected into the running context as user
-//!                 guidance (the agent changes direction mid-flight).
+//!   guidance (the agent changes direction mid-flight).
 //! - `FollowUp`  — Collect multiple messages, then process them as a batch.
 //! - `Collect`   — Accumulate messages until an explicit trigger.
 //!
@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 
 /// Queue mode for message handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum QueueMode {
     /// Interrupt the current agent execution and start a new turn.
     Interrupt,
@@ -29,14 +30,10 @@ pub enum QueueMode {
     /// Collect messages until an explicit trigger.
     Collect,
     /// No special queue behaviour (default single-turn).
+    #[default]
     Normal,
 }
 
-impl Default for QueueMode {
-    fn default() -> Self {
-        QueueMode::Normal
-    }
-}
 
 /// Per-session tracking for queue-mode heuristics.
 #[derive(Debug, Clone)]
@@ -52,6 +49,12 @@ pub struct QueueModeResolver {
     sessions: Arc<RwLock<HashMap<String, SessionTiming>>>,
     /// Time window for FollowUp detection (messages within this window are batched).
     follow_up_window: Duration,
+}
+
+impl Default for QueueModeResolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QueueModeResolver {

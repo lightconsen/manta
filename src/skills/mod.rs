@@ -908,7 +908,7 @@ impl SkillManager {
             .config
             .entries
             .entry(name.to_string())
-            .or_insert_with(SkillEntryConfig::default);
+            .or_default();
         entry.enabled = enabled;
         self.config.save().await?;
 

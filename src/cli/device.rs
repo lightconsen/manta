@@ -61,26 +61,23 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
 
             // Also show pending
             let url = format!("{}/api/v1/pairing/pending", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    if let Some(requests) = body.get("requests").and_then(|r| r.as_array()) {
-                        if !requests.is_empty() {
-                            println!("\nPending Pairing Requests:");
-                            println!("{:<12} {:<15} {:<20}", "Code", "Channel", "User ID");
-                            println!("{}", "-".repeat(50));
-                            for req in requests {
-                                println!(
-                                    "{:<12} {:<15} {}",
-                                    req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
-                                    req.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
-                                    req.get("user_id").and_then(|u| u.as_str()).unwrap_or("-"),
-                                );
-                            }
+            if let Ok(resp) = client.get(&url).send().await {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                if let Some(requests) = body.get("requests").and_then(|r| r.as_array()) {
+                    if !requests.is_empty() {
+                        println!("\nPending Pairing Requests:");
+                        println!("{:<12} {:<15} {:<20}", "Code", "Channel", "User ID");
+                        println!("{}", "-".repeat(50));
+                        for req in requests {
+                            println!(
+                                "{:<12} {:<15} {}",
+                                req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("user_id").and_then(|u| u.as_str()).unwrap_or("-"),
+                            );
                         }
                     }
                 }
-                Err(_) => {}
             }
             Ok(())
         }

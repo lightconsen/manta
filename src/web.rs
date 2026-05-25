@@ -623,9 +623,7 @@ fn terminal_html() -> String {
     let version = env!("CARGO_PKG_VERSION");
     match std::fs::read_to_string("web/dist/index.html") {
         Ok(html) => html.replace("{VERSION}", version),
-        Err(_) => format!(
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
-        ),
+        Err(_) => "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>".to_string(),
     }
 }
 

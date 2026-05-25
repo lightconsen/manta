@@ -346,7 +346,7 @@ impl TierIndex {
     /// Get the tier of a memory.
     pub fn get_tier(&self, id: &str) -> Option<MemoryTier> {
         let guard = self.entries.read().unwrap();
-        guard.get(id).map(|e| e.tier.clone())
+        guard.get(id).map(|e| e.tier)
     }
 
     /// Get tiered metadata for a memory.
@@ -366,7 +366,7 @@ impl TierIndex {
         let guard = self.entries.read().unwrap();
         let mut counts = HashMap::new();
         for entry in guard.values() {
-            *counts.entry(entry.tier.clone()).or_insert(0) += 1;
+            *counts.entry(entry.tier).or_insert(0) += 1;
         }
         counts
     }

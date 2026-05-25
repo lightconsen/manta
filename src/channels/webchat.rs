@@ -182,7 +182,7 @@ impl WebchatChannel {
 
     /// Check if session is authorized
     pub async fn check_access(&self, session_id: &str) -> (bool, Option<String>) {
-        let policy = self.dm_policy.read().await.clone();
+        let policy = *self.dm_policy.read().await;
         match policy {
             DmPolicy::Open => (true, None),
             DmPolicy::Allowlist => {
@@ -496,7 +496,7 @@ impl Channel for WebchatChannel {
 
         let listener = tokio::net::TcpListener::bind(&self.config.bind_addr)
             .await
-            .map_err(|e| crate::error::MantaError::Io(e))?;
+            .map_err(crate::error::MantaError::Io)?;
 
         let server = axum::serve(listener, app);
 

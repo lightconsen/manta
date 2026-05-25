@@ -45,8 +45,8 @@ pub async fn run_audit_command(command: &AuditCommands) -> Result<()> {
                         } else {
                             println!("Audit Log:");
                             println!(
-                                "{:<20} {:<15} {:<20} {}",
-                                "Timestamp", "Event", "User", "Details"
+                                "{:<20} {:<15} {:<20} Details",
+                                "Timestamp", "Event", "User"
                             );
                             println!("{}", "-".repeat(90));
                             for entry in entries {

@@ -222,7 +222,7 @@ impl Tool for AcpSpawnTool {
 
                         Ok(ToolExecutionResult {
                             success: true,
-                            output: format!("{}", response),
+                            output: response.to_string(),
                             error: None,
                             data: Some(serde_json::json!({
                                 "subagent_id": subagent_id,

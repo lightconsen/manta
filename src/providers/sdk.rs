@@ -53,18 +53,15 @@ pub struct ProviderMetadata {
 /// Health status of a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProviderHealth {
     Healthy,
     Degraded { reason: String },
     Unhealthy { reason: String },
+    #[default]
     Unknown,
 }
 
-impl Default for ProviderHealth {
-    fn default() -> Self {
-        ProviderHealth::Unknown
-    }
-}
 
 /// A "provider pack" — a bundle of related providers shipped as a unit.
 ///

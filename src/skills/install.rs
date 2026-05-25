@@ -159,7 +159,7 @@ async fn install_with_npm(
         package
             .trim_start_matches('@')
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or(package)
     });
     if is_binary_available(bin_name).await {
@@ -216,7 +216,7 @@ async fn install_with_npm(
 /// Install using Go
 async fn install_with_go(package: &str, binary: Option<&str>) -> InstallResultInternal {
     // Check if already installed
-    let bin_name = binary.unwrap_or_else(|| package.split('/').last().unwrap_or(package));
+    let bin_name = binary.unwrap_or_else(|| package.split('/').next_back().unwrap_or(package));
     if is_binary_available(bin_name).await {
         return InstallResultInternal::AlreadyPresent;
     }
@@ -398,7 +398,7 @@ async fn extract_archive(
                 ])
                 .output()
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
 
             if !output.status.success() {
                 return Err(crate::error::MantaError::Internal(
@@ -419,7 +419,7 @@ async fn extract_archive(
                 ])
                 .output()
                 .await
-                .map_err(|e| crate::error::MantaError::Io(e))?;
+                .map_err(crate::error::MantaError::Io)?;
 
             if !output.status.success() {
                 return Err(crate::error::MantaError::Internal(
@@ -473,7 +473,7 @@ async fn install_with_shell(command: &str, binary: Option<&str>) -> InstallResul
 /// Install using Cargo
 async fn install_with_cargo(package: &str, binary: Option<&str>) -> InstallResultInternal {
     // Check if already installed
-    let bin_name = binary.unwrap_or_else(|| package.split('/').last().unwrap_or(package));
+    let bin_name = binary.unwrap_or_else(|| package.split('/').next_back().unwrap_or(package));
     if is_binary_available(bin_name).await {
         return InstallResultInternal::AlreadyPresent;
     }

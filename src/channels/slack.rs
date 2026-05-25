@@ -125,7 +125,7 @@ impl SlackChannel {
         user_id: &str,
         user_name: Option<&str>,
     ) -> (bool, Option<String>) {
-        let policy = self.dm_policy.read().await.clone();
+        let policy = *self.dm_policy.read().await;
         match policy {
             DmPolicy::Open => (true, None),
             DmPolicy::Allowlist => {

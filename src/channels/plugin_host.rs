@@ -536,7 +536,7 @@ impl PluginChannel {
     pub async fn init(&self, config: &serde_json::Value) -> crate::Result<String> {
         let mut store = self.store.lock().await;
         let (ptr, len) =
-            write_string_to_memory(&mut *store, &self.memory, &self.alloc_fn, &config.to_string())?;
+            write_string_to_memory(&mut store, &self.memory, &self.alloc_fn, &config.to_string())?;
 
         let result = self
             .init_fn
@@ -673,7 +673,7 @@ impl Channel for PluginChannel {
 
         let mut store = self.store.lock().await;
         let (ptr, len) =
-            write_string_to_memory(&mut *store, &self.memory, &self.alloc_fn, &json.to_string())?;
+            write_string_to_memory(&mut store, &self.memory, &self.alloc_fn, &json.to_string())?;
 
         let result = self
             .send_fn
@@ -694,7 +694,7 @@ impl Channel for PluginChannel {
     async fn send_typing(&self, conversation_id: &ConversationId) -> crate::Result<()> {
         let mut store = self.store.lock().await;
         let (ptr, len) = write_string_to_memory(
-            &mut *store,
+            &mut store,
             &self.memory,
             &self.alloc_fn,
             &conversation_id.to_string(),
@@ -719,13 +719,13 @@ impl Channel for PluginChannel {
     async fn edit_message(&self, message_id: Id, new_content: String) -> crate::Result<()> {
         let mut store = self.store.lock().await;
         let (ptr1, len1) = write_string_to_memory(
-            &mut *store,
+            &mut store,
             &self.memory,
             &self.alloc_fn,
             &message_id.to_string(),
         )?;
         let (ptr2, len2) =
-            write_string_to_memory(&mut *store, &self.memory, &self.alloc_fn, &new_content)?;
+            write_string_to_memory(&mut store, &self.memory, &self.alloc_fn, &new_content)?;
 
         let result = self
             .edit_message_fn
@@ -749,7 +749,7 @@ impl Channel for PluginChannel {
     async fn delete_message(&self, message_id: Id) -> crate::Result<()> {
         let mut store = self.store.lock().await;
         let (ptr, len) = write_string_to_memory(
-            &mut *store,
+            &mut store,
             &self.memory,
             &self.alloc_fn,
             &message_id.to_string(),

@@ -1662,6 +1662,7 @@ async fn handle_restart(req: &WsRequest) -> WsResponse {
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::result_large_err)]
 fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, WsResponse> {
     match &req.params {
         Some(p) => match serde_json::from_value::<T>(p.clone()) {
