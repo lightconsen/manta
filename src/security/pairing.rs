@@ -174,6 +174,8 @@ pub struct PairingStore {
     pending_index: Arc<RwLock<HashMap<(String, String), String>>>,
     /// Authorized users keyed by (channel, user_id).
     authorized: Arc<RwLock<HashMap<(String, String), AuthorizedUser>>>,
+    /// Multi-dimensional allowlist for fine-grained access control.
+    allowlist: Arc<crate::security::allowlist::Allowlist>,
     /// Default TTL for pairing requests.
     default_ttl: Duration,
     /// Max pending requests per user per channel (rate limiting).
@@ -188,6 +190,7 @@ impl Default for PairingStore {
             pending: Arc::new(RwLock::new(HashMap::new())),
             pending_index: Arc::new(RwLock::new(HashMap::new())),
             authorized: Arc::new(RwLock::new(HashMap::new())),
+            allowlist: Arc::new(crate::security::allowlist::Allowlist::new()),
             default_ttl: Duration::from_secs(3600), // 1 hour
             max_requests_per_user: 3,
             min_request_interval: Duration::from_secs(600), // 10 minutes
@@ -211,10 +214,16 @@ impl PairingStore {
             pending: Arc::new(RwLock::new(HashMap::new())),
             pending_index: Arc::new(RwLock::new(HashMap::new())),
             authorized: Arc::new(RwLock::new(HashMap::new())),
+            allowlist: Arc::new(crate::security::allowlist::Allowlist::new()),
             default_ttl,
             max_requests_per_user,
             min_request_interval,
         }
+    }
+
+    /// Get a reference to the multi-dimensional allowlist.
+    pub fn allowlist(&self) -> &Arc<crate::security::allowlist::Allowlist> {
+        &self.allowlist
     }
 
     // ── User-initiated pairing (OpenClaw-style) ───────────────────────────────
@@ -384,10 +393,19 @@ impl PairingStore {
     // ── Access checks ─────────────────────────────────────────────────────────
 
     /// Return `true` if `user_id` is currently authorized on `channel`.
+    /// Checks both the direct authorized list and the multi-dimensional allowlist.
     pub async fn is_authorized(&self, channel: &str, user_id: &str) -> bool {
+        // First check direct authorized list (pairing flow)
         let key = (channel.to_string(), user_id.to_string());
-        let auth = self.authorized.read().await;
-        auth.get(&key).map(|u| u.is_valid()).unwrap_or(false)
+        {
+            let auth = self.authorized.read().await;
+            if auth.get(&key).map(|u| u.is_valid()).unwrap_or(false) {
+                return true;
+            }
+        }
+
+        // Then check multi-dimensional allowlist
+        crate::security::allowlist::is_user_allowed(&self.allowlist, channel, user_id, None).await
     }
 
     /// Check if user has a pending request.

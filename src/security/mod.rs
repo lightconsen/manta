@@ -1199,5 +1199,8 @@ pub mod pentest;
 /// Tailscale authentication
 pub mod tailscale;
 
+/// Multi-dimensional allowlist
+pub mod allowlist;
+
 // Re-export SecurityValidator and validation types from tools module for use in security tests
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
