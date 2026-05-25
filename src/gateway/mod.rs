@@ -1121,9 +1121,46 @@ pub struct Gateway {
     config: GatewayConfig,
 }
 
+/// Validate authentication configuration for ambiguity and conflicts.
+///
+/// Fails fast when both `shared_token` and OAuth providers are configured
+/// but `auth_mode` is not explicitly set.
+fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
+    if !config.security.enabled || !config.security.auth_required {
+        return Ok(());
+    }
+
+    let has_token = config.security.shared_token.is_some();
+    let has_oauth = config.security.oauth.enabled
+        && (config.security.oauth.github.is_some() || config.security.oauth.google.is_some());
+    let mode_unset = config.security.auth_mode == crate::gateway::protocol::AuthMode::None;
+
+    if has_token && has_oauth && mode_unset {
+        return Err(crate::error::MantaError::Validation(
+            "Auth mode ambiguity: both shared_token and OAuth are configured but \
+             auth_mode is not set. Please set auth_mode to 'token' or 'device' \
+             in your security configuration."
+                .into(),
+        ));
+    }
+
+    // Warn when token is configured but auth_mode is not Token
+    if has_token && mode_unset && config.security.shared_token.as_deref() != Some("") {
+        tracing::warn!(
+            "shared_token is configured but auth_mode is 'none'. \
+             Set auth_mode to 'token' for consistent authentication."
+        );
+    }
+
+    Ok(())
+}
+
 impl Gateway {
     /// Create a new gateway instance
     pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
+        // Validate security configuration before proceeding
+        validate_auth_config(&config)?;
+
         let (event_tx, _) = broadcast::channel(1000);
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
@@ -1274,9 +1311,8 @@ impl Gateway {
         }
 
         // Create skill manager early so it can be shared with ACP builder and GatewayState
-        let skills_manager = Arc::new(tokio::sync::RwLock::new(
-            crate::skills::SkillManager::new().await?,
-        ));
+        let skills_manager =
+            Arc::new(tokio::sync::RwLock::new(crate::skills::SkillManager::new().await?));
 
         // Configure ACP default agent builder (needs provider + tools, which are now ready)
         if let Ok(default_provider) = model_router.create_default_provider().await {
@@ -4423,11 +4459,7 @@ async fn live_handler() -> impl IntoResponse {
 /// Metrics endpoint — returns Prometheus text format metrics.
 async fn metrics_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let metrics = build_prometheus_metrics(&state).await;
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        metrics,
-    )
+    (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; version=0.0.4")], metrics)
 }
 
 /// Build Prometheus text format metrics from GatewayState.
@@ -4453,21 +4485,13 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     let agents = state.agents.read().await;
     let agent_count = agents.len() as f64;
     drop(agents);
-    gauge(
-        "manta_agents_active",
-        agent_count,
-        "Number of active agents",
-    );
+    gauge("manta_agents_active", agent_count, "Number of active agents");
 
     // Channels
     let channels = state.channels.read().await;
     let channel_count = channels.len() as f64;
     drop(channels);
-    gauge(
-        "manta_channels_configured",
-        channel_count,
-        "Number of configured channels",
-    );
+    gauge("manta_channels_configured", channel_count, "Number of configured channels");
 
     // Providers
     let router_health = state.model_router.get_health_status().await;
@@ -4476,11 +4500,7 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
         .count() as f64;
     let total_providers = router_health.len() as f64;
-    gauge(
-        "manta_providers_healthy",
-        healthy_providers,
-        "Number of healthy LLM providers",
-    );
+    gauge("manta_providers_healthy", healthy_providers, "Number of healthy LLM providers");
     gauge(
         "manta_providers_total",
         total_providers,
@@ -4523,19 +4543,11 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
 
     // Plugins
     let plugin_count = state.plugin_manager.list_plugins().await.len() as f64;
-    gauge(
-        "manta_plugins_loaded",
-        plugin_count,
-        "Number of loaded plugins",
-    );
+    gauge("manta_plugins_loaded", plugin_count, "Number of loaded plugins");
 
     // MCP
     let mcp_count = state.mcp_manager.list_servers().await.len() as f64;
-    gauge(
-        "manta_mcp_servers_connected",
-        mcp_count,
-        "Number of connected MCP servers",
-    );
+    gauge("manta_mcp_servers_connected", mcp_count, "Number of connected MCP servers");
 
     // Storage
     let storage_healthy = match state.storage.read().await.health_check().await {
@@ -4551,12 +4563,12 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     // Cost guard
     let daily_spend = state.cost_guard.daily_spend_cents() as f64;
     let hourly_actions = state.cost_guard.hourly_action_count() as f64;
-    let budget_exceeded = if state.cost_guard.is_exceeded() { 1.0 } else { 0.0 };
-    gauge(
-        "manta_cost_daily_spend_cents",
-        daily_spend,
-        "Daily LLM spend in cents",
-    );
+    let budget_exceeded = if state.cost_guard.is_exceeded() {
+        1.0
+    } else {
+        0.0
+    };
+    gauge("manta_cost_daily_spend_cents", daily_spend, "Daily LLM spend in cents");
     gauge(
         "manta_cost_hourly_actions",
         hourly_actions,
@@ -4570,11 +4582,7 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
 
     // Audit log
     let audit_entries = state.audit_log.persisted_count().await as f64;
-    gauge(
-        "manta_audit_log_entries",
-        audit_entries,
-        "Total number of audit log entries",
-    );
+    gauge("manta_audit_log_entries", audit_entries, "Total number of audit log entries");
 
     lines.push(String::new());
     lines.join("\n")

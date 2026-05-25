@@ -10,6 +10,7 @@
 //! 2. Episodic — session history via chat_messages table
 //! 3. Semantic — extracted facts/prefs via memories table with embeddings
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -59,6 +60,16 @@ impl Default for MemoryManagerConfig {
     }
 }
 
+/// Maximum number of recent recalls to track per session before LRU eviction.
+const MAX_RECENT_RECALLS_PER_SESSION: usize = 100;
+
+/// Tracks a recent recall so it can be evaluated for a hit after the LLM responds.
+#[derive(Debug, Clone)]
+struct RecentRecall {
+    recall_id: String,
+    memory_content: String,
+}
+
 /// The MemoryManager orchestrates all memory operations.
 pub struct MemoryManager {
     /// Primary memory store (may be tiered or unified).
@@ -84,6 +95,9 @@ pub struct MemoryManager {
     multimodal_store: Option<Arc<MultimodalStore>>,
     /// QMD executor for scope-based queries.
     qmd_executor: Option<Arc<QmdExecutor>>,
+    /// Recent recalls per session, awaiting hit evaluation.
+    /// session_key -> Vec<(recall_id, memory_content)>
+    recent_recalls: RwLock<HashMap<String, Vec<RecentRecall>>>,
 }
 
 impl std::fmt::Debug for MemoryManager {
@@ -101,6 +115,7 @@ impl std::fmt::Debug for MemoryManager {
             .field("effectiveness", &self.effectiveness.is_some())
             .field("multimodal_store", &self.multimodal_store.is_some())
             .field("qmd_executor", &self.qmd_executor.is_some())
+            .field("recent_recalls", &"<HashMap>")
             .finish()
     }
 }
@@ -173,6 +188,7 @@ impl MemoryManager {
             effectiveness,
             multimodal_store,
             qmd_executor,
+            recent_recalls: RwLock::new(HashMap::new()),
         }
     }
 
@@ -458,6 +474,18 @@ impl MemoryManager {
                         rank,
                     )
                     .await;
+
+                // Store recall for later hit evaluation
+                let mut recent_guard = self.recent_recalls.write().await;
+                let recalls = recent_guard.entry(session_key.clone()).or_default();
+                recalls.push(RecentRecall {
+                    recall_id,
+                    memory_content: mem.content.clone(),
+                });
+                // Enforce per-session bound to prevent unbounded growth
+                if recalls.len() > MAX_RECENT_RECALLS_PER_SESSION {
+                    recalls.remove(0);
+                }
             }
 
             // Log recall event
@@ -697,6 +725,47 @@ impl MemoryManager {
     /// Get memory statistics.
     pub async fn stats(&self) -> crate::Result<MemoryStats> {
         self.store.stats().await
+    }
+
+    /// Evaluate whether recently-recalled memories were "hit" by the LLM response.
+    ///
+    /// For each recent recall in `session_key`, checks if `response_text` contains
+    /// a significant substring of the recalled memory content. If so, marks it as a hit
+    /// in the effectiveness tracker.
+    ///
+    /// This should be called immediately after `get_completion()` returns.
+    pub async fn evaluate_response_hits(&self, session_key: &str, response_text: &str) {
+        let effectiveness = match self.effectiveness {
+            Some(ref e) => e.clone(),
+            None => return,
+        };
+
+        let recalls_to_evaluate = {
+            let mut guard = self.recent_recalls.write().await;
+            guard.remove(session_key)
+        };
+
+        let Some(recalls) = recalls_to_evaluate else {
+            return;
+        };
+
+        let response_lower = response_text.to_lowercase();
+
+        for recall in recalls {
+            let probe = recall
+                .memory_content
+                .chars()
+                .take(30)
+                .collect::<String>()
+                .to_lowercase();
+            if probe.len() < 3 {
+                // Too short to meaningfully match; skip
+                continue;
+            }
+            if response_lower.contains(&probe) {
+                effectiveness.mark_hit(&recall.recall_id).await;
+            }
+        }
     }
 }
 
@@ -1086,5 +1155,146 @@ mod tests {
 
         let ids = mm.compact_session("short-conv", None).await.unwrap();
         assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_response_hits_marks_hit() {
+        use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
+
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let tracker = Arc::new(EffectivenessTracker::new(EffectivenessConfig::default()));
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default())
+            .with_effectiveness_tracker(tracker.clone());
+
+        let session_key = "u1:conv1";
+
+        // Manually inject a recent recall
+        {
+            let mut guard = mm.recent_recalls.write().await;
+            guard.insert(
+                session_key.to_string(),
+                vec![RecentRecall {
+                    recall_id: "recall-001".to_string(),
+                    memory_content: "The user loves hiking in the mountains".to_string(),
+                }],
+            );
+        }
+
+        // Record the recall in the tracker so mark_hit can find it
+        tracker
+            .record_recall("recall-001", "m1", session_key, "preference", 0.8, 0)
+            .await;
+
+        // Response contains the memory content
+        mm.evaluate_response_hits(
+            session_key,
+            "I remember that the user loves hiking in the mountains!",
+        )
+        .await;
+
+        let stats = tracker.memory_stats("m1").await.unwrap();
+        assert_eq!(stats.total_recalls, 1);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.hit_rate, 1.0);
+
+        // recent_recalls should be cleared for this session
+        let guard = mm.recent_recalls.read().await;
+        assert!(!guard.contains_key(session_key));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_response_hits_no_hit() {
+        use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
+
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let tracker = Arc::new(EffectivenessTracker::new(EffectivenessConfig::default()));
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default())
+            .with_effectiveness_tracker(tracker.clone());
+
+        let session_key = "u1:conv2";
+
+        {
+            let mut guard = mm.recent_recalls.write().await;
+            guard.insert(
+                session_key.to_string(),
+                vec![RecentRecall {
+                    recall_id: "recall-002".to_string(),
+                    memory_content: "The user loves hiking in the mountains".to_string(),
+                }],
+            );
+        }
+
+        tracker
+            .record_recall("recall-002", "m2", session_key, "preference", 0.8, 0)
+            .await;
+
+        // Response does NOT contain the memory content
+        mm.evaluate_response_hits(session_key, "That sounds interesting, tell me more.")
+            .await;
+
+        let stats = tracker.memory_stats("m2").await.unwrap();
+        assert_eq!(stats.total_recalls, 1);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.hit_rate, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_response_hits_full_closed_loop() {
+        use crate::memory::effectiveness::{
+            EffectivenessAction, EffectivenessConfig, EffectivenessTracker,
+        };
+
+        let config = EffectivenessConfig {
+            auto_adjust: true,
+            promotion_threshold: 0.7,
+            demotion_threshold: 0.2,
+            min_recalls_for_adjustment: 3,
+            importance_boost: 0.1,
+            importance_penalty: 0.1,
+            max_importance: 1.0,
+            min_importance: 0.0,
+        };
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let tracker = Arc::new(EffectivenessTracker::new(config));
+        let mm = MemoryManager::new(store.clone(), store, MemoryManagerConfig::default())
+            .with_effectiveness_tracker(tracker.clone());
+
+        let session_key = "u1:conv3";
+
+        // Simulate 3 recalls, all hit
+        for i in 0..3 {
+            let recall_id = format!("recall-high-{}", i);
+            {
+                let mut guard = mm.recent_recalls.write().await;
+                guard
+                    .entry(session_key.to_string())
+                    .or_default()
+                    .push(RecentRecall {
+                        recall_id: recall_id.clone(),
+                        memory_content: "User prefers dark mode".to_string(),
+                    });
+            }
+            tracker
+                .record_recall(&recall_id, "m_high", session_key, "preference", 0.6, 0)
+                .await;
+        }
+
+        // Response contains the memory content
+        mm.evaluate_response_hits(
+            session_key,
+            "I know that User prefers dark mode, so I'll set that up.",
+        )
+        .await;
+
+        let stats = tracker.memory_stats("m_high").await.unwrap();
+        assert_eq!(stats.total_recalls, 3);
+        assert_eq!(stats.hits, 3);
+        assert_eq!(stats.hit_rate, 1.0);
+
+        let action = tracker.evaluate("m_high", 0.6).await;
+        assert_eq!(action, EffectivenessAction::Boost);
+
+        let new_importance = tracker.apply_action(action, 0.6);
+        assert!((new_importance - 0.7).abs() < 0.001);
     }
 }

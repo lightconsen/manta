@@ -1196,5 +1196,8 @@ pub mod sliding_window;
 /// Dynamic security penetration testing
 pub mod pentest;
 
+/// Tailscale authentication
+pub mod tailscale;
+
 // Re-export SecurityValidator and validation types from tools module for use in security tests
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
