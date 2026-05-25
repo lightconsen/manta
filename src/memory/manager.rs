@@ -98,6 +98,8 @@ pub struct MemoryManager {
     /// Recent recalls per session, awaiting hit evaluation.
     /// session_key -> Vec<(recall_id, memory_content)>
     recent_recalls: RwLock<HashMap<String, Vec<RecentRecall>>>,
+    /// Last time effectiveness adjustments were applied (rate limiting).
+    last_adjustment: RwLock<Option<std::time::Instant>>,
 }
 
 impl std::fmt::Debug for MemoryManager {
@@ -189,6 +191,7 @@ impl MemoryManager {
             multimodal_store,
             qmd_executor,
             recent_recalls: RwLock::new(HashMap::new()),
+            last_adjustment: RwLock::new(None),
         }
     }
 
@@ -766,6 +769,101 @@ impl MemoryManager {
                 effectiveness.mark_hit(&recall.recall_id).await;
             }
         }
+    }
+
+    /// Evaluate recalled memories for effectiveness and adjust importance scores.
+    ///
+    /// Closes the feedback loop: uses the effectiveness tracker to evaluate
+    /// memories that have been recalled recently, and adjusts their importance
+    /// scores based on hit rates.
+    ///
+    /// Rate-limited: skips if adjustments were applied within the last 5 minutes.
+    pub async fn apply_effectiveness_adjustments(&self) {
+        let effectiveness = match &self.effectiveness {
+            Some(e) => e.clone(),
+            None => return,
+        };
+
+        // Rate limit: skip if adjustments were applied within the last 5 minutes
+        {
+            let guard = self.last_adjustment.read().await;
+            if let Some(last) = *guard {
+                if last.elapsed().as_secs() < 300 {
+                    return;
+                }
+            }
+        }
+
+        // Collect memory IDs that have been tracked by effectiveness
+        let Some(memory_ids) = self.collect_tracked_memory_ids().await else {
+            return;
+        };
+
+        if memory_ids.is_empty() {
+            return;
+        }
+
+        let mut adjusted = 0usize;
+
+        for memory_id in memory_ids {
+            // Get current memory to read importance score
+            let Ok(Some(memory)) = self.store.get(&crate::memory::MemoryId::new(&memory_id)).await
+            else {
+                continue;
+            };
+
+            let action = effectiveness.evaluate(&memory_id, memory.importance_score).await;
+            if action == crate::memory::effectiveness::EffectivenessAction::NoOp {
+                continue;
+            }
+
+            let old_score = memory.importance_score;
+            let new_score = effectiveness.apply_action(action, old_score);
+            if (new_score - old_score).abs() < 0.001 {
+                continue;
+            }
+
+            // Update the memory with new importance score
+            let mut updated = memory;
+            updated.importance_score = new_score;
+            if let Err(e) = self.store.update(updated).await {
+                warn!("Failed to update memory effectiveness for {}: {}", memory_id, e);
+                continue;
+            }
+
+            info!(
+                "Effectiveness adjustment: memory {} importance {:.3} -> {:.3}",
+                memory_id, old_score, new_score
+            );
+            adjusted += 1;
+        }
+
+        if adjusted > 0 {
+            info!("Applied {} effectiveness adjustments", adjusted);
+        }
+
+        // Update last adjustment time
+        *self.last_adjustment.write().await = Some(std::time::Instant::now());
+    }
+
+    /// Collect memory IDs that have been tracked by the effectiveness system.
+    async fn collect_tracked_memory_ids(&self) -> Option<Vec<String>> {
+        let Some(ref effectiveness) = self.effectiveness else {
+            return None;
+        };
+
+        // Get top and under performers that qualify for adjustment
+        let mut ids = Vec::new();
+        for (id, _stats) in effectiveness.top_performers(50).await {
+            ids.push(id);
+        }
+        for (id, _stats) in effectiveness.under_performers(50).await {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+
+        Some(ids)
     }
 }
 

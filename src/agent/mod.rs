@@ -1294,6 +1294,8 @@ impl Agent {
             let session_key = format!("{}:{}", user_id, conversation_id);
             mm.evaluate_response_hits(&session_key, &response.message.content)
                 .await;
+            // Close the effectiveness feedback loop
+            mm.apply_effectiveness_adjustments().await;
         }
 
         // Store assistant response in chat history and index for search

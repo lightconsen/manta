@@ -848,7 +848,7 @@ async fn handle_chat_history(
 async fn handle_chat_abort(
     req: &WsRequest,
     _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct AbortParams {
@@ -860,11 +860,11 @@ async fn handle_chat_abort(
         Err(res) => return res,
     };
 
-    // TODO: implement abort via ACP
+    state.acp.cancel(params.session_id.clone()).await;
     WsResponse::ok(
         &req.id,
         serde_json::json!({
-            "status": "abort_requested",
+            "status": "aborted",
             "session_id": params.session_id,
         }),
     )
@@ -993,21 +993,33 @@ async fn handle_sessions_delete(
 async fn handle_sessions_reset(
     req: &WsRequest,
     _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
-    _state: &Arc<GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> WsResponse {
     #[derive(Debug, Deserialize)]
-    #[allow(dead_code)]
     struct ResetParams {
         session_id: String,
     }
 
-    let _params: ResetParams = match parse_params(req) {
+    let params: ResetParams = match parse_params(req) {
         Ok(p) => p,
         Err(res) => return res,
     };
 
-    // TODO: implement session reset
-    WsResponse::ok(&req.id, serde_json::json!({ "status": "reset" }))
+    // Cancel any running ACP session
+    state.acp.cancel(params.session_id.clone()).await;
+
+    // Delete session data from the store
+    if let Some(ref store) = state.session_store {
+        let _ = store.delete_session(&params.session_id).await;
+    }
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "reset",
+            "session_id": params.session_id,
+        }),
+    )
 }
 
 async fn handle_sessions_subscribe(

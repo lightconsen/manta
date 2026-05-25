@@ -540,6 +540,23 @@ impl SkillManager {
         // Load skills from all storage locations
         let count = self.load_all().await?;
 
+        // Validate dependency graph and version constraints
+        let graph = self.build_dependency_graph().await;
+        match graph.check_versions() {
+            Ok(()) => info!("Skill dependency version checks passed"),
+            Err(e) => warn!("Skill dependency version issue: {}", e),
+        }
+
+        // Resolve all skills in dependency order
+        match self.resolve_all_dependencies().await {
+            Ok(order) => {
+                info!("Skills loaded in dependency order: {}", order.join(", "));
+            }
+            Err(e) => {
+                warn!("Skill dependency resolution failed (startup continues): {}", e);
+            }
+        }
+
         // Start file watcher for hot reloading
         self.start_watcher().await?;
 
