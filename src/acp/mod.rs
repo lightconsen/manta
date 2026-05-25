@@ -368,7 +368,12 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
 
     while let Some(cmd) = command_rx.recv().await {
         match cmd {
-            AcpCommand::ExecuteSession { agent, message, max_iterations: req_max_iter, respond_to } => {
+            AcpCommand::ExecuteSession {
+                agent,
+                message,
+                max_iterations: req_max_iter,
+                respond_to,
+            } => {
                 let session_id = message.conversation_id.0.clone();
                 let effective_max = req_max_iter.unwrap_or(max_iterations);
                 let handle = get_or_create_session(
@@ -392,7 +397,12 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                     .await;
             }
 
-            AcpCommand::ExecuteRun { agent, message, max_iterations: req_max_iter, respond_to } => {
+            AcpCommand::ExecuteRun {
+                agent,
+                message,
+                max_iterations: req_max_iter,
+                respond_to,
+            } => {
                 let session_id = message.conversation_id.0.clone();
                 let effective_max = req_max_iter.unwrap_or(max_iterations);
                 let handle = get_or_create_session(
@@ -863,7 +873,8 @@ impl AcpControlPlane {
         agent: Arc<Agent>,
         message: IncomingMessage,
     ) -> crate::Result<OutgoingMessage> {
-        self.execute_session_with_max_iterations(agent, message, None).await
+        self.execute_session_with_max_iterations(agent, message, None)
+            .await
     }
 
     /// Execute a message in persistent session mode with optional max iteration override.
@@ -893,7 +904,8 @@ impl AcpControlPlane {
         agent: Arc<Agent>,
         message: IncomingMessage,
     ) -> crate::Result<OutgoingMessage> {
-        self.execute_run_with_max_iterations(agent, message, None).await
+        self.execute_run_with_max_iterations(agent, message, None)
+            .await
     }
 
     /// Execute a message in one-shot run mode with optional max iteration override.

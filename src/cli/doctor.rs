@@ -386,14 +386,8 @@ async fn run_diagnostics(
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
                     for model in models {
-                        let model_id = model
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let provider = model
-                            .get("provider")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let model_id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let provider = model.get("provider").and_then(|v| v.as_str()).unwrap_or("");
                         for rule in DEPRECATION_RULES {
                             if model_id.contains(rule.pattern) || provider.contains(rule.pattern) {
                                 let msg = format!(
@@ -431,18 +425,13 @@ async fn run_diagnostics(
                     _ => "",
                 };
                 if key_str.is_empty() || key_str == "$PLACEHOLDER" {
-                    let msg = format!(
-                        "Service '{}' has empty or placeholder API key",
-                        service_name
-                    );
+                    let msg =
+                        format!("Service '{}' has empty or placeholder API key", service_name);
                     recommendations.push(msg);
                 }
             }
             if service.endpoint.is_empty() {
-                recommendations.push(format!(
-                    "Service '{}' has empty endpoint URL",
-                    service_name
-                ));
+                recommendations.push(format!("Service '{}' has empty endpoint URL", service_name));
             }
             // Check for common URL misconfigurations
             if !service.endpoint.is_empty()
@@ -458,9 +447,7 @@ async fn run_diagnostics(
 
         // Check memory config for suspicious values
         if config.memory.dreaming.enabled && config.memory.dreaming.frequency.is_empty() {
-            recommendations.push(
-                "Memory dreaming is enabled but frequency is empty".to_string(),
-            );
+            recommendations.push("Memory dreaming is enabled but frequency is empty".to_string());
         }
     }
 

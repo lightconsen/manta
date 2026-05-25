@@ -18,33 +18,38 @@ use tracing::{debug, error, info, warn};
 /// Returns `Err` if the timeout expires or the request is malformed.
 pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(String, String)> {
     let addr = format!("127.0.0.1:{}", port);
-    let listener = TcpListener::bind(&addr).await.map_err(|e| {
-        crate::error::MantaError::ExternalService {
-            source: format!("Failed to bind callback server to {}: {}", addr, e),
-            cause: Some(Box::new(e)),
-        }
-    })?;
+    let listener =
+        TcpListener::bind(&addr)
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
+                source: format!("Failed to bind callback server to {}: {}", addr, e),
+                cause: Some(Box::new(e)),
+            })?;
 
     info!("Waiting for OAuth callback on http://{}/callback", addr);
 
     let accept_future = async {
-        let (mut stream, peer) = listener.accept().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to accept callback connection: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let (mut stream, peer) =
+            listener
+                .accept()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to accept callback connection: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         debug!("OAuth callback connection from {:?}", peer);
 
         // Read the first HTTP request line
         let mut buf = [0u8; 4096];
-        let n = stream.peek(&mut buf).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("Failed to read callback request: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let n =
+            stream
+                .peek(&mut buf)
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("Failed to read callback request: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let request = String::from_utf8_lossy(&buf[..n]);
         debug!("Callback request: {}", request.lines().next().unwrap_or("(empty)"));
@@ -93,13 +98,12 @@ fn parse_callback_request(request: &str) -> crate::Result<(String, String)> {
             cause: None,
         })?;
 
-    let path_part = line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| crate::error::MantaError::ExternalService {
+    let path_part = line.split_whitespace().nth(1).ok_or_else(|| {
+        crate::error::MantaError::ExternalService {
             source: "OAuth callback request has no path".to_string(),
             cause: None,
-        })?;
+        }
+    })?;
 
     // Extract query string after '?'
     let query = path_part

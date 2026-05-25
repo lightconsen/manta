@@ -104,12 +104,13 @@ impl OAuthFlow {
             });
         }
 
-        let data: TokenResponse = resp.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("OAuth token exchange response invalid: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let data: TokenResponse =
+            resp.json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("OAuth token exchange response invalid: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let expires_at = Utc::now() + Duration::seconds(data.expires_in as i64);
 

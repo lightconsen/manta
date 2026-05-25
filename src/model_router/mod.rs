@@ -29,7 +29,9 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::providers::{CompletionRequest, CompletionResponse, CompletionStream, Message, Provider};
+use crate::providers::{
+    CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
+};
 
 pub use auth_profile::{
     AuthProfile, AuthProfileConfig, AuthProfileManager, KeyStatus, ProfileStatus,
@@ -42,12 +44,16 @@ pub use oauth_callback::wait_for_callback;
 pub use oauth_credential::Credential;
 pub use oauth_flow::OAuthFlow;
 pub use pkce::{challenge_from_verifier, generate_verifier};
+pub use usage_fetcher::{
+    LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry,
+};
 pub use usage_formatter::{
     format_provider_snapshot, format_tokens, format_usage_report, format_usage_summary_line,
     format_window, format_window_compact,
 };
-pub use usage_fetcher::{LocalBudgetFetcher, OpenAiUsageFetcher, UsageFetcher, UsageFetcherRegistry};
-pub use usage_tracker::{ProviderUsageSnapshot, ProviderUsageTracker, UsageTrackerConfig, UsageQuota, QuotaSource};
+pub use usage_tracker::{
+    ProviderUsageSnapshot, ProviderUsageTracker, QuotaSource, UsageQuota, UsageTrackerConfig,
+};
 
 /// Model alias configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -789,11 +795,8 @@ impl ModelRouter {
             })?
         };
 
-        let cooldown = cooldown_secs.unwrap_or_else(|| {
-            config
-                .derived_auth_profile_config()
-                .cooldown_secs
-        });
+        let cooldown =
+            cooldown_secs.unwrap_or_else(|| config.derived_auth_profile_config().cooldown_secs);
 
         // Rotate to next key
         if let Some(new_key) = self.auth_profiles.rotate(provider_name, cooldown).await {
@@ -944,10 +947,7 @@ impl ModelRouter {
                             self.model_catalog
                                 .suppress(&entry.provider, &entry.model)
                                 .await;
-                            warn!(
-                                "Auto-suppressed model {}:{}",
-                                entry.provider, entry.model
-                            );
+                            warn!("Auto-suppressed model {}:{}", entry.provider, entry.model);
                         }
 
                         if class.should_disable_key() {
@@ -1088,9 +1088,10 @@ impl ModelRouter {
                 drop(config);
                 let fb_chain = self.get_provider_chain(&fb_alias).await;
                 for entry in fb_chain {
-                    if !providers_to_try.iter().any(|e| {
-                        e.provider == entry.provider && e.model == entry.model
-                    }) {
+                    if !providers_to_try
+                        .iter()
+                        .any(|e| e.provider == entry.provider && e.model == entry.model)
+                    {
                         providers_to_try.push(entry);
                     }
                 }
@@ -1177,17 +1178,13 @@ impl ModelRouter {
                                                 return Ok(stream);
                                             }
                                             Err(e2) => {
-                                                let class2 =
-                                                    FailureClass::from_error(&e2, None);
+                                                let class2 = FailureClass::from_error(&e2, None);
                                                 error!(
                                                     "Provider {} stream failed after key rotation: {}",
                                                     entry.provider, e2
                                                 );
-                                                self.record_failure(
-                                                    &entry.provider,
-                                                    Some(class2),
-                                                )
-                                                .await;
+                                                self.record_failure(&entry.provider, Some(class2))
+                                                    .await;
                                                 last_error = Some(e2);
                                             }
                                         }
@@ -1442,8 +1439,13 @@ impl ModelRouter {
             .map(|w| w.estimated_cost_usd)
             .sum();
 
-        let fetcher =
-            LocalBudgetFetcher::new(provider, config.daily_budget_usd, config.monthly_budget_usd, today_cost, month_cost);
+        let fetcher = LocalBudgetFetcher::new(
+            provider,
+            config.daily_budget_usd,
+            config.monthly_budget_usd,
+            today_cost,
+            month_cost,
+        );
         fetcher.fetch().await.ok().flatten()
     }
 

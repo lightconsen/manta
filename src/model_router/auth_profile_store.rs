@@ -180,8 +180,12 @@ impl AuthProfileStore {
                 entry.failure_count = failure_count as u32;
                 entry.success_count = success_count as u64;
                 entry.status = parse_status(&status_str);
-                entry.cooldown_until = cooldown_until_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok()).map(|d| d.with_timezone(&Utc));
-                entry.last_failure = last_failure_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok()).map(|d| d.with_timezone(&Utc));
+                entry.cooldown_until = cooldown_until_str
+                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc));
+                entry.last_failure = last_failure_str
+                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc));
             } else {
                 warn!(
                     "Auth profile state for {} contains unknown key label '{}' — ignoring",
@@ -264,7 +268,10 @@ mod tests {
         );
 
         // Load state
-        store.load_profile_state("openai", &mut restored).await.unwrap();
+        store
+            .load_profile_state("openai", &mut restored)
+            .await
+            .unwrap();
 
         // Verify primary key has failure state restored
         let statuses = restored.key_statuses();
@@ -282,14 +289,19 @@ mod tests {
     async fn test_delete_profile_state() {
         let store = in_memory_store().await;
 
-        let mut profile = AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 60, 3);
+        let mut profile =
+            AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 60, 3);
         profile.rotate(30);
 
         store.save_profile_state("openai", &profile).await.unwrap();
         store.delete_profile_state("openai").await.unwrap();
 
-        let mut restored = AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 60, 3);
-        store.load_profile_state("openai", &mut restored).await.unwrap();
+        let mut restored =
+            AuthProfile::with_keys("openai", vec![("key1".to_string(), "primary")], 60, 3);
+        store
+            .load_profile_state("openai", &mut restored)
+            .await
+            .unwrap();
 
         let statuses = restored.key_statuses();
         assert_eq!(statuses[0].failure_count, 0);

@@ -631,19 +631,16 @@ impl Agent {
             | crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking => {
                 // Anthropic thinking models (claude-3-7-sonnet-thinking, etc.)
                 if model.contains("thinking") || model.contains("-extended-thinking") {
-                    request.extra = Some(
-                        serde_json::json!({
-                            "thinking": { "type": "enabled", "budget_tokens": 16000 }
-                        }),
-                    );
+                    request.extra = Some(serde_json::json!({
+                        "thinking": { "type": "enabled", "budget_tokens": 16000 }
+                    }));
                 }
             }
             crate::providers::stream_wrappers::ProviderStreamFamily::GoogleThinking => {
                 // Gemini thinking models
                 if model.contains("thinking") || model.contains("-exp") {
-                    request.extra = Some(
-                        serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }),
-                    );
+                    request.extra =
+                        Some(serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }));
                 }
             }
             _ => {}
@@ -793,10 +790,7 @@ impl Agent {
     }
 
     /// Attach a `ModelRouter` for advanced routing, key rotation, and fallback.
-    pub fn with_model_router(
-        mut self,
-        router: Arc<crate::model_router::ModelRouter>,
-    ) -> Self {
+    pub fn with_model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
         self.model_router = Some(router);
         self
     }
@@ -1235,6 +1229,13 @@ impl Agent {
         }
 
         let response = llm_result?;
+
+        // Mark memory hits based on response content
+        if let Some(ref mm) = self.memory_manager {
+            let session_key = format!("{}:{}", user_id, conversation_id);
+            mm.evaluate_response_hits(&session_key, &response.message.content)
+                .await;
+        }
 
         // Store assistant response in chat history and index for search
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
@@ -1834,7 +1835,9 @@ impl Agent {
         let response = if let Some(ref router) = self.model_router {
             let alias = {
                 let guard = self.model_override.read().await;
-                guard.as_ref().cloned()
+                guard
+                    .as_ref()
+                    .cloned()
                     .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
@@ -2049,7 +2052,9 @@ impl Agent {
         let (raw_stream, family) = if let Some(ref router) = self.model_router {
             let alias = {
                 let guard = self.model_override.read().await;
-                guard.as_ref().cloned()
+                guard
+                    .as_ref()
+                    .cloned()
                     .or(self.model_alias.clone())
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
@@ -2891,7 +2896,10 @@ impl AgentBuilder {
     }
 
     /// Set skill manager for dynamic skill injection.
-    pub fn skill_manager(mut self, manager: Arc<tokio::sync::RwLock<crate::skills::SkillManager>>) -> Self {
+    pub fn skill_manager(
+        mut self,
+        manager: Arc<tokio::sync::RwLock<crate::skills::SkillManager>>,
+    ) -> Self {
         self.skill_manager = Some(manager);
         self
     }

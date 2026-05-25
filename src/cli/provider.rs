@@ -68,7 +68,10 @@ pub enum ProviderCommands {
 }
 
 /// Run provider commands
-pub async fn run_provider_command(command: &ProviderCommands, config: &crate::config::Config) -> Result<()> {
+pub async fn run_provider_command(
+    command: &ProviderCommands,
+    config: &crate::config::Config,
+) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
@@ -281,11 +284,15 @@ async fn run_auth_command(
     if !no_browser {
         #[cfg(target_os = "macos")]
         {
-            let _ = std::process::Command::new("open").arg(&authorization_url).spawn();
+            let _ = std::process::Command::new("open")
+                .arg(&authorization_url)
+                .spawn();
         }
         #[cfg(target_os = "linux")]
         {
-            let _ = std::process::Command::new("xdg-open").arg(&authorization_url).spawn();
+            let _ = std::process::Command::new("xdg-open")
+                .arg(&authorization_url)
+                .spawn();
         }
         #[cfg(target_os = "windows")]
         {

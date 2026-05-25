@@ -75,24 +75,26 @@ impl UsageFetcher for OpenAiUsageFetcher {
             req = req.header("OpenAI-Organization", org.clone());
         }
 
-        let resp = req.send().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| crate::error::MantaError::ExternalService {
                 source: format!("OpenAI usage fetch request failed: {}", e),
                 cause: Some(Box::new(e)),
-            }
-        })?;
+            })?;
 
         if !resp.status().is_success() {
             // Most API keys don't have dashboard access — silently return None
             return Ok(None);
         }
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
-                source: format!("OpenAI usage response invalid: {}", e),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        let body: serde_json::Value =
+            resp.json()
+                .await
+                .map_err(|e| crate::error::MantaError::ExternalService {
+                    source: format!("OpenAI usage response invalid: {}", e),
+                    cause: Some(Box::new(e)),
+                })?;
 
         let limit = body
             .get("hard_limit_usd")
