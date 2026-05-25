@@ -909,6 +909,7 @@ impl Agent {
 
             // Add dynamically filtered skills based on user message
             if let Some(ref skill_manager) = self.skill_manager {
+                debug!("SkillManager is active, prefiltering skills");
                 let mgr = skill_manager.read().await;
                 let matching_skills = mgr.prefilter_skills(user_message, 5).await;
                 if !matching_skills.is_empty() {
@@ -2800,6 +2801,7 @@ pub struct AgentBuilder {
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
     model_alias: Option<String>,
+    skill_manager: Option<Arc<tokio::sync::RwLock<crate::skills::SkillManager>>>,
 }
 
 impl AgentBuilder {
@@ -2888,6 +2890,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Set skill manager for dynamic skill injection.
+    pub fn skill_manager(mut self, manager: Arc<tokio::sync::RwLock<crate::skills::SkillManager>>) -> Self {
+        self.skill_manager = Some(manager);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -2932,6 +2940,10 @@ impl AgentBuilder {
 
         if let Some(alias) = self.model_alias {
             agent = agent.with_model_alias(alias);
+        }
+
+        if let Some(manager) = self.skill_manager {
+            agent = agent.with_skill_manager(manager);
         }
 
         Ok(agent)

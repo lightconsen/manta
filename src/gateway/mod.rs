@@ -1270,6 +1270,11 @@ impl Gateway {
                 .await;
         }
 
+        // Create skill manager early so it can be shared with ACP builder and GatewayState
+        let skills_manager = Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillManager::new().await?,
+        ));
+
         // Configure ACP default agent builder (needs provider + tools, which are now ready)
         if let Ok(default_provider) = model_router.create_default_provider().await {
             let mut default_agent_config = config.default_agent.clone();
@@ -1282,6 +1287,7 @@ impl Gateway {
             let provider_clone = default_provider.clone();
             let model_router_clone = model_router.clone();
             let default_model = config.model.clone();
+            let skills_manager_clone = Arc::clone(&skills_manager);
             acp.set_agent_builder(move || {
                 crate::agent::AgentBuilder::new()
                     .config(default_agent_config.clone())
@@ -1289,6 +1295,7 @@ impl Gateway {
                     .tools(default_tools.clone())
                     .model_router(model_router_clone.clone())
                     .model_alias(default_model.clone())
+                    .skill_manager(Arc::clone(&skills_manager_clone))
                     .build()
             })
             .await;
@@ -1441,7 +1448,7 @@ impl Gateway {
             rate_limiter,
             multi_tier_rate_limiter,
             storage,
-            skills_manager: Arc::new(RwLock::new(crate::skills::SkillManager::new().await?)),
+            skills_manager,
             agent_registry: Arc::new(RwLock::new(crate::agent::AgentRegistry::new())),
             session_manager: Arc::new(RwLock::new(crate::agent::SessionManager::new())),
             session_store,
