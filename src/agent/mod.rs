@@ -521,6 +521,9 @@ pub struct Agent {
     /// Optional execution controller for pause/resume/step/cancel.
     /// Set by the ACP before dispatching a command; cleared afterward.
     execution_controller: Arc<RwLock<Option<Arc<ExecutionController>>>>,
+    /// Optional max tool iteration override.
+    /// Set by the ACP before dispatching a command; cleared afterward.
+    max_tool_iterations_override: Arc<RwLock<Option<usize>>>,
     /// Transcript store for session conversation records.
     transcript_store: Option<Arc<crate::agent::TranscriptStore>>,
     /// Artifact store for session-bound artifacts (code, docs, links).
@@ -565,6 +568,7 @@ impl Agent {
             active_skill_trust: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(1)), // Trusted
             skill_manager: None,
             execution_controller: Arc::new(RwLock::new(None)),
+            max_tool_iterations_override: Arc::new(RwLock::new(None)),
             transcript_store: None,
             artifact_store: None,
             disk_budget: None,
@@ -961,6 +965,16 @@ impl Agent {
             dynamic_limit, conversation_id
         );
 
+        // Apply ACP max iteration override if set
+        let override_opt = *self.max_tool_iterations_override.read().await;
+        if let Some(max_iter) = override_opt {
+            context.set_max_tool_iterations(max_iter);
+            info!(
+                "Applied ACP max iteration override: {} for conversation {}",
+                max_iter, conversation_id
+            );
+        }
+
         context
     }
 
@@ -1159,6 +1173,16 @@ impl Agent {
                 }
             }
         };
+
+        // Apply ACP max iteration override for existing threads
+        let override_opt = *self.max_tool_iterations_override.read().await;
+        if let Some(max_iter) = override_opt {
+            thread.context.set_max_tool_iterations(max_iter);
+            info!(
+                "Applied ACP max iteration override to existing thread: {} for conversation {}",
+                max_iter, conversation_id
+            );
+        }
 
         // Reset tool tracking and add user message for this turn.
         thread.context.clear_tools_used();
@@ -1485,6 +1509,16 @@ impl Agent {
             }
         };
 
+        // Apply ACP max iteration override for existing threads
+        let override_opt = *self.max_tool_iterations_override.read().await;
+        if let Some(max_iter) = override_opt {
+            thread.context.set_max_tool_iterations(max_iter);
+            info!(
+                "Applied ACP max iteration override to existing thread: {} for conversation {}",
+                max_iter, conversation_id
+            );
+        }
+
         // Reset tool tracking and add user message for this turn.
         thread.context.clear_tools_used();
         thread
@@ -1648,11 +1682,13 @@ impl Agent {
         &self,
         message: IncomingMessage,
         controller: Arc<ExecutionController>,
-        _max_iterations: usize,
+        max_iterations: usize,
     ) -> crate::Result<OutgoingMessage> {
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = Some(controller);
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = Some(max_iterations);
         }
 
         let result = self.process_message(message).await;
@@ -1660,6 +1696,8 @@ impl Agent {
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = None;
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = None;
         }
 
         result
@@ -1671,11 +1709,13 @@ impl Agent {
         message: IncomingMessage,
         progress_cb: ProgressCallback,
         controller: Arc<ExecutionController>,
-        _max_iterations: usize,
+        max_iterations: usize,
     ) -> crate::Result<OutgoingMessage> {
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = Some(controller);
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = Some(max_iterations);
         }
 
         let result = self
@@ -1685,6 +1725,8 @@ impl Agent {
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = None;
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = None;
         }
 
         result
@@ -1697,13 +1739,15 @@ impl Agent {
         &self,
         message: IncomingMessage,
         controller: Arc<ExecutionController>,
-        _max_iterations: usize,
+        max_iterations: usize,
     ) -> crate::Result<OutgoingMessage> {
         let conversation_id = message.conversation_id.0.clone();
 
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = Some(controller);
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = Some(max_iterations);
         }
 
         let result = self.process_message(message).await;
@@ -1711,6 +1755,8 @@ impl Agent {
         {
             let mut ctrl = self.execution_controller.write().await;
             *ctrl = None;
+            let mut max_iter = self.max_tool_iterations_override.write().await;
+            *max_iter = None;
         }
 
         // Run mode: discard the thread after execution

@@ -1572,6 +1572,9 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
         user_id: String,
         #[serde(default)]
         agent_id: Option<String>,
+        /// Optional per-request max iteration override.
+        #[serde(default)]
+        max_iterations: Option<usize>,
     }
 
     let params: ExecuteParams = match parse_params(req) {
@@ -1602,7 +1605,7 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
 
     match state
         .acp
-        .execute_session(agent_handle.agent, incoming)
+        .execute_session_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
         .await
     {
         Ok(outgoing) => WsResponse::ok(
@@ -1625,6 +1628,9 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
         user_id: String,
         #[serde(default)]
         agent_id: Option<String>,
+        /// Optional per-request max iteration override.
+        #[serde(default)]
+        max_iterations: Option<usize>,
     }
 
     let params: ExecuteParams = match parse_params(req) {
@@ -1653,7 +1659,11 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
         params.message,
     );
 
-    match state.acp.execute_run(agent_handle.agent, incoming).await {
+    match state
+        .acp
+        .execute_run_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
+        .await
+    {
         Ok(outgoing) => WsResponse::ok(
             &req.id,
             serde_json::json!({

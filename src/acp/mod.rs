@@ -122,6 +122,7 @@ impl std::fmt::Display for RuntimeState {
 pub struct ExecutionController {
     state: RwLock<RuntimeState>,
     notify: tokio::sync::Notify,
+    iteration: std::sync::atomic::AtomicUsize,
 }
 
 impl ExecutionController {
@@ -130,6 +131,7 @@ impl ExecutionController {
         Arc::new(Self {
             state: RwLock::new(RuntimeState::Idle),
             notify: tokio::sync::Notify::new(),
+            iteration: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -138,8 +140,14 @@ impl ExecutionController {
         loop {
             let state = *self.state.read().await;
             match state {
-                RuntimeState::Idle | RuntimeState::Running => return Ok(()),
+                RuntimeState::Idle | RuntimeState::Running => {
+                    self.iteration
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Ok(());
+                }
                 RuntimeState::Stepping => {
+                    self.iteration
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     *self.state.write().await = RuntimeState::Paused;
                     return Ok(());
                 }
@@ -194,11 +202,18 @@ impl ExecutionController {
     pub async fn reset(&self) {
         let mut state = self.state.write().await;
         *state = RuntimeState::Idle;
+        self.iteration.store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Current runtime state.
     pub async fn current_state(&self) -> RuntimeState {
         *self.state.read().await
+    }
+
+    /// Current iteration count (number of times check_and_wait has allowed
+    /// execution to proceed).
+    pub fn current_iteration(&self) -> usize {
+        self.iteration.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -220,12 +235,16 @@ pub enum AcpCommand {
     ExecuteSession {
         agent: Arc<Agent>,
         message: IncomingMessage,
+        /// Optional per-request max iterations override.
+        max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
     /// Execute in one-shot run mode
     ExecuteRun {
         agent: Arc<Agent>,
         message: IncomingMessage,
+        /// Optional per-request max iterations override.
+        max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
     /// Execute with progress callbacks in session mode
@@ -233,6 +252,8 @@ pub enum AcpCommand {
         agent: Arc<Agent>,
         message: IncomingMessage,
         progress_cb: ProgressCallback,
+        /// Optional per-request max iterations override.
+        max_iterations: Option<usize>,
         respond_to: oneshot::Sender<crate::Result<OutgoingMessage>>,
     },
     /// Pause a running session
@@ -347,14 +368,15 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
 
     while let Some(cmd) = command_rx.recv().await {
         match cmd {
-            AcpCommand::ExecuteSession { agent, message, respond_to } => {
+            AcpCommand::ExecuteSession { agent, message, max_iterations: req_max_iter, respond_to } => {
                 let session_id = message.conversation_id.0.clone();
+                let effective_max = req_max_iter.unwrap_or(max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Session,
-                    max_iterations,
+                    effective_max,
                 )
                 .await;
 
@@ -370,14 +392,15 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                     .await;
             }
 
-            AcpCommand::ExecuteRun { agent, message, respond_to } => {
+            AcpCommand::ExecuteRun { agent, message, max_iterations: req_max_iter, respond_to } => {
                 let session_id = message.conversation_id.0.clone();
+                let effective_max = req_max_iter.unwrap_or(max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Run,
-                    max_iterations,
+                    effective_max,
                 )
                 .await;
 
@@ -397,15 +420,17 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                 agent,
                 message,
                 progress_cb,
+                max_iterations: req_max_iter,
                 respond_to,
             } => {
                 let session_id = message.conversation_id.0.clone();
+                let effective_max = req_max_iter.unwrap_or(max_iterations);
                 let handle = get_or_create_session(
                     &mut sessions,
                     &mut session_meta,
                     &session_id,
                     ExecutionMode::Session,
-                    max_iterations,
+                    effective_max,
                 )
                 .await;
 
@@ -455,10 +480,7 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                         session_id: session_id.clone(),
                         runtime_state: handle.controller.current_state().await,
                         mode: handle.mode,
-                        current_iteration: session_meta
-                            .get(&session_id)
-                            .map(|m| m.current_iteration)
-                            .unwrap_or(0),
+                        current_iteration: handle.controller.current_iteration(),
                         max_iterations: session_meta
                             .get(&session_id)
                             .map(|m| m.max_iterations)
@@ -841,10 +863,25 @@ impl AcpControlPlane {
         agent: Arc<Agent>,
         message: IncomingMessage,
     ) -> crate::Result<OutgoingMessage> {
+        self.execute_session_with_max_iterations(agent, message, None).await
+    }
+
+    /// Execute a message in persistent session mode with optional max iteration override.
+    pub async fn execute_session_with_max_iterations(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        max_iterations: Option<usize>,
+    ) -> crate::Result<OutgoingMessage> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .command_tx
-            .send(AcpCommand::ExecuteSession { agent, message, respond_to: tx })
+            .send(AcpCommand::ExecuteSession {
+                agent,
+                message,
+                max_iterations,
+                respond_to: tx,
+            })
             .await;
         rx.await
             .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
@@ -856,10 +893,25 @@ impl AcpControlPlane {
         agent: Arc<Agent>,
         message: IncomingMessage,
     ) -> crate::Result<OutgoingMessage> {
+        self.execute_run_with_max_iterations(agent, message, None).await
+    }
+
+    /// Execute a message in one-shot run mode with optional max iteration override.
+    pub async fn execute_run_with_max_iterations(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        max_iterations: Option<usize>,
+    ) -> crate::Result<OutgoingMessage> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .command_tx
-            .send(AcpCommand::ExecuteRun { agent, message, respond_to: tx })
+            .send(AcpCommand::ExecuteRun {
+                agent,
+                message,
+                max_iterations,
+                respond_to: tx,
+            })
             .await;
         rx.await
             .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
@@ -872,6 +924,18 @@ impl AcpControlPlane {
         message: IncomingMessage,
         progress_cb: ProgressCallback,
     ) -> crate::Result<OutgoingMessage> {
+        self.execute_session_with_progress_and_max_iterations(agent, message, progress_cb, None)
+            .await
+    }
+
+    /// Execute with progress callbacks in session mode with optional max iteration override.
+    pub async fn execute_session_with_progress_and_max_iterations(
+        &self,
+        agent: Arc<Agent>,
+        message: IncomingMessage,
+        progress_cb: ProgressCallback,
+        max_iterations: Option<usize>,
+    ) -> crate::Result<OutgoingMessage> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .command_tx
@@ -879,6 +943,7 @@ impl AcpControlPlane {
                 agent,
                 message,
                 progress_cb,
+                max_iterations,
                 respond_to: tx,
             })
             .await;
