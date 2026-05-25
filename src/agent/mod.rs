@@ -3346,4 +3346,67 @@ mod tests {
         assert!(resolved.to_string_lossy().contains(".manta"));
         assert!(resolved.to_string_lossy().contains("workspace"));
     }
+
+    // ── Skill Injection ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_skill_manager_injection_into_build_fresh_context() {
+        // Create skill manager and load built-in skills
+        let mut skill_manager = crate::skills::SkillManager::new().await.unwrap();
+        let loaded = skill_manager.load_all().await.unwrap();
+        assert!(loaded > 0, "Expected built-in skills to be loaded");
+
+        let skill_manager = Arc::new(RwLock::new(skill_manager));
+
+        // Create agent with skill manager injected
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_skill_manager(skill_manager);
+
+        // Build context with a message that should trigger the weather skill
+        let ctx = agent
+            .build_fresh_context("conv1", "user1", "what's the weather in Beijing")
+            .await;
+
+        let prompt = ctx.system_prompt();
+        assert!(
+            prompt.contains("## Active Skills"),
+            "Expected '## Active Skills' section in prompt, got: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("Weather - Weather Information"),
+            "Expected weather skill content in prompt, got: {}",
+            prompt
+        );
+    }
+
+    #[tokio::test]
+    async fn test_skill_manager_no_match_without_trigger() {
+        let mut skill_manager = crate::skills::SkillManager::new().await.unwrap();
+        skill_manager.load_all().await.unwrap();
+        let skill_manager = Arc::new(RwLock::new(skill_manager));
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_skill_manager(skill_manager);
+
+        // Generic message should not trigger any skills
+        let ctx = agent
+            .build_fresh_context("conv2", "user1", "hello there")
+            .await;
+
+        let prompt = ctx.system_prompt();
+        assert!(
+            !prompt.contains("## Active Skills"),
+            "Expected no skills section for generic message, got: {}",
+            prompt
+        );
+    }
 }
