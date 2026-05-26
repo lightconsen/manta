@@ -16,18 +16,33 @@ export function ReasoningPart({ text }: { text: string }) {
   const targetRef = useRef("");
   const animatingRef = useRef(false);
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevLengthRef = useRef(0);
+  const isHistoryRef = useRef(false);
 
   const isWaiting = text.length === 0;
 
-  // Detect completion: text stops growing for 1.5s
+  // Detect streaming vs history: big jump = history (show immediately)
   useEffect(() => {
-    targetRef.current = text;
-
     if (isWaiting) {
-      setDisplayedText("");
-      setDone(false);
+      prevLengthRef.current = 0;
+      isHistoryRef.current = false;
       return;
     }
+
+    if (prevLengthRef.current === 0 && text.length > 20) {
+      // Text arrived all at once — history view, no animation
+      isHistoryRef.current = true;
+      setDisplayedText(text);
+      setDone(true);
+    }
+
+    prevLengthRef.current = text.length;
+  }, [text, isWaiting]);
+
+  // Detect completion: text stops growing for 1.5s (streaming only)
+  useEffect(() => {
+    if (isWaiting || isHistoryRef.current) return;
+    targetRef.current = text;
 
     if (doneTimerRef.current) {
       clearTimeout(doneTimerRef.current);
@@ -44,9 +59,9 @@ export function ReasoningPart({ text }: { text: string }) {
     };
   }, [text, displayedText.length, isWaiting]);
 
-  // Smooth typing animation
+  // Smooth typing animation (streaming only)
   useEffect(() => {
-    if (isWaiting || done) return;
+    if (isWaiting || done || isHistoryRef.current) return;
     if (displayedText.length >= targetRef.current.length) return;
     if (animatingRef.current) return;
 
@@ -138,7 +153,7 @@ export function ReasoningPart({ text }: { text: string }) {
 
       {/* Content */}
       {expanded && (
-        <div className="px-3.5 py-2.5 text-[11px] text-violet-700 dark:text-violet-300 font-mono whitespace-pre-wrap leading-relaxed border-t border-violet-100/50 dark:border-violet-800/20 max-h-48 overflow-y-auto">
+        <div className="px-3.5 py-2.5 text-[11px] text-violet-700 dark:text-violet-300 font-mono whitespace-pre-wrap leading-relaxed border-t border-violet-100/50 dark:border-violet-800/20">
           {displayedText}
           {isTyping && (
             <span className="inline-block w-1.5 h-3.5 ml-0.5 align-text-bottom bg-violet-500 dark:bg-violet-400 animate-pulse rounded-sm" />
