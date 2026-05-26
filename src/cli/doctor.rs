@@ -168,21 +168,22 @@ pub async fn run_doctor_command(command: &DoctorCommands) -> Result<()> {
             if let Ok(json) = serde_json::to_string_pretty(&report) {
                 let path = report_cache_path();
                 if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                let _ = std::fs::write(&path, json);
+                let _ = tokio::fs::write(&path, json).await;
             }
 
             Ok(())
         }
         DoctorCommands::Report => {
             let path = report_cache_path();
-            if !path.exists() {
-                println!("No diagnostic report found. Run `manta doctor run` first.");
-                return Ok(());
-            }
-            let contents = std::fs::read_to_string(&path)
-                .map_err(|e| MantaError::Internal(format!("Failed to read report: {}", e)))?;
+            let contents = match tokio::fs::read_to_string(&path).await {
+                Ok(c) => c,
+                Err(_) => {
+                    println!("No diagnostic report found. Run `manta doctor run` first.");
+                    return Ok(());
+                }
+            };
             let report: DoctorReport = serde_json::from_str(&contents)
                 .map_err(|e| MantaError::Internal(format!("Failed to parse report: {}", e)))?;
             print_report(&report, false);

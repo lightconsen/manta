@@ -1512,12 +1512,10 @@ impl Gateway {
             route_resolver: Arc::new(crate::agent::RouteResolver::new("default")),
             transcript_store: {
                 let store = crate::agent::TranscriptStore::new(crate::dirs::transcripts_dir());
-                let _ = store.init();
                 Arc::new(store)
             },
             artifact_store: {
                 let store = crate::agent::ArtifactStore::new(crate::dirs::artifacts_dir());
-                let _ = store.init();
                 Arc::new(store)
             },
             disk_budget: {

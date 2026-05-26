@@ -305,7 +305,7 @@ async fn telegram_webhook_handler(
     State(state): State<Arc<GatewayState>>,
     Json(update): Json<TelegramUpdate>,
 ) -> impl IntoResponse {
-    // Verify webhook token from URL path
+    // Verify webhook token from URL path - required for all Telegram webhook channels
     let expected_token = {
         let config = state.config.read().await;
         config
@@ -315,13 +315,19 @@ async fn telegram_webhook_handler(
             .cloned()
     };
 
-    if let Some(expected) = expected_token {
-        if expected != token {
-            warn!("Telegram webhook: invalid token");
-            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+    let expected = match expected_token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            warn!("Telegram webhook: webhook_token is required");
+            return (StatusCode::UNAUTHORIZED, "Webhook token is required").into_response();
         }
-        debug!("Telegram webhook: token verified");
+    };
+
+    if expected != token {
+        warn!("Telegram webhook: invalid token");
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
     }
+    debug!("Telegram webhook: token verified");
 
     // Process the update
     if let Some(message) = update.message {
@@ -684,27 +690,34 @@ async fn generic_webhook_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "Channel disabled").into_response();
     }
 
-    // Get webhook secret if configured
+    // Get webhook secret - required for all generic webhook channels
     let secret = channel_config.credentials.get("webhook_secret");
 
-    // Verify HMAC if secret is set
-    if let Some(secret) = secret {
-        let signature = headers
-            .get("x-signature")
-            .or_else(|| headers.get("x-hub-signature-256"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.strip_prefix("sha256=").unwrap_or(s));
-
-        if let Some(sig) = signature {
-            if !verify_hmac_sha256(secret, &body, sig) {
-                warn!("{} webhook: invalid HMAC signature", channel);
-                return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
-            }
-            debug!("{} webhook: HMAC signature verified", channel);
-        } else {
-            warn!("{} webhook: missing signature", channel);
-            return (StatusCode::UNAUTHORIZED, "Missing signature").into_response();
+    let secret = match secret {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            warn!("{} webhook: webhook_secret is required", channel);
+            return (StatusCode::UNAUTHORIZED, "Webhook secret is required for this channel")
+                .into_response();
         }
+    };
+
+    // Verify HMAC signature
+    let signature = headers
+        .get("x-signature")
+        .or_else(|| headers.get("x-hub-signature-256"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.strip_prefix("sha256=").unwrap_or(s));
+
+    if let Some(sig) = signature {
+        if !verify_hmac_sha256(secret, &body, sig) {
+            warn!("{} webhook: invalid HMAC signature", channel);
+            return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
+        }
+        debug!("{} webhook: HMAC signature verified", channel);
+    } else {
+        warn!("{} webhook: missing signature", channel);
+        return (StatusCode::UNAUTHORIZED, "Missing signature").into_response();
     }
 
     // Parse generic JSON payload

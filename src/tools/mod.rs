@@ -208,6 +208,10 @@ impl ToolContext {
 
         // Apply memory limit
         if let Some(memory_limit) = self.memory_limit {
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
+            #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
                     rlim_cur: memory_limit as libc::rlim_t,
@@ -221,6 +225,10 @@ impl ToolContext {
 
         // Apply CPU limit
         if let Some(cpu_limit) = self.cpu_limit {
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
+            #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
                     rlim_cur: cpu_limit as libc::rlim_t,
@@ -234,6 +242,10 @@ impl ToolContext {
 
         // Apply file descriptor limit
         if let Some(fd_limit) = self.fd_limit {
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
+            #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
                     rlim_cur: fd_limit as libc::rlim_t,
@@ -247,6 +259,10 @@ impl ToolContext {
 
         // Apply process limit (NPROC)
         if let Some(process_limit) = self.process_limit {
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
+            #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
                     rlim_cur: process_limit as libc::rlim_t,

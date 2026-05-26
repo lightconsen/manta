@@ -2706,8 +2706,7 @@ impl Agent {
         // Flush transcript to disk
         if let Some(ref transcript_store) = self.transcript_store {
             let store = transcript_store.clone();
-            let conv_id = conversation_id.to_string();
-            if let Err(e) = tokio::task::spawn_blocking(move || store.flush(&conv_id)).await {
+            if let Err(e) = store.flush(conversation_id).await {
                 warn!("Failed to flush transcript for {}: {}", conversation_id, e);
             } else {
                 info!("Flushed transcript for {}", conversation_id);

@@ -330,7 +330,11 @@ impl EffectivenessTracker {
             .collect();
         drop(events_guard);
 
-        scored.sort_by(|a, b| b.1.hit_rate.partial_cmp(&a.1.hit_rate).unwrap());
+        scored.sort_by(|a, b| {
+            b.1.hit_rate
+                .partial_cmp(&a.1.hit_rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.into_iter().take(limit).collect()
     }
 
@@ -355,7 +359,11 @@ impl EffectivenessTracker {
             .collect();
         drop(events_guard);
 
-        scored.sort_by(|a, b| a.1.hit_rate.partial_cmp(&b.1.hit_rate).unwrap());
+        scored.sort_by(|a, b| {
+            a.1.hit_rate
+                .partial_cmp(&b.1.hit_rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.into_iter().take(limit).collect()
     }
 

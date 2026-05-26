@@ -105,12 +105,21 @@ impl PluginRuntime {
             .func_wrap(
                 "env",
                 "log",
-                |mut caller: wasmtime::Caller<'_, PluginState>, ptr: i32, len: i32| {
-                    let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 ptr: i32,
+                 len: i32|
+                 -> anyhow::Result<()> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let data = memory.data(&caller);
                     let message = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
                         .unwrap_or("<invalid utf8>");
                     info!("[plugin] {}", message);
+                    Ok(())
                 },
             )
             .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
@@ -125,8 +134,13 @@ impl PluginRuntime {
                  key_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> i32 {
-                    let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let data = memory.data(&caller);
                     let key =
                         std::str::from_utf8(&data[key_ptr as usize..(key_ptr + key_len) as usize])
@@ -142,9 +156,9 @@ impl PluginRuntime {
                         data_mut[out_ptr as usize..out_ptr as usize + to_write]
                             .copy_from_slice(&bytes[..to_write]);
 
-                        to_write as i32
+                        Ok(to_write as i32)
                     } else {
-                        0
+                        Ok(0)
                     }
                 },
             )

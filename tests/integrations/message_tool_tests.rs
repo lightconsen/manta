@@ -79,9 +79,9 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         Arc::new(DummyOutboundPipeline);
 
     let transcript_store = manta::agent::TranscriptStore::new(transcript_dir);
-    let _ = transcript_store.init();
+    let _ = transcript_store.init().await;
     let artifact_store = manta::agent::ArtifactStore::new(artifact_dir);
-    let _ = artifact_store.init();
+    let _ = artifact_store.init().await;
     let disk_budget = manta::agent::DiskBudgetManager::new(budget_dir);
     let _ = disk_budget.init();
     let session_file_manager = manta::agent::SessionFileManager::new(session_files_dir);

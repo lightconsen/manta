@@ -819,11 +819,20 @@ mod tests {
 
     #[test]
     fn test_openai_provider_url_with_custom_path() {
-        unsafe { std::env::set_var("MANTA_API_PATH", "custom/path") };
+        // SAFETY: Setting/removing an environment variable in a single-threaded
+        // test context is safe. The unsafe block is only to satisfy the deny lint.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("MANTA_API_PATH", "custom/path")
+        };
         let provider = OpenAiProvider::new("test-key").unwrap();
         let url = provider.url("/chat/completions");
         assert_eq!(url, "https://api.openai.com/v1/custom/path");
-        unsafe { std::env::remove_var("MANTA_API_PATH") };
+        // SAFETY: See comment above.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::remove_var("MANTA_API_PATH")
+        };
     }
 
     #[test]

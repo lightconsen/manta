@@ -131,13 +131,13 @@ async fn session_file_manager_cleanup_removes_session() {
 
 // ── Artifact Store Contract ──────────────────────────────────────────────────
 
-#[test]
-fn artifact_store_adds_and_retrieves() {
+#[tokio::test]
+async fn artifact_store_adds_and_retrieves() {
     use manta::agent::{Artifact, ArtifactType};
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
-    let _ = store.init();
+    store.init().await.unwrap();
 
     let artifact = Artifact::code(
         "test-code-1",
@@ -157,13 +157,13 @@ fn artifact_store_adds_and_retrieves() {
     assert_eq!(retrieved.artifact_type, ArtifactType::Code);
 }
 
-#[test]
-fn artifact_store_lists_by_session() {
+#[tokio::test]
+async fn artifact_store_lists_by_session() {
     use manta::agent::Artifact;
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
-    let _ = store.init();
+    store.init().await.unwrap();
 
     store.add(Artifact::code("c1", "s1", "Code 1", "py", "print(1)"));
     store.add(Artifact::code("c2", "s1", "Code 2", "py", "print(2)"));
@@ -176,13 +176,13 @@ fn artifact_store_lists_by_session() {
     assert_eq!(s2_artifacts.len(), 1, "session s2 must have 1 artifact");
 }
 
-#[test]
-fn artifact_store_link_artifact_contract() {
+#[tokio::test]
+async fn artifact_store_link_artifact_contract() {
     use manta::agent::{Artifact, ArtifactType};
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
-    let _ = store.init();
+    store.init().await.unwrap();
 
     let link =
         Artifact::link("link-1", "session-1", "Rust Book", "https://doc.rust-lang.org/book/");
@@ -196,13 +196,13 @@ fn artifact_store_link_artifact_contract() {
 
 // ── Transcript Store Contract ────────────────────────────────────────────────
 
-#[test]
-fn transcript_store_appends_and_exports() {
+#[tokio::test]
+async fn transcript_store_appends_and_exports() {
     use manta::agent::TranscriptMessage;
 
     let dir = TempDir::new().unwrap();
     let store = TranscriptStore::new(dir.path());
-    let _ = store.init();
+    store.init().await.unwrap();
 
     store.append(
         "session-1",
@@ -224,18 +224,18 @@ fn transcript_store_appends_and_exports() {
     assert_eq!(transcript.messages[0].role, "user");
     assert_eq!(transcript.messages[1].role, "assistant");
 
-    let path = store.flush("session-1").expect("flush must succeed");
+    let path = store.flush("session-1").await.expect("flush must succeed");
     assert!(path.exists(), "exported file must exist");
     assert!(path.to_string_lossy().contains("session-1"));
 }
 
-#[test]
-fn transcript_store_multiple_sessions_isolated() {
+#[tokio::test]
+async fn transcript_store_multiple_sessions_isolated() {
     use manta::agent::TranscriptMessage;
 
     let dir = TempDir::new().unwrap();
     let store = TranscriptStore::new(dir.path());
-    let _ = store.init();
+    store.init().await.unwrap();
 
     store.append("session-a", "web", "alice", "room-1", TranscriptMessage::new("user", "msg a"));
     store.append("session-b", "web", "bob", "room-2", TranscriptMessage::new("user", "msg b"));

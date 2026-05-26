@@ -75,9 +75,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         Arc::new(DummyOutboundPipeline);
 
     let transcript_store = crate::agent::TranscriptStore::new(transcript_dir);
-    let _ = transcript_store.init();
+    let _ = transcript_store.init().await;
     let artifact_store = crate::agent::ArtifactStore::new(artifact_dir);
-    let _ = artifact_store.init();
+    let _ = artifact_store.init().await;
     let disk_budget = crate::agent::DiskBudgetManager::new(budget_dir);
     let _ = disk_budget.init();
     let session_file_manager = crate::agent::SessionFileManager::new(session_files_dir);

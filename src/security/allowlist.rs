@@ -410,33 +410,48 @@ impl Allowlist {
     pub async fn save(&self, path: &Path) -> crate::Result<()> {
         let entries = self.entries.read().await;
         let json = serde_json::to_string_pretty(&*entries)?;
+        drop(entries);
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
 
         // Write with file locking to prevent concurrent writes
         #[cfg(unix)]
         {
-            use std::fs::File;
-            use std::io::Write;
-            use std::os::unix::io::AsRawFd;
+            let path = path.to_path_buf();
+            let json = json.clone();
+            tokio::task::spawn_blocking(move || -> crate::Result<()> {
+                use std::fs::File;
+                use std::io::Write;
+                use std::os::unix::io::AsRawFd;
 
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
+                let file = File::create(&path)?;
+                // SAFETY: libc::flock is a standard POSIX advisory locking call.
+                // LOCK_EX|LOCK_NB requests a non-blocking exclusive lock; failure
+                // is handled gracefully. This is safe on Unix platforms.
+                #[allow(unsafe_code)]
+                let lock_result =
+                    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if lock_result != 0 {
+                    warn!("Could not acquire file lock on {:?}, proceeding anyway", path);
+                }
 
-            let file = File::create(path)?;
-            let lock_result =
-                unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-            if lock_result != 0 {
-                warn!("Could not acquire file lock on {:?}, proceeding anyway", path);
-            }
-
-            let mut file = file;
-            file.write_all(json.as_bytes())?;
-            file.sync_all()?;
+                let mut file = file;
+                file.write_all(json.as_bytes())?;
+                file.sync_all()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| {
+                crate::error::MantaError::Internal(format!("spawn_blocking join error: {}", e))
+            })??;
         }
 
         #[cfg(not(unix))]
         {
-            std::fs::write(path, json)?;
+            tokio::fs::write(path, json).await?;
         }
 
         info!("Allowlist saved to {:?}", path);
@@ -445,11 +460,12 @@ impl Allowlist {
 
     /// Load allowlist from a JSON file.
     pub async fn load(&self, path: &Path) -> crate::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
+        let content = match tokio::fs::read_to_string(path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
 
-        let content = std::fs::read_to_string(path)?;
         let entries: Vec<AllowlistEntry> = serde_json::from_str(&content)?;
 
         let mut entries_guard = self.entries.write().await;
@@ -689,6 +705,6 @@ mod tests {
         assert!(allowlist2.is_allowed("u123").await);
         assert!(allowlist2.is_allowed("admin").await);
 
-        std::fs::remove_file(&path).ok();
+        tokio::fs::remove_file(&path).await.ok();
     }
 }

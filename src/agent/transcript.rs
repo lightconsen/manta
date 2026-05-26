@@ -396,8 +396,8 @@ impl TranscriptStore {
     }
 
     /// Initialize the store (create directories).
-    pub fn init(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.root_dir)?;
+    pub async fn init(&self) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.root_dir).await?;
         debug!("Transcript store initialized at {:?}", self.root_dir);
         Ok(())
     }
@@ -411,7 +411,7 @@ impl TranscriptStore {
         scope: impl Into<String>,
     ) -> std::sync::MutexGuard<'_, HashMap<String, Transcript>> {
         let session_id = session_id.into();
-        let mut active = self.active.lock().unwrap();
+        let mut active = self.active.lock().expect("lock poisoned");
         active
             .entry(session_id.clone())
             .or_insert_with(|| Transcript::new(session_id, channel, peer, scope));
@@ -435,12 +435,12 @@ impl TranscriptStore {
 
     /// Get a transcript by session ID.
     pub fn get(&self, session_id: &str) -> Option<Transcript> {
-        let active = self.active.lock().unwrap();
+        let active = self.active.lock().expect("lock poisoned");
         active.get(session_id).cloned()
     }
 
     /// Export a transcript to a file.
-    pub fn export(&self, session_id: &str, format: TranscriptFormat) -> Result<PathBuf, String> {
+    pub async fn export(&self, session_id: &str, format: TranscriptFormat) -> Result<PathBuf, String> {
         let transcript = self.get(session_id).ok_or("Transcript not found")?;
         let content = render_transcript(&transcript, format);
 
@@ -452,47 +452,49 @@ impl TranscriptStore {
         );
         let path = self.root_dir.join(&filename);
 
-        std::fs::write(&path, content).map_err(|e| format!("Failed to write transcript: {}", e))?;
+        tokio::fs::write(&path, content).await.map_err(|e| format!("Failed to write transcript: {}", e))?;
         info!("Exported transcript to {:?}", path);
         Ok(path)
     }
 
     /// Export all active transcripts.
-    pub fn export_all(&self, format: TranscriptFormat) -> Vec<Result<PathBuf, String>> {
-        let active = self.active.lock().unwrap();
-        let session_ids: Vec<String> = active.keys().cloned().collect();
-        drop(active);
+    pub async fn export_all(&self, format: TranscriptFormat) -> Vec<Result<PathBuf, String>> {
+        let session_ids = {
+            let active = self.active.lock().expect("lock poisoned");
+            active.keys().cloned().collect::<Vec<String>>()
+        };
 
-        session_ids
-            .into_iter()
-            .map(|id| self.export(&id, format))
-            .collect()
+        let mut results = Vec::new();
+        for id in session_ids {
+            results.push(self.export(&id, format).await);
+        }
+        results
     }
 
     /// Flush a transcript to disk (persist the active buffer).
-    pub fn flush(&self, session_id: &str) -> Result<PathBuf, String> {
-        self.export(session_id, TranscriptFormat::Json)
+    pub async fn flush(&self, session_id: &str) -> Result<PathBuf, String> {
+        self.export(session_id, TranscriptFormat::Json).await
     }
 
     /// Flush all active transcripts.
-    pub fn flush_all(&self) -> Vec<Result<PathBuf, String>> {
-        self.export_all(TranscriptFormat::Json)
+    pub async fn flush_all(&self) -> Vec<Result<PathBuf, String>> {
+        self.export_all(TranscriptFormat::Json).await
     }
 
     /// Load a transcript from a JSON file.
-    pub fn load(&self, filename: &str) -> Result<Transcript, String> {
+    pub async fn load(&self, filename: &str) -> Result<Transcript, String> {
         let path = self.root_dir.join(filename);
-        let content = std::fs::read_to_string(&path)
+        let content = tokio::fs::read_to_string(&path).await
             .map_err(|e| format!("Failed to read transcript file: {}", e))?;
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse transcript JSON: {}", e))
     }
 
     /// List all transcript files in the store.
-    pub fn list_files(&self) -> Vec<PathBuf> {
+    pub async fn list_files(&self) -> Vec<PathBuf> {
         let mut files = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&self.root_dir) {
-            for entry in entries.flatten() {
+        if let Ok(mut entries) = tokio::fs::read_dir(&self.root_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
                 if path.is_file() {
                     files.push(path);
@@ -504,25 +506,28 @@ impl TranscriptStore {
     }
 
     /// Get store stats.
-    pub fn stats(&self) -> TranscriptStoreStats {
-        let active = self.active.lock().unwrap();
-        let file_count = self.list_files().len();
+    pub async fn stats(&self) -> TranscriptStoreStats {
+        let (active_sessions, total_messages) = {
+            let active = self.active.lock().expect("lock poisoned");
+            (active.len(), active.values().map(|t| t.message_count()).sum())
+        };
+        let file_count = self.list_files().await.len();
         TranscriptStoreStats {
-            active_sessions: active.len(),
-            total_messages: active.values().map(|t| t.message_count()).sum(),
+            active_sessions,
+            total_messages,
             total_file_count: file_count,
         }
     }
 
     /// Remove a transcript from active memory.
     pub fn remove(&self, session_id: &str) -> Option<Transcript> {
-        let mut active = self.active.lock().unwrap();
+        let mut active = self.active.lock().expect("lock poisoned");
         active.remove(session_id)
     }
 
     /// Clear all active transcripts (files are preserved).
     pub fn clear_active(&self) {
-        let mut active = self.active.lock().unwrap();
+        let mut active = self.active.lock().expect("lock poisoned");
         active.clear();
     }
 }
@@ -585,35 +590,35 @@ mod tests {
         assert!(json.contains("\"role\": \"user\""));
     }
 
-    #[test]
-    fn test_store_export() {
+    #[tokio::test]
+    async fn test_store_export() {
         let tmp = TempDir::new().unwrap();
         let store = TranscriptStore::new(tmp.path());
-        store.init().unwrap();
+        store.init().await.unwrap();
 
         store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("user", "Hello"));
         store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("assistant", "Hi!"));
 
-        let path = store.export("s1", TranscriptFormat::Markdown).unwrap();
+        let path = store.export("s1", TranscriptFormat::Markdown).await.unwrap();
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("Hello"));
         assert!(content.contains("Hi!"));
     }
 
-    #[test]
-    fn test_store_load() {
+    #[tokio::test]
+    async fn test_store_load() {
         let tmp = TempDir::new().unwrap();
         let store = TranscriptStore::new(tmp.path());
-        store.init().unwrap();
+        store.init().await.unwrap();
 
         store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("user", "Hello"));
-        store.flush("s1").unwrap();
+        store.flush("s1").await.unwrap();
 
-        let files = store.list_files();
+        let files = store.list_files().await;
         assert_eq!(files.len(), 1);
 
-        let loaded = store.load(files[0].file_name().unwrap().to_str().unwrap());
+        let loaded = store.load(files[0].file_name().unwrap().to_str().unwrap()).await;
         assert!(loaded.is_ok());
         let transcript = loaded.unwrap();
         assert_eq!(transcript.session_id, "s1");

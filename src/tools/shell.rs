@@ -153,7 +153,9 @@ impl Tool for ShellTool {
                 let process_limit = context.process_limit;
 
                 // SAFETY: pre_exec runs in the child process after fork but before exec.
-                // We only call async-signal-safe functions (setrlimit) here.
+                // We only call async-signal-safe libc functions (setrlimit) here, which
+                // is the documented safety requirement for pre_exec callbacks.
+                #[allow(unsafe_code)]
                 unsafe {
                     cmd.pre_exec(move || {
                         // Apply memory limit

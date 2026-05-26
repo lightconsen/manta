@@ -277,8 +277,8 @@ pub async fn rate_limit_middleware(
             crate::gateway::rate_limit::MultiTierResult::Allowed { remaining } => {
                 let mut response = next.run(req).await;
                 let headers = response.headers_mut();
-                headers.insert("X-RateLimit-Limit", "100".parse().unwrap());
-                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
+                headers.insert("X-RateLimit-Limit", "100".parse().expect("failed to parse header value"));
+                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().expect("failed to parse header value"));
                 Ok(response)
             }
             crate::gateway::rate_limit::MultiTierResult::Denied { tier, retry_after_secs } => {
@@ -289,13 +289,13 @@ pub async fn rate_limit_middleware(
                         "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
                         tier, retry_after_secs
                     )))
-                    .unwrap();
+                    .expect("failed to build response");
                 response
                     .headers_mut()
-                    .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+                    .insert("Retry-After", retry_after_secs.to_string().parse().expect("failed to parse header value"));
                 response
                     .headers_mut()
-                    .insert("X-RateLimit-Tier", tier.parse().unwrap());
+                    .insert("X-RateLimit-Tier", tier.parse().expect("failed to parse header value"));
                 Ok(response)
             }
         }
@@ -318,10 +318,10 @@ pub async fn rate_limit_middleware(
                         .unwrap_or(100)
                         .to_string()
                         .parse()
-                        .unwrap(),
+                        .expect("failed to parse header value"),
                 );
-                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
-                headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().unwrap());
+                headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().expect("failed to parse header value"));
+                headers.insert("X-RateLimit-Reset", reset_after_secs.to_string().parse().expect("failed to parse header value"));
 
                 Ok(response)
             }
@@ -333,11 +333,11 @@ pub async fn rate_limit_middleware(
                         "Rate limit exceeded. Retry after {} seconds.",
                         retry_after_secs
                     )))
-                    .unwrap();
+                    .expect("failed to build response");
 
                 response
                     .headers_mut()
-                    .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+                    .insert("Retry-After", retry_after_secs.to_string().parse().expect("failed to parse header value"));
 
                 Ok(response)
             }
@@ -403,18 +403,18 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     let headers = response.headers_mut();
 
     // Content Security Policy with route-aware strategy
-    headers.insert("Content-Security-Policy", csp_policy.to_header_value().parse().unwrap());
+    headers.insert("Content-Security-Policy", csp_policy.to_header_value().parse().expect("failed to parse header value"));
 
-    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
-    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    headers.insert("X-Content-Type-Options", "nosniff".parse().expect("failed to parse header value"));
+    headers.insert("X-Frame-Options", "DENY".parse().expect("failed to parse header value"));
+    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().expect("failed to parse header value"));
     headers.insert(
         "Permissions-Policy",
-        "camera=(), microphone=(), geolocation=()".parse().unwrap(),
+        "camera=(), microphone=(), geolocation=()".parse().expect("failed to parse header value"),
     );
     headers.insert(
         "Strict-Transport-Security",
-        "max-age=31536000; includeSubDomains".parse().unwrap(),
+        "max-age=31536000; includeSubDomains".parse().expect("failed to parse header value"),
     );
 
     response

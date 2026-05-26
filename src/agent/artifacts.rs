@@ -208,26 +208,26 @@ impl Artifact {
     }
 
     /// Get the content (from memory or file).
-    pub fn get_content(&self) -> Option<String> {
+    pub async fn get_content(&self) -> Option<String> {
         if let Some(ref content) = self.content {
             return Some(content.clone());
         }
         if let Some(ref path) = self.file_path {
-            return std::fs::read_to_string(path).ok();
+            return tokio::fs::read_to_string(path).await.ok();
         }
         None
     }
 
     /// Render as markdown.
-    pub fn to_markdown(&self) -> String {
+    pub async fn to_markdown(&self) -> String {
         match self.artifact_type {
             ArtifactType::Code => {
                 let lang = self.language.as_deref().unwrap_or("");
-                let content = self.get_content().unwrap_or_default();
+                let content = self.get_content().await.unwrap_or_default();
                 format!("### {}\n\n```{lang}\n{}\n```\n", self.title, content, lang = lang)
             }
             ArtifactType::Document => {
-                let content = self.get_content().unwrap_or_default();
+                let content = self.get_content().await.unwrap_or_default();
                 format!("### {}\n\n{}\n", self.title, content)
             }
             ArtifactType::Link => {
@@ -235,7 +235,7 @@ impl Artifact {
                 format!("- [{}]({})\n", self.title, url)
             }
             ArtifactType::Data => {
-                let content = self.get_content().unwrap_or_default();
+                let content = self.get_content().await.unwrap_or_default();
                 format!("### {} (data)\n\n```json\n{}\n```\n", self.title, content)
             }
             ArtifactType::Image => {
@@ -272,15 +272,15 @@ impl ArtifactStore {
     }
 
     /// Initialize directories.
-    pub fn init(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.root_dir)?;
+    pub async fn init(&self) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.root_dir).await?;
         debug!("Artifact store initialized at {:?}", self.root_dir);
         Ok(())
     }
 
     /// Add an artifact to a session.
     pub fn add(&self, artifact: Artifact) {
-        let mut artifacts = self.artifacts.lock().unwrap();
+        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         let list = artifacts.entry(artifact.session_id.clone()).or_default();
         list.push(artifact);
         debug!(
@@ -292,13 +292,13 @@ impl ArtifactStore {
 
     /// Get all artifacts for a session.
     pub fn get_for_session(&self, session_id: &str) -> Vec<Artifact> {
-        let artifacts = self.artifacts.lock().unwrap();
+        let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts.get(session_id).cloned().unwrap_or_default()
     }
 
     /// Get a specific artifact by ID.
     pub fn get(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
-        let artifacts = self.artifacts.lock().unwrap();
+        let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts
             .get(session_id)
             .and_then(|list| list.iter().find(|a| a.id == artifact_id).cloned())
@@ -306,13 +306,13 @@ impl ArtifactStore {
 
     /// List all artifacts across all sessions.
     pub fn list_all(&self) -> Vec<Artifact> {
-        let artifacts = self.artifacts.lock().unwrap();
+        let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts.values().flatten().cloned().collect()
     }
 
     /// List artifact IDs for a session.
     pub fn list_session(&self, session_id: &str) -> Vec<String> {
-        let artifacts = self.artifacts.lock().unwrap();
+        let artifacts = self.artifacts.lock().expect("lock poisoned");
         artifacts
             .get(session_id)
             .map(|list| list.iter().map(|a| a.id.clone()).collect())
@@ -321,7 +321,7 @@ impl ArtifactStore {
 
     /// Remove a specific artifact.
     pub fn remove(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
-        let mut artifacts = self.artifacts.lock().unwrap();
+        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         if let Some(list) = artifacts.get_mut(session_id) {
             let pos = list.iter().position(|a| a.id == artifact_id);
             if let Some(pos) = pos {
@@ -333,14 +333,14 @@ impl ArtifactStore {
 
     /// Remove all artifacts for a session (cleanup on session end).
     pub fn clear_session(&self, session_id: &str) -> Vec<Artifact> {
-        let mut artifacts = self.artifacts.lock().unwrap();
+        let mut artifacts = self.artifacts.lock().expect("lock poisoned");
         let removed = artifacts.remove(session_id).unwrap_or_default();
         info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
     }
 
     /// Export all artifacts for a session as a single markdown file.
-    pub fn export_session(&self, session_id: &str) -> Result<PathBuf, String> {
+    pub async fn export_session(&self, session_id: &str) -> Result<PathBuf, String> {
         let artifacts = self.get_for_session(session_id);
         if artifacts.is_empty() {
             return Err("No artifacts for session".to_string());
@@ -348,13 +348,14 @@ impl ArtifactStore {
 
         let mut content = format!("# Session Artifacts: {}\n\n", session_id);
         for artifact in &artifacts {
-            content.push_str(&artifact.to_markdown());
+            content.push_str(&artifact.to_markdown().await);
             content.push('\n');
         }
 
         let filename = format!("artifacts_{}.md", sanitize(session_id));
         let path = self.root_dir.join(&filename);
-        std::fs::write(&path, content)
+        tokio::fs::write(&path, content)
+            .await
             .map_err(|e| format!("Failed to write artifact export: {}", e))?;
         info!("Exported {} artifacts to {:?}", artifacts.len(), path);
         Ok(path)
@@ -362,7 +363,7 @@ impl ArtifactStore {
 
     /// Get store stats.
     pub fn stats(&self) -> ArtifactStoreStats {
-        let artifacts = self.artifacts.lock().unwrap();
+        let artifacts = self.artifacts.lock().expect("lock poisoned");
         let total = artifacts.values().map(|v| v.len()).sum();
         let total_size: usize = artifacts.values().flatten().map(|a| a.size_bytes).sum();
         ArtifactStoreStats {
@@ -396,12 +397,12 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_code_artifact() {
+    #[tokio::test]
+    async fn test_code_artifact() {
         let a = Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}");
         assert_eq!(a.artifact_type, ArtifactType::Code);
         assert_eq!(a.language, Some("rust".to_string()));
-        assert_eq!(a.get_content(), Some("fn main() {}".to_string()));
+        assert_eq!(a.get_content().await, Some("fn main() {}".to_string()));
     }
 
     #[test]
@@ -411,11 +412,11 @@ mod tests {
         assert_eq!(a.url, Some("https://example.com".to_string()));
     }
 
-    #[test]
-    fn test_store_add_and_get() {
+    #[tokio::test]
+    async fn test_store_add_and_get() {
         let tmp = TempDir::new().unwrap();
         let store = ArtifactStore::new(tmp.path());
-        store.init().unwrap();
+        store.init().await.unwrap();
 
         store.add(Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}"));
         store.add(Artifact::document("a2", "s1", "README", "Hello"));
@@ -431,11 +432,11 @@ mod tests {
         assert_eq!(all.len(), 3);
     }
 
-    #[test]
-    fn test_store_clear_session() {
+    #[tokio::test]
+    async fn test_store_clear_session() {
         let tmp = TempDir::new().unwrap();
         let store = ArtifactStore::new(tmp.path());
-        store.init().unwrap();
+        store.init().await.unwrap();
 
         store.add(Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}"));
         store.clear_session("s1");
@@ -444,25 +445,25 @@ mod tests {
         assert!(s1.is_empty());
     }
 
-    #[test]
-    fn test_markdown_render() {
+    #[tokio::test]
+    async fn test_markdown_render() {
         let a = Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}");
-        let md = a.to_markdown();
+        let md = a.to_markdown().await;
         assert!(md.contains("### main.rs"));
         assert!(md.contains("```rust"));
         assert!(md.contains("fn main() {}"));
     }
 
-    #[test]
-    fn test_export_session() {
+    #[tokio::test]
+    async fn test_export_session() {
         let tmp = TempDir::new().unwrap();
         let store = ArtifactStore::new(tmp.path());
-        store.init().unwrap();
+        store.init().await.unwrap();
 
         store.add(Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}"));
         store.add(Artifact::document("a2", "s1", "Notes", "Important"));
 
-        let path = store.export_session("s1").unwrap();
+        let path = store.export_session("s1").await.unwrap();
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("main.rs"));

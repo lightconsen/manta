@@ -606,7 +606,8 @@ async fn handle_compact(
     // Flush transcript to disk as a compaction step
     let export_result = state
         .transcript_store
-        .export(&sid, TranscriptFormat::Markdown);
+        .export(&sid, TranscriptFormat::Markdown)
+        .await;
 
     let mut lines = vec![format!("🗜️ **Compacted session `{}`**", sid)];
 
@@ -1339,28 +1340,18 @@ async fn handle_export_session(
     let _path_hint = args.trim();
 
     if let Some(sid) = session_id {
-        match tokio::task::spawn_blocking({
-            let store = state.transcript_store.clone();
-            let sid = sid.clone();
-            move || store.export(&sid, TranscriptFormat::Html)
-        }).await {
-            Ok(Ok(path)) => {
+        match state.transcript_store.export(&sid, TranscriptFormat::Html).await
+        {
+            Ok(path) => {
                 let text =
                     format!("📄 **Session `{}` exported**\n\nHTML: `{}`", sid, path.display());
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
-            }
-            Ok(Err(e)) => {
-                return WsResponse::err(
-                    &req.id,
-                    "EXPORT_FAILED",
-                    format!("Failed to export session: {}", e),
-                );
             }
             Err(e) => {
                 return WsResponse::err(
                     &req.id,
                     "EXPORT_FAILED",
-                    format!("Export task failed: {}", e),
+                    format!("Failed to export session: {}", e),
                 );
             }
         }

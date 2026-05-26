@@ -367,8 +367,8 @@ pub async fn multi_tier_rate_limit_middleware(
         MultiTierResult::Allowed { remaining } => {
             let mut response = next.run(req).await;
             let headers = response.headers_mut();
-            headers.insert("X-RateLimit-Limit", "100".parse().unwrap());
-            headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().unwrap());
+            headers.insert("X-RateLimit-Limit", "100".parse().expect("failed to parse header value"));
+            headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().expect("failed to parse header value"));
             Ok(response)
         }
         MultiTierResult::Denied { tier, retry_after_secs } => {
@@ -379,13 +379,13 @@ pub async fn multi_tier_rate_limit_middleware(
                     "Rate limit exceeded on tier '{}'. Retry after {} seconds.",
                     tier, retry_after_secs
                 )))
-                .unwrap();
+                .expect("failed to build response");
             response
                 .headers_mut()
-                .insert("Retry-After", retry_after_secs.to_string().parse().unwrap());
+                .insert("Retry-After", retry_after_secs.to_string().parse().expect("failed to parse header value"));
             response
                 .headers_mut()
-                .insert("X-RateLimit-Tier", tier.parse().unwrap());
+                .insert("X-RateLimit-Tier", tier.parse().expect("failed to parse header value"));
             Ok(response)
         }
     }

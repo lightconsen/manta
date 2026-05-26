@@ -162,9 +162,7 @@ pub async fn ws_handler(
         config.security.auth_mode
     };
 
-    ws.on_upgrade(move |socket| {
-        handle_websocket(socket, state, query, auth_mode, auth_result)
-    })
+    ws.on_upgrade(move |socket| handle_websocket(socket, state, query, auth_mode, auth_result))
 }
 
 async fn handle_websocket(
@@ -271,8 +269,15 @@ async fn handle_websocket(
                     match serde_json::from_str::<WsRequest>(&text) {
                         Ok(req) => {
                             if req.method == "connect" {
-                                let res =
-                                    handle_connect(&req, &conn, &state, &auth_mode, &cmd_tx, &auth_result).await;
+                                let res = handle_connect(
+                                    &req,
+                                    &conn,
+                                    &state,
+                                    &auth_mode,
+                                    &cmd_tx,
+                                    &auth_result,
+                                )
+                                .await;
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
                                 let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
 
@@ -497,12 +502,10 @@ async fn handle_connect(
         crate::gateway::protocol::AuthMode::Device => {
             return handle_device_auth(req, state, &params, conn).await;
         }
-        crate::gateway::protocol::AuthMode::Tailscale => {
-            (
-                Some(UserId::new("tailscale")),
-                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
-            )
-        }
+        crate::gateway::protocol::AuthMode::Tailscale => (
+            Some(UserId::new("tailscale")),
+            DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        ),
     };
 
     finalize_hello_ok(req, conn, &params, user_id, granted_scopes).await
