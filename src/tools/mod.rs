@@ -108,7 +108,7 @@ impl Default for ToolContext {
             process_limit: None,
             skill_trust: SkillTrust::Trusted,
             workspace_root: crate::dirs::workspace_data_dir(),
-            workspace_only: false,
+            workspace_only: true,
         }
     }
 }

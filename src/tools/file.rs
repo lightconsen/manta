@@ -581,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_read_not_found() {
         let tool = FileReadTool::new();
-        let context = ToolContext::new("user", "conv1");
+        let context = ToolContext::new("user", "conv1").with_workspace_only(false);
         let args = serde_json::json!({"path": "/tmp/nonexistent_file_12345.txt"});
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
@@ -755,7 +755,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_edit_not_found() {
         let tool = FileEditTool::new();
-        let context = ToolContext::new("user", "conv1");
+        let context = ToolContext::new("user", "conv1").with_workspace_only(false);
         let args = serde_json::json!({
             "path": "/tmp/nonexistent_edit_12345.txt",
             "old_string": "old",

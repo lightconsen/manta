@@ -4,17 +4,19 @@
 //!
 //! Protocol flow:
 //!   1. Client opens WebSocket to /ws
-//!   2. Server accepts (no auth yet)
-//!   3. Client sends `connect` req as first frame
-//!   4. Server validates auth + protocol version, replies `hello-ok`
-//!   5. Client sends method calls (e.g. `chat.send`), server replies `res`
-//!   6. Server pushes events (`chat.delta`, `tool.calling`, etc.) asynchronously
+//!   2. Server validates auth (session cookie or shared token) - rejects with 401 if missing
+//!   3. Server accepts WebSocket connection
+//!   4. Client sends `connect` req as first frame
+//!   5. Server validates auth + protocol version, replies `hello-ok`
+//!   6. Client sends method calls (e.g. `chat.send`), server replies `res`
+//!   7. Server pushes events (`chat.delta`, `tool.calling`, etc.) asynchronously
 
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
+    middleware::Next,
     response::IntoResponse,
 };
 use futures_util::{
@@ -31,8 +33,6 @@ use crate::gateway::protocol::*;
 use crate::gateway::{GatewayEvent, GatewayState};
 use crate::security::UserId;
 
-// ── Query Parameters ──────────────────────────────────────────────────────────
-
 /// Query parameters for WebSocket upgrade
 #[derive(Debug, Deserialize)]
 pub struct WsConnectQuery {
@@ -42,80 +42,163 @@ pub struct WsConnectQuery {
     pub client: Option<String>,
 }
 
-// ── Internal Commands ─────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum WsCommand {
-    /// Send a response frame to the client
     SendResponse(String),
-    /// Send an event frame to the client
     SendEvent(String),
-    /// Subscription updates
     Subscribe(Vec<String>),
     Unsubscribe(Vec<String>),
     SubscribeAll,
 }
 
-// ── Public Handler ────────────────────────────────────────────────────────────
+/// Pre-validated WebSocket authentication result, injected via Extension
+/// by the `ws_auth_middleware` BEFORE the WebSocket upgrade happens.
+#[derive(Debug, Clone)]
+pub struct WsAuthResult {
+    pub user_id: UserId,
+    pub scopes: Vec<String>,
+}
 
-/// Handler: WebSocket upgrade (no auth at this stage)
+/// Middleware: validate WebSocket upgrade credentials before proceeding.
+///
+/// Runs BEFORE the WebSocket upgrade. Rejects with 401 if no valid
+/// session cookie or shared token is found, regardless of auth_mode.
+pub async fn ws_auth_middleware(
+    State(state): State<Arc<GatewayState>>,
+    mut req: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    let auth_result = validate_ws_upgrade_request(&state, req.headers()).await;
+    match auth_result {
+        Ok(result) => {
+            req.extensions_mut().insert(result);
+            next.run(req).await
+        }
+        Err(resp) => resp,
+    }
+}
+
+/// Validate WebSocket upgrade request credentials BEFORE the handshake.
+async fn validate_ws_upgrade_request(
+    state: &Arc<GatewayState>,
+    headers: &axum::http::HeaderMap,
+) -> Result<WsAuthResult, axum::response::Response> {
+    // 1. Try session cookie
+    let cookie_config = crate::gateway::auth::SessionCookieConfig::default();
+    if let Some(token) =
+        crate::gateway::auth::extract_session_cookie_from_headers(headers, &cookie_config.name)
+    {
+        if let Some(session) = state.auth_manager.validate_session(&token).await {
+            let scopes = if session.scopes.is_empty() {
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
+            } else {
+                session.scopes.clone()
+            };
+            return Ok(WsAuthResult {
+                user_id: session.user_id,
+                scopes,
+            });
+        }
+    }
+
+    // 2. Try Bearer token from Authorization header
+    let token_from_header = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer ").map(String::from));
+
+    // Check against auth_manager (for Bearer session tokens)
+    if let Some(ref tok) = token_from_header {
+        if let Some(session) = state.auth_manager.validate_session(tok).await {
+            let scopes = if session.scopes.is_empty() {
+                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
+            } else {
+                session.scopes.clone()
+            };
+            return Ok(WsAuthResult {
+                user_id: session.user_id,
+                scopes,
+            });
+        }
+    }
+
+    // Check against shared_token in config
+    let config = state.config.read().await;
+    if let Some(shared_token) = &config.security.shared_token {
+        if let Some(ref tok) = token_from_header {
+            if tok == shared_token {
+                return Ok(WsAuthResult {
+                    user_id: UserId::new("shared"),
+                    scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+    }
+
+    warn!("WebSocket upgrade rejected: no valid credentials");
+    let resp = axum::http::Response::builder()
+        .status(axum::http::StatusCode::UNAUTHORIZED)
+        .header(axum::http::header::WWW_AUTHENTICATE, "Bearer, Cookie")
+        .body(axum::body::Body::from(
+            "Unauthorized: valid session cookie or API token required",
+        ))
+        .unwrap();
+    Err(resp)
+}
+
+/// Handler: WebSocket upgrade.
+///
+/// Credentials are validated by the `ws_auth_middleware` BEFORE this handler
+/// is reached. If we get here, auth is already verified.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
     Query(query): Query<WsConnectQuery>,
+    axum::Extension(auth_result): axum::Extension<WsAuthResult>,
 ) -> impl IntoResponse {
-    // Extract auth mode
     let auth_mode = {
         let config = state.config.read().await;
         config.security.auth_mode
     };
 
-    ws.on_upgrade(move |socket| handle_websocket(socket, state, query, auth_mode))
+    ws.on_upgrade(move |socket| {
+        handle_websocket(socket, state, query, auth_mode, auth_result)
+    })
 }
-
-// ── Main WebSocket Loop ───────────────────────────────────────────────────────
 
 async fn handle_websocket(
     socket: WebSocket,
     state: Arc<GatewayState>,
     query: WsConnectQuery,
     auth_mode: crate::gateway::protocol::AuthMode,
+    auth_result: WsAuthResult,
 ) {
     let conn_id = Uuid::new_v4().to_string();
     info!("[{}] WebSocket connected", conn_id);
 
-    // Connection state — shared between send and recv tasks
     let mut proto_conn = ProtocolConnection::new(conn_id.clone());
     if let Some(sid) = query.session_id {
         proto_conn.subscriptions.push(sid);
     }
     let conn = Arc::new(tokio::sync::RwLock::new(proto_conn));
 
-    // Subscribe to gateway events
     let mut event_rx = state.event_tx.subscribe();
-
-    // Command channel for cross-task communication
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(256);
 
-    // Split socket into sender/receiver so recv().await doesn't block sends.
-    // WebSocket implements Stream + Sink; StreamExt::split yields independent halves.
     let (mut ws_sender, mut ws_receiver): (SplitSink<WebSocket, Message>, SplitStream<WebSocket>) =
         StreamExt::split(socket);
     let conn_send = conn.clone();
 
-    // ── Send Task: pushes events and responses to client ─────────────────────
     let send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
                     let conn_guard = conn_send.read().await;
-                    // Only send if handshaked
                     if !conn_guard.handshaked {
                         continue;
                     }
 
-                    // Filter by subscription
                     let should_send = match &event {
                         GatewayEvent::AgentResponse { session_id, .. }
                         | GatewayEvent::ToolCalling { session_id, .. }
@@ -125,7 +208,7 @@ async fn handle_websocket(
                         | GatewayEvent::Thinking { session_id, .. } => {
                             conn_guard.is_subscribed(session_id)
                         }
-                        _ => true, // Global events always sent
+                        _ => true,
                     };
 
                     if !should_send {
@@ -133,7 +216,6 @@ async fn handle_websocket(
                     }
                     drop(conn_guard);
 
-                    // Convert GatewayEvent -> WsEvent
                     if let Some((event_name, payload)) = gateway_event_to_ws(&event) {
                         let seq = {
                             let mut cg = conn_send.write().await;
@@ -177,9 +259,7 @@ async fn handle_websocket(
         }
     });
 
-    // ── Receive Task: processes client messages ──────────────────────────────
     let recv_task = tokio::spawn(async move {
-        // Phase 1: Wait for connect handshake
         let handshake_ok = loop {
             let msg = ws_receiver.next().await;
 
@@ -192,7 +272,7 @@ async fn handle_websocket(
                         Ok(req) => {
                             if req.method == "connect" {
                                 let res =
-                                    handle_connect(&req, &conn, &state, &auth_mode, &cmd_tx).await;
+                                    handle_connect(&req, &conn, &state, &auth_mode, &cmd_tx, &auth_result).await;
                                 let res_text = serde_json::to_string(&res).unwrap_or_default();
                                 let _ = cmd_tx.send(WsCommand::SendResponse(res_text)).await;
 
@@ -200,12 +280,10 @@ async fn handle_websocket(
                                     conn.write().await.handshaked = true;
                                     break true;
                                 } else {
-                                    // Auth failed, give client a moment then close
                                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                                     break false;
                                 }
                             } else {
-                                // First message must be connect
                                 let res = WsResponse::err(
                                     req.id,
                                     "INVALID_REQUEST",
@@ -235,7 +313,6 @@ async fn handle_websocket(
             return;
         }
 
-        // Phase 2: Normal operation loop
         loop {
             let msg = ws_receiver.next().await;
 
@@ -271,7 +348,6 @@ async fn handle_websocket(
         info!("[{}] WebSocket disconnected", conn_id);
     });
 
-    // Wait for either task to complete
     tokio::select! {
         _ = send_task => {}
         _ = recv_task => {}
@@ -280,19 +356,15 @@ async fn handle_websocket(
     info!("[{}] WebSocket session ended", conn_id);
 }
 
-// ── Method Dispatch ───────────────────────────────────────────────────────────
-
 async fn dispatch_method(
     req: &WsRequest,
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
     state: &Arc<GatewayState>,
     cmd_tx: &mpsc::Sender<WsCommand>,
 ) -> WsResponse {
-    // Check scope
     let scopes = conn.read().await.scopes.clone();
     if let Some(required) = method_scope(&req.method) {
         if !scopes_allow(&scopes, &req.method) {
-            // Persist commands.execute scope errors to session history
             if req.method == "commands.execute" {
                 if let Some(ref params_val) = req.params {
                     if let Ok(params) =
@@ -371,7 +443,6 @@ async fn dispatch_method(
         "acp.tree" => handle_acp_tree(req, state).await,
         "acp.execute.session" => handle_acp_execute_session(req, state).await,
         "acp.execute.run" => handle_acp_execute_run(req, state).await,
-        // Legacy commands (still supported during migration)
         "subscribe" => handle_legacy_subscribe(req, conn, cmd_tx).await,
         "unsubscribe" => handle_legacy_unsubscribe(req, conn, cmd_tx).await,
         "subscribe_all" => {
@@ -382,16 +453,14 @@ async fn dispatch_method(
     }
 }
 
-// ── Handshake Handler ─────────────────────────────────────────────────────────
-
 async fn handle_connect(
     req: &WsRequest,
     conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
     state: &Arc<GatewayState>,
     auth_mode: &crate::gateway::protocol::AuthMode,
     _cmd_tx: &mpsc::Sender<WsCommand>,
+    pre_validated_auth: &WsAuthResult,
 ) -> WsResponse {
-    // Parse params
     let params = match req.params.as_ref() {
         Some(p) => match serde_json::from_value::<ConnectParams>(p.clone()) {
             Ok(c) => c,
@@ -404,24 +473,23 @@ async fn handle_connect(
         }
     };
 
-    // Protocol version check
     if params.protocol_version < PROTOCOL_VERSION_MIN || params.protocol_version > PROTOCOL_VERSION
     {
         return error_version_mismatch(&req.id);
     }
 
-    // Auth resolution
     let (user_id, granted_scopes) = match auth_mode {
         crate::gateway::protocol::AuthMode::None => {
-            // No auth required, grant requested scopes (capped to available scopes)
-            let mut scopes: Vec<String> = DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect();
+            // WebSocket upgrade already validated credentials at the HTTP layer.
+            // Use the pre-validated identity instead of granting anonymous access.
+            let mut scopes = pre_validated_auth.scopes.clone();
             for s in &params.scopes {
                 if crate::gateway::protocol::ALL_SCOPES.contains(&s.as_str()) && !scopes.contains(s)
                 {
                     scopes.push(s.clone());
                 }
             }
-            (Some(UserId::new("anonymous")), scopes)
+            (Some(pre_validated_auth.user_id.clone()), scopes)
         }
         crate::gateway::protocol::AuthMode::Token => {
             resolve_token_auth(req, state, &params, conn).await
@@ -430,7 +498,6 @@ async fn handle_connect(
             return handle_device_auth(req, state, &params, conn).await;
         }
         crate::gateway::protocol::AuthMode::Tailscale => {
-            // Tailscale auth is handled at the network layer
             (
                 Some(UserId::new("tailscale")),
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
@@ -514,7 +581,6 @@ async fn resolve_token_auth(
         }
     }
 
-    // Try shared token from config
     let config = state.config.read().await;
     if let Some(shared_token) = &config.security.shared_token {
         if let Some(auth) = &params.auth {
@@ -543,7 +609,6 @@ async fn handle_device_auth(
     use crate::gateway::GatewayEvent;
     use crate::security::device_pairing::DeviceAccessResult;
 
-    // 1. If client already has a device token, validate it
     if let Some(token) = params.auth.as_ref().and_then(|a| a.token.as_ref()) {
         if let Some(device_id) = state.device_pairing_store.validate_token(token).await {
             let scopes = if params.scopes.is_empty() {
@@ -556,7 +621,6 @@ async fn handle_device_auth(
         }
     }
 
-    // 2. Device identity is required
     let device = match &params.device {
         Some(d) => d,
         None => {
@@ -564,7 +628,6 @@ async fn handle_device_auth(
         }
     };
 
-    // 3. Request pairing access
     let result = state
         .device_pairing_store
         .request_access(&device.id, None, device.public_key.as_deref())
@@ -572,7 +635,6 @@ async fn handle_device_auth(
 
     match result {
         DeviceAccessResult::Authorized { token: _ } => {
-            // Already authorized (shouldn't happen after validate_token, but handle it)
             let scopes = if params.scopes.is_empty() {
                 DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
             } else {
@@ -581,7 +643,6 @@ async fn handle_device_auth(
             finalize_hello_ok(req, conn, params, Some(UserId::new(&device.id)), scopes).await
         }
         DeviceAccessResult::PairingRequired { code } => {
-            // Broadcast to admin clients
             let _ = state.event_tx.send(GatewayEvent::DevicePairRequested {
                 device_id: device.id.clone(),
                 code: code.clone(),
@@ -599,8 +660,6 @@ async fn handle_device_auth(
         DeviceAccessResult::RateLimited => error_rate_limited(&req.id),
     }
 }
-
-// ── Method Handlers ───────────────────────────────────────────────────────────
 
 fn handle_ping(req: &WsRequest) -> WsResponse {
     WsResponse::ok(&req.id, serde_json::json!({}))
@@ -627,7 +686,6 @@ async fn handle_chat_send(
         Err(res) => return res,
     };
 
-    // Derive or use session ID
     let (session_id, is_new_session) = if let Some(sid) = params.session_id {
         (sid, false)
     } else {
@@ -641,7 +699,6 @@ async fn handle_chat_send(
         (format!("{}:{}", channel, user), true)
     };
 
-    // Build IncomingMessage
     let user_id = {
         let cg = conn.read().await;
         cg.user_id
@@ -650,7 +707,6 @@ async fn handle_chat_send(
             .unwrap_or_else(|| "anonymous".to_string())
     };
 
-    // Save user message to persistent session history
     let mut should_name = false;
     if let Some(ref store) = state.session_store {
         if let Err(e) = store
@@ -659,7 +715,6 @@ async fn handle_chat_send(
         {
             tracing::warn!("Failed to save user message to session history: {}", e);
         }
-        // Check if this is the first message and session has no name yet
         if let Ok(ps) = store.load_session(&session_id).await {
             if ps.as_ref().map(|m| m.message_count).unwrap_or(0) <= 1 {
                 if let Ok(existing) = store.get_session_name(&session_id).await {
@@ -671,8 +726,6 @@ async fn handle_chat_send(
         }
     }
 
-    // Auto-generate session name (first message only)
-    // Use the user's first message as the name immediately — no extra LLM call.
     if should_name {
         let store = state.session_store.clone();
         let sid = session_id.clone();
@@ -701,7 +754,6 @@ async fn handle_chat_send(
         });
     }
 
-    // Resolve bound agent from session store (unified session model)
     if let Some(ref store) = state.session_store {
         if let Ok(Some(ps)) = store.load_session(&session_id).await {
             if let Some(ref bound_agent) = ps.metadata.bound_agent_id {
@@ -715,7 +767,6 @@ async fn handle_chat_send(
         }
     }
 
-    // Explicit agent_id override from request
     if let Some(agent_id) = params.agent_id {
         let route = crate::inbound::RouteResult {
             agent_id,
@@ -732,11 +783,9 @@ async fn handle_chat_send(
                 is_direct: true,
             });
 
-    // Route through inbound pipeline
     let routed = state.inbound_pipeline.process(incoming).await;
 
     if let Some(ref _r) = routed {
-        // Subscribe to this session automatically
         let mut cg = conn.write().await;
         if !cg.subscriptions.contains(&session_id) {
             cg.subscriptions.push(session_id.clone());
@@ -744,7 +793,6 @@ async fn handle_chat_send(
         drop(cg);
     }
 
-    // Notify clients if this is a newly derived session
     if is_new_session {
         let _ = state
             .event_tx
@@ -871,7 +919,6 @@ async fn handle_chat_abort(
 }
 
 async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    // Prefer SQLite session_store for persistence across restarts/browsers
     let sessions: Vec<serde_json::Value> = if let Some(ref store) = state.session_store {
         match store.find_sessions(None, None, None, false).await {
             Ok(rows) => rows
@@ -896,7 +943,6 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
             }
         }
     } else {
-        // Fallback to in-memory session manager
         let mgr = state.session_manager.read().await;
         mgr.list_sessions()
             .await
@@ -947,7 +993,6 @@ async fn handle_sessions_create(
         mgr.create_session(session_id.clone());
     }
 
-    // Also persist to session_store so sessions.list can find it
     if let Some(ref store) = state.session_store {
         let metadata = crate::agent::session_store::SessionMetadata::new(&session_id, "", "", "");
         let _ = store.save_session(&session_id, &metadata, "{}").await;
@@ -982,7 +1027,6 @@ async fn handle_sessions_delete(
         mgr.terminate_session(&params.session_id);
     }
 
-    // Also delete from session_store for consistency
     if let Some(ref store) = state.session_store {
         let _ = store.delete_session(&params.session_id).await;
     }
@@ -1005,10 +1049,8 @@ async fn handle_sessions_reset(
         Err(res) => return res,
     };
 
-    // Cancel any running ACP session
     state.acp.cancel(params.session_id.clone()).await;
 
-    // Delete session data from the store
     if let Some(ref store) = state.session_store {
         let _ = store.delete_session(&params.session_id).await;
     }
@@ -1130,7 +1172,6 @@ async fn handle_health(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse
 }
 
 async fn handle_system_presence(req: &WsRequest) -> WsResponse {
-    // Simplified presence info
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -1138,8 +1179,6 @@ async fn handle_system_presence(req: &WsRequest) -> WsResponse {
         }),
     )
 }
-
-// ── ACP (Agent Control Plane) Handlers ────────────────────────────────────────
 
 async fn handle_acp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let subagents = state.acp.list_subagents().await;
@@ -1202,7 +1241,6 @@ async fn handle_acp_spawn(
             .unwrap_or_else(|| "anonymous".to_string())
     };
 
-    // Rate limit: 10 spawns per minute per user
     let rate_result = state
         .rate_limiter
         .check_with_cost(&crate::security::UserId::new(format!("acp:spawn:{}", actor)), 1.0)
@@ -1254,7 +1292,6 @@ async fn handle_acp_spawn(
         Ok(handle) => {
             let subagent_id = handle.id.clone();
 
-            // Audit log
             state
                 .audit_log
                 .log(
@@ -1271,7 +1308,6 @@ async fn handle_acp_spawn(
                 )
                 .await;
 
-            // Send task to subagent
             let message = IncomingMessage::new(actor.clone(), session_id.to_string(), params.task);
 
             match state.acp.send_message(&subagent_id, message).await {
@@ -1586,7 +1622,6 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
         user_id: String,
         #[serde(default)]
         agent_id: Option<String>,
-        /// Optional per-request max iteration override.
         #[serde(default)]
         max_iterations: Option<usize>,
     }
@@ -1642,7 +1677,6 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
         user_id: String,
         #[serde(default)]
         agent_id: Option<String>,
-        /// Optional per-request max iteration override.
         #[serde(default)]
         max_iterations: Option<usize>,
     }
@@ -1691,8 +1725,6 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
     }
 }
 
-// ── Legacy Compatibility ──────────────────────────────────────────────────────
-
 async fn handle_legacy_subscribe(
     req: &WsRequest,
     _conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
@@ -1734,8 +1766,6 @@ async fn handle_legacy_unsubscribe(
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 #[allow(clippy::result_large_err)]
 fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, WsResponse> {

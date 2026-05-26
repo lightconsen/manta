@@ -1339,17 +1339,28 @@ async fn handle_export_session(
     let _path_hint = args.trim();
 
     if let Some(sid) = session_id {
-        match state.transcript_store.export(&sid, TranscriptFormat::Html) {
-            Ok(path) => {
+        match tokio::task::spawn_blocking({
+            let store = state.transcript_store.clone();
+            let sid = sid.clone();
+            move || store.export(&sid, TranscriptFormat::Html)
+        }).await {
+            Ok(Ok(path)) => {
                 let text =
                     format!("📄 **Session `{}` exported**\n\nHTML: `{}`", sid, path.display());
                 return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));
+            }
+            Ok(Err(e)) => {
+                return WsResponse::err(
+                    &req.id,
+                    "EXPORT_FAILED",
+                    format!("Failed to export session: {}", e),
+                );
             }
             Err(e) => {
                 return WsResponse::err(
                     &req.id,
                     "EXPORT_FAILED",
-                    format!("Failed to export session: {}", e),
+                    format!("Export task failed: {}", e),
                 );
             }
         }

@@ -52,12 +52,18 @@ impl Default for SessionCookieConfig {
 
 /// Extract session token from cookie header
 pub fn extract_session_cookie(req: &Request, cookie_name: &str) -> Option<String> {
-    let cookie_header = req.headers().get(header::COOKIE)?;
-    let cookie_str = cookie_header.to_str().ok()?;
+    extract_session_cookie_from_headers(req.headers(), cookie_name)
+}
 
+/// Extract session token from a HeaderMap directly (for use before upgrade)
+pub fn extract_session_cookie_from_headers(
+    headers: &axum::http::HeaderMap,
+    cookie_name: &str,
+) -> Option<String> {
+    let cookie_header = headers.get(header::COOKIE)?;
+    let cookie_str = cookie_header.to_str().ok()?;
     for cookie in cookie_str.split(';') {
         let (name, value) = cookie.trim().split_once('=')?;
-
         if name == cookie_name {
             return Some(value.to_string());
         }

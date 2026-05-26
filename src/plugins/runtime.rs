@@ -276,7 +276,11 @@ impl PluginRuntime {
         _wasm_path: &std::path::Path,
         _config: serde_json::Value,
     ) -> crate::Result<(Option<()>, Option<()>)> {
-        Ok((None, None))
+        Err(crate::error::MantaError::Internal(
+            "Plugin execution requires the `plugins` feature. \
+             Recompile Manta with `--features plugins` to enable WASM plugin support."
+                .to_string(),
+        ))
     }
 
     /// Unload a plugin
@@ -470,7 +474,11 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+        Err(crate::error::MantaError::Internal(
+            "Plugin execution requires the `plugins` feature. \
+             Recompile Manta with `--features plugins` to enable WASM plugin support."
+                .to_string(),
+        ))
     }
 
     /// Low-level WASM tool invocation.
@@ -634,7 +642,11 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+        Err(crate::error::MantaError::Internal(
+            "Plugin execution requires the `plugins` feature. \
+             Recompile Manta with `--features plugins` to enable WASM plugin support."
+                .to_string(),
+        ))
     }
 
     /// Call a plugin's provider `stream` implementation.
@@ -677,7 +689,11 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+        Err(crate::error::MantaError::Internal(
+            "Plugin execution requires the `plugins` feature. \
+             Recompile Manta with `--features plugins` to enable WASM plugin support."
+                .to_string(),
+        ))
     }
 
     /// Call a plugin's provider `health_check` implementation.
@@ -723,7 +739,11 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal("plugins feature is not enabled".to_string()))
+        Err(crate::error::MantaError::Internal(
+            "Plugin execution requires the `plugins` feature. \
+             Recompile Manta with `--features plugins` to enable WASM plugin support."
+                .to_string(),
+        ))
     }
 
     /// Low-level WASM provider invocation.

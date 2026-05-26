@@ -2073,7 +2073,6 @@ impl Gateway {
             .route("/ready", get(ready_handler))
             .route("/live", get(live_handler))
             // WebSocket endpoints (localhost/Tailscale only)
-            .route("/ws", get(ws::ws_handler))
             .route("/ws/canvas/:id", get(canvas_ws_handler))
             // OpenAI-compatible API
             .route("/v1/chat/completions", post(openai_chat_completions_handler))
@@ -2096,6 +2095,12 @@ impl Gateway {
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
             .layer(from_fn(middleware::tailscale_only_middleware))
             .layer(from_fn(middleware::security_headers_middleware))
+            .with_state(state.clone());
+
+        // WebSocket sub-router with mandatory auth validation middleware
+        let ws_router = Router::new()
+            .route("/ws", get(ws::ws_handler))
+            .layer(from_fn_with_state(state.clone(), ws::ws_auth_middleware))
             .with_state(state.clone());
 
         // Build CORS layer from config
@@ -2168,6 +2173,7 @@ impl Gateway {
             .merge(public_router)
             .merge(auth_router)
             .merge(admin_router)
+            .merge(ws_router)
             .layer(cors_layer)
     }
 
