@@ -1,0 +1,186 @@
+package manta:plugin-sdk@0.2.0;
+
+/// Core types used across all plugin interfaces
+interface types {
+    /// JSON value as a string (plugin serializes/deserializes)
+    type json-value = string;
+
+    /// Result types for various operations
+    variant string-result {
+        ok(string),
+        err(string),
+    }
+
+    variant bytes-result {
+        ok(list<u8>),
+        err(string),
+    }
+
+    variant json-result {
+        ok(json-value),
+        err(string),
+    }
+
+    /// Plugin event emitted via events::emit
+    record plugin-event {
+        plugin-id: string,
+        event-type: string,
+        payload: json-value,
+    }
+}
+
+/// Logging interface — plugins write to Manta's log
+interface logging {
+    /// Log a message at the given level
+    log: func(level: string, message: string);
+}
+
+/// Configuration interface — read plugin config from plugin.json / config.json
+interface config {
+    use types.{json-result, json-value};
+
+    /// Get a single config value by key. Returns empty string if not found.
+    get: func(key: string) -> string;
+
+    /// Get the entire config as a JSON object string
+    get-all: func() -> json-value;
+}
+
+/// In-memory store — per-plugin, volatile key-value storage
+interface memory-store {
+    use types.{bytes-result, string-result};
+
+    /// Store a value in memory
+    store: func(key: string, value: list<u8>) -> bool;
+
+    /// Load a value from memory
+    load: func(key: string) -> bytes-result;
+
+    /// Search keys by prefix, returns JSON array of matching keys
+    search: func(prefix: string) -> string;
+}
+
+/// Persistent key-value store — scoped by plugin ID, survives reloads
+interface persistent-store {
+    /// Set a key-value pair
+    set: func(key: string, value: string) -> bool;
+
+    /// Get a value, returns empty string if not found
+    get: func(key: string) -> string;
+
+    /// Delete a key
+    delete: func(key: string) -> bool;
+}
+
+/// HTTP client for outbound requests from plugins
+interface http {
+    /// Perform a GET request, returns response body
+    get: func(url: string) -> string;
+
+    /// Perform a POST request with body and content type
+    post: func(url: string, body: string, content-type: string) -> string;
+}
+
+/// Event emission — plugins emit events that Manta consumers can subscribe to
+interface events {
+    use types.{plugin-event};
+
+    /// Emit an event. Returns false if no event channel is configured.
+    emit: func(event-type: string, payload: string) -> bool;
+}
+
+/// Context access — read session ID and arbitrary context values set by Manta
+interface context {
+    /// Get the current session ID (empty if none)
+    get-session-id: func() -> string;
+
+    /// Get a context value by key (empty if not found)
+    get: func(key: string) -> string;
+}
+
+/// Plugin identity
+interface plugin-info {
+    /// Get this plugin's unique identifier
+    get-id: func() -> string;
+}
+
+/// Combined host interface — all host functions available to plugins
+interface host-functions {
+    use types.{json-value, string-result, bytes-result};
+
+    // Logging
+    log: func(level: string, message: string);
+
+    // Config
+    config-get: func(key: string) -> string;
+    config-get-all: func() -> json-value;
+
+    // Memory store
+    memory-store: func(key: string, value: list<u8>) -> bool;
+    memory-load: func(key: string) -> string;
+    memory-search: func(prefix: string) -> string;
+
+    // Persistent store
+    store-get: func(key: string) -> string;
+    store-set: func(key: string, value: string) -> bool;
+
+    // HTTP
+    http-get: func(url: string) -> string;
+    http-post: func(url: string, body: string, content-type: string) -> string;
+
+    // Events
+    emit-event: func(event-type: string, payload: string) -> bool;
+
+    // Context
+    get-context: func(key: string) -> string;
+    get-session-id: func() -> string;
+
+    // Plugin info
+    get-plugin-id: func() -> string;
+}
+
+/// Plugin tool world — what a tool plugin exports
+world tool-plugin {
+    export call-tool: func(name: string, params: string) -> string;
+
+    import host-functions;
+}
+
+/// Plugin provider world — what an LLM provider plugin exports
+world provider-plugin {
+    export provider-complete: func(request: string) -> string;
+    export provider-stream: func(request: string) -> string;
+    export provider-health-check: func() -> string;
+
+    import host-functions;
+}
+
+/// Plugin hook world — what a hook plugin exports
+world hook-plugin {
+    export run-hook: func(hook-type: string, payload: string) -> string;
+
+    import host-functions;
+}
+
+/// Full plugin world — supports all capabilities
+world full-plugin {
+    // Tool exports
+    export call-tool: func(name: string, params: string) -> string;
+
+    // Provider exports
+    export provider-complete: func(request: string) -> string;
+    export provider-stream: func(request: string) -> string;
+    export provider-health-check: func() -> string;
+
+    // Hook exports
+    export run-hook: func(hook-type: string, payload: string) -> string;
+
+    // Host imports
+    import host-functions;
+}
+
+/// Host-only world — generates import bindings without requiring exports
+/// Use this if you only need to call host functions (e.g. in hooks or simple tools)
+world host-bindings {
+    import host-functions;
+}

@@ -8,6 +8,85 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+/// Shared state accessible by all plugin instances.
+///
+/// Provides async-capable primitives (KV store, HTTP client, event bridge)
+/// that synchronous WASM host functions delegate to via `block_on`.
+#[cfg(feature = "plugins")]
+#[derive(Default)]
+pub struct PluginSharedState {
+    /// Persistent per-plugin KV store
+    pub kv_store: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
+    /// Global event channel (plugins emit, Manta consumers subscribe)
+    pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<PluginEvent>>,
+    /// Shared HTTP client
+    pub http_client: reqwest::Client,
+    /// Current session ID (set by Manta when invoking plugins)
+    pub session_id: Arc<RwLock<Option<String>>>,
+    /// Arbitrary context map (set by Manta)
+    pub context: Arc<RwLock<HashMap<String, String>>>,
+}
+
+#[cfg(feature = "plugins")]
+impl PluginSharedState {
+    /// Create shared state without event channel
+    pub fn new() -> Self {
+        Self {
+            kv_store: Arc::new(RwLock::new(HashMap::new())),
+            event_tx: None,
+            http_client: reqwest::Client::new(),
+            session_id: Arc::new(RwLock::new(None)),
+            context: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create shared state with an event channel
+    pub fn with_events(event_tx: tokio::sync::mpsc::UnboundedSender<PluginEvent>) -> Self {
+        Self {
+            kv_store: Arc::new(RwLock::new(HashMap::new())),
+            event_tx: Some(event_tx),
+            http_client: reqwest::Client::new(),
+            session_id: Arc::new(RwLock::new(None)),
+            context: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Set the current session ID
+    pub async fn set_session_id(&self, id: String) {
+        *self.session_id.write().await = Some(id);
+    }
+
+    /// Get the current session ID
+    pub async fn get_session_id(&self) -> Option<String> {
+        self.session_id.read().await.clone()
+    }
+
+    /// Set a context value
+    pub async fn set_context(&self, key: String, value: String) {
+        self.context.write().await.insert(key, value);
+    }
+
+    /// Get a context value
+    pub async fn get_context(&self, key: &str) -> Option<String> {
+        self.context.read().await.get(key).cloned()
+    }
+
+    /// Get all context as JSON
+    pub async fn get_all_context(&self) -> String {
+        let ctx = self.context.read().await;
+        serde_json::to_string(&*ctx).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+/// Event emitted by plugins via `emit_event`
+#[cfg(feature = "plugins")]
+#[derive(Debug, Clone)]
+pub struct PluginEvent {
+    pub plugin_id: String,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+}
+
 /// A loaded plugin instance
 pub struct PluginInstance {
     /// Plugin manifest
@@ -44,21 +123,29 @@ pub struct PluginState {
     pub config: serde_json::Value,
     /// Memory for plugin use
     pub memory: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    /// Shared state (KV store, HTTP, events, context)
+    pub shared_state: Arc<PluginSharedState>,
+    /// Plugin ID (for event emission, store scoping)
+    pub plugin_id: String,
 }
 
 #[cfg(feature = "plugins")]
 impl PluginState {
-    pub fn new(config: serde_json::Value) -> Self {
+    pub fn new(config: serde_json::Value, shared_state: Arc<PluginSharedState>, plugin_id: String) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(HashMap::new())),
+            shared_state,
+            plugin_id,
         }
     }
 
-    pub fn new_with_memory(config: serde_json::Value, memory: HashMap<String, Vec<u8>>) -> Self {
+    pub fn new_with_memory(config: serde_json::Value, memory: HashMap<String, Vec<u8>>, shared_state: Arc<PluginSharedState>, plugin_id: String) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(memory)),
+            shared_state,
+            plugin_id,
         }
     }
 }
@@ -70,6 +157,8 @@ pub struct PluginRuntime {
     engine: wasmtime::Engine,
     #[cfg(feature = "plugins")]
     linker: wasmtime::Linker<PluginState>,
+    #[cfg(feature = "plugins")]
+    shared_state: Arc<PluginSharedState>,
 }
 
 impl PluginRuntime {
@@ -79,6 +168,7 @@ impl PluginRuntime {
         {
             let engine = wasmtime::Engine::default();
             let mut linker = wasmtime::Linker::new(&engine);
+            let shared_state = Arc::new(PluginSharedState::new());
 
             // Define host functions for plugins
             Self::define_host_functions(&mut linker)?;
@@ -87,6 +177,7 @@ impl PluginRuntime {
                 plugins: Arc::new(RwLock::new(HashMap::new())),
                 engine,
                 linker,
+                shared_state,
             })
         }
 
@@ -100,7 +191,25 @@ impl PluginRuntime {
 
     #[cfg(feature = "plugins")]
     fn define_host_functions(linker: &mut wasmtime::Linker<PluginState>) -> crate::Result<()> {
-        // Log function
+        use wasmtime::Memory;
+
+        // Helper: read a UTF-8 string from WASM memory
+        fn read_memory_string(
+            memory: &Memory,
+            caller: &mut wasmtime::Caller<'_, PluginState>,
+            ptr: i32,
+            len: i32,
+        ) -> anyhow::Result<String> {
+            let data = memory.data(caller);
+            let bytes = &data[ptr as usize..(ptr + len) as usize];
+            Ok(std::str::from_utf8(bytes)
+                .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in WASM memory: {}", e))?
+                .to_string())
+        }
+
+        // --- Logging ---
+
+        // log(ptr, len)
         linker
             .func_wrap(
                 "env",
@@ -112,9 +221,7 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
-                        })?;
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
                     let data = memory.data(&caller);
                     let message = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
                         .unwrap_or("<invalid utf8>");
@@ -124,7 +231,9 @@ impl PluginRuntime {
             )
             .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
 
-        // Config get function
+        // --- Config ---
+
+        // config_get(key_ptr, key_len, out_ptr, out_len) -> bytes_written | 0
         linker
             .func_wrap(
                 "env",
@@ -138,28 +247,443 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
-                        })?;
-                    let data = memory.data(&caller);
-                    let key =
-                        std::str::from_utf8(&data[key_ptr as usize..(key_ptr + key_len) as usize])
-                            .unwrap_or("");
-
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
-                    if let Some(value) = state.config.get(key) {
+                    if let Some(value) = state.config.get(&key) {
                         let value_str = value.to_string();
                         let bytes = value_str.as_bytes();
                         let to_write = bytes.len().min(out_len as usize);
-
                         let data_mut = memory.data_mut(&mut caller);
                         data_mut[out_ptr as usize..out_ptr as usize + to_write]
                             .copy_from_slice(&bytes[..to_write]);
-
                         Ok(to_write as i32)
                     } else {
                         Ok(0)
                     }
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // config_get_all(out_ptr, out_len) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "config_get_all",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let state = caller.data();
+                    let config_str = serde_json::to_string(&state.config)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    let bytes = config_str.as_bytes();
+                    let to_write = bytes.len().min(out_len as usize);
+                    let data_mut = memory.data_mut(&mut caller);
+                    data_mut[out_ptr as usize..out_ptr as usize + to_write]
+                        .copy_from_slice(&bytes[..to_write]);
+                    Ok(to_write as i32)
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- In-memory Store (per-plugin HashMap) ---
+
+        // memory_store(key_ptr, key_len, val_ptr, val_len) -> 1 on success
+        linker
+            .func_wrap(
+                "env",
+                "memory_store",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 val_ptr: i32,
+                 val_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
+                    let value: Vec<u8> = memory.data(&caller)
+                        [val_ptr as usize..(val_ptr + val_len) as usize].to_vec();
+                    let state = caller.data();
+                    let rt = tokio::runtime::Handle::current();
+                    let mem = state.memory.clone();
+                    Ok(rt.block_on(async move {
+                        mem.write().await.insert(key, value);
+                        1i32
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // memory_load(key_ptr, key_len, out_ptr, out_len) -> bytes_written | 0
+        linker
+            .func_wrap(
+                "env",
+                "memory_load",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
+                    let state = caller.data();
+                    let rt = tokio::runtime::Handle::current();
+                    let mem = state.memory.clone();
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    Ok(rt.block_on(async move {
+                        if let Some(data) = mem.read().await.get(&key) {
+                            let to_write = data.len().min(out_len);
+                            let mem_data = memory.data_mut(&mut caller);
+                            mem_data[out_ptr..out_ptr + to_write]
+                                .copy_from_slice(&data[..to_write]);
+                            to_write as i32
+                        } else {
+                            0i32
+                        }
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // memory_search(prefix_ptr, prefix_len, out_ptr, out_len) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "memory_search",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 prefix_ptr: i32,
+                 prefix_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let prefix = read_memory_string(&memory, &mut caller, prefix_ptr, prefix_len)?;
+                    let state = caller.data();
+                    let rt = tokio::runtime::Handle::current();
+                    let mem = state.memory.clone();
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    Ok(rt.block_on(async move {
+                        let mem_guard = mem.read().await;
+                        let keys: Vec<String> = mem_guard
+                            .keys()
+                            .filter(|k| k.starts_with(&prefix))
+                            .cloned()
+                            .collect();
+                        drop(mem_guard);
+                        let result = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string());
+                        let bytes = result.as_bytes();
+                        let to_write = bytes.len().min(out_len);
+                        let mem_data = memory.data_mut(&mut caller);
+                        mem_data[out_ptr..out_ptr + to_write]
+                            .copy_from_slice(&bytes[..to_write]);
+                        to_write as i32
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- Persistent KV Store (global, scoped by plugin_id) ---
+
+        // store_get(key_ptr, key_len, out_ptr, out_len) -> bytes_written | 0
+        linker
+            .func_wrap(
+                "env",
+                "store_get",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
+                    let state = caller.data();
+                    let plugin_id = state.plugin_id.clone();
+                    let kv = state.shared_state.kv_store.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    Ok(rt.block_on(async move {
+                        let store = kv.read().await;
+                        let value = store
+                            .get(&plugin_id)
+                            .and_then(|m| m.get(&key))
+                            .cloned();
+                        drop(store);
+                        if let Some(value) = value {
+                            let bytes = value.as_bytes();
+                            let to_write = bytes.len().min(out_len);
+                            let mem_data = memory.data_mut(&mut caller);
+                            mem_data[out_ptr..out_ptr + to_write]
+                                .copy_from_slice(&bytes[..to_write]);
+                            to_write as i32
+                        } else {
+                            0i32
+                        }
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // store_set(key_ptr, key_len, val_ptr, val_len) -> 1 on success
+        linker
+            .func_wrap(
+                "env",
+                "store_set",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 val_ptr: i32,
+                 val_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
+                    let value = read_memory_string(&memory, &mut caller, val_ptr, val_len)?;
+                    let state = caller.data();
+                    let plugin_id = state.plugin_id.clone();
+                    let kv = state.shared_state.kv_store.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    Ok(rt.block_on(async move {
+                        kv.write().await
+                            .entry(plugin_id)
+                            .or_default()
+                            .insert(key, value);
+                        1i32
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- HTTP ---
+
+        // http_get(url_ptr, url_len, out_ptr, out_len) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "http_get",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 url_ptr: i32,
+                 url_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    let body = reqwest::blocking::get(&url)
+                        .and_then(|r| r.text())
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+                    let bytes = body.as_bytes();
+                    let to_write = bytes.len().min(out_len);
+                    let mem_data = memory.data_mut(&mut caller);
+                    mem_data[out_ptr..out_ptr + to_write]
+                        .copy_from_slice(&bytes[..to_write]);
+                    Ok(to_write as i32)
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // http_post(url_ptr, url_len, body_ptr, body_len, content_type_ptr, content_type_len, out_ptr, out_len) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "http_post",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 url_ptr: i32,
+                 url_len: i32,
+                 body_ptr: i32,
+                 body_len: i32,
+                 ct_ptr: i32,
+                 ct_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
+                    let body = read_memory_string(&memory, &mut caller, body_ptr, body_len)?;
+                    let content_type = read_memory_string(&memory, &mut caller, ct_ptr, ct_len)?;
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    let response = reqwest::blocking::Client::new()
+                        .post(&url)
+                        .header("Content-Type", &content_type)
+                        .body(body)
+                        .send()
+                        .and_then(|r| r.text())
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+                    let bytes = response.as_bytes();
+                    let to_write = bytes.len().min(out_len);
+                    let mem_data = memory.data_mut(&mut caller);
+                    mem_data[out_ptr..out_ptr + to_write]
+                        .copy_from_slice(&bytes[..to_write]);
+                    Ok(to_write as i32)
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- Events ---
+
+        // emit_event(type_ptr, type_len, payload_ptr, payload_len) -> 1 | 0 (no channel)
+        linker
+            .func_wrap(
+                "env",
+                "emit_event",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 type_ptr: i32,
+                 type_len: i32,
+                 payload_ptr: i32,
+                 payload_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let event_type = read_memory_string(&memory, &mut caller, type_ptr, type_len)?;
+                    let payload_str = read_memory_string(&memory, &mut caller, payload_ptr, payload_len)?;
+                    let payload: serde_json::Value = serde_json::from_str(&payload_str)
+                        .unwrap_or_else(|_| serde_json::json!({ "raw": payload_str }));
+                    let state = caller.data();
+                    let plugin_id = state.plugin_id.clone();
+                    if let Some(ref tx) = state.shared_state.event_tx {
+                        let _ = tx.send(PluginEvent {
+                            plugin_id,
+                            event_type,
+                            payload,
+                        });
+                        Ok(1)
+                    } else {
+                        Ok(0)
+                    }
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- Context ---
+
+        // get_context(key_ptr, key_len, out_ptr, out_len) -> bytes_written | 0
+        linker
+            .func_wrap(
+                "env",
+                "get_context",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
+                    let state = caller.data();
+                    let ctx = state.shared_state.context.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    Ok(rt.block_on(async move {
+                        if let Some(value) = ctx.read().await.get(&key).cloned() {
+                            let bytes = value.as_bytes();
+                            let to_write = bytes.len().min(out_len);
+                            let mem_data = memory.data_mut(&mut caller);
+                            mem_data[out_ptr..out_ptr + to_write]
+                                .copy_from_slice(&bytes[..to_write]);
+                            to_write as i32
+                        } else {
+                            0i32
+                        }
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // get_session_id(out_ptr, out_len) -> bytes_written | 0
+        linker
+            .func_wrap(
+                "env",
+                "get_session_id",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let state = caller.data();
+                    let sid = state.shared_state.session_id.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    let out_ptr = out_ptr as usize;
+                    let out_len = out_len as usize;
+                    Ok(rt.block_on(async move {
+                        if let Some(session_id) = sid.read().await.clone() {
+                            let bytes = session_id.as_bytes();
+                            let to_write = bytes.len().min(out_len);
+                            let mem_data = memory.data_mut(&mut caller);
+                            mem_data[out_ptr..out_ptr + to_write]
+                                .copy_from_slice(&bytes[..to_write]);
+                            to_write as i32
+                        } else {
+                            0i32
+                        }
+                    }))
+                },
+            )
+            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+
+        // --- Plugin Info ---
+
+        // get_plugin_id(out_ptr, out_len) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "get_plugin_id",
+                |mut caller: wasmtime::Caller<'_, PluginState>,
+                 out_ptr: i32,
+                 out_len: i32|
+                 -> anyhow::Result<i32> {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                    let state = caller.data();
+                    let plugin_id = state.plugin_id.clone();
+                    let bytes = plugin_id.as_bytes();
+                    let to_write = bytes.len().min(out_len as usize);
+                    let data_mut = memory.data_mut(&mut caller);
+                    data_mut[out_ptr as usize..out_ptr as usize + to_write]
+                        .copy_from_slice(&bytes[..to_write]);
+                    Ok(to_write as i32)
                 },
             )
             .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
@@ -213,7 +737,7 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), None)
+                    self.load_wasm_plugin(&wasm_path, config.clone(), &plugin_id, None)
                         .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
@@ -248,6 +772,7 @@ impl PluginRuntime {
         &self,
         wasm_path: &std::path::Path,
         config: serde_json::Value,
+        plugin_id: &str,
         preserved_memory: Option<HashMap<String, Vec<u8>>>,
     ) -> crate::Result<(Option<wasmtime::Store<PluginState>>, Option<wasmtime::Instance>)> {
         use wasmtime::Module;
@@ -264,9 +789,9 @@ impl PluginRuntime {
         })?;
 
         let state = if let Some(memory) = preserved_memory {
-            PluginState::new_with_memory(config, memory)
+            PluginState::new_with_memory(config, memory, self.shared_state.clone(), plugin_id.to_string())
         } else {
-            PluginState::new(config)
+            PluginState::new(config, self.shared_state.clone(), plugin_id.to_string())
         };
         let mut store = wasmtime::Store::new(&self.engine, state);
 
@@ -374,7 +899,7 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), preserved_memory)
+                    self.load_wasm_plugin(&wasm_path, config.clone(), plugin_id, preserved_memory)
                         .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
@@ -1108,15 +1633,17 @@ mod tests {
 
     #[test]
     fn test_plugin_state_new() {
-        let state = PluginState::new(serde_json::json!({"key": "value"}));
+        let shared_state = Arc::new(PluginSharedState::new());
+        let state = PluginState::new(serde_json::json!({"key": "value"}), shared_state, "test.plugin".to_string());
         assert_eq!(state.config["key"], "value");
     }
 
     #[test]
     fn test_plugin_state_new_with_memory() {
+        let shared_state = Arc::new(PluginSharedState::new());
         let mut memory = HashMap::new();
         memory.insert("data".to_string(), vec![1, 2, 3]);
-        let state = PluginState::new_with_memory(serde_json::json!({}), memory);
+        let state = PluginState::new_with_memory(serde_json::json!({}), memory, shared_state, "test.plugin".to_string());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let stored = rt.block_on(async {
             let m = state.memory.read().await;
