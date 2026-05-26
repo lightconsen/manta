@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tracing::{debug, error, info};
 
 use crate::agent::Agent;
@@ -302,7 +303,7 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
 
 /// HTML page with terminal interface
 async fn index_handler() -> Html<String> {
-    Html(terminal_html())
+    Html(terminal_html().to_string())
 }
 
 /// WebSocket upgrade handler
@@ -619,7 +620,8 @@ async fn web_terminal_chat_daemon_handler(
 }
 
 /// HTML/CSS/JS for the terminal interface (loaded from web/dist/index.html)
-fn terminal_html() -> String {
+#[allow(clippy::incompatible_msrv)]
+static TERMINAL_HTML: LazyLock<String> = LazyLock::new(|| {
     let version = env!("CARGO_PKG_VERSION");
     match std::fs::read_to_string("web/dist/index.html") {
         Ok(html) => html.replace("{VERSION}", version),
@@ -628,6 +630,10 @@ fn terminal_html() -> String {
                 .to_string()
         }
     }
+});
+
+fn terminal_html() -> &'static str {
+    &TERMINAL_HTML
 }
 
 #[cfg(test)]

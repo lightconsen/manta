@@ -626,7 +626,6 @@ impl SecurityAuditor {
         }
 
         use crate::security::secrets::SecretScanner;
-        use std::fs;
         use std::path::Path;
 
         let scanner = SecretScanner::with_default_patterns();
@@ -640,7 +639,7 @@ impl SecurityAuditor {
                 continue;
             }
 
-            let entries = match fs::read_dir(path) {
+            let mut entries = match tokio::fs::read_dir(path).await {
                 Ok(entries) => entries,
                 Err(e) => {
                     warn!("Failed to read directory {}: {}", path_str, e);
@@ -648,7 +647,7 @@ impl SecurityAuditor {
                 }
             };
 
-            for entry in entries.flatten() {
+            while let Some(entry) = entries.next_entry().await.ok().flatten() {
                 let file_path = entry.path();
                 let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
@@ -676,7 +675,7 @@ impl SecurityAuditor {
                 audit.checks_performed += 1;
 
                 // Read and scan the file
-                let content = match fs::read_to_string(&file_path) {
+                let content = match tokio::fs::read_to_string(&file_path).await {
                     Ok(content) => content,
                     Err(e) => {
                         debug!("Failed to read file {}: {}", file_path.display(), e);
@@ -734,7 +733,6 @@ impl SecurityAuditor {
     /// Check for potential sensitive data in error message patterns
     async fn check_error_message_leaks(&self) -> Option<PotentialLeak> {
         // Scan for patterns that might expose sensitive data in errors
-        use std::fs;
         use std::path::Path;
 
         let sensitive_patterns = [
@@ -752,7 +750,11 @@ impl SecurityAuditor {
         }
 
         // Check common error formatting patterns in source files
-        for entry in fs::read_dir(src_path).ok()?.flatten() {
+        let mut entries = match tokio::fs::read_dir(src_path).await {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+        while let Some(entry) = entries.next_entry().await.ok().flatten() {
             let file_path = entry.path();
             if !file_path.is_file() {
                 continue;
@@ -763,7 +765,7 @@ impl SecurityAuditor {
                 continue;
             }
 
-            let content = match fs::read_to_string(&file_path) {
+            let content = match tokio::fs::read_to_string(&file_path).await {
                 Ok(c) => c,
                 Err(_) => continue,
             };

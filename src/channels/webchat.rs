@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Default WebSocket port for WebChat
 const DEFAULT_WEBCHAT_PORT: u16 = 8081;
@@ -230,7 +230,9 @@ impl WebchatChannel {
                 html_content: None,
             };
             let json = serde_json::to_string(&msg).unwrap_or_default();
-            let _ = conn.sender.send(json);
+            if conn.sender.send(json).is_err() {
+                warn!("WebChat message send failed: receiver closed");
+            }
             Ok(())
         } else {
             Err(crate::error::MantaError::NotFound {
@@ -249,7 +251,9 @@ impl WebchatChannel {
                 html_content: None,
             };
             let json = serde_json::to_string(&msg).unwrap_or_default();
-            let _ = conn.sender.send(json);
+            if conn.sender.send(json).is_err() {
+                warn!("WebChat broadcast send failed: receiver closed");
+            }
         }
         Ok(())
     }
@@ -556,7 +560,9 @@ impl Channel for WebchatChannel {
                 is_typing: true,
             };
             let json = serde_json::to_string(&msg).unwrap_or_default();
-            let _ = conn.sender.send(json);
+            if conn.sender.send(json).is_err() {
+                warn!("WebChat typing send failed: receiver closed");
+            }
         }
         Ok(())
     }

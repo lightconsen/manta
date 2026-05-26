@@ -231,7 +231,6 @@ impl LarkChannel {
     }
 
     /// Check if user is allowed (legacy; prefer `check_access` for policy-aware checks)
-    #[allow(dead_code)]
     fn is_user_allowed(&self, user_id: &str) -> bool {
         if self.config.allowed_users.is_empty() {
             return true;

@@ -10,7 +10,6 @@
 // Transitional: management REST handlers are no longer routed (protocol.md v1.0
 // Phase 3) but kept in source for reference during the migration window.
 // They will be fully removed in Phase 5 cleanup.
-#![allow(dead_code)]
 #![allow(unused_imports)]
 
 use axum::{
@@ -2065,31 +2064,35 @@ impl Gateway {
             .with_state(state.clone());
 
         // Admin tier: Essential APIs (not deprecated)
-        let essential_router = Router::new()
-            // Health checks (public)
+        // Public health checks (no auth required)
+        let essential_public_router = Router::new()
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
             .route("/live", get(live_handler))
-            // WebSocket endpoints (localhost/Tailscale only)
-            .route("/ws/canvas/:id", get(canvas_ws_handler))
+            .route("/api/v1/health", get(health_handler))
+            .route("/api/v1/metrics", get(metrics_handler));
+
+        // Authenticated essential APIs (auth required)
+        let essential_auth_router = Router::new()
             // OpenAI-compatible API
             .route("/v1/chat/completions", post(openai_chat_completions_handler))
             .route("/v1/models", get(openai_list_models_handler))
             // Internal model catalog API
             .route("/api/v1/models", get(list_models_handler))
-            // Versioned health and metrics endpoints
-            .route("/api/v1/health", get(health_handler))
-            .route("/api/v1/metrics", get(metrics_handler))
-            // Manta as MCP server – Streamable-HTTP endpoint
+            // WebSocket canvas
+            .route("/ws/canvas/:id", get(canvas_ws_handler))
+            // Manta as MCP server -- Streamable-HTTP endpoint
             .route("/mcp", post(manta_as_mcp_server_handler))
-            // Admin redirect — management UI moved to CLI
-            .route("/admin", get(admin_redirect_handler));
+            // Admin redirect -- management UI moved to CLI
+            .route("/admin", get(admin_redirect_handler))
+            .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
-        // Apply security middleware to essential router
+        let essential_router = essential_public_router.merge(essential_auth_router);
+
+        // Apply remaining middleware layers to essential routes
         // (order matters - applied in reverse)
         let admin_router = essential_router
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
-            .layer(from_fn_with_state(state.clone(), middleware::auth_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
             .layer(from_fn(middleware::tailscale_only_middleware))
             .layer(from_fn(middleware::security_headers_middleware))
@@ -4731,6 +4734,7 @@ struct HealthStatus {
     message: String,
 }
 
+#[allow(dead_code)]
 /// Simple chat handler for backwards compatibility with DaemonClient
 #[derive(Debug, Deserialize)]
 struct ChatRequestCompat {
@@ -4738,6 +4742,7 @@ struct ChatRequestCompat {
     conversation_id: Option<String>,
 }
 
+#[allow(dead_code)]
 async fn chat_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<ChatRequestCompat>,
@@ -4836,6 +4841,7 @@ async fn chat_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     // Get running agents
     let running_agents = state.agents.read().await;
@@ -4875,6 +4881,7 @@ async fn list_agents_handler(State(state): State<Arc<GatewayState>>) -> impl Int
     Json(combined)
 }
 
+#[allow(dead_code)]
 async fn create_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Json(config): Json<AgentConfig>,
@@ -5185,6 +5192,7 @@ async fn create_agent_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 async fn get_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Path(id): Path<String>,
@@ -5200,6 +5208,7 @@ async fn get_agent_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn delete_agent_handler(
     State(state): State<Arc<GatewayState>>,
     Path(id): Path<String>,
@@ -5248,12 +5257,14 @@ async fn delete_agent_handler(
     StatusCode::NO_CONTENT
 }
 
+#[allow(dead_code)]
 async fn list_channels_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let channels = state.channels.read().await;
     let list: Vec<_> = channels.keys().cloned().collect();
     Json(list)
 }
 
+#[allow(dead_code)]
 /// Request body for web terminal chat
 #[derive(Debug, Deserialize)]
 struct WebTerminalChatRequest {
@@ -5265,6 +5276,7 @@ struct WebTerminalChatRequest {
     user_id: Option<String>,
 }
 
+#[allow(dead_code)]
 /// Response for web terminal chat
 #[derive(Debug, Serialize)]
 struct WebTerminalChatResponse {
@@ -5276,6 +5288,7 @@ struct WebTerminalChatResponse {
     status: String,
 }
 
+#[allow(dead_code)]
 /// `POST /api/chat` — Send a message from the web terminal.
 ///
 /// The message is queued for processing and a 202 Accepted is returned immediately.
@@ -5321,6 +5334,7 @@ async fn web_terminal_chat_handler(
     (StatusCode::ACCEPTED, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 async fn send_message_handler(
     State(state): State<Arc<GatewayState>>,
     Path(session_id): Path<String>,
@@ -5400,6 +5414,7 @@ async fn send_message_handler(
     (StatusCode::ACCEPTED, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 /// Get conversation history
 async fn get_conversation_history_handler(
     State(state): State<Arc<GatewayState>>,
@@ -5451,6 +5466,7 @@ async fn get_conversation_history_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Get last conversation for a user
 async fn get_last_conversation_handler(
     State(state): State<Arc<GatewayState>>,
@@ -5484,6 +5500,7 @@ async fn get_last_conversation_handler(
     }
 }
 
+#[allow(dead_code)]
 /// List all conversations for a user
 async fn list_conversations_handler(
     State(state): State<Arc<GatewayState>>,
@@ -5521,6 +5538,7 @@ async fn list_conversations_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let agents = state.agents.read().await;
     let channels = state.channels.read().await;
@@ -5535,6 +5553,7 @@ async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResp
     }))
 }
 
+#[allow(dead_code)]
 async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
     let last_cycle = state
@@ -5559,6 +5578,7 @@ async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl I
     }))
 }
 
+#[allow(dead_code)]
 /// GET /api/v1/cost/status
 ///
 /// Returns current spend and action-rate counters from the live CostGuard.
@@ -5649,6 +5669,7 @@ async fn handle_canvas_websocket(
     info!("Canvas WebSocket disconnected: {}", canvas_id.0);
 }
 
+#[allow(dead_code)]
 async fn create_canvas_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let (event_tx, _) = mpsc::channel(100);
     let session = state.canvas_manager.create_session(event_tx).await;
@@ -5662,6 +5683,7 @@ async fn create_canvas_handler(State(state): State<Arc<GatewayState>>) -> impl I
     )
 }
 
+#[allow(dead_code)]
 async fn get_canvas_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5685,6 +5707,7 @@ async fn get_canvas_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn delete_canvas_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5697,6 +5720,7 @@ async fn delete_canvas_handler(
 
 // Provider Management Handlers
 
+#[allow(dead_code)]
 async fn list_providers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let providers = state.model_router.list_providers().await;
     Json(serde_json::json!({
@@ -5705,6 +5729,7 @@ async fn list_providers_handler(State(state): State<Arc<GatewayState>>) -> impl 
     }))
 }
 
+#[allow(dead_code)]
 async fn get_provider_health_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5727,6 +5752,7 @@ async fn get_provider_health_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn switch_model_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SwitchModelRequest>,
@@ -5750,6 +5776,7 @@ async fn switch_model_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn enable_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5772,6 +5799,7 @@ async fn enable_provider_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn disable_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5794,6 +5822,7 @@ async fn disable_provider_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn check_provider_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5819,6 +5848,7 @@ async fn check_provider_handler(
 
 // Provider Usage Handlers
 
+#[allow(dead_code)]
 async fn provider_usage_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let snapshots = state.model_router.all_snapshots_with_quota().await;
     Json(serde_json::json!({
@@ -5827,6 +5857,7 @@ async fn provider_usage_handler(State(state): State<Arc<GatewayState>>) -> impl 
     }))
 }
 
+#[allow(dead_code)]
 async fn provider_usage_by_id_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5842,6 +5873,7 @@ async fn provider_usage_by_id_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn get_fallback_chain_handler(
     Path(alias): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5853,11 +5885,13 @@ async fn get_fallback_chain_handler(
     }))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SetFallbackChainRequest {
     providers: Vec<String>,
 }
 
+#[allow(dead_code)]
 async fn set_fallback_chain_handler(
     Path(alias): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5887,6 +5921,7 @@ async fn set_fallback_chain_handler(
 
 // Auth Profile Handlers
 
+#[allow(dead_code)]
 async fn get_auth_profile_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5902,6 +5937,7 @@ async fn get_auth_profile_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn rotate_auth_profile_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -5924,6 +5960,7 @@ async fn rotate_auth_profile_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn list_auth_profiles_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let profiles = state.model_router.list_auth_profiles().await;
     Json(serde_json::json!({
@@ -5939,6 +5976,7 @@ async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl Int
     }))
 }
 
+#[allow(dead_code)]
 async fn get_default_model_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let default = state.model_router.get_default_model().await;
     Json(serde_json::json!({
@@ -5948,6 +5986,7 @@ async fn get_default_model_handler(State(state): State<Arc<GatewayState>>) -> im
 
 // Vector Memory API Handlers
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemorySearchRequest {
     query: String,
@@ -5961,6 +6000,7 @@ fn default_memory_limit() -> usize {
     10
 }
 
+#[allow(dead_code)]
 async fn memory_search_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<MemorySearchRequest>,
@@ -5997,6 +6037,7 @@ async fn memory_search_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemoryAddRequest {
     content: String,
@@ -6006,6 +6047,7 @@ pub struct MemoryAddRequest {
     collection: String,
 }
 
+#[allow(dead_code)]
 async fn memory_add_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<MemoryAddRequest>,
@@ -6041,6 +6083,7 @@ async fn memory_add_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn list_memory_collections_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
@@ -6065,6 +6108,7 @@ async fn list_memory_collections_handler(
 
 // Plugin Management API Handlers
 
+#[allow(dead_code)]
 async fn list_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let plugins = state.plugin_manager.list_plugins().await;
     let plugin_list: Vec<_> = plugins
@@ -6085,6 +6129,7 @@ async fn list_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl In
     }))
 }
 
+#[allow(dead_code)]
 async fn enable_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6106,6 +6151,7 @@ async fn enable_plugin_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn disable_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6127,6 +6173,7 @@ async fn disable_plugin_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn unload_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6148,6 +6195,7 @@ async fn unload_plugin_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn reload_plugin_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6169,6 +6217,7 @@ async fn reload_plugin_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn reload_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     // Unload all currently loaded plugins, then re-initialize from disk.
     let plugins = state.plugin_manager.list_plugins().await;
@@ -6200,6 +6249,7 @@ async fn reload_plugins_handler(State(state): State<Arc<GatewayState>>) -> impl 
 
 // Skills API Handlers
 
+#[allow(dead_code)]
 async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let skills_manager = state.skills_manager.read().await;
     let skills = skills_manager.list_skills().await;
@@ -6224,6 +6274,7 @@ async fn list_skills_handler(State(state): State<Arc<GatewayState>>) -> impl Int
     }))
 }
 
+#[allow(dead_code)]
 async fn get_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6251,6 +6302,7 @@ async fn get_skill_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn enable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6273,6 +6325,7 @@ async fn enable_skill_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn disable_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6305,6 +6358,7 @@ struct RunSkillRequest {
     context: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 async fn run_skill_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6425,6 +6479,7 @@ async fn run_skill_handler(
 
 // ACP (Agent Control Plane) API Handlers
 
+#[allow(dead_code)]
 async fn list_acp_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let subagents = state.acp.list_subagents().await;
     let sessions: Vec<_> = subagents
@@ -6447,6 +6502,7 @@ async fn list_acp_sessions_handler(State(state): State<Arc<GatewayState>>) -> im
     }))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SpawnSubagentRequest {
     task: String,
@@ -6460,6 +6516,7 @@ fn default_acp_mode() -> String {
     "run".to_string()
 }
 
+#[allow(dead_code)]
 async fn acp_spawn_handler(
     State(state): State<Arc<GatewayState>>,
     Json(body): Json<SpawnSubagentRequest>,
@@ -6588,6 +6645,7 @@ async fn acp_spawn_handler(
     }
 }
 
+#[allow(dead_code)]
 async fn terminate_acp_session_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6635,11 +6693,13 @@ async fn terminate_acp_session_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AcpMessageRequest {
     message: String,
 }
 
+#[allow(dead_code)]
 async fn acp_session_message_handler(
     Path(id): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -6708,6 +6768,7 @@ async fn acp_session_message_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Get ACP session runtime status
 async fn acp_session_status_handler(
     Path(id): Path<String>,
@@ -6734,6 +6795,7 @@ async fn acp_session_status_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Pause an ACP session
 async fn acp_session_pause_handler(
     Path(id): Path<String>,
@@ -6748,6 +6810,7 @@ async fn acp_session_pause_handler(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 /// Resume a paused ACP session
 async fn acp_session_resume_handler(
     Path(id): Path<String>,
@@ -6762,6 +6825,7 @@ async fn acp_session_resume_handler(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 /// Single-step a paused ACP session
 async fn acp_session_step_handler(
     Path(id): Path<String>,
@@ -6776,6 +6840,7 @@ async fn acp_session_step_handler(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 /// Cancel a running ACP session
 async fn acp_session_cancel_handler(
     Path(id): Path<String>,
@@ -6790,6 +6855,7 @@ async fn acp_session_cancel_handler(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 /// Get subagent tree for an ACP session
 async fn acp_session_tree_handler(
     Path(id): Path<String>,
@@ -6805,6 +6871,7 @@ async fn acp_session_tree_handler(
     (StatusCode::OK, Json(resp)).into_response()
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AcpExecuteRequest {
     message: String,
@@ -6812,6 +6879,7 @@ pub struct AcpExecuteRequest {
     agent_id: Option<String>,
 }
 
+#[allow(dead_code)]
 /// Execute a message in ACP session mode (persistent context)
 async fn acp_execute_session_handler(
     State(state): State<Arc<GatewayState>>,
@@ -6860,6 +6928,7 @@ async fn acp_execute_session_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Execute a message in ACP run mode (one-shot, no persistence)
 async fn acp_execute_run_handler(
     State(state): State<Arc<GatewayState>>,
@@ -6904,6 +6973,7 @@ async fn acp_execute_run_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Handler to spawn a discovered agent from the registry
 async fn spawn_discovered_agent_handler(
     Path(id): Path<String>,
@@ -7120,6 +7190,7 @@ async fn spawn_discovered_agent_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Handler to spawn all discovered agents
 async fn spawn_all_discovered_agents_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7270,6 +7341,7 @@ async fn spawn_all_discovered_agents_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// Handler to list discovered agents in registry
 async fn list_discovered_agents_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7297,6 +7369,7 @@ async fn list_discovered_agents_handler(
 // MCP REST API handlers (9.5)
 // ─────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// List connected MCP servers
 async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let servers = state.mcp_manager.list_servers().await;
@@ -7306,6 +7379,7 @@ async fn list_mcp_servers_handler(State(state): State<Arc<GatewayState>>) -> imp
     }))
 }
 
+#[allow(dead_code)]
 /// Request body for connecting an MCP server
 #[derive(Debug, Deserialize)]
 struct McpConnectRequest {
@@ -7319,10 +7393,12 @@ struct McpConnectRequest {
     timeout_secs: u64,
 }
 
+#[allow(dead_code)]
 fn mcp_default_timeout() -> u64 {
     30
 }
 
+#[allow(dead_code)]
 /// Connect to an MCP server
 async fn connect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7362,6 +7438,7 @@ async fn connect_mcp_server_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Disconnect from an MCP server
 async fn disconnect_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7386,6 +7463,7 @@ async fn disconnect_mcp_server_handler(
     }
 }
 
+#[allow(dead_code)]
 /// List tools from an MCP server
 async fn list_mcp_tools_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7411,6 +7489,7 @@ async fn list_mcp_tools_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Call an MCP tool
 async fn call_mcp_tool_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7437,6 +7516,7 @@ async fn call_mcp_tool_handler(
     }
 }
 
+#[allow(dead_code)]
 /// List resources from an MCP server
 async fn list_mcp_resources_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7467,12 +7547,14 @@ async fn list_mcp_resources_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Request body for reading a resource
 #[derive(Debug, Deserialize)]
 struct McpReadResourceRequest {
     uri: String,
 }
 
+#[allow(dead_code)]
 /// Read a resource from an MCP server
 async fn read_mcp_resource_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7953,18 +8035,21 @@ async fn openai_list_models_handler(State(state): State<Arc<GatewayState>>) -> i
 
 // ── Runtime settings CRUD ─────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SetSettingRequest {
     key: String,
     value: serde_json::Value,
 }
 
+#[allow(dead_code)]
 /// `GET /api/settings` — list all runtime key/value settings.
 async fn list_settings_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let settings = state.runtime_settings.read().await.clone();
     Json(settings)
 }
 
+#[allow(dead_code)]
 /// `POST /api/settings` — upsert a runtime setting.
 async fn set_setting_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7975,6 +8060,7 @@ async fn set_setting_handler(
     Json(serde_json::json!({ "ok": true, "key": req.key }))
 }
 
+#[allow(dead_code)]
 /// `GET /api/settings/:key` — read one setting by key.
 async fn get_setting_handler(
     State(state): State<Arc<GatewayState>>,
@@ -7991,6 +8077,7 @@ async fn get_setting_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/settings/:key` — remove one setting.
 async fn delete_setting_handler(
     State(state): State<Arc<GatewayState>>,
@@ -8010,6 +8097,7 @@ async fn delete_setting_handler(
 
 // ── Tool approval management (human-in-the-loop) ──────────────────────────────
 
+#[allow(dead_code)]
 /// `GET /api/v1/approvals` — list all pending approval requests.
 async fn list_approvals_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let approvals = state
@@ -8019,6 +8107,7 @@ async fn list_approvals_handler(State(state): State<Arc<GatewayState>>) -> impl 
     Json(serde_json::json!({ "approvals": approvals, "count": approvals.len() }))
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/approvals/:id` — get a specific pending approval.
 async fn get_approval_handler(
     Path(id): Path<String>,
@@ -8034,6 +8123,7 @@ async fn get_approval_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/approvals/:id/approve` — approve a pending tool call.
 async fn approve_tool_handler(
     Path(id): Path<String>,
@@ -8054,11 +8144,13 @@ async fn approve_tool_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct DenyApprovalRequest {
     reason: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/approvals/:id/deny` — deny a pending tool call.
 async fn deny_tool_handler(
     Path(id): Path<String>,
@@ -8086,6 +8178,7 @@ async fn deny_tool_handler(
 
 // ── Cron job management ───────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// `GET /api/v1/cron` — list all scheduled jobs.
 async fn list_cron_jobs_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let guard = state.cron_scheduler.read().await;
@@ -8098,6 +8191,7 @@ async fn list_cron_jobs_handler(State(state): State<Arc<GatewayState>>) -> impl 
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AddCronJobRequest {
     name: String,
@@ -8105,6 +8199,7 @@ struct AddCronJobRequest {
     command: String,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/cron` — create a new cron job.
 async fn add_cron_job_handler(
     State(state): State<Arc<GatewayState>>,
@@ -8159,6 +8254,7 @@ async fn add_cron_job_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/cron/:id` — remove a cron job.
 async fn remove_cron_job_handler(
     Path(id): Path<String>,
@@ -8181,6 +8277,7 @@ async fn remove_cron_job_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/cron/:id/enable` — enable a cron job.
 async fn enable_cron_job_handler(
     Path(id): Path<String>,
@@ -8204,6 +8301,7 @@ async fn enable_cron_job_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/cron/:id/disable` — disable a cron job.
 async fn disable_cron_job_handler(
     Path(id): Path<String>,
@@ -8227,6 +8325,7 @@ async fn disable_cron_job_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/cron/:id/run` — trigger a cron job immediately.
 async fn trigger_cron_job_handler(
     Path(id): Path<String>,
@@ -8250,6 +8349,7 @@ async fn trigger_cron_job_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/cron/:id/logs` — return job state / last-run info.
 async fn cron_job_logs_handler(
     Path(id): Path<String>,
@@ -8285,6 +8385,7 @@ async fn cron_job_logs_handler(
 
 // ── Entity management ─────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// `GET /api/v1/entities` — list all entities.
 async fn list_entities_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let storage = state.storage.read().await;
@@ -8302,6 +8403,7 @@ async fn list_entities_handler(State(state): State<Arc<GatewayState>>) -> impl I
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct CreateEntityRequest {
     name: String,
@@ -8313,6 +8415,7 @@ struct CreateEntityRequest {
     status: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/entities` — create a new entity.
 async fn create_entity_handler(
     State(state): State<Arc<GatewayState>>,
@@ -8344,6 +8447,7 @@ async fn create_entity_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/entities/:id` — get a single entity.
 async fn get_entity_handler(
     Path(id): Path<String>,
@@ -8370,6 +8474,7 @@ async fn get_entity_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct UpdateEntityRequest {
     #[serde(default)]
@@ -8382,6 +8487,7 @@ struct UpdateEntityRequest {
     tags: Option<Vec<String>>,
 }
 
+#[allow(dead_code)]
 /// `PUT /api/v1/entities/:id` — update an entity.
 async fn update_entity_handler(
     Path(id): Path<String>,
@@ -8436,6 +8542,7 @@ async fn update_entity_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/entities/:id` — delete an entity.
 async fn delete_entity_handler(
     Path(id): Path<String>,
@@ -8470,6 +8577,7 @@ struct SearchEntitiesRequest {
     entity_type: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/entities/search` — search entities by name.
 async fn search_entities_handler(
     State(state): State<Arc<GatewayState>>,
@@ -8499,6 +8607,7 @@ async fn search_entities_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/entities/export` — export all entities as JSON.
 async fn export_entities_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let storage = state.storage.read().await;
@@ -8513,11 +8622,13 @@ async fn export_entities_handler(State(state): State<Arc<GatewayState>>) -> impl
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ImportEntitiesRequest {
     entities: Vec<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/entities/import` — bulk import entities.
 async fn import_entities_handler(
     State(state): State<Arc<GatewayState>>,
@@ -8548,6 +8659,7 @@ async fn import_entities_handler(
 
 // ── Team management ───────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// `GET /api/v1/teams` — list all teams.
 async fn list_teams_handler(_state: State<Arc<GatewayState>>) -> impl IntoResponse {
     match crate::team::Team::list_all().await {
@@ -8562,6 +8674,7 @@ async fn list_teams_handler(_state: State<Arc<GatewayState>>) -> impl IntoRespon
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct CreateTeamRequest {
     name: String,
@@ -8569,6 +8682,7 @@ struct CreateTeamRequest {
     description: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/teams` — create a new team.
 async fn create_team_handler(
     _state: State<Arc<GatewayState>>,
@@ -8588,6 +8702,7 @@ async fn create_team_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/teams/:id` — get team details.
 async fn get_team_handler(
     Path(id): Path<String>,
@@ -8600,6 +8715,7 @@ async fn get_team_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/teams/:id` — delete a team.
 async fn delete_team_handler(
     Path(id): Path<String>,
@@ -8619,6 +8735,7 @@ async fn delete_team_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/teams/:id/members` — list team members.
 async fn list_team_members_handler(
     Path(id): Path<String>,
@@ -8634,6 +8751,7 @@ async fn list_team_members_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AddTeamMemberRequest {
     agent: String,
@@ -8641,10 +8759,12 @@ struct AddTeamMemberRequest {
     role: String,
 }
 
+#[allow(dead_code)]
 fn default_member_role() -> String {
     "member".to_string()
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/teams/:id/members` — add a member to the team.
 async fn add_team_member_handler(
     Path(id): Path<String>,
@@ -8673,6 +8793,7 @@ async fn add_team_member_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/teams/:id/members/:agent` — remove a member from the team.
 async fn remove_team_member_handler(
     Path((id, agent)): Path<(String, String)>,
@@ -8700,6 +8821,7 @@ async fn remove_team_member_handler(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AssignTeamTaskRequest {
     task: String,
@@ -8707,10 +8829,12 @@ struct AssignTeamTaskRequest {
     priority: String,
 }
 
+#[allow(dead_code)]
 fn default_task_priority() -> String {
     "normal".to_string()
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/teams/:id/tasks` — assign a task to the team via the mesh.
 async fn assign_team_task_handler(
     Path(id): Path<String>,
@@ -8750,6 +8874,7 @@ async fn assign_team_task_handler(
 
 // ── Session / Thread / Turn API ───────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// `GET /api/sessions` — list all active sessions and their routing info.
 async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let bindings = state.agent_router.list_bindings().await;
@@ -8770,6 +8895,7 @@ async fn list_sessions_handler(State(state): State<Arc<GatewayState>>) -> impl I
     }))
 }
 
+#[allow(dead_code)]
 /// Resolve session_id → query sender, returning a 404 response on failure.
 ///
 /// The caller must NOT hold any lock when invoking this helper.
@@ -8805,6 +8931,7 @@ async fn resolve_session_query_tx(
     }
 }
 
+#[allow(dead_code)]
 /// `GET /api/sessions/:id/threads` — list threads for a session's agent.
 async fn list_threads_handler(
     Path(session_id): Path<String>,
@@ -8859,6 +8986,7 @@ async fn list_threads_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `GET /api/sessions/:id/threads/:thread_id/turns` — list turns for a thread.
 async fn list_turns_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
@@ -8926,6 +9054,7 @@ async fn list_turns_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/sessions/:id/threads/:thread_id/undo` — undo the last turn of a thread.
 async fn undo_turn_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
@@ -8982,6 +9111,7 @@ async fn undo_turn_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/sessions/:id/threads/:thread_id/redo` — redo the most recently undone turn.
 async fn redo_turn_handler(
     Path((session_id, thread_id)): Path<(String, String)>,
@@ -9091,12 +9221,14 @@ async fn web_terminal_events_handler(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+#[allow(dead_code)]
 /// List all registered event hooks
 async fn list_hooks_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let hooks = state.hook_registry.list_hooks().await;
     Json(hooks)
 }
 
+#[allow(dead_code)]
 /// Unregister a hook by name
 async fn unregister_hook_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9115,6 +9247,7 @@ async fn unregister_hook_handler(
     }
 }
 
+#[allow(dead_code)]
 /// Get current gateway configuration
 async fn get_config_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let config = state.config.read().await;
@@ -9128,6 +9261,7 @@ async fn get_config_handler(State(state): State<Arc<GatewayState>>) -> impl Into
     }
 }
 
+#[allow(dead_code)]
 /// Update gateway configuration and persist to disk
 async fn put_config_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9194,6 +9328,7 @@ async fn put_config_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// Validate a configuration without persisting it
 async fn validate_config_handler(Json(config): Json<GatewayConfig>) -> impl IntoResponse {
     // Basic validation: try to serialize and deserialize as TOML
@@ -9222,29 +9357,34 @@ async fn validate_config_handler(Json(config): Json<GatewayConfig>) -> impl Into
 
 // ── Pairing / DM Access Control Handlers ───────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct PairingChannelQuery {
     channel: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ApprovePairingRequest {
     channel: String,
     code: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RejectPairingRequest {
     channel: String,
     code: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RevokePairingRequest {
     channel: String,
     user_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AddAllowlistRequest {
     channel: String,
@@ -9252,6 +9392,7 @@ struct AddAllowlistRequest {
     username: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/pairing/pending` — list pending pairing requests.
 async fn list_pairing_pending_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9275,6 +9416,7 @@ async fn list_pairing_pending_handler(
     Json(pending)
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/pairing/authorized` — list authorized users.
 async fn list_pairing_authorized_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9291,6 +9433,7 @@ async fn list_pairing_authorized_handler(
     Json(authorized)
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/pairing/approve` — approve a pending request by code.
 async fn approve_pairing_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9349,6 +9492,7 @@ async fn approve_pairing_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/pairing/reject` — reject a pending request by code.
 async fn reject_pairing_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9403,6 +9547,7 @@ async fn reject_pairing_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/pairing/revoke` — revoke an authorized user.
 async fn revoke_pairing_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9455,6 +9600,7 @@ async fn revoke_pairing_handler(
     }
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/pairing/allowlist` — add a user directly to the allowlist.
 async fn add_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9489,12 +9635,14 @@ async fn add_allowlist_handler(
 
 // ── Command Gate Handlers ──────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SetGateLevelRequest {
     user_id: String,
     level: String,
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/gate/levels` — list all configured user levels.
 async fn list_gate_levels_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let levels = state.command_gate.user_levels();
@@ -9508,6 +9656,7 @@ async fn list_gate_levels_handler(State(state): State<Arc<GatewayState>>) -> imp
     }))
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/gate/levels` — set a user's permission level.
 async fn set_gate_level_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9563,6 +9712,7 @@ async fn set_gate_level_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/gate/levels/:user_id` — clear a user's custom level.
 async fn clear_gate_level_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9593,17 +9743,20 @@ async fn clear_gate_level_handler(
 
 // ── Mention Gate Handlers ──────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SetMentionPolicyRequest {
     policy: crate::security::mention_gate::MentionPolicy,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AddMentionPatternRequest {
     channel: String,
     pattern: String,
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/mentions/policy` — get current mention gate policy.
 async fn get_mention_policy_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let policy = state.mention_gate.policy().await;
@@ -9616,6 +9769,7 @@ async fn get_mention_policy_handler(State(state): State<Arc<GatewayState>>) -> i
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/mentions/policy` — set mention gate policy.
 async fn set_mention_policy_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9632,6 +9786,7 @@ async fn set_mention_policy_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/mentions/allowlist` — list allowlist entries for a channel.
 async fn list_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9652,6 +9807,7 @@ async fn list_mention_allowlist_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/mentions/allowlist` — add a pattern to the allowlist.
 async fn add_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9672,6 +9828,7 @@ async fn add_mention_allowlist_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/mentions/allowlist/:channel/:pattern` — remove from allowlist.
 async fn remove_mention_allowlist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9692,6 +9849,7 @@ async fn remove_mention_allowlist_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/mentions/blocklist` — list blocklist entries for a channel.
 async fn list_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9712,6 +9870,7 @@ async fn list_mention_blocklist_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `POST /api/v1/mentions/blocklist` — add a pattern to the blocklist.
 async fn add_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9732,6 +9891,7 @@ async fn add_mention_blocklist_handler(
         .into_response()
 }
 
+#[allow(dead_code)]
 /// `DELETE /api/v1/mentions/blocklist/:channel/:pattern` — remove from blocklist.
 async fn remove_mention_blocklist_handler(
     State(state): State<Arc<GatewayState>>,
@@ -9754,12 +9914,14 @@ async fn remove_mention_blocklist_handler(
 
 // ── Audit Log Handler ──────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AuditLogQuery {
     limit: Option<usize>,
     event_type: Option<String>,
 }
 
+#[allow(dead_code)]
 /// `GET /api/v1/audit/log` — retrieve recent audit log entries.
 async fn list_audit_log_handler(
     State(state): State<Arc<GatewayState>>,

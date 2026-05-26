@@ -107,10 +107,12 @@ impl TailscaleAuthenticator {
 async fn whois_local_api(ip: &str) -> Option<TailscaleUser> {
     #[cfg(unix)]
     {
+        use std::os::unix::fs::FileTypeExt;
+
         // Try to connect to the Tailscale daemon socket
         let socket_path = "/var/run/tailscale/tailscaled.sock";
-        let stream = std::fs::metadata(socket_path).ok()?;
-        if !stream.is_file() {
+        let meta = tokio::fs::metadata(socket_path).await.ok()?;
+        if !meta.is_file() && !meta.file_type().is_socket() {
             return None;
         }
 

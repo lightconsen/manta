@@ -243,7 +243,6 @@ impl QqChannel {
     }
 
     /// Check if QQ number is allowed (legacy; prefer `check_access` for policy-aware checks)
-    #[allow(dead_code)]
     fn is_qq_allowed(&self, qq: &str) -> bool {
         if self.config.allowed_qqs.is_empty() {
             return true;

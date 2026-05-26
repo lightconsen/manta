@@ -133,7 +133,13 @@ impl AuthProfileStore {
             for label in &labels {
                 query = query.bind(*label);
             }
-            query.execute(&self.pool).await.ok();
+            query.execute(&self.pool).await.map_err(|e| {
+                warn!("Failed to clean up stale auth profile rows for {}: {}", provider, e);
+                crate::error::MantaError::Storage {
+                    context: format!("Failed to clean up stale auth profile rows for {}", provider),
+                    details: e.to_string(),
+                }
+            })?;
         }
 
         debug!("Saved auth profile state for '{}' ({} keys)", provider, statuses.len());

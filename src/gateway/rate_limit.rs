@@ -359,9 +359,8 @@ pub async fn multi_tier_rate_limit_middleware(
     let ip = extract_client_ip(&req);
     let endpoint = req.uri().path().to_string();
 
-    // Check multi-tier rate limit
-    let multi_tier = Arc::new(MultiTierRateLimiter::default());
-    let result = multi_tier.check(&user_id, ip, &endpoint).await;
+    // Check multi-tier rate limit using the shared instance from GatewayState
+    let result = state.multi_tier_rate_limiter.check(&user_id, ip, &endpoint).await;
 
     match result {
         MultiTierResult::Allowed { remaining } => {

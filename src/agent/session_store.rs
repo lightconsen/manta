@@ -10,7 +10,7 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// Session metadata for querying
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +240,7 @@ impl SessionStore {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)")
             .execute(&self.pool)
             .await
+            .map_err(|e| warn!("Failed to create session store index idx_sessions_agent: {}", e))
             .ok();
 
         sqlx::query(
@@ -247,11 +248,13 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create session store index idx_sessions_channel: {}", e))
         .ok();
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity)")
             .execute(&self.pool)
             .await
+            .map_err(|e| warn!("Failed to create session store index idx_sessions_activity: {}", e))
             .ok();
 
         sqlx::query(
@@ -259,6 +262,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
+        .map_err(|e| warn!("Failed to create session store index idx_messages_session: {}", e))
         .ok();
 
         // ── Thread / Turn additions ───────────────────────────────────────────
@@ -285,6 +289,7 @@ impl SessionStore {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id)")
             .execute(&self.pool)
             .await
+            .map_err(|e| warn!("Failed to create session store index idx_threads_session: {}", e))
             .ok();
 
         // Migrate existing session_messages rows: add thread_id, turn_index,

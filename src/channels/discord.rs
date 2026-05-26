@@ -922,7 +922,9 @@ impl EventHandler for DiscordHandler {
 
             // Send to handler if configured; responses arrive via Channel::send()
             if let Some(tx) = &self.config.message_tx {
-                let _ = tx.send(incoming);
+                if tx.send(incoming).is_err() {
+                    warn!("Discord message send failed: receiver closed");
+                }
             } else {
                 warn!("No message_tx configured for Discord channel — message dropped");
             }
@@ -973,7 +975,9 @@ impl EventHandler for DiscordHandler {
 
             // Send to handler if configured
             if let Some(tx) = &self.config.message_tx {
-                let _ = tx.send(incoming);
+                if tx.send(incoming).is_err() {
+                    warn!("Discord message send failed: receiver closed");
+                }
             }
         }
     }

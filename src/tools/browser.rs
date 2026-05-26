@@ -255,8 +255,12 @@ impl BrowserTool {
                 match page.find_element(&selector).await {
                     Ok(elem) => {
                         if clear.unwrap_or(true) {
-                            elem.click().await.ok();
-                            elem.click().await.ok();
+                            if elem.click().await.is_err() {
+                                warn!("Failed to click browser element before typing");
+                            }
+                            if elem.click().await.is_err() {
+                                warn!("Failed to click browser element before typing");
+                            }
                         }
                         match elem.type_str(&text).await {
                             Ok(_) => Ok(json!({
