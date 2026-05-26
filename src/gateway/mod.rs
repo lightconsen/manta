@@ -579,6 +579,8 @@ pub struct GatewayState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
+    /// Dream scheduler for background memory consolidation (RwLock for late initialization)
+    pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// DM pairing store for access control
@@ -1449,6 +1451,7 @@ impl Gateway {
             memory_manager: RwLock::new(None),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
+            dream_scheduler: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             device_pairing_store: Arc::new(
@@ -1957,6 +1960,7 @@ impl Gateway {
                 let mut scheduler = crate::memory::DreamScheduler::new(engine);
                 scheduler.start(mm.store(), tier_index);
                 info!("Dream scheduler started");
+                self.state.dream_scheduler.write().await.replace(scheduler);
             }
         }
 
