@@ -32,7 +32,7 @@ pub type LlmCallback = Arc<
 >;
 
 /// Default cron expression: daily at 3:00 AM.
-pub const DEFAULT_MEMORY_DREAMING_FREQUENCY: &str = "0 3 * * *";
+pub const DEFAULT_MEMORY_DREAMING_FREQUENCY: &str = "0 0 3 * * *";
 
 /// Dream execution speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

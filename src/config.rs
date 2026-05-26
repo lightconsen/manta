@@ -333,7 +333,7 @@ impl Default for MemoryDreamingConfig {
 }
 
 fn default_dreaming_frequency() -> String {
-    "0 3 * * *".to_string()
+    "0 0 3 * * *".to_string()
 }
 
 fn default_dreaming_speed() -> String {

@@ -236,6 +236,21 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
+        // ── Migration: add missing columns to existing session_messages tables
+        // CREATE TABLE IF NOT EXISTS won't add columns to existing tables
+        for col in &["transcript_id", "run_id"] {
+            let result =
+                sqlx::query(&format!("ALTER TABLE session_messages ADD COLUMN {} TEXT", col))
+                    .execute(&self.pool)
+                    .await;
+            if let Err(ref e) = result {
+                // "duplicate column name" is expected — ignore it
+                if !e.to_string().contains("duplicate column name") {
+                    warn!("Failed to add column '{}' to session_messages: {}", col, e);
+                }
+            }
+        }
+
         // Indexes for common queries
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)")
             .execute(&self.pool)
