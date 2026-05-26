@@ -216,7 +216,7 @@ workspace_only = true
         // Vector Memory - enabled by default with local GGUF embeddings
         if std::env::var("MANTA_VECTOR_MEMORY_ENABLED")
             .map(|v| v == "true" || v == "1")
-            .unwrap_or(true)
+            .unwrap_or(false)
         {
             gateway_config.vector_memory.enabled = true;
             gateway_config.vector_memory.embedding_api_key =

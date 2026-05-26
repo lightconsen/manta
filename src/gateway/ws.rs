@@ -40,6 +40,8 @@ pub struct WsConnectQuery {
     pub session_id: Option<String>,
     /// Optional: client identifier hint
     pub client: Option<String>,
+    /// Optional: authentication token (alternative to cookie/Bearer)
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,14 +64,40 @@ pub struct WsAuthResult {
 
 /// Middleware: validate WebSocket upgrade credentials before proceeding.
 ///
-/// Runs BEFORE the WebSocket upgrade. Rejects with 401 if no valid
-/// session cookie or shared token is found, regardless of auth_mode.
+/// Runs BEFORE the WebSocket upgrade. When auth_mode is not "none", rejects
+/// with 401 if no valid session cookie, shared token, or query token is found.
 pub async fn ws_auth_middleware(
     State(state): State<Arc<GatewayState>>,
     mut req: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
-    let auth_result = validate_ws_upgrade_request(&state, req.headers()).await;
+    // Check auth_mode — if "none", allow anonymous connections
+    let auth_mode = {
+        let config = state.config.read().await;
+        config.security.auth_mode
+    };
+
+    if matches!(auth_mode, crate::gateway::protocol::AuthMode::None) {
+        // Allow anonymous access
+        req.extensions_mut().insert(WsAuthResult {
+            user_id: UserId::new("anonymous"),
+            scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        });
+        return next.run(req).await;
+    }
+
+    // Extract optional token from query parameter
+    let query_token = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find(|p| p.starts_with("token="))
+                .and_then(|p| urlencoding::decode(&p["token=".len()..]).ok())
+                .map(|s| s.to_string())
+        });
+
+    let auth_result = validate_ws_upgrade_request(&state, req.headers(), query_token.as_deref()).await;
     match auth_result {
         Ok(result) => {
             req.extensions_mut().insert(result);
@@ -83,6 +111,7 @@ pub async fn ws_auth_middleware(
 async fn validate_ws_upgrade_request(
     state: &Arc<GatewayState>,
     headers: &axum::http::HeaderMap,
+    query_token: Option<&str>,
 ) -> Result<WsAuthResult, axum::response::Response> {
     // 1. Try session cookie
     let cookie_config = crate::gateway::auth::SessionCookieConfig::default();
@@ -123,11 +152,21 @@ async fn validate_ws_upgrade_request(
         }
     }
 
-    // Check against shared_token in config
+    // 3. Check against shared_token in config
     let config = state.config.read().await;
     if let Some(shared_token) = &config.security.shared_token {
+        // Check Bearer header token
         if let Some(ref tok) = token_from_header {
             if tok == shared_token {
+                return Ok(WsAuthResult {
+                    user_id: UserId::new("shared"),
+                    scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+        // Check query parameter token
+        if let Some(qt) = query_token {
+            if qt == shared_token {
                 return Ok(WsAuthResult {
                     user_id: UserId::new("shared"),
                     scopes: DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
