@@ -271,6 +271,60 @@ function Avatar({ role }: { role: string }) {
   );
 }
 
+/* ── Live Status Bar ── */
+function LiveStatusBar({
+  liveStatus,
+  startTime,
+}: {
+  liveStatus: { status: "thinking" | "tool_calling"; toolName?: string };
+  startTime: number;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startTime);
+    }, 200);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  const formatElapsed = (ms: number): string => {
+    const sec = Math.floor(ms / 1000);
+    const min = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (min > 0) return `${min}:${s.toString().padStart(2, "0")}`;
+    return `${s}s`;
+  };
+
+  return (
+    <div className="mt-1.5 flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400/80">
+      {/* Animated dot */}
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+      </span>
+      {/* Status text */}
+      <span className="font-medium">
+        {liveStatus.status === "thinking"
+          ? "Thinking"
+          : liveStatus.toolName
+            ? `Running ${liveStatus.toolName}`
+            : "Working"}
+      </span>
+      {/* Animated dots */}
+      <span className="inline-flex w-4">
+        <span className="animate-pulse">.</span>
+        <span className="animate-pulse" style={{ animationDelay: "150ms" }}>.</span>
+        <span className="animate-pulse" style={{ animationDelay: "300ms" }}>.</span>
+      </span>
+      {/* Elapsed timer */}
+      <span className="text-[10px] text-gray-400 dark:text-neutral-500 font-mono tabular-nums">
+        {formatElapsed(elapsed)}
+      </span>
+    </div>
+  );
+}
+
 /* ── Message Bubble ── */
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -345,8 +399,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               <MarkdownMessage text={message.content} />
             </div>
           )}
-          {/* Summary footer */}
-          {hasMetadata && (
+          {/* Summary footer or live status */}
+          {message.liveStatus && (
+            <LiveStatusBar
+              liveStatus={message.liveStatus}
+              startTime={message.timestamp ?? Date.now() - 5000}
+            />
+          )}
+          {!message.liveStatus && hasMetadata && (
             <div className="mt-1.5 flex items-center gap-3 text-[10px] text-gray-400 dark:text-neutral-500">
               {message.durationMs !== undefined && (
                 <span className="flex items-center gap-1">

@@ -47,6 +47,11 @@ export interface ChatMessage {
   toolCount?: number;
   /** Metadata: how long the response took (ms) */
   durationMs?: number;
+  /** Live streaming status — set during response, cleared on complete */
+  liveStatus?: {
+    status: "thinking" | "tool_calling";
+    toolName?: string;
+  };
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
@@ -671,6 +676,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
     // Show "Thinking..." placeholder immediately while waiting for first event
     aiMsg.parts = [{ type: "reasoning", text: "" }];
+    aiMsg.liveStatus = { status: "thinking" };
     this.messagesListeners.forEach((cb) => cb(this.messages));
     yield { content: [makeReasoningPart("")] };
 
@@ -721,6 +727,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.push(...newParts);
             aiMsg.content = currentText;
             aiMsg.parts = newParts.map(toChatPart);
+            aiMsg.liveStatus = { status: "thinking" };
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -755,6 +762,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.push(...newParts);
             aiMsg.content = currentText;
             aiMsg.parts = newParts.map(toChatPart);
+            aiMsg.liveStatus = { status: "tool_calling", toolName };
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -813,6 +821,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             aiMsg.parts = finalParts.map(toChatPart);
             aiMsg.durationMs = durationMs;
             aiMsg.toolCount = toolCount;
+            aiMsg.liveStatus = undefined;
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: finalParts, status: { type: "complete", reason: "stop" } };
             return;
