@@ -89,6 +89,9 @@ pub struct GatewayConfig {
     /// Cron scheduler configuration
     #[serde(default)]
     pub cron: CronConfig,
+    /// Heartbeat scheduler configuration
+    #[serde(default)]
+    pub heartbeat: crate::heartbeat::HeartbeatConfig,
     /// Security configuration
     #[serde(default)]
     pub security: SecurityConfig,
@@ -453,6 +456,7 @@ impl Default for GatewayConfig {
             hot_reload: HotReloadConfig::default(),
             acp: AcpConfig::default(),
             cron: CronConfig::default(),
+            heartbeat: crate::heartbeat::HeartbeatConfig::default(),
             security: SecurityConfig::default(),
             storage: StorageConfig::default(),
             providers: HashMap::new(),
@@ -579,6 +583,14 @@ pub struct GatewayState {
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
+    /// Heartbeat wake channel sender (for requesting immediate heartbeat)
+    pub heartbeat_wake_tx: RwLock<
+        Option<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>,
+    >,
+    /// Heartbeat event broadcast sender (RwLock for late initialization)
+    pub heartbeat_event_tx: RwLock<
+        Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>,
+    >,
     /// Dream scheduler for background memory consolidation (RwLock for late initialization)
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
     /// Auth manager for authentication
@@ -1452,6 +1464,8 @@ impl Gateway {
             memory_manager: RwLock::new(None),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
+            heartbeat_wake_tx: RwLock::new(None),
+            heartbeat_event_tx: RwLock::new(None),
             dream_scheduler: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -2038,6 +2052,27 @@ impl Gateway {
 
         // Start gateway-level self-repair watchdog (60 s interval)
         tokio::spawn(run_repair_loop(self.state.clone()));
+
+        // Start heartbeat runner if enabled
+        if self.config.heartbeat.enabled {
+            let runner = crate::heartbeat::HeartbeatRunner::new(self.state.clone());
+            let wake_tx = runner.wake_sender();
+            let event_tx = runner.event_tx.clone();
+            *self.state.heartbeat_wake_tx.write().await = Some(wake_tx.clone());
+            *self.state.heartbeat_event_tx.write().await = Some(event_tx);
+            tokio::spawn(async move {
+                runner.start().await;
+            });
+            info!("Heartbeat runner started");
+
+            // Wire heartbeat wake sender into cron scheduler so cron jobs
+            // with wake_mode: heartbeat_nuke can trigger immediate heartbeats
+            if let Some(ref cron_arc) = *self.state.cron_scheduler.read().await {
+                let mut scheduler = cron_arc.lock().await;
+                scheduler.set_heartbeat_wake_tx(wake_tx);
+                info!("Cron heartbeat wake integration enabled");
+            }
+        }
 
         // Run the server
         axum::serve(listener, app).await.map_err(|e| {

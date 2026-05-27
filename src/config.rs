@@ -59,6 +59,10 @@ pub struct Config {
     #[serde(default)]
     pub memory: MemoryConfig,
 
+    /// Heartbeat scheduler configuration
+    #[serde(default)]
+    pub heartbeat: crate::heartbeat::HeartbeatConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -522,6 +526,7 @@ impl Default for Config {
             #[cfg(feature = "browser")]
             browser: BrowserConfig::default(),
             memory: MemoryConfig::default(),
+            heartbeat: crate::heartbeat::HeartbeatConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }

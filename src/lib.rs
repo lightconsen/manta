@@ -50,6 +50,7 @@ pub mod dirs;
 pub mod error;
 pub mod export;
 pub mod gateway;
+pub mod heartbeat;
 pub mod inbound;
 pub mod logs;
 pub mod memory;

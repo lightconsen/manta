@@ -238,6 +238,23 @@ pub struct JobState {
     pub consecutive_errors: u32,
 }
 
+/// Wake mode for cron-triggered heartbeat
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeMode {
+    /// No wake — run cron job normally
+    #[default]
+    None,
+    /// Wake the heartbeat runner immediately after job execution
+    HeartbeatWake,
+}
+
+impl WakeMode {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
 /// A cron job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
@@ -251,6 +268,11 @@ pub struct CronJob {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub state: JobState,
+    /// Wake mode — when set to `HeartbeatWake`, sends a wake request to the
+    /// heartbeat runner after the job completes, similar to OpenClaw's
+    /// `requestHeartbeatNow()` for `sessionTarget: "main"` + `wakeMode: "now"`.
+    #[serde(default, skip_serializing_if = "WakeMode::is_none")]
+    pub wake_mode: WakeMode,
 }
 
 impl CronJob {
@@ -278,7 +300,14 @@ impl CronJob {
                 next_run_at: next_run,
                 ..Default::default()
             },
+            wake_mode: WakeMode::None,
         }
+    }
+
+    /// Set the wake mode for heartbeat integration
+    pub fn with_wake_mode(mut self, wake_mode: WakeMode) -> Self {
+        self.wake_mode = wake_mode;
+        self
     }
 
     /// Set the delivery mode
@@ -383,6 +412,9 @@ pub struct CronScheduler {
     store_path: Option<PathBuf>,
     /// Optional sender for Announce-mode delivery events.
     announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
+    /// Optional sender for heartbeat wake requests.
+    /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent here.
+    heartbeat_wake_tx: Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
     /// Notify the timer to re-calculate next wake time
     rearm_notify: Arc<tokio::sync::Notify>,
 }
@@ -407,6 +439,7 @@ impl CronScheduler {
             agent: Arc::new(RwLock::new(None)),
             store_path: None,
             announce_tx: None,
+            heartbeat_wake_tx: None,
             rearm_notify: Arc::new(tokio::sync::Notify::new()),
         };
         (scheduler, command_rx)
@@ -419,6 +452,15 @@ impl CronScheduler {
     /// for receiving the events and routing them to the correct messaging back-end.
     pub fn set_announce_tx(&mut self, tx: mpsc::Sender<AnnounceDelivery>) {
         self.announce_tx = Some(tx);
+    }
+
+    /// Attach a heartbeat wake sender.
+    ///
+    /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent
+    /// to this channel after the job completes, similar to OpenClaw's
+    /// `requestHeartbeatNow()`.
+    pub fn set_heartbeat_wake_tx(&mut self, tx: mpsc::Sender<crate::heartbeat::WakeRequest>) {
+        self.heartbeat_wake_tx = Some(tx);
     }
 
     /// Wire an `Agent` into a running scheduler.
@@ -451,6 +493,7 @@ impl CronScheduler {
         let agent = Arc::clone(&self.agent);
         let store_path = self.store_path.clone();
         let announce_tx = self.announce_tx.clone();
+        let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
 
         // Spawn command handler
         tokio::spawn(async move {
@@ -458,7 +501,7 @@ impl CronScheduler {
                 tokio::select! {
                     cmd = command_rx.recv() => {
                         if let Some(cmd) = cmd {
-                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, cmd).await;
+                            Self::handle_command(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx, cmd).await;
                         }
                     }
                     _ = shutdown_rx.recv() => {
@@ -474,6 +517,7 @@ impl CronScheduler {
         let agent_for_timer = Arc::clone(&self.agent);
         let store_path_for_timer = self.store_path.clone();
         let announce_tx_for_timer = self.announce_tx.clone();
+        let heartbeat_wake_tx_for_timer = self.heartbeat_wake_tx.clone();
         let rearm_notify = Arc::clone(&self.rearm_notify);
 
         tokio::spawn(async move {
@@ -529,10 +573,11 @@ impl CronScheduler {
                 let agent = Arc::clone(&agent_for_timer);
                 let store_path = store_path_for_timer.clone();
                 let announce_tx = announce_tx_for_timer.clone();
+                let heartbeat_wake_tx = heartbeat_wake_tx_for_timer.clone();
 
                 // Run jobs (result unused)
                 async {
-                    Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx).await;
+                    Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx).await;
                 }
                 .await;
 
@@ -583,6 +628,7 @@ impl CronScheduler {
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+        heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
     ) {
         let due_job_ids: Vec<String> = {
             let jobs_lock = jobs.read().await;
@@ -607,7 +653,7 @@ impl CronScheduler {
         info!("Running {} due cron jobs", due_job_ids.len());
 
         for job_id in due_job_ids {
-            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx, false).await;
+            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx, heartbeat_wake_tx, false).await;
         }
     }
 
@@ -622,6 +668,7 @@ impl CronScheduler {
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+        heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
         cmd: CronCommand,
     ) {
         match cmd {
@@ -667,7 +714,7 @@ impl CronScheduler {
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
-                Self::execute_job(jobs, &id, agent, store_path, announce_tx, true).await;
+                Self::execute_job(jobs, &id, agent, store_path, announce_tx, heartbeat_wake_tx, true).await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;
@@ -697,6 +744,7 @@ impl CronScheduler {
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
         store_path: &Option<PathBuf>,
         announce_tx: &Option<mpsc::Sender<AnnounceDelivery>>,
+        heartbeat_wake_tx: &Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
         force: bool,
     ) {
         let job = {
@@ -819,6 +867,27 @@ impl CronScheduler {
 
         // Log the run
         let _ = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await;
+
+        // Send heartbeat wake if configured and job succeeded
+        if matches!(job.wake_mode, WakeMode::HeartbeatWake) {
+            if let Some(ref tx) = heartbeat_wake_tx {
+                let agent_id = match &job.target {
+                    ExecutionTarget::Agent { agent_id, .. } => agent_id.clone().unwrap_or_default(),
+                    _ => String::from("*"),
+                };
+                info!(
+                    "Cron job '{}' completed with heartbeat wake — waking agent {}",
+                    job.name, agent_id
+                );
+                let _ = tx
+                    .send(crate::heartbeat::WakeRequest {
+                        agent_id,
+                        priority: crate::heartbeat::WakePriority::Action,
+                        prompt: None,
+                    })
+                    .await;
+            }
+        }
     }
 
     /// Execute shell command
@@ -1524,5 +1593,59 @@ mod tests {
         let _ = tokio::fs::remove_file(&runs_path).await;
 
         scheduler.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn test_wake_mode_default() {
+        assert_eq!(WakeMode::default(), WakeMode::None);
+    }
+
+    #[test]
+    fn test_wake_mode_is_none() {
+        assert!(WakeMode::None.is_none());
+        assert!(!WakeMode::HeartbeatWake.is_none());
+    }
+
+    #[test]
+    fn test_wake_mode_serialize_none_skipped() {
+        let job = CronJob::new(
+            "test",
+            "Test",
+            Schedule::At { timestamp: Utc::now() },
+            ExecutionTarget::shell("echo"),
+        );
+        let json = serde_json::to_string(&job).unwrap();
+        // WakeMode::None should be skipped due to skip_serializing_if
+        assert!(!json.contains("wake_mode"));
+    }
+
+    #[test]
+    fn test_wake_mode_serialize_heartbeat_wake() {
+        let job = CronJob::new(
+            "test",
+            "Test",
+            Schedule::At { timestamp: Utc::now() },
+            ExecutionTarget::shell("echo"),
+        )
+        .with_wake_mode(WakeMode::HeartbeatWake);
+        let json = serde_json::to_string(&job).unwrap();
+        assert!(json.contains("\"wake_mode\":\"heartbeat_wake\""));
+    }
+
+    #[test]
+    fn test_wake_mode_roundtrip() {
+        let job = CronJob::new(
+            "test",
+            "Test",
+            Schedule::At { timestamp: Utc::now() },
+            ExecutionTarget::agent("check status"),
+        )
+        .with_wake_mode(WakeMode::HeartbeatWake);
+        let json = serde_json::to_string(&job).unwrap();
+        let deserialized: CronJob = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.wake_mode, WakeMode::HeartbeatWake);
+        assert_eq!(deserialized.id, job.id);
+        // Also verify the agent target is preserved
+        assert!(matches!(deserialized.target, ExecutionTarget::Agent { .. }));
     }
 }

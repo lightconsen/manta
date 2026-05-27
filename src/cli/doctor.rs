@@ -418,6 +418,22 @@ async fn run_diagnostics(
 
     // Config misconfiguration checks (local config file)
     if let Ok(config) = crate::config::Config::load() {
+        // Heartbeat status
+        let heartbeat_enabled = config.heartbeat.enabled;
+        if heartbeat_enabled {
+            recommendations.push(format!(
+                "Heartbeat is enabled: interval={}s, active_hours={}-{}",
+                config.heartbeat.interval_seconds,
+                config.heartbeat.active_hours_start,
+                config.heartbeat.active_hours_end,
+            ));
+        } else if config.heartbeat.interval_seconds > 0 {
+            recommendations.push(
+                "Heartbeat is configured but disabled — set heartbeat.enabled = true to enable"
+                    .to_string(),
+            );
+        }
+
         for (service_name, service) in &config.services {
             if let Some(ref key) = service.api_key {
                 let key_str = match key {
