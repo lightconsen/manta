@@ -1332,6 +1332,7 @@ impl Gateway {
                     .tools(default_tools.clone())
                     .model_router(model_router_clone.clone())
                     .model_alias(default_model.clone())
+                    .planner_model(default_model.clone())
                     .skill_manager(Arc::clone(&skills_manager_clone))
                     .build()
             })

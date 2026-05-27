@@ -2874,6 +2874,8 @@ pub struct AgentBuilder {
     session_file_manager: Option<Arc<crate::agent::SessionFileManager>>,
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
     model_alias: Option<String>,
+    /// Model name for the task planner (bypasses provider default).
+    planner_model: Option<String>,
     skill_manager: Option<Arc<tokio::sync::RwLock<crate::skills::SkillManager>>>,
 }
 
@@ -2963,6 +2965,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the model name for the task planner's direct provider calls.
+    /// This prevents the planner from using the provider's hardcoded default
+    /// (e.g., gpt-4o-mini) which may not be supported by the actual API.
+    pub fn planner_model(mut self, model: impl Into<String>) -> Self {
+        self.planner_model = Some(model.into());
+        self
+    }
+
     /// Set skill manager for dynamic skill injection.
     pub fn skill_manager(
         mut self,
@@ -3016,6 +3026,13 @@ impl AgentBuilder {
 
         if let Some(alias) = self.model_alias {
             agent = agent.with_model_alias(alias);
+        }
+
+        if let Some(model) = self.planner_model {
+            // Update the task planner with the correct model name so it
+            // doesn't fall back to the provider's hardcoded default
+            let provider = agent.provider.clone();
+            agent.task_planner = Arc::new(crate::agent::planner::TaskPlanner::new(provider).with_model(model));
         }
 
         if let Some(manager) = self.skill_manager {
