@@ -1536,7 +1536,7 @@ async fn handle_btw(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> W
     }
 
     let messages = vec![crate::providers::Message::user(question)];
-    match state.model_router.complete_auto(messages).await {
+    match state.model_router.complete_auto(messages, None).await {
         Ok(response) => {
             let text = format!(
                 "💡 **Side question** ({}):\n\n{}",

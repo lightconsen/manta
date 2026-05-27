@@ -5376,6 +5376,7 @@ async fn send_message_handler(
                 &provider_name,
                 body.model_id,
                 vec![crate::providers::Message::user(body.message.clone())],
+                None,
             )
             .await
         {

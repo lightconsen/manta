@@ -169,7 +169,7 @@ impl MediaUnderstandingPipeline {
         );
 
         let messages = vec![crate::providers::Message::user(prompt)];
-        match router.complete("default", messages).await {
+        match router.complete("default", messages, None).await {
             Ok(resp) => resp.message.content.trim().to_string(),
             Err(e) => {
                 tracing::warn!("Vision provider failed for image {}: {}", attachment.filename, e);

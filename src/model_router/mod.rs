@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::providers::{
-    CompletionRequest, CompletionResponse, CompletionStream, Message, Provider,
+    CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, ToolDefinition,
 };
 
 pub use auth_profile::{
@@ -847,6 +847,7 @@ impl ModelRouter {
         &self,
         alias_or_model: &str,
         messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionResponse> {
         // Resolve alias
         let config = self.config.read().await;
@@ -868,7 +869,7 @@ impl ModelRouter {
             temperature: alias.temperature,
             max_tokens: alias.max_tokens,
             stream: false,
-            tools: None,
+            tools,
             stop: None,
             extra: None,
             requires_vision: false,
@@ -1222,14 +1223,18 @@ impl ModelRouter {
     /// If cost-aware routing is enabled in config, this method classifies the
     /// task type from the messages and routes to the most cost-effective model
     /// alias for that task. Otherwise, it falls back to the default alias.
-    pub async fn complete_auto(&self, messages: Vec<Message>) -> crate::Result<CompletionResponse> {
+    pub async fn complete_auto(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> crate::Result<CompletionResponse> {
         let config = self.config.read().await;
 
         // Check if cost-aware routing is enabled
         let alias_name = if let Some(ref cost_aware) = config.cost_aware {
             if cost_aware.enabled {
                 drop(config);
-                return self.complete_with_cost_routing(messages).await;
+                return self.complete_with_cost_routing(messages, tools).await;
             }
             cost_aware.default_alias.clone()
         } else {
@@ -1237,13 +1242,14 @@ impl ModelRouter {
         };
         drop(config);
 
-        self.complete(&alias_name, messages).await
+        self.complete(&alias_name, messages, tools).await
     }
 
     /// Internal: route based on task classification and cost
     async fn complete_with_cost_routing(
         &self,
         messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionResponse> {
         let task_type = TaskClassifier::classify(&messages);
         info!("Task classified as: {:?}", task_type);
@@ -1276,7 +1282,7 @@ impl ModelRouter {
                     .map(|(name, _)| name.clone())
                     .unwrap_or_else(|| cost_aware.default_alias.clone());
                 drop(config);
-                return self.complete(&cheapest, messages).await;
+                return self.complete(&cheapest, messages, tools).await;
             }
         }
 
@@ -1320,7 +1326,7 @@ impl ModelRouter {
 
         // Complete and track cost
         let alias_name_for_cost = alias_name.clone();
-        let response = self.complete(&alias_name, messages).await?;
+        let response = self.complete(&alias_name, messages, tools).await?;
 
         // Update spend if usage is available
         if let Some(ref usage) = response.usage {
@@ -1950,6 +1956,7 @@ impl ModelRouter {
         provider_name: &str,
         model: Option<String>,
         messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionResponse> {
         let providers = self.providers.read().await;
         let provider = providers.get(provider_name).cloned().ok_or_else(|| {
@@ -1975,7 +1982,7 @@ impl ModelRouter {
             temperature: None,
             max_tokens: None,
             stream: false,
-            tools: None,
+            tools,
             stop: None,
             extra: None,
             ..Default::default()

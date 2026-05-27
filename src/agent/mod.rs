@@ -1906,7 +1906,8 @@ impl Agent {
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
             };
-            router.complete(&alias, request.messages).await?
+            let tools = request.tools.take();
+            router.complete(&alias, request.messages, tools).await?
         } else {
             self.provider.complete(request).await?
         };
