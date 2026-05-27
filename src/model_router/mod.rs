@@ -1050,6 +1050,7 @@ impl ModelRouter {
         &self,
         alias_or_model: &str,
         messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionStream> {
         let config = self.config.read().await;
         let alias = config
@@ -1069,7 +1070,7 @@ impl ModelRouter {
             temperature: alias.temperature,
             max_tokens: alias.max_tokens,
             stream: true,
-            tools: None,
+            tools,
             stop: None,
             extra: None,
             requires_vision: false,

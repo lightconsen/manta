@@ -2124,7 +2124,8 @@ impl Agent {
                     .or(self.model.clone())
                     .unwrap_or_else(|| self.provider.default_model().to_string())
             };
-            let stream = router.stream(&alias, request.messages).await?;
+            let tools = request.tools.take();
+            let stream = router.stream(&alias, request.messages, tools).await?;
             // When using model router, fall back to Generic stream family
             (stream, crate::providers::stream_wrappers::ProviderStreamFamily::Generic)
         } else {
