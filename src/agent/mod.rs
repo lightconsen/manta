@@ -638,6 +638,14 @@ impl Agent {
                         serde_json::json!({ "reasoning_effort": "medium", "service_tier": "auto" }),
                     );
                 }
+                // DeepSeek thinking models (via OpenAI-compatible API) require
+                // `reasoning` parameter so that the API accepts reasoning_content
+                // in conversation history.
+                else if model.starts_with("deepseek") {
+                    request.extra = Some(
+                        serde_json::json!({ "reasoning": { "enabled": true } }),
+                    );
+                }
             }
             crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
             | crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking => {

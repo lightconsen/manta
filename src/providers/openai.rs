@@ -129,7 +129,7 @@ impl OpenAiProvider {
             }
             .to_string(),
             content: Some(msg.content.clone()),
-            reasoning_content: None, // Strip from conversation history — models treat it as visible content
+            reasoning_content: msg.reasoning_content.clone(),
             name: msg.name.clone(),
             tool_calls: msg.tool_calls.as_ref().map(|calls| {
                 calls

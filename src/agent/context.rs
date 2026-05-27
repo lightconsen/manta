@@ -273,10 +273,13 @@ impl Context {
 
         // Keep pruning until we're under the limit
         while self.token_count() > self.max_tokens && self.messages.len() > 1 {
-            // Find the oldest message that can be safely pruned
-            let prune_index = self.find_prunable_message(&pending_tool_call_ids);
-
-            if let Some(index) = prune_index {
+            // First try to prune complete tool call groups (assistant + all tool results)
+            if let Some((start, count)) = self.find_prunable_tool_group(&pending_tool_call_ids) {
+                for _ in 0..count {
+                    let removed = self.messages.remove(start);
+                    self.token_count = self.token_count.saturating_sub(removed.content.len() / 4);
+                }
+            } else if let Some(index) = self.find_prunable_message(&pending_tool_call_ids) {
                 let removed = self.messages.remove(index);
                 self.token_count = self.token_count.saturating_sub(removed.content.len() / 4);
             } else {
@@ -284,6 +287,63 @@ impl Context {
                 break;
             }
         }
+    }
+
+    /// Find a complete tool call group (assistant message with tool calls + all
+    /// its tool results) that can be pruned as a unit.
+    ///
+    /// Returns `(start_index, message_count)` if a complete group is found.
+    fn find_prunable_tool_group(
+        &self,
+        pending_tool_call_ids: &std::collections::HashSet<String>,
+    ) -> Option<(usize, usize)> {
+        for (index, msg) in self.messages.iter().enumerate() {
+            // Only consider assistant messages with tool calls
+            if msg.role != crate::providers::Role::Assistant {
+                continue;
+            }
+            let Some(ref tool_calls) = msg.tool_calls else {
+                continue;
+            };
+            if tool_calls.is_empty() {
+                continue;
+            }
+
+            // Check if ALL tool calls in this group have results (no pending ones)
+            let has_pending = tool_calls
+                .iter()
+                .any(|tc| pending_tool_call_ids.contains(&tc.id));
+            if has_pending {
+                continue;
+            }
+
+            // Count how many messages belong to this tool group (assistant + tool results)
+            let mut group_size = 1; // starts with the assistant message
+            let tool_call_ids: std::collections::HashSet<String> =
+                tool_calls.iter().map(|tc| tc.id.clone()).collect();
+
+            for subsequent in self.messages.iter().skip(index + 1) {
+                if subsequent.role == crate::providers::Role::Tool {
+                    if let Some(ref tid) = subsequent.tool_call_id {
+                        if tool_call_ids.contains(tid) {
+                            group_size += 1;
+                            continue;
+                        }
+                    }
+                }
+                // Stop at the next non-tool message or unrelated tool message
+                break;
+            }
+
+            // Don't prune if this would remove all messages
+            if group_size >= self.messages.len() {
+                continue;
+            }
+
+            return Some((index, group_size));
+        }
+
+        None
     }
 
     /// Find the index of a message that can be safely pruned
@@ -297,6 +357,18 @@ impl Context {
             // Never prune the last message
             if index == self.messages.len() - 1 {
                 return None;
+            }
+
+            // Never prune the first user message when there are tool calls in the
+            // conversation — without it the LLM loses the original request and
+            // conversation continuity breaks.  For simple text-only conversations
+            // (no tool calls) this protection is not needed.
+            let has_tool_calls = self.messages.iter().any(|m| m.tool_calls.is_some());
+            if index == 0
+                && msg.role == crate::providers::Role::User
+                && has_tool_calls
+            {
+                continue;
             }
 
             // Check if this is an assistant message with tool calls
