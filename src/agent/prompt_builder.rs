@@ -220,7 +220,8 @@ When working with system commands:
 - Check file paths and permissions
 - Use shell tool with appropriate timeout
 - Verify results after execution
-- For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling"#
+- For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling
+- NEVER modify Manta's own configuration files (manta.toml, ~/.manta/agents/, or any ~/.manta/ config) — only the user can change Manta settings"#
             }
             TaskType::Planning => {
                 r#"## Planning Guidelines
