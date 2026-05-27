@@ -66,11 +66,13 @@ impl Tool for CronTool {
 
     fn description(&self) -> &str {
         "Schedule and manage recurring tasks using cron expressions. \
-         Actions: create (add a job), list (show all jobs with status), enable/disable, remove, run (trigger now). \
+         ALWAYS use this tool for any scheduling, scheduling queries, or task automation — \
+         do NOT use shell commands or other tools to schedule or query tasks. \
+         Actions: create (add a new job), list (show all jobs with their status — use this to answer 'what cron jobs exist?' or 'are any running?'), \
+         enable (resume a paused job), disable (pause a job), remove (delete a job), run (trigger a job immediately). \
          The 'list' action returns each job's Status field: 'active' (enabled, waiting for next run), \
          'running' (currently executing), 'disabled' (paused), or 'error' (failed, retry scheduled). \
-         Use 'list' to answer questions like 'are there any cron jobs running?'. \
-         Cron format: 'minute hour day month weekday' (e.g., '0 * * * *' = hourly, '*/5 * * * *' = every 5 minutes)"
+         Cron format: 'minute hour day month weekday' (e.g., '0 * * * *' = hourly, '*/5 * * * *' = every 5 minutes, '0 3 * * *' = daily at 3am)"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

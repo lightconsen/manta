@@ -219,7 +219,8 @@ When working with system commands:
 - Be cautious with destructive operations
 - Check file paths and permissions
 - Use shell tool with appropriate timeout
-- Verify results after execution"#
+- Verify results after execution
+- For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling"#
             }
             TaskType::Planning => {
                 r#"## Planning Guidelines

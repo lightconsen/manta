@@ -297,6 +297,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   // Assistant message – render parts (reasoning, tool calls, text)
   const hasParts = message.parts && message.parts.length > 0;
+  const isAssistant = message.role === "assistant";
+  const hasMetadata = isAssistant && (message.durationMs !== undefined || message.toolCount !== undefined);
+
+  const formatDuration = (ms: number): string => {
+    if (ms < 1000) return `${ms}ms`;
+    const sec = (ms / 1000).toFixed(1).replace(/\.0$/, '');
+    return `${sec}s`;
+  };
 
   return (
     <div className="py-4 px-4 sm:px-6 bg-gray-50/60 dark:bg-neutral-800/30">
@@ -335,6 +343,29 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           ) : (
             <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-neutral-800 text-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm border border-gray-100 dark:border-neutral-700">
               <MarkdownMessage text={message.content} />
+            </div>
+          )}
+          {/* Summary footer */}
+          {hasMetadata && (
+            <div className="mt-1.5 flex items-center gap-3 text-[10px] text-gray-400 dark:text-neutral-500">
+              {message.durationMs !== undefined && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" strokeWidth="2" />
+                    <polyline points="12 6 12 12 16 14" strokeWidth="2" />
+                  </svg>
+                  {formatDuration(message.durationMs!)}
+                </span>
+              )}
+              {message.toolCount !== undefined && message.toolCount > 0 && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <circle cx="12" cy="12" r="3" strokeWidth="2" />
+                  </svg>
+                  {message.toolCount} tool{message.toolCount !== 1 ? 's' : ''}
+                </span>
+              )}
             </div>
           )}
         </div>

@@ -43,6 +43,10 @@ export interface ChatMessage {
   content: string;
   parts?: ChatMessagePart[];
   timestamp?: number;
+  /** Metadata: how many tools were called */
+  toolCount?: number;
+  /** Metadata: how long the response took (ms) */
+  durationMs?: number;
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
@@ -468,6 +472,8 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           role: m.role as "user" | "assistant",
           content: m.content,
           parts: parts.length > 0 ? parts : undefined,
+          durationMs: (m as any).duration_ms,
+          toolCount: (m as any).tool_count,
         };
       });
     } catch {
@@ -509,6 +515,8 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       .map((c) => (c.type === "text" ? c.text : ""))
       .join("");
 
+    const startTime = Date.now();
+
     const userMsg: ChatMessage = {
       id: `u_${Date.now()}`,
       role: "user",
@@ -529,6 +537,17 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           if (parsed.command === "new") {
             this.createSession();
             this.setMessages([]);
+            const cmdDuration = Date.now() - startTime;
+            const assistantMsg: ChatMessage = {
+              id: `a_${Date.now()}`,
+              role: "assistant",
+              content: "New session started.",
+              durationMs: cmdDuration,
+              toolCount: 0,
+            };
+            this.saveMessage(assistantMsg);
+            this.messages = [...this.messages, assistantMsg];
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield {
               content: [makeTextPart("New session started.")],
               status: { type: "complete", reason: "stop" },
@@ -538,6 +557,17 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           if (parsed.command === "clear") {
             this.clearHistory(this.sessionId);
             this.setMessages([]);
+            const cmdDuration = Date.now() - startTime;
+            const assistantMsg: ChatMessage = {
+              id: `a_${Date.now()}`,
+              role: "assistant",
+              content: "History cleared.",
+              durationMs: cmdDuration,
+              toolCount: 0,
+            };
+            this.saveMessage(assistantMsg);
+            this.messages = [...this.messages, assistantMsg];
+            this.messagesListeners.forEach((cb) => cb(this.messages));
             yield {
               content: [makeTextPart("History cleared.")],
               status: { type: "complete", reason: "stop" },
@@ -556,10 +586,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           })) as { text?: string } | undefined;
 
           const responseText = result?.text ?? "Command executed.";
+          const cmdDuration = Date.now() - startTime;
           const assistantMsg: ChatMessage = {
             id: `a_${Date.now()}`,
             role: "assistant",
             content: responseText,
+            durationMs: cmdDuration,
+            toolCount: 0,
           };
           this.saveMessage(assistantMsg);
           this.messages = [...this.messages, assistantMsg];
@@ -571,10 +604,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           return;
         } catch (err) {
           const errorText = `Command error: ${err instanceof Error ? err.message : String(err)}`;
+          const cmdDuration = Date.now() - startTime;
           const assistantMsg: ChatMessage = {
             id: `a_${Date.now()}`,
             role: "assistant",
             content: errorText,
+            durationMs: cmdDuration,
+            toolCount: 0,
           };
           this.saveMessage(assistantMsg);
           this.messages = [...this.messages, assistantMsg];
@@ -589,10 +625,13 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
       // Unrecognized command: show error
       const errorText = `Unknown command: /${parsed.command}`;
+      const cmdDuration = Date.now() - startTime;
       const assistantMsg: ChatMessage = {
         id: `a_${Date.now()}`,
         role: "assistant",
         content: errorText,
+        durationMs: cmdDuration,
+        toolCount: 0,
       };
       this.saveMessage(assistantMsg);
       this.messages = [...this.messages, assistantMsg];
@@ -766,10 +805,14 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
               finalParts.push(t);
             }
             finalParts.push(makeTextPart(currentText));
-            // Save final AI message to history with full parts
-            this.saveMessage({ ...aiMsg });
+            const durationMs = Date.now() - startTime;
+            const toolCount = toolCalls.size;
+            // Save final AI message to history with full parts and metadata
+            this.saveMessage({ ...aiMsg, durationMs, toolCount });
             aiMsg.content = currentText;
             aiMsg.parts = finalParts.map(toChatPart);
+            aiMsg.durationMs = durationMs;
+            aiMsg.toolCount = toolCount;
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: finalParts, status: { type: "complete", reason: "stop" } };
             return;

@@ -551,7 +551,7 @@ mod tests {
         let chunks = test_chunks();
         let stream = Box::pin(futures::stream::iter(chunks.clone()));
         let registry = StreamFamilyRegistry::default();
-        let mut wrapped = registry.apply(ProviderStreamFamily::OpenAi, stream);
+        let wrapped = registry.apply(ProviderStreamFamily::OpenAi, stream);
 
         let result: Vec<_> = wrapped.collect().await;
         assert_eq!(result.len(), 2);
@@ -569,7 +569,7 @@ mod tests {
             usage: None,
         }];
         let stream = Box::pin(futures::stream::iter(chunks));
-        let mut wrapped = usage_extractor_wrapper()(stream);
+        let wrapped = usage_extractor_wrapper()(stream);
 
         let result: Vec<_> = wrapped.collect().await;
         assert_eq!(result.len(), 1);
@@ -581,7 +581,7 @@ mod tests {
         let chunks = test_chunks();
         let stream = Box::pin(futures::stream::iter(chunks));
         let registry = StreamFamilyRegistry::default();
-        let mut wrapped = registry.apply(ProviderStreamFamily::Generic, stream);
+        let wrapped = registry.apply(ProviderStreamFamily::Generic, stream);
 
         let result: Vec<_> = wrapped.collect().await;
         assert_eq!(result.len(), 2);
@@ -656,7 +656,7 @@ mod tests {
             },
         ];
         let stream = Box::pin(futures::stream::iter(chunks));
-        let mut wrapped = thinking_tag_extractor_wrapper()(stream);
+        let wrapped = thinking_tag_extractor_wrapper()(stream);
 
         let result: Vec<_> = wrapped.collect().await;
         assert_eq!(result.len(), 2);

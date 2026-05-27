@@ -1233,7 +1233,11 @@ impl ToolRegistry {
             }
         }
 
-        Err(crate::error::MantaError::Validation(format!("Unknown tool: {}", call.name)))
+        Err(crate::error::MantaError::Validation(format!(
+            "Unknown tool: {}. Available tools: {}",
+            call.name,
+            self.list().join(", ")
+        )))
     }
 }
 

@@ -1411,7 +1411,7 @@ impl DreamScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::{DatabaseStore, MemoryStore, UnifiedStore};
+    use crate::memory::{MemoryStore, UnifiedStore};
     use std::sync::Arc;
 
     #[tokio::test]

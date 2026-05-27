@@ -68,8 +68,9 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command. Use for file operations, running scripts, or system commands. \
-         Commands are executed with safety restrictions."
+        "Execute a shell command for file operations, running scripts, or system commands. \
+         Commands are executed with safety restrictions. \
+         Note: For scheduling or recurring tasks, use the 'cron' tool instead — do NOT use shell commands with 'at', 'cron', or 'schedule'."
     }
 
     fn parameters_schema(&self) -> Value {
