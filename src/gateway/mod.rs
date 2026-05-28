@@ -4147,6 +4147,9 @@ async fn create_default_tool_registry(
     // Register cron tool
     registry.register(Box::new(CronTool::new()));
 
+    // Register heartbeat tool (agent self-management)
+    registry.register(Box::new(HeartbeatTool::new()));
+
     // Register time tool
     registry.register(Box::new(TimeTool::new()));
 

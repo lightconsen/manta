@@ -10,7 +10,7 @@ pub struct HeartbeatTask {
 }
 
 /// Parse a duration string like "5m", "30s", "1h", "2h30m" into Duration
-fn parse_duration(s: &str) -> Option<Duration> {
+pub fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
     if s.is_empty() {
         return None;
