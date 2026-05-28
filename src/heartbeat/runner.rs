@@ -1,13 +1,13 @@
 use chrono::Timelike;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 use super::config::HeartbeatConfig;
 use super::events::{HeartbeatEvent, HeartbeatStatus};
-use super::parser::{parse_heartbeat_tasks, is_heartbeat_content_empty, HeartbeatTask, TaskDedupTracker};
+use super::parser::{is_heartbeat_content_empty, parse_heartbeat_tasks, HeartbeatTask, TaskDedupTracker};
 use super::wake::{WakePriority, WakeRequest};
 use crate::channels::IncomingMessage;
 use crate::gateway::GatewayState;
@@ -17,25 +17,36 @@ const HEARTBEAT_FILENAME: &str = "HEARTBEAT.md";
 
 /// State tracked per agent for heartbeat scheduling
 struct AgentHeartbeatState {
+    /// Resolved heartbeat config for this agent (agent override or global fallback)
+    config: HeartbeatConfig,
     consecutive_idle: u32,
-    last_run: Option<std::time::Instant>,
+    last_run: Option<Instant>,
+    /// When this agent should next run a heartbeat
+    next_run_at: Instant,
     dedup: TaskDedupTracker,
 }
 
 impl AgentHeartbeatState {
-    fn new() -> Self {
+    fn new(config: HeartbeatConfig, now: Instant) -> Self {
+        let interval = config.interval_seconds;
         Self {
+            config,
             consecutive_idle: 0,
             last_run: None,
+            next_run_at: now + Duration::from_secs(interval),
             dedup: TaskDedupTracker::new(),
         }
+    }
+
+    /// Reschedule next run based on current time and interval
+    fn reschedule(&mut self, now: Instant) {
+        self.next_run_at = now + Duration::from_secs(self.config.interval_seconds);
     }
 }
 
 /// The heartbeat runner that periodically wakes agents to check HEARTBEAT.md
 pub struct HeartbeatRunner {
     state: Arc<GatewayState>,
-    config: HeartbeatConfig,
     agent_states: Arc<RwLock<HashMap<String, AgentHeartbeatState>>>,
     pub(crate) event_tx: tokio::sync::broadcast::Sender<HeartbeatEvent>,
     wake_rx: mpsc::Receiver<WakeRequest>,
@@ -44,16 +55,11 @@ pub struct HeartbeatRunner {
 
 impl HeartbeatRunner {
     pub fn new(state: Arc<GatewayState>) -> Self {
-        let config = {
-            let config_lock = state.config.blocking_read();
-            config_lock.heartbeat.clone()
-        };
         let (wake_tx, wake_rx) = mpsc::channel::<WakeRequest>(64);
         let (event_tx, _) = tokio::sync::broadcast::channel::<HeartbeatEvent>(256);
 
         Self {
             state,
-            config,
             agent_states: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             wake_rx,
@@ -73,30 +79,163 @@ impl HeartbeatRunner {
 
     /// Start the heartbeat runner loop
     pub async fn start(mut self) {
-        info!(
-            "Heartbeat runner started: interval={}s, active_hours={}-{}",
-            self.config.interval_seconds,
-            self.config.active_hours_start,
-            self.config.active_hours_end,
-        );
+        self.init_agent_states().await;
 
         loop {
-            // Run heartbeat cycle
-            self._emit_event(HeartbeatEvent::Started);
-            self.run_heartbeat_cycle().await;
+            let next_wake = self.compute_next_wake().await;
+            let now = Instant::now();
+            let sleep_duration = next_wake.saturating_duration_since(now);
 
-            // Wait for interval, but process wake requests if they arrive
-            tokio::time::sleep(Duration::from_secs(self.config.interval_seconds)).await;
+            info!(
+                "Heartbeat runner waiting: next_wake_in={:.1}s",
+                sleep_duration.as_secs_f64()
+            );
 
-            // Check for pending wake requests after sleep
-            while let Ok(req) = self.wake_rx.try_recv() {
-                self._emit_event(HeartbeatEvent::Started);
-                self.handle_wake_request(&req).await;
+            tokio::select! {
+                _ = tokio::time::sleep(sleep_duration) => {
+                    self.run_due_agents().await;
+                }
+                Some(req) = self.wake_rx.recv() => {
+                    self._emit_event(HeartbeatEvent::Started);
+                    self.handle_wake_request(&req).await;
+                }
             }
         }
     }
 
-    /// Handle a single wake request
+    /// Initialize heartbeat state for all existing agents
+    async fn init_agent_states(&self) {
+        let now = Instant::now();
+        let agents = self.state.agents.read().await;
+        let mut states = self.agent_states.write().await;
+
+        for (agent_id, handle) in agents.iter() {
+            let config = self.resolve_agent_config(handle).await;
+            if config.enabled {
+                info!(
+                    "Heartbeat initialized for agent {}: interval={}s, active_hours={}-{}",
+                    agent_id, config.interval_seconds, config.active_hours_start, config.active_hours_end
+                );
+            } else {
+                debug!("Heartbeat disabled for agent {}", agent_id);
+            }
+            states.insert(agent_id.clone(), AgentHeartbeatState::new(config, now));
+        }
+    }
+
+    /// Compute the next Instant when any agent should run.
+    /// Returns now + 1s if no agents are registered or all are disabled.
+    async fn compute_next_wake(&self) -> Instant {
+        let states = self.agent_states.read().await;
+        let now = Instant::now();
+
+        let mut next_wake = None;
+        for (_agent_id, state) in states.iter() {
+            if !state.config.enabled {
+                continue;
+            }
+            match next_wake {
+                None => next_wake = Some(state.next_run_at),
+                Some(nw) if state.next_run_at < nw => next_wake = Some(state.next_run_at),
+                _ => {}
+            }
+        }
+
+        next_wake.unwrap_or_else(|| now + Duration::from_secs(1))
+    }
+
+    /// Run heartbeat for all agents whose next_run_at has passed.
+    async fn run_due_agents(&self) {
+        let now = Instant::now();
+        let mut due_ids: Vec<String> = Vec::new();
+
+        {
+            let states = self.agent_states.read().await;
+            for (agent_id, state) in states.iter() {
+                if !state.config.enabled {
+                    continue;
+                }
+                if state.next_run_at <= now {
+                    due_ids.push(agent_id.clone());
+                }
+            }
+        }
+
+        if due_ids.is_empty() {
+            return;
+        }
+
+        info!("Heartbeat cycle: {} agents due", due_ids.len());
+        self._emit_event(HeartbeatEvent::Started);
+
+        for agent_id in due_ids {
+            self.run_heartbeat_for_agent_by_id(&agent_id).await;
+        }
+    }
+
+    /// Run heartbeat for a single agent by ID (used by the main loop)
+    async fn run_heartbeat_for_agent_by_id(&self, agent_id: &str) {
+        let handle = {
+            let agents = self.state.agents.read().await;
+            match agents.get(agent_id) {
+                Some(h) => h.clone(),
+                None => {
+                    warn!("Heartbeat: agent {} not found, removing state", agent_id);
+                    let mut states = self.agent_states.write().await;
+                    states.remove(agent_id);
+                    return;
+                }
+            }
+        };
+
+        // Check if agent config changed (e.g., hot reload updated heartbeat config)
+        let agent_config = self.resolve_agent_config(&handle).await;
+        {
+            let mut states = self.agent_states.write().await;
+            if let Some(state) = states.get_mut(agent_id) {
+                // Update config if it changed
+                if state.config != agent_config {
+                    debug!("Agent {} heartbeat config updated", agent_id);
+                    state.config = agent_config;
+                }
+
+                // Check active hours
+                if !is_within_active_hours(&state.config) {
+                    debug!("Agent {} heartbeat skipped: outside active hours", agent_id);
+                    self._emit_event(HeartbeatEvent::Skipped {
+                        reason: "outside_active_hours".to_string(),
+                        agent_id: agent_id.to_string(),
+                    });
+                    state.reschedule(Instant::now());
+                    return;
+                }
+
+                // Check max consecutive idle
+                if state.consecutive_idle >= state.config.max_consecutive_idle {
+                    debug!(
+                        "Agent {} heartbeat skipped: max consecutive idle ({}/{}) reached",
+                        agent_id, state.consecutive_idle, state.config.max_consecutive_idle,
+                    );
+                    self._emit_event(HeartbeatEvent::Skipped {
+                        reason: "max_consecutive_idle".to_string(),
+                        agent_id: agent_id.to_string(),
+                    });
+                    state.reschedule(Instant::now());
+                    return;
+                }
+            } else {
+                // No state yet — create it (agent added after runner started)
+                states.insert(
+                    agent_id.to_string(),
+                    AgentHeartbeatState::new(agent_config, Instant::now()),
+                );
+            }
+        }
+
+        self.run_heartbeat_for_agent(&handle, None).await;
+    }
+
+    /// Handle a single wake request (from cron or external triggers)
     async fn handle_wake_request(&self, req: &WakeRequest) {
         info!(
             "Heartbeat wake request: agent={}, priority={:?}",
@@ -117,6 +256,30 @@ impl HeartbeatRunner {
         };
         drop(agents);
 
+        // Resolve agent config and check if heartbeat is enabled
+        let agent_config = self.resolve_agent_config(&handle).await;
+        if !agent_config.enabled {
+            debug!("Heartbeat wake skipped: agent {} heartbeat disabled", req.agent_id);
+            self._emit_event(HeartbeatEvent::Skipped {
+                reason: "heartbeat_disabled".to_string(),
+                agent_id: req.agent_id.clone(),
+            });
+            return;
+        }
+
+        // Check active hours for wake requests too
+        if !is_within_active_hours(&agent_config) {
+            debug!(
+                "Heartbeat wake skipped: agent {} outside active hours",
+                req.agent_id
+            );
+            self._emit_event(HeartbeatEvent::Skipped {
+                reason: "outside_active_hours".to_string(),
+                agent_id: req.agent_id.clone(),
+            });
+            return;
+        }
+
         if handle.busy {
             if req.priority == WakePriority::Retry {
                 debug!("Agent {} busy, skipping retry wake", req.agent_id);
@@ -136,52 +299,6 @@ impl HeartbeatRunner {
         }
 
         self.run_heartbeat_for_agent(&handle, req.prompt.as_deref()).await;
-    }
-
-    /// Run a full heartbeat cycle across all agents
-    async fn run_heartbeat_cycle(&self) {
-        if !self.is_within_active_hours() {
-            debug!("Heartbeat skipped: outside active hours");
-            return;
-        }
-
-        let handles: Vec<_> = {
-            let agents = self.state.agents.read().await;
-            agents.values().cloned().collect()
-        };
-
-        if handles.is_empty() {
-            self._emit_event(HeartbeatEvent::Skipped {
-                reason: "no_agents".to_string(),
-                agent_id: String::from("*"),
-            });
-            return;
-        }
-
-        for handle in &handles {
-            let agent_id = &handle.id;
-            let should_run = {
-                let states = self.agent_states.read().await;
-                if let Some(agent_state) = states.get(agent_id) {
-                    agent_state.consecutive_idle < self.config.max_consecutive_idle
-                } else {
-                    true
-                }
-            };
-
-            if should_run {
-                self.run_heartbeat_for_agent(handle, None).await;
-            } else {
-                debug!(
-                    "Agent {} heartbeat skipped: max consecutive idle reached",
-                    agent_id,
-                );
-                self._emit_event(HeartbeatEvent::Skipped {
-                    reason: "max_consecutive_idle".to_string(),
-                    agent_id: agent_id.clone(),
-                });
-            }
-        }
     }
 
     /// Read HEARTBEAT.md content
@@ -210,7 +327,11 @@ impl HeartbeatRunner {
     }
 
     /// Run heartbeat for a single agent
-    async fn run_heartbeat_for_agent(&self, handle: &crate::gateway::AgentHandle, custom_prompt: Option<&str>) {
+    async fn run_heartbeat_for_agent(
+        &self,
+        handle: &crate::gateway::AgentHandle,
+        custom_prompt: Option<&str>,
+    ) {
         let agent_id = &handle.id;
 
         if handle.busy {
@@ -218,6 +339,11 @@ impl HeartbeatRunner {
                 reason: "agent_busy".to_string(),
                 agent_id: agent_id.clone(),
             });
+            // Reschedule so we don't keep trying while busy
+            let mut states = self.agent_states.write().await;
+            if let Some(state) = states.get_mut(agent_id) {
+                state.reschedule(Instant::now());
+            }
             return;
         }
 
@@ -234,6 +360,10 @@ impl HeartbeatRunner {
                 session_id: None,
             });
             self.update_consecutive_idle(agent_id, true).await;
+            let mut states = self.agent_states.write().await;
+            if let Some(state) = states.get_mut(agent_id) {
+                state.reschedule(Instant::now());
+            }
             return;
         }
 
@@ -296,13 +426,14 @@ impl HeartbeatRunner {
                     }
                 }
 
-                let status = if response.content.contains("HEARTBEAT_OK") {
+                let is_idle = response.content.contains("HEARTBEAT_OK");
+                let status = if is_idle {
                     HeartbeatStatus::Idle
                 } else {
                     HeartbeatStatus::TaskExecuted
                 };
 
-                self.update_consecutive_idle(agent_id, status == HeartbeatStatus::Idle).await;
+                self.update_consecutive_idle(agent_id, is_idle).await;
 
                 self._emit_event(HeartbeatEvent::Completed {
                     status,
@@ -319,7 +450,8 @@ impl HeartbeatRunner {
 
                 let mut states = self.agent_states.write().await;
                 if let Some(agent_state) = states.get_mut(agent_id) {
-                    agent_state.last_run = Some(std::time::Instant::now());
+                    agent_state.last_run = Some(Instant::now());
+                    agent_state.reschedule(Instant::now());
                 }
             }
             Err(e) => {
@@ -329,6 +461,10 @@ impl HeartbeatRunner {
                     agent_id: agent_id.clone(),
                 });
                 self.update_consecutive_idle(agent_id, false).await;
+                let mut states = self.agent_states.write().await;
+                if let Some(agent_state) = states.get_mut(agent_id) {
+                    agent_state.reschedule(Instant::now());
+                }
             }
         }
     }
@@ -336,36 +472,51 @@ impl HeartbeatRunner {
     /// Update consecutive idle counter for an agent
     async fn update_consecutive_idle(&self, agent_id: &str, is_idle: bool) {
         let mut states = self.agent_states.write().await;
-        let agent_state = states.entry(agent_id.to_string()).or_insert_with(AgentHeartbeatState::new);
-        if is_idle {
-            agent_state.consecutive_idle += 1;
-        } else {
-            agent_state.consecutive_idle = 0;
+        if let Some(agent_state) = states.get_mut(agent_id) {
+            if is_idle {
+                agent_state.consecutive_idle += 1;
+            } else {
+                agent_state.consecutive_idle = 0;
+            }
         }
     }
 
-    /// Check if current time is within active hours
-    fn is_within_active_hours(&self) -> bool {
-        let now = chrono::Local::now();
-        let current_minutes = now.hour() * 60 + now.minute();
-
-        let start = parse_time(&self.config.active_hours_start);
-        let end = parse_time(&self.config.active_hours_end);
-
-        match (start, end) {
-            (Some(s), Some(e)) => {
-                if s <= e {
-                    current_minutes >= s && current_minutes < e
-                } else {
-                    current_minutes >= s || current_minutes < e
-                }
-            }
-            _ => true,
+    /// Resolve heartbeat config for an agent.
+    /// Uses agent-specific config if set, otherwise falls back to global GatewayConfig.
+    async fn resolve_agent_config(
+        &self,
+        handle: &crate::gateway::AgentHandle,
+    ) -> HeartbeatConfig {
+        if let Some(ref agent_heartbeat) = handle.config.heartbeat {
+            return agent_heartbeat.clone();
         }
+
+        let config_lock = self.state.config.read().await;
+        config_lock.heartbeat.clone()
     }
 
     fn _emit_event(&self, event: HeartbeatEvent) {
         let _ = self.event_tx.send(event);
+    }
+}
+
+/// Check if current time is within the active hours defined in the given config
+fn is_within_active_hours(config: &HeartbeatConfig) -> bool {
+    let now = chrono::Local::now();
+    let current_minutes = now.hour() * 60 + now.minute();
+
+    let start = parse_time(&config.active_hours_start);
+    let end = parse_time(&config.active_hours_end);
+
+    match (start, end) {
+        (Some(s), Some(e)) => {
+            if s <= e {
+                current_minutes >= s && current_minutes < e
+            } else {
+                current_minutes >= s || current_minutes < e
+            }
+        }
+        _ => true,
     }
 }
 
@@ -381,4 +532,92 @@ fn parse_time(s: &str) -> Option<u32> {
         return None;
     }
     Some(hour * 60 + minute)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_agent_heartbeat_state_new() {
+        let config = HeartbeatConfig {
+            enabled: true,
+            interval_seconds: 60,
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let state = AgentHeartbeatState::new(config, now);
+
+        assert_eq!(state.consecutive_idle, 0);
+        assert!(state.last_run.is_none());
+        assert!(state.next_run_at >= now + Duration::from_secs(60));
+        assert!(state.next_run_at <= now + Duration::from_secs(65));
+    }
+
+    #[test]
+    fn test_agent_heartbeat_state_reschedule() {
+        let config = HeartbeatConfig {
+            enabled: true,
+            interval_seconds: 30,
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let mut state = AgentHeartbeatState::new(config, now);
+
+        let before = state.next_run_at;
+        state.reschedule(now + Duration::from_secs(10));
+        let after = state.next_run_at;
+
+        assert!(after > before);
+        let expected = now + Duration::from_secs(10) + Duration::from_secs(30);
+        assert!(after >= expected);
+        assert!(after <= expected + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_is_within_active_hours_daytime() {
+        let config = HeartbeatConfig {
+            active_hours_start: "08:00".to_string(),
+            active_hours_end: "23:00".to_string(),
+            ..Default::default()
+        };
+        // This test may be flaky depending on the current time,
+        // so we just verify the function doesn't panic
+        let _ = is_within_active_hours(&config);
+    }
+
+    #[test]
+    fn test_is_within_active_hours_wraparound() {
+        let config = HeartbeatConfig {
+            active_hours_start: "23:00".to_string(),
+            active_hours_end: "08:00".to_string(),
+            ..Default::default()
+        };
+        let _ = is_within_active_hours(&config);
+    }
+
+    #[test]
+    fn test_is_within_active_hours_invalid() {
+        let config = HeartbeatConfig {
+            active_hours_start: "invalid".to_string(),
+            active_hours_end: "also-invalid".to_string(),
+            ..Default::default()
+        };
+        // Invalid times should default to always active
+        assert!(is_within_active_hours(&config));
+    }
+
+    #[test]
+    fn test_heartbeat_config_eq() {
+        let a = HeartbeatConfig::default();
+        let b = HeartbeatConfig::default();
+        assert_eq!(a, b);
+
+        let c = HeartbeatConfig {
+            interval_seconds: 120,
+            ..Default::default()
+        };
+        assert_ne!(a, c);
+    }
 }

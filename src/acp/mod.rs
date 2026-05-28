@@ -1091,6 +1091,7 @@ impl AcpControlPlane {
             compaction_model: None,
             workspace_dir: None,
             workspace_only: false,
+            heartbeat: None,
         };
 
         // Create the agent (acquire builder, call, release)

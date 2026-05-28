@@ -151,6 +151,7 @@ impl AgentPersonality {
             compaction_model: None,
             workspace_dir: None,
             workspace_only: false,
+            heartbeat: None,
         }
     }
 

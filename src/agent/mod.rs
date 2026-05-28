@@ -339,6 +339,11 @@ pub struct AgentConfig {
     /// When `None`, the agent's primary model is used.  Set to a cheaper/faster
     /// model (e.g. `"claude-haiku-4-5-20251101"`) to reduce compaction costs.
     pub compaction_model: Option<String>,
+    /// Per-agent heartbeat configuration override.
+    ///
+    /// When `None`, inherits from global `GatewayConfig.heartbeat`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat: Option<crate::heartbeat::HeartbeatConfig>,
 }
 
 impl Default for AgentConfig {
@@ -400,6 +405,7 @@ The current time is provided in the context. When asked about time-sensitive inf
             compaction_model: None,
             workspace_dir: None,
             workspace_only: false,
+            heartbeat: None,
         }
     }
 }
@@ -3181,6 +3187,15 @@ mod tests {
             compaction_model: Some("claude-haiku".to_string()),
             workspace_dir: None,
             workspace_only: false,
+            heartbeat: Some(crate::heartbeat::HeartbeatConfig {
+                enabled: true,
+                interval_seconds: 120,
+                active_hours_start: "09:00".to_string(),
+                active_hours_end: "18:00".to_string(),
+                max_consecutive_idle: 5,
+                model: Some("claude-haiku".to_string()),
+                provider: Some("anthropic".to_string()),
+            }),
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AgentConfig = serde_json::from_str(&json).unwrap();
@@ -3190,6 +3205,16 @@ mod tests {
         assert_eq!(restored.max_concurrent_tools, 3);
         assert_eq!(restored.max_turns, Some(10));
         assert_eq!(restored.compaction_model, Some("claude-haiku".to_string()));
+
+        // Verify heartbeat roundtrip
+        let hb = restored.heartbeat.unwrap();
+        assert!(hb.enabled);
+        assert_eq!(hb.interval_seconds, 120);
+        assert_eq!(hb.active_hours_start, "09:00");
+        assert_eq!(hb.active_hours_end, "18:00");
+        assert_eq!(hb.max_consecutive_idle, 5);
+        assert_eq!(hb.model, Some("claude-haiku".to_string()));
+        assert_eq!(hb.provider, Some("anthropic".to_string()));
     }
 
     // ── ResponseCache ─────────────────────────────────────────────────────────

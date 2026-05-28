@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Heartbeat scheduler configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct HeartbeatConfig {
     /// Enable heartbeat scheduler
