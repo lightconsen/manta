@@ -10007,4 +10007,4 @@ async fn list_audit_log_handler(
 #[cfg(test)]
 mod api_tests;
 #[cfg(test)]
-mod state_tests;
+pub(crate) mod state_tests;

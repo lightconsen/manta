@@ -539,6 +539,178 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn make_test_agent_handle(
+        id: &str,
+        heartbeat: Option<HeartbeatConfig>,
+    ) -> crate::gateway::AgentHandle {
+        let agent_config = crate::agent::AgentConfig {
+            heartbeat,
+            ..Default::default()
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (query_tx, _query_rx) = tokio::sync::mpsc::channel(1);
+        let provider: Arc<dyn crate::providers::Provider> = Arc::new(crate::providers::MockProvider);
+        let tools = Arc::new(crate::tools::ToolRegistry::new());
+        let agent = Arc::new(crate::agent::Agent::new(
+            agent_config.clone(),
+            provider,
+            tools,
+        ));
+        crate::gateway::AgentHandle {
+            id: id.to_string(),
+            config: agent_config,
+            tx,
+            query_tx,
+            busy: false,
+            agent,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_config_falls_back_to_global() {
+        let state = crate::gateway::state_tests::make_test_state(
+            crate::gateway::GatewayConfig::default(),
+        )
+        .await;
+        let state = Arc::new(state);
+        let runner = HeartbeatRunner::new(state.clone());
+
+        let handle = make_test_agent_handle("agent-a", None);
+        let resolved = runner.resolve_agent_config(&handle).await;
+        assert_eq!(resolved, crate::heartbeat::HeartbeatConfig::default());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_config_uses_agent_override() {
+        let mut gateway_config = crate::gateway::GatewayConfig::default();
+        gateway_config.heartbeat = crate::heartbeat::HeartbeatConfig {
+            interval_seconds: 300,
+            ..Default::default()
+        };
+        let state = crate::gateway::state_tests::make_test_state(gateway_config).await;
+        let state = Arc::new(state);
+        let runner = HeartbeatRunner::new(state.clone());
+
+        let agent_heartbeat = crate::heartbeat::HeartbeatConfig {
+            interval_seconds: 60,
+            ..Default::default()
+        };
+        let handle = make_test_agent_handle("agent-b", Some(agent_heartbeat));
+        let resolved = runner.resolve_agent_config(&handle).await;
+        assert_eq!(resolved.interval_seconds, 60); // agent override
+        assert_ne!(resolved, crate::heartbeat::HeartbeatConfig::default());
+    }
+
+    #[tokio::test]
+    async fn test_two_agents_different_intervals() {
+        // Agent A: heartbeat every 1s
+        // Agent B: heartbeat every 3s
+        // Run for ~3.5s, expect A ~3-4 times, B ~1 time
+
+        let mut gateway_config = crate::gateway::GatewayConfig::default();
+        gateway_config.heartbeat = HeartbeatConfig {
+            enabled: true,
+            interval_seconds: 10, // global default, overridden per agent
+            active_hours_start: "00:00".to_string(),
+            active_hours_end: "23:59".to_string(),
+            max_consecutive_idle: 100,
+            ..Default::default()
+        };
+
+        let state = crate::gateway::state_tests::make_test_state(gateway_config).await;
+        let state = Arc::new(state);
+
+        // Insert agents into GatewayState BEFORE runner starts
+        {
+            let mut agents = state.agents.write().await;
+            let handle_a = make_test_agent_handle(
+                "agent-fast",
+                Some(HeartbeatConfig {
+                    enabled: true,
+                    interval_seconds: 1,
+                    active_hours_start: "00:00".to_string(),
+                    active_hours_end: "23:59".to_string(),
+                    max_consecutive_idle: 100,
+                    ..Default::default()
+                }),
+            );
+            let handle_b = make_test_agent_handle(
+                "agent-slow",
+                Some(HeartbeatConfig {
+                    enabled: true,
+                    interval_seconds: 3,
+                    active_hours_start: "00:00".to_string(),
+                    active_hours_end: "23:59".to_string(),
+                    max_consecutive_idle: 100,
+                    ..Default::default()
+                }),
+            );
+            agents.insert("agent-fast".to_string(), handle_a);
+            agents.insert("agent-slow".to_string(), handle_b);
+        }
+
+        let runner = HeartbeatRunner::new(state.clone());
+        let mut event_rx = runner.event_subscribe();
+
+        // Start runner in background, cancel after 3.5s
+        let runner_handle = tokio::spawn(async move {
+            runner.start().await;
+        });
+
+        // Collect events for ~3.5 seconds
+        let mut events = Vec::new();
+        let collect = tokio::time::timeout(Duration::from_millis(3800), async {
+            while let Ok(event) = event_rx.recv().await {
+                events.push(event);
+            }
+        });
+        let _ = collect.await;
+
+        // Cancel runner
+        runner_handle.abort();
+
+        // Count Completed events per agent
+        let mut fast_count = 0u32;
+        let mut slow_count = 0u32;
+        for event in &events {
+            if let HeartbeatEvent::Completed { agent_id, .. } = event {
+                match agent_id.as_str() {
+                    "agent-fast" => fast_count += 1,
+                    "agent-slow" => slow_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        info!(
+            "Integration test results: fast={}, slow={}, total_events={}",
+            fast_count, slow_count, events.len()
+        );
+
+        // Agent-fast (1s interval) should have run at least 2-3 times in 3.5s
+        // (first run at ~0s after init, then at ~1s, ~2s, ~3s)
+        assert!(
+            fast_count >= 2,
+            "agent-fast should have run at least 2 times in 3.5s, got {}",
+            fast_count
+        );
+
+        // Agent-slow (3s interval) should have run at least once
+        assert!(
+            slow_count >= 1,
+            "agent-slow should have run at least 1 time in 3.5s, got {}",
+            slow_count
+        );
+
+        // fast should have run more times than slow
+        assert!(
+            fast_count > slow_count,
+            "agent-fast ({}) should run more than agent-slow ({})",
+            fast_count,
+            slow_count
+        );
+    }
+
     #[test]
     fn test_agent_heartbeat_state_new() {
         let config = HeartbeatConfig {
