@@ -123,6 +123,9 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private messages: ChatMessage[] = [];
   private messagesListeners: Set<MessagesCallback> = new Set();
   private sessionListeners: Set<SessionCallback> = new Set();
+  private isRunningFlag = false;
+  private runListeners: Set<(running: boolean) => void> = new Set();
+  private currentAbortController: AbortController | null = null;
 
   constructor() {
     this.deviceId =
@@ -150,6 +153,19 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   onSessionChange(callback: SessionCallback): () => void {
     this.sessionListeners.add(callback);
     return () => this.sessionListeners.delete(callback);
+  }
+
+  onRunStateChange(callback: (running: boolean) => void): () => void {
+    this.runListeners.add(callback);
+    callback(this.isRunningFlag);
+    return () => this.runListeners.delete(callback);
+  }
+
+  abort(): void {
+    this.currentAbortController?.abort();
+    this.sendRequest("chat.abort", {
+      session_id: this.sessionId,
+    });
   }
 
   private notifySessionChange() {
@@ -648,6 +664,10 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
       return;
     }
 
+    this.isRunningFlag = true;
+    this.runListeners.forEach((cb) => cb(true));
+    this.currentAbortController = new AbortController();
+
     this.sendRequest("chat.send", {
       session_id: this.sessionId,
       message: text,
@@ -682,7 +702,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
     try {
       while (true) {
-        const evt = await this.nextEvent(abortSignal);
+        const evt = await this.nextEvent(this.currentAbortController?.signal ?? abortSignal);
         if (!evt) {
           aborted = true;
           break;
@@ -839,6 +859,9 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           session_id: this.sessionId,
         });
       }
+      this.isRunningFlag = false;
+      this.runListeners.forEach((cb) => cb(false));
+      this.currentAbortController = null;
     }
   }
 

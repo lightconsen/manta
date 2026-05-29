@@ -513,12 +513,17 @@ function CommandPalette({
 }
 
 /* ── Chat Content ── */
-function ChatContent({ messages }: { messages: ChatMessage[] }) {
+function ChatContent({ messages, transport }: { messages: ChatMessage[]; transport: MantaWebSocketTransport }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composer = useComposerRuntime();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
   const [paletteCommands, setPaletteCommands] = useState<CommandDef[]>([]);
+  const [isRunning, setIsRunning] = useState(false);
+
+  useEffect(() => {
+    return transport.onRunStateChange(setIsRunning);
+  }, [transport]);
 
   const handleInput = useCallback(() => {
     const val = inputRef.current?.value || "";
@@ -650,12 +655,25 @@ function ChatContent({ messages }: { messages: ChatMessage[] }) {
                   </svg>
                 </button>
               </div>
-              <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white transition shadow-sm">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-              </ComposerPrimitive.Send>
+              {isRunning ? (
+                <button
+                  type="button"
+                  onClick={() => transport.abort()}
+                  title="Stop generating"
+                  className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                </button>
+              ) : (
+                <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white transition shadow-sm">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </ComposerPrimitive.Send>
+              )}
             </div>
           </div>
         </ComposerPrimitive.Root>
@@ -703,7 +721,7 @@ function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatContent messages={messages} />
+      <ChatContent messages={messages} transport={transport} />
     </AssistantRuntimeProvider>
   );
 }
