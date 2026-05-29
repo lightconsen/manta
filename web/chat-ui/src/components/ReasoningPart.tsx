@@ -90,19 +90,9 @@ export function ReasoningPart({ text }: { text: string }) {
   }, [text, displayedText, isWaiting, done]);
 
   // ── Waiting state ───────────────────────────────────────────────
+  // Don't show anything while waiting for reasoning content to arrive.
   if (isWaiting) {
-    return (
-      <div className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-800/30">
-        <span className="relative flex items-center justify-center h-4 w-4">
-          {/* Pulse ring — grows from small to large */}
-          <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-violet-400 dark:bg-violet-600 opacity-70" />
-          {/* Center dot */}
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500 dark:bg-violet-400" />
-        </span>
-        <BrainIcon className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400" />
-        <span className="text-xs text-violet-600 dark:text-violet-300 font-medium">Thinking...</span>
-      </div>
-    );
+    return null;
   }
 
   // ── Done (collapsed) ────────────────────────────────────────────

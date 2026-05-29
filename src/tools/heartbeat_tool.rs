@@ -125,10 +125,11 @@ impl Tool for HeartbeatTool {
     }
 
     fn description(&self) -> &str {
-        r#"Manage your own periodic heartbeat tasks.
+        r#"Manage your own periodic heartbeat tasks in HEARTBEAT.md.
 
-Use this tool to read, add, remove, or update tasks in your HEARTBEAT.md file.
-These tasks are automatically executed by the heartbeat scheduler at the specified intervals.
+USE THIS TOOL when the user asks to add, remove, view, or modify your "heartbeat tasks" (心跳任务) or HEARTBEAT.md. These are tasks that YOU (the agent) periodically check and execute yourself via the heartbeat scheduler.
+
+DO NOT use this tool for general cron jobs, shell scripts, or external system tasks — use the cron tool for those.
 
 Actions:
 - read: List all current heartbeat tasks

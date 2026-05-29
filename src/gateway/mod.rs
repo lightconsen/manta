@@ -1918,8 +1918,15 @@ impl Gateway {
         }
 
         // Initialize default agent (optional - requires provider configuration)
+        let mut default_config = self.config.default_agent.clone();
+        let default_agent_dir = crate::dirs::agents_dir().join("default");
+        default_config.system_prompt = format!(
+            "{}\n\n## Agent Identity\n\nYour agent ID is: `default`\nYour agent directory is: `{}`\nYou may edit files in your agent directory (including HEARTBEAT.md) to manage your personality and periodic tasks when explicitly asked by the user.",
+            default_config.system_prompt,
+            default_agent_dir.display()
+        );
         match self
-            .spawn_agent("default".to_string(), self.config.default_agent.clone())
+            .spawn_agent("default".to_string(), default_config)
             .await
         {
             Ok(()) => info!("Default agent spawned successfully"),
