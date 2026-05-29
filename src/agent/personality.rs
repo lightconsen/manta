@@ -279,6 +279,49 @@ impl AgentPersonality {
         let content_lower = content.to_lowercase();
         keywords.iter().any(|kw| content_lower.contains(kw))
     }
+
+    /// Get all possible aliases for this agent.
+    ///
+    /// Includes the display name, the agent ID, and short forms derived from both.
+    /// Example: "secretary-xiaowang" with display name "秘书小王" produces
+    /// `["secretary-xiaowang", "xiaowang", "秘书小王", "小王"]`.
+    pub fn aliases(&self) -> Vec<String> {
+        let mut aliases = Vec::new();
+
+        // Agent ID (always included)
+        aliases.push(self.id.clone());
+
+        // Short form from ID: "secretary-xiaowang" -> "xiaowang"
+        if let Some(short) = self.id.rsplit('-').next() {
+            if short != self.id {
+                aliases.push(short.to_string());
+            }
+        }
+
+        // Display name from IDENTITY.md
+        let display = self.display_name();
+        if !display.is_empty() && display != self.id {
+            aliases.push(display.clone());
+            // Extract short nicknames from display name:
+            // "秘书小王" -> "小王"
+            // "My Agent Name" -> "My", "Agent", "Name", "Agent Name"
+            for word in display.split_whitespace() {
+                let trimmed = word.trim();
+                if trimmed.len() >= 2 && !aliases.iter().any(|a| a == trimmed) {
+                    aliases.push(trimmed.to_string());
+                }
+            }
+            // Also try last 2-4 chars as a common nickname pattern (Chinese)
+            if display.chars().count() >= 3 {
+                let suffix: String = display.chars().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+                if suffix.len() >= 2 && !aliases.iter().any(|a| a == &suffix) {
+                    aliases.push(suffix);
+                }
+            }
+        }
+
+        aliases
+    }
 }
 
 /// Agent Registry for discovered personalities
@@ -407,6 +450,23 @@ impl AgentRegistry {
     /// Iterate over all personalities
     pub fn iter(&self) -> impl Iterator<Item = &AgentPersonality> {
         self.personalities.values()
+    }
+
+    /// Find an agent whose aliases match the given name.
+    ///
+    /// Matches exact alias strings (case-insensitive).  Returns the first
+    /// matching personality and the matched alias text so the caller can
+    /// strip it from the original message.
+    pub fn find_by_alias(&self, name: &str) -> Option<(&AgentPersonality, String)> {
+        let name_lower = name.to_lowercase();
+        for personality in self.personalities.values() {
+            for alias in personality.aliases() {
+                if alias.to_lowercase() == name_lower {
+                    return Some((personality, alias));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -540,5 +600,62 @@ mod tests {
         let config = personality.to_agent_config_for(PersonalityContext::Subagent);
         // Should not panic and should return the default system prompt
         assert!(!config.system_prompt.is_empty());
+    }
+
+    #[test]
+    fn test_aliases_from_id_and_display_name() {
+        let personality = AgentPersonality {
+            id: "secretary-xiaowang".to_string(),
+            identity: "# 秘书小王\n私人秘书".to_string(),
+            ..Default::default()
+        };
+
+        let aliases = personality.aliases();
+        assert!(aliases.contains(&"secretary-xiaowang".to_string()));
+        assert!(aliases.contains(&"xiaowang".to_string()));
+        assert!(aliases.contains(&"秘书小王".to_string()));
+        assert!(aliases.contains(&"小王".to_string()));
+    }
+
+    #[test]
+    fn test_find_by_alias_exact_match() {
+        let mut registry = AgentRegistry::new();
+        registry.personalities.insert(
+            "secretary-xiaowang".to_string(),
+            AgentPersonality {
+                id: "secretary-xiaowang".to_string(),
+                identity: "# 秘书小王\n私人秘书".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let (p, alias) = registry.find_by_alias("小王").unwrap();
+        assert_eq!(p.id, "secretary-xiaowang");
+        assert_eq!(alias, "小王");
+
+        let (p2, _) = registry.find_by_alias("xiaowang").unwrap();
+        assert_eq!(p2.id, "secretary-xiaowang");
+    }
+
+    #[test]
+    fn test_find_by_alias_case_insensitive() {
+        let mut registry = AgentRegistry::new();
+        registry.personalities.insert(
+            "coder".to_string(),
+            AgentPersonality {
+                id: "coder".to_string(),
+                identity: "# Code Assistant\nI write code.".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let (p, _) = registry.find_by_alias("CODE ASSISTANT").unwrap();
+        assert_eq!(p.id, "coder");
+    }
+
+    #[test]
+    fn test_find_by_alias_no_match() {
+        let registry = AgentRegistry::new();
+        assert!(registry.find_by_alias("nonexistent").is_none());
     }
 }

@@ -818,8 +818,33 @@ async fn handle_chat_send(
         state.agent_router.bind_session(&session_id, &route).await;
     }
 
+    // ── Smart name-based routing: "小王，xxx" -> route to secretary-xiaowang ──
+    let mut final_message = params.message.clone();
+    {
+        let registry = state.agent_registry.read().await;
+        // Try to extract a name prefix like "小王，" or "小王：" from the message.
+        let trimmed = final_message.trim_start();
+        if let Some((first_word, rest)) = trimmed.split_once(|c: char| c == '，' || c == ',' || c == '：' || c == ':' || c == ' ' || c == '\t') {
+            let name = first_word.trim();
+            if !name.is_empty() {
+                if let Some((personality, _matched_alias)) = registry.find_by_alias(name) {
+                    let agent_id = personality.id.clone();
+                    info!("Smart-routing session {} to agent '{}' (matched name: '{}' in message)", session_id, agent_id, name);
+                    let route = crate::inbound::RouteResult {
+                        agent_id: agent_id.clone(),
+                        workspace_id: None,
+                        created_binding: true,
+                    };
+                    state.agent_router.bind_session(&session_id, &route).await;
+                    // Strip the greeting prefix so the agent sees only the task.
+                    final_message = rest.trim_start().to_string();
+                }
+            }
+        }
+    }
+
     let incoming =
-        crate::channels::IncomingMessage::new(user_id.clone(), session_id.clone(), params.message)
+        crate::channels::IncomingMessage::new(user_id.clone(), session_id.clone(), final_message)
             .with_provenance(crate::channels::InputProvenance::ExternalUser {
                 channel: "web".to_string(),
                 is_direct: true,
