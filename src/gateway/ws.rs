@@ -2246,13 +2246,14 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill frontmatter: {}", e));
     }
 
-    // Write to ~/.manta/skills/{name}.md
+    // Write to ~/.manta/skills/{name}/SKILL.md
     let skills_dir = crate::dirs::skills_dir();
-    if let Err(e) = tokio::fs::create_dir_all(&skills_dir).await {
-        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create skills directory: {}", e));
+    let skill_dir = skills_dir.join(name);
+    if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
+        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create skill directory: {}", e));
     }
 
-    let skill_path = skills_dir.join(format!("{}.md", name));
+    let skill_path = skill_dir.join("SKILL.md");
     if let Err(e) = tokio::fs::write(&skill_path, &payload.content).await {
         return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write skill file: {}", e));
     }
