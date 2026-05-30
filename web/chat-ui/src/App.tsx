@@ -1432,19 +1432,75 @@ function SettingsPanel({
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No cron jobs configured.</div>
                   ) : (
                     <div className="space-y-2">
-                      {crons.map((job, i) => (
-                        <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(job as Record<string, string>).name || "Unnamed"}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${job.enabled ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
-                              {job.enabled ? "Enabled" : "Disabled"}
-                            </span>
+                      {crons.map((job, i) => {
+                        const j = job as Record<string, unknown>;
+                        const target = j.target as Record<string, unknown> | undefined;
+                        const targetType = target?.type as string | undefined;
+                        const jobState = j.state as Record<string, unknown> | undefined;
+                        const nextRun = jobState?.next_run_at as string | undefined;
+                        const lastRun = jobState?.last_run_at as string | undefined;
+                        const agentId = target?.agent_id as string | undefined;
+                        const command = target?.command as string | undefined;
+                        const prompt = target?.prompt as string | undefined;
+                        return (
+                          <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(j.name as string) || "Unnamed"}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${j.enabled ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                                {j.enabled ? "Enabled" : "Disabled"}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 space-y-1">
+                              {(j.schedule as string) && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Schedule</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{j.schedule as string}</span>
+                                </div>
+                              )}
+                              {nextRun && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Next Run</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300">{new Date(nextRun).toLocaleString()}</span>
+                                </div>
+                              )}
+                              {lastRun && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Last Run</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300">{new Date(lastRun).toLocaleString()}</span>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Target</span>
+                                {targetType === "shell" ? (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-700 dark:text-neutral-300">Shell</span>
+                                ) : targetType === "agent" ? (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">Agent</span>
+                                ) : (
+                                  <span className="text-xs text-gray-500 dark:text-neutral-400">{targetType || "Unknown"}</span>
+                                )}
+                              </div>
+                              {targetType === "agent" && agentId && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Agent</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{agentId}</span>
+                                </div>
+                              )}
+                              {targetType === "shell" && command && (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Command</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono break-all">{command}</span>
+                                </div>
+                              )}
+                              {targetType === "agent" && prompt && (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Prompt</span>
+                                  <span className="text-xs text-gray-600 dark:text-neutral-300 line-clamp-2">{prompt}</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          {(job as Record<string, string>).schedule && (
-                            <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1 font-mono">{(job as Record<string, string>).schedule}</div>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </section>
