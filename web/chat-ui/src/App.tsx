@@ -775,12 +775,8 @@ interface MantaConfig {
 }
 
 function SettingsPanel({
-  open,
-  onClose,
   transport,
 }: {
-  open: boolean;
-  onClose: () => void;
   transport: MantaWebSocketTransport;
 }) {
   const [config, setConfig] = useState<MantaConfig>({});
@@ -788,7 +784,6 @@ function SettingsPanel({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
     setLoading(true);
     Promise.all([transport.getConfig(), transport.listModels()])
       .then(([cfg, mdl]) => {
@@ -797,7 +792,7 @@ function SettingsPanel({
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [open, transport]);
+  }, [transport]);
 
   const update = async (path: string, value: unknown) => {
     const ok = await transport.setConfig(path, value);
@@ -820,35 +815,20 @@ function SettingsPanel({
   const da = config.default_agent || {};
   const hb = config.heartbeat || {};
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-white dark:bg-neutral-800 shadow-2xl border border-gray-200 dark:border-neutral-700"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-neutral-700">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-700 text-gray-400 dark:text-neutral-400 transition"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
+    <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-neutral-900">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
+      </div>
 
-        {loading ? (
-          <div className="px-5 py-12 text-center text-gray-400 dark:text-neutral-500">
-            <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin mx-auto mb-3" />
-            Loading configuration...
-          </div>
-        ) : (
-          <div className="px-5 py-4 space-y-5">
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-neutral-500">
+          <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin mb-3 mr-3" />
+          Loading configuration...
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
             {/* Model */}
             <section>
               <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model</h3>
@@ -983,8 +963,7 @@ function SettingsPanel({
           </div>
         )}
       </div>
-    </div>
-  );
+    );
 }
 
 /* ── App ── */
@@ -1173,13 +1152,12 @@ function ChatApp() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
-        <ChatAppInner key={sessionKey} transport={transport} />
+        {settingsOpen ? (
+          <SettingsPanel transport={transport} />
+        ) : (
+          <ChatAppInner key={sessionKey} transport={transport} />
+        )}
       </main>
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        transport={transport}
-      />
     </div>
   );
 }
