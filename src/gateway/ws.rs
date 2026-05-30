@@ -478,6 +478,8 @@ async fn dispatch_method(
         "config.get" => handle_config_get(req, state).await,
         "config.set" => handle_config_set(req, state).await,
         "models.list" => handle_models_list(req, state).await,
+        "cron.list" => handle_cron_list(req, state).await,
+        "skills.list" => handle_skills_list(req, state).await,
         "acp.list" => handle_acp_list(req, state).await,
         "acp.spawn" => handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => handle_acp_terminate(req, state).await,
@@ -827,7 +829,7 @@ async fn handle_chat_send(
         let registry = state.agent_registry.read().await;
         // Try to extract a name prefix like "小王，" or "小王：" from the message.
         let trimmed = final_message.trim_start();
-        if let Some((first_word, rest)) = trimmed.split_once(|c: char| c == '，' || c == ',' || c == '：' || c == ':' || c == ' ' || c == '\t') {
+        if let Some((first_word, rest)) = trimmed.split_once(['，', ',', '：', ':', ' ', '\t']) {
             let name = first_word.trim();
             if !name.is_empty() {
                 if let Some((personality, _matched_alias)) = registry.find_by_alias(name) {
@@ -1976,6 +1978,37 @@ async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         serde_json::json!({
             "models": entries,
             "default_model": default_model,
+        }),
+    )
+}
+
+async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let jobs = {
+        let scheduler_opt = state.cron_scheduler.read().await;
+        match scheduler_opt.as_ref() {
+            Some(s) => s.lock().await.list_jobs().await,
+            None => Vec::new(),
+        }
+    };
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "jobs": jobs,
+            "count": jobs.len(),
+        }),
+    )
+}
+
+async fn handle_skills_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let skills = {
+        let sm = state.skills_manager.read().await;
+        sm.list_skills().await
+    };
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "skills": skills,
+            "count": skills.len(),
         }),
     )
 }

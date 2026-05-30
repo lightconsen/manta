@@ -126,6 +126,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private isRunningFlag = false;
   private runListeners: Set<(running: boolean) => void> = new Set();
   private currentAbortController: AbortController | null = null;
+  private serverInfo: { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } = {};
 
   constructor() {
     this.deviceId =
@@ -225,6 +226,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
           }
           if (msg.ok && msg.payload?.protocol_version) {
             this.setStatus("connected");
+            this.serverInfo = {
+              version: msg.payload.server?.version,
+              conn_id: msg.payload.server?.conn_id,
+              features: msg.payload.features,
+              scopes_granted: msg.payload.scopes_granted,
+            };
             if (this.subscribedSessions.length > 0) {
               this.sendRequest("sessions.subscribe", {
                 session_ids: this.subscribedSessions,
@@ -532,7 +539,21 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { agents: [] };
   }
 
+  async listCrons(): Promise<{ jobs: Array<Record<string, unknown>>; count: number }> {
+    const res = await this.sendRequestAndWait("cron.list", {}) as { jobs: Array<Record<string, unknown>>; count: number } | undefined;
+    return res || { jobs: [], count: 0 };
+  }
+
+  async listSkills(): Promise<{ skills: Array<Record<string, unknown>>; count: number }> {
+    const res = await this.sendRequestAndWait("skills.list", {}) as { skills: Array<Record<string, unknown>>; count: number } | undefined;
+    return res || { skills: [], count: 0 };
+  }
+
   /* ── In-memory message state for UI ── */
+  getServerInfo(): { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } {
+    return this.serverInfo;
+  }
+
   getMessages(): ChatMessage[] {
     return this.messages;
   }

@@ -785,6 +785,8 @@ function SettingsPanel({
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [agents, setAgents] = useState<string[]>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
+  const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
+  const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("general");
 
@@ -795,12 +797,16 @@ function SettingsPanel({
       transport.listModels(),
       transport.listAgents(),
       transport.listSessions(),
+      transport.listCrons(),
+      transport.listSkills(),
     ])
-      .then(([cfg, mdl, agt, sess]) => {
+      .then(([cfg, mdl, agt, sess, cronRes, skillRes]) => {
         setConfig(cfg as MantaConfig);
         setModels(mdl.models || []);
         setAgents(agt.agents || []);
         setSessions(sess || []);
+        setCrons(cronRes.jobs || []);
+        setSkills(skillRes.skills || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -831,10 +837,10 @@ function SettingsPanel({
   const tabs = [
     { id: "general", label: "General" },
     { id: "channels", label: "Channels" },
+    { id: "models", label: "Models" },
     { id: "agents", label: "Agents" },
     { id: "crons", label: "Crons" },
     { id: "sessions", label: "Sessions" },
-    { id: "nodes", label: "Nodes" },
     { id: "skills", label: "Skills" },
     { id: "logs", label: "Logs" },
   ];
@@ -884,7 +890,35 @@ function SettingsPanel({
             {activeTab === "general" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model</h3>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Gateway</h3>
+                  <div className="space-y-2">
+                    {(() => {
+                      const si = transport.getServerInfo();
+                      return (
+                        <>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">Version</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{si.version || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">Connection</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{si.conn_id || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">Features</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100">{(si.features || []).join(", ") || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">Scopes</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100">{(si.scopes_granted || []).join(", ") || "—"}</span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </section>
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model & Provider</h3>
                   <div className="space-y-3">
                     <div>
                       <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
@@ -938,13 +972,22 @@ function SettingsPanel({
                     </div>
                   </div>
                 </section>
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Token Usage</h3>
+                  <div className="text-sm text-gray-500 dark:text-neutral-400">Token usage tracking coming soon.</div>
+                </section>
               </div>
             )}
 
             {activeTab === "channels" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Configured Channels</h3>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Configured Channels</h3>
+                    <button className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition">
+                      + Add
+                    </button>
+                  </div>
                   {channels.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No channels configured.</div>
                   ) : (
@@ -953,6 +996,34 @@ function SettingsPanel({
                         <div key={ch} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
                           <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{ch}</span>
                           <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Enabled</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {activeTab === "models" && (
+              <div className="space-y-5">
+                <section>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Available Models</h3>
+                    <button className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition">
+                      + Add
+                    </button>
+                  </div>
+                  {models.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No models available.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {models.map((m) => (
+                        <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{m.name}</span>
+                            <span className="text-xs text-gray-500 dark:text-neutral-400">{m.provider}</span>
+                          </div>
+                          {config.model === m.id && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Default</span>}
                         </div>
                       ))}
                     </div>
@@ -1013,8 +1084,26 @@ function SettingsPanel({
             {activeTab === "crons" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Cron Jobs</h3>
-                  <div className="text-sm text-gray-500 dark:text-neutral-400">Cron job management coming soon.</div>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Cron Jobs ({crons.length})</h3>
+                  {crons.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No cron jobs configured.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {crons.map((job, i) => (
+                        <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(job as Record<string, string>).name || "Unnamed"}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${job.enabled ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                              {job.enabled ? "Enabled" : "Disabled"}
+                            </span>
+                          </div>
+                          {(job as Record<string, string>).schedule && (
+                            <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1 font-mono">{(job as Record<string, string>).schedule}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </div>
             )}
@@ -1039,20 +1128,32 @@ function SettingsPanel({
               </div>
             )}
 
-            {activeTab === "nodes" && (
-              <div className="space-y-5">
-                <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Nodes</h3>
-                  <div className="text-sm text-gray-500 dark:text-neutral-400">Node management coming soon.</div>
-                </section>
-              </div>
-            )}
-
             {activeTab === "skills" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Skills</h3>
-                  <div className="text-sm text-gray-500 dark:text-neutral-400">Skill management coming soon.</div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Skills ({skills.length})</h3>
+                    <button className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition">
+                      + Install
+                    </button>
+                  </div>
+                  {skills.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No skills loaded.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {skills.map((s, i) => (
+                        <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(s as Record<string, string>).name || "Unnamed"}</span>
+                            <span className="text-xs text-gray-500 dark:text-neutral-400">{(s as Record<string, string>).version || ""}</span>
+                          </div>
+                          {(s as Record<string, string>).description && (
+                            <div className="text-xs text-gray-500 dark:text-neutral-400 mt-1">{(s as Record<string, string>).description}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </div>
             )}

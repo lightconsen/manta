@@ -232,7 +232,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
     match method {
         "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
         "chat.history" | "sessions.list" | "agents.list" | "agents.get" | "health"
-        | "system.presence" | "commands.list" | "config.get" | "models.list" => Some(SCOPE_READ),
+        | "system.presence" | "commands.list" | "config.get" | "models.list"
+        | "cron.list" | "skills.list" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"
