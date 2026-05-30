@@ -1757,8 +1757,8 @@ function SettingsPanel({
             )}
 
             {activeTab === "logs" && (
-              <div className="space-y-5">
-                <section>
+              <div className="flex flex-col h-full">
+                <section className="flex flex-col flex-1">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Logs</h3>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ${logsSubscribed ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-neutral-800 dark:text-neutral-500'}`}>
@@ -1767,7 +1767,7 @@ function SettingsPanel({
                   </div>
                   <div
                     ref={logListRef}
-                    className="bg-gray-50 dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-neutral-700 h-96 overflow-y-auto font-mono text-[11px] leading-4 p-3"
+                    className="bg-gray-50 dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-neutral-700 flex-1 overflow-y-auto font-mono text-[11px] leading-4 p-3 min-h-0"
                   >
                     {logLines.length === 0 && (
                       <div className="text-gray-400 dark:text-neutral-600 text-center py-20">
