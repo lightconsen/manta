@@ -1527,12 +1527,17 @@ function SettingsPanel({
                               </span>
                             </div>
                             <div className="mt-1.5 space-y-1">
-                              {(j.schedule as string) && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Schedule</span>
-                                  <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{j.schedule as string}</span>
-                                </div>
-                              )}
+                              {(() => {
+                                const sched = j.schedule as Record<string, unknown> | string | undefined;
+                                const expr = typeof sched === "string" ? sched : (sched as Record<string, unknown> | undefined)?.expression as string | undefined;
+                                if (!expr) return null;
+                                return (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Schedule</span>
+                                    <span className="text-xs text-gray-600 dark:text-neutral-300 font-mono">{expr}</span>
+                                  </div>
+                                );
+                              })()}
                               {nextRun && (
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 w-16 shrink-0">Next Run</span>
