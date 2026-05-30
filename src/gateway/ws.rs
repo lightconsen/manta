@@ -26,6 +26,7 @@ use futures_util::{
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -486,6 +487,8 @@ async fn dispatch_method(
         "cron.list" => handle_cron_list(req, state).await,
         "skills.list" => handle_skills_list(req, state).await,
         "skills.install" => handle_skills_install(req, state).await,
+        "logs.subscribe" => handle_logs_subscribe(req, conn, state, cmd_tx).await,
+        "logs.unsubscribe" => handle_logs_unsubscribe(req, conn).await,
         "acp.list" => handle_acp_list(req, state).await,
         "acp.spawn" => handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => handle_acp_terminate(req, state).await,
@@ -2274,6 +2277,95 @@ fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, Ws
         },
         None => Err(error_invalid_request(&req.id, "Missing params")),
     }
+}
+
+async fn handle_logs_subscribe(
+    req: &WsRequest,
+    conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+    state: &Arc<GatewayState>,
+    cmd_tx: &mpsc::Sender<WsCommand>,
+) -> WsResponse {
+    // Cancel any existing log subscription for this connection
+    {
+        let cg = conn.write().await;
+        if let Some(ref tx) = cg.log_cancel_tx {
+            let _ = tx.send(()).await;
+        }
+    }
+
+    let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+    {
+        let mut cg = conn.write().await;
+        cg.log_cancel_tx = Some(cancel_tx);
+    }
+
+    let log_tx = state.log_tx.clone();
+    let cmd_tx = cmd_tx.clone();
+
+    tokio::spawn(async move {
+        // Subscribe to new log lines first to avoid missing any during file read
+        let mut log_rx = log_tx.subscribe();
+
+        // Send all historical log lines from the file
+        let log_path = crate::logs::log_file_path();
+        if log_path.exists() {
+            if let Ok(file) = tokio::fs::File::open(&log_path).await {
+                let reader = tokio::io::BufReader::new(file);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let event = WsEvent {
+                        frame_type: "event",
+                        event: "log.line".to_string(),
+                        payload: serde_json::to_value(serde_json::json!({
+                            "line": line,
+                            "historical": true,
+                        })).ok(),
+                        seq: None,
+                    };
+                    if let Ok(text) = serde_json::to_string(&event) {
+                        let _ = cmd_tx.send(WsCommand::SendEvent(text)).await;
+                    }
+                }
+            }
+        }
+
+        // Forward new lines from the broadcast channel
+        loop {
+            tokio::select! {
+                Ok(line) = log_rx.recv() => {
+                    let event = WsEvent {
+                        frame_type: "event",
+                        event: "log.line".to_string(),
+                        payload: serde_json::to_value(serde_json::json!({
+                            "line": line,
+                            "historical": false,
+                        })).ok(),
+                        seq: None,
+                    };
+                    if let Ok(text) = serde_json::to_string(&event) {
+                        let _ = cmd_tx.send(WsCommand::SendEvent(text)).await;
+                    }
+                }
+                _ = cancel_rx.recv() => {
+                    break;
+                }
+            }
+        }
+    });
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "subscribed" }))
+}
+
+async fn handle_logs_unsubscribe(
+    req: &WsRequest,
+    conn: &Arc<tokio::sync::RwLock<ProtocolConnection>>,
+) -> WsResponse {
+    let mut cg = conn.write().await;
+    if let Some(ref tx) = cg.log_cancel_tx {
+        let _ = tx.send(()).await;
+        cg.log_cancel_tx = None;
+    }
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
 
 #[cfg(test)]

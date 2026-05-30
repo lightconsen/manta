@@ -52,6 +52,7 @@ impl crate::outbound::OutboundPipeline for DummyOutboundPipeline {
 
 pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let (event_tx, _) = broadcast::channel(1);
+    let (log_tx, _) = broadcast::channel(1);
     let (message_queue_tx, _message_queue_rx) = mpsc::channel(1);
     let (routed_tx, _routed_rx) = mpsc::channel(1);
 
@@ -97,6 +98,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         model_router: Arc::new(ModelRouter::new(crate::model_router::ModelRouterConfig::default())),
         tool_registry: Arc::new(ToolRegistry::new()),
         event_tx,
+        log_tx,
         hook_registry: Arc::new(hooks::EventHookRegistry::new()),
         message_queue: message_queue_tx,
         canvas_manager: Arc::new(CanvasManager::new()),

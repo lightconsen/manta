@@ -234,7 +234,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "chat.history" | "sessions.list" | "agents.list" | "agents.get"
         | "agents.registry" | "health" | "system.presence" | "commands.list"
         | "config.get" | "models.list" | "models.add" | "models.remove" | "models.set_default"
-        | "cron.list" | "skills.list" | "skills.install" => Some(SCOPE_READ),
+        | "cron.list" | "skills.list" | "skills.install"
+        | "logs.subscribe" | "logs.unsubscribe" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"
@@ -313,6 +314,9 @@ pub struct ProtocolConnection {
     pub seq: u64,
     /// Connection ID
     pub conn_id: String,
+    /// Log subscription cancel sender
+    #[allow(dead_code)]
+    pub log_cancel_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl ProtocolConnection {
@@ -325,6 +329,7 @@ impl ProtocolConnection {
             subscriptions: Vec::new(),
             seq: 0,
             conn_id: conn_id.into(),
+            log_cancel_tx: None,
         }
     }
 

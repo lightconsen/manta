@@ -27,6 +27,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
@@ -668,6 +669,8 @@ pub struct GatewayState {
     /// Browser bridge server (started when browser.bridge_enabled is true)
     #[cfg(feature = "browser")]
     pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
+    /// Log line broadcast channel for real-time log streaming to WebSocket clients
+    pub log_tx: broadcast::Sender<String>,
 }
 
 impl GatewayState {
@@ -1169,6 +1172,7 @@ impl Gateway {
         validate_auth_config(&config)?;
 
         let (event_tx, _) = broadcast::channel(1000);
+        let (log_tx, _) = broadcast::channel(1000);
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
@@ -1454,6 +1458,7 @@ impl Gateway {
             model_router,
             tool_registry,
             event_tx,
+            log_tx,
             hook_registry: Arc::new(hooks::EventHookRegistry::new()),
             message_queue: message_queue_tx,
             canvas_manager: Arc::new(CanvasManager::new()),
@@ -2079,6 +2084,51 @@ impl Gateway {
                 scheduler.set_heartbeat_wake_tx(wake_tx);
                 info!("Cron heartbeat wake integration enabled");
             }
+        }
+
+        // Start log tail broadcaster for real-time log streaming
+        {
+            let log_tx = self.state.log_tx.clone();
+            tokio::spawn(async move {
+                let log_path = crate::logs::log_file_path();
+                let mut pos: u64 = 0;
+                loop {
+                    if log_path.exists() {
+                        match tokio::fs::metadata(&log_path).await {
+                            Ok(meta) => {
+                                let new_len = meta.len();
+                                if new_len > pos {
+                                    match tokio::fs::File::open(&log_path).await {
+                                        Ok(file) => {
+                                            let mut reader = tokio::io::BufReader::new(file);
+                                            if let Err(e) = reader.seek(tokio::io::SeekFrom::Start(pos)).await {
+                                                tracing::warn!("Log tail seek error: {}", e);
+                                            } else {
+                                                let mut lines = reader.lines();
+                                                while let Ok(Some(line)) = lines.next_line().await {
+                                                    let _ = log_tx.send(line);
+                                                }
+                                            }
+                                            pos = new_len;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Log tail open error: {}", e);
+                                        }
+                                    }
+                                } else if new_len < pos {
+                                    // File was truncated/rotated
+                                    pos = 0;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Log tail metadata error: {}", e);
+                            }
+                        }
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            });
+            info!("Log tail broadcaster started");
         }
 
         // Run the server

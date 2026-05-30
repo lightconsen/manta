@@ -593,6 +593,15 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /* ── Log streaming ── */
+  subscribeLogs(): void {
+    this.sendRequest("logs.subscribe", {});
+  }
+
+  unsubscribeLogs(): void {
+    this.sendRequest("logs.unsubscribe", {});
+  }
+
   /* ── Channel operations ── */
   async addChannel(payload: { name: string; channel_type: string; enabled?: boolean; agent_id?: string; credentials?: Record<string, string> }): Promise<boolean> {
     try {
