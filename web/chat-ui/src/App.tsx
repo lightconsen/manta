@@ -275,6 +275,77 @@ function Avatar({ role }: { role: string }) {
 }
 
 /* ── Live Status Bar ── */
+
+/** Diverse status messages based on tool name and elapsed time. */
+function getStatusText(
+  status: "thinking" | "tool_calling",
+  toolName: string | undefined,
+  elapsedSec: number
+): string {
+  if (status === "thinking") {
+    const pool = elapsedSec > 30
+      ? ["Still thinking", "Deep in thought", "Processing", "Analyzing"]
+      : elapsedSec > 10
+        ? ["Thinking", "Pondering", "Reasoning", "Considering"]
+        : ["Thinking", "Analyzing", "Reasoning"];
+    return pool[Math.floor(elapsedSec / 3) % pool.length];
+  }
+
+  // tool_calling — diverse messages per tool
+  const name = toolName?.toLowerCase() || "";
+  if (name.includes("file_read") || name.includes("fileread")) {
+    return "Reading files";
+  }
+  if (name.includes("file_write") || name.includes("filewrite")) {
+    return "Writing files";
+  }
+  if (name.includes("file_edit") || name.includes("fileedit")) {
+    return "Editing files";
+  }
+  if (name.includes("shell") || name.includes("bash")) {
+    const pool = elapsedSec > 15
+      ? ["Running command", "Executing shell", "Processing output"]
+      : ["Running command", "Executing shell"];
+    return pool[Math.floor(elapsedSec / 5) % pool.length];
+  }
+  if (name.includes("web_search") || name.includes("websearch")) {
+    return "Searching the web";
+  }
+  if (name.includes("heartbeat")) {
+    return "Checking heartbeat";
+  }
+  if (name.includes("cron")) {
+    return "Managing scheduled tasks";
+  }
+  if (name.includes("memory") || name.includes("recall")) {
+    return "Recalling memory";
+  }
+  if (name.includes("upgrade") || name.includes("patch")) {
+    return "Applying changes";
+  }
+  if (name.includes("delegate")) {
+    return "Delegating to subagent";
+  }
+  if (name.includes("browser")) {
+    return "Browsing the web";
+  }
+  if (name.includes("git")) {
+    return "Running git";
+  }
+  if (name.includes("build") || name.includes("cargo")) {
+    return "Building project";
+  }
+  if (name.includes("test")) {
+    return "Running tests";
+  }
+
+  // Generic tool messages
+  const generic = elapsedSec > 20
+    ? ["Still working", "Processing", "Running tools"]
+    : ["Running tools", "Executing", "Working"];
+  return generic[Math.floor(elapsedSec / 4) % generic.length];
+}
+
 function LiveStatusBar({
   liveStatus,
   startTime,
@@ -299,6 +370,9 @@ function LiveStatusBar({
     return `${s}s`;
   };
 
+  const elapsedSec = Math.floor(elapsed / 1000);
+  const statusText = getStatusText(liveStatus.status, liveStatus.toolName, elapsedSec);
+
   return (
     <div className="mt-1.5 flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400/80">
       {/* Animated dot */}
@@ -307,13 +381,7 @@ function LiveStatusBar({
         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
       </span>
       {/* Status text */}
-      <span className="font-medium">
-        {liveStatus.status === "thinking"
-          ? "Thinking"
-          : liveStatus.toolName
-            ? `Running ${liveStatus.toolName}`
-            : "Working"}
-      </span>
+      <span className="font-medium">{statusText}</span>
       {/* Animated dots */}
       <span className="inline-flex w-4">
         <span className="animate-pulse">.</span>
