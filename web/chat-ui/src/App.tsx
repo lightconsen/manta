@@ -776,8 +776,10 @@ interface MantaConfig {
 
 function SettingsPanel({
   transport,
+  onClose,
 }: {
   transport: MantaWebSocketTransport;
+  onClose: () => void;
 }) {
   const [config, setConfig] = useState<MantaConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
@@ -820,6 +822,16 @@ function SettingsPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
         <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-400 dark:text-neutral-400 transition"
+          title="Back to chat"
+        >
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
       {loading ? (
@@ -1149,11 +1161,11 @@ function ChatApp() {
         networkStatus={networkStatus}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => setSettingsOpen((s) => !s)}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
         {settingsOpen ? (
-          <SettingsPanel transport={transport} />
+          <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
         ) : (
           <ChatAppInner key={sessionKey} transport={transport} />
         )}
