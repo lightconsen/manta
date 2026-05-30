@@ -467,6 +467,7 @@ async fn dispatch_method(
         "sessions.unsubscribe" => handle_sessions_unsubscribe(req, conn, cmd_tx).await,
         "agents.list" => handle_agents_list(req, state).await,
         "agents.get" => handle_agents_get(req, state).await,
+        "agents.registry" => handle_agents_registry(req, state).await,
         "health" => handle_health(req, state).await,
         "system.presence" => handle_system_presence(req).await,
         "commands.list" => {
@@ -1225,6 +1226,28 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         ),
         None => error_agent_not_found(&req.id),
     }
+}
+
+async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let registry = state.agent_registry.read().await;
+    let entries: Vec<_> = registry
+        .list()
+        .into_iter()
+        .filter_map(|id| registry.get(&id))
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "display_name": p.display_name(),
+                "is_valid": p.is_valid,
+                "has_heartbeat": !p.heartbeat.is_empty(),
+            })
+        })
+        .collect();
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "agents": entries, "count": entries.len() }),
+    )
 }
 
 async fn handle_health(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {

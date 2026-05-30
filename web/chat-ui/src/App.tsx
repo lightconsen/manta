@@ -784,6 +784,7 @@ function SettingsPanel({
   const [config, setConfig] = useState<MantaConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [agents, setAgents] = useState<string[]>([]);
+  const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
@@ -796,14 +797,16 @@ function SettingsPanel({
       transport.getConfig(),
       transport.listModels(),
       transport.listAgents(),
+      transport.listAgentRegistry(),
       transport.listSessions(),
       transport.listCrons(),
       transport.listSkills(),
     ])
-      .then(([cfg, mdl, agt, sess, cronRes, skillRes]) => {
+      .then(([cfg, mdl, agt, reg, sess, cronRes, skillRes]) => {
         setConfig(cfg as MantaConfig);
         setModels(mdl.models || []);
         setAgents(agt.agents || []);
+        setAgentRegistry(reg.agents || []);
         setSessions(sess || []);
         setCrons(cronRes.jobs || []);
         setSkills(skillRes.skills || []);
@@ -1035,13 +1038,28 @@ function SettingsPanel({
             {activeTab === "agents" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Registered Agents</h3>
-                  {agents.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No agents registered.</div>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Registered Agents ({agentRegistry.length})</h3>
+                  {agentRegistry.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No agents in registry.</div>
                   ) : (
-                    <div className="space-y-1">
-                      {agents.map((a) => (
-                        <div key={a} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 text-sm text-gray-900 dark:text-gray-100 font-mono">{a}</div>
+                    <div className="space-y-2">
+                      {agentRegistry.map((a) => (
+                        <div key={a.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{a.display_name || a.id}</span>
+                            <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">{a.id}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {a.has_heartbeat && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Heartbeat</span>
+                            )}
+                            {agents.includes(a.id) ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Running</span>
+                            ) : (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400">Stopped</span>
+                            )}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}
