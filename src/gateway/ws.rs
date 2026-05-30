@@ -1231,15 +1231,64 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         agents.get(&params.agent_id).cloned()
     };
 
+    let personality = {
+        let registry = state.agent_registry.read().await;
+        registry.get(&params.agent_id).cloned()
+    };
+
     match agent {
-        Some(handle) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({
-                "agent_id": params.agent_id,
-                "busy": handle.busy,
-            }),
-        ),
-        None => error_agent_not_found(&req.id),
+        Some(handle) => {
+            let cfg = &handle.config;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "agent_id": params.agent_id,
+                    "busy": handle.busy,
+                    "status": if handle.busy { "busy" } else { "idle" },
+                    "config": {
+                        "temperature": cfg.temperature,
+                        "max_tokens": cfg.max_tokens,
+                        "max_turns": cfg.max_turns,
+                        "max_concurrent_tools": cfg.max_concurrent_tools,
+                        "workspace_only": cfg.workspace_only,
+                        "compaction_model": cfg.compaction_model,
+                        "system_prompt": cfg.system_prompt,
+                    },
+                    "personality": personality.map(|p| serde_json::json!({
+                        "display_name": p.display_name(),
+                        "is_valid": p.is_valid,
+                        "has_heartbeat": !p.heartbeat.is_empty(),
+                        "has_soul": !p.soul.is_empty(),
+                        "has_identity": !p.identity.is_empty(),
+                        "has_memory": !p.memory.is_empty(),
+                    })),
+                }),
+            )
+        }
+        None => {
+            // Agent not spawned but may have a personality on disk
+            if let Some(p) = personality {
+                WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({
+                        "agent_id": params.agent_id,
+                        "busy": false,
+                        "status": "stopped",
+                        "config": null,
+                        "personality": {
+                            "display_name": p.display_name(),
+                            "is_valid": p.is_valid,
+                            "has_heartbeat": !p.heartbeat.is_empty(),
+                            "has_soul": !p.soul.is_empty(),
+                            "has_identity": !p.identity.is_empty(),
+                            "has_memory": !p.memory.is_empty(),
+                        },
+                    }),
+                )
+            } else {
+                error_agent_not_found(&req.id)
+            }
+        }
     }
 }
 

@@ -546,6 +546,23 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { agents: [], count: 0 };
   }
 
+  async getAgent(agentId: string): Promise<{
+    agent_id: string;
+    busy: boolean;
+    status: string;
+    config: Record<string, unknown> | null;
+    personality: Record<string, unknown> | null;
+  } | null> {
+    const res = await this.sendRequestAndWait("agents.get", { agent_id: agentId }) as {
+      agent_id: string;
+      busy: boolean;
+      status: string;
+      config: Record<string, unknown> | null;
+      personality: Record<string, unknown> | null;
+    } | undefined;
+    return res || null;
+  }
+
   async listCrons(): Promise<{ jobs: Array<Record<string, unknown>>; count: number }> {
     const res = await this.sendRequestAndWait("cron.list", {}) as { jobs: Array<Record<string, unknown>>; count: number } | undefined;
     return res || { jobs: [], count: 0 };

@@ -794,7 +794,6 @@ function SettingsPanel({
 }) {
   const [config, setConfig] = useState<MantaConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
-  const [agents, setAgents] = useState<string[]>([]);
   const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
@@ -822,26 +821,40 @@ function SettingsPanel({
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logsSubscribed, setLogsSubscribed] = useState(false);
   const logListRef = useRef<HTMLDivElement>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [selectedAgentDetail, setSelectedAgentDetail] = useState<{
+    agent_id: string;
+    busy: boolean;
+    status: string;
+    config: Record<string, unknown> | null;
+    personality: Record<string, unknown> | null;
+  } | null>(null);
+  const [agentDetailLoading, setAgentDetailLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([
       transport.getConfig(),
       transport.listModels(),
-      transport.listAgents(),
       transport.listAgentRegistry(),
       transport.listSessions(),
       transport.listCrons(),
       transport.listSkills(),
     ])
-      .then(([cfg, mdl, agt, reg, sess, cronRes, skillRes]) => {
+      .then(([cfg, mdl, reg, sess, cronRes, skillRes]) => {
         setConfig(cfg as MantaConfig);
         setModels(mdl.models || []);
-        setAgents(agt.agents || []);
-        setAgentRegistry(reg.agents || []);
+        const registry = reg.agents || [];
+        setAgentRegistry(registry);
         setSessions(sess || []);
         setCrons(cronRes.jobs || []);
         setSkills(skillRes.skills || []);
+        // Auto-select default agent or first available
+        const toSelect = registry.some((a) => a.id === "default") ? "default" : (registry[0]?.id || "");
+        if (toSelect) {
+          setSelectedAgentId(toSelect);
+          loadAgentDetail(toSelect);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -1045,6 +1058,22 @@ function SettingsPanel({
       setSkills(skillRes.skills || []);
     } catch {
       /* ignore */
+    }
+  };
+
+  const loadAgentDetail = async (agentId: string) => {
+    if (!agentId) {
+      setSelectedAgentDetail(null);
+      return;
+    }
+    setAgentDetailLoading(true);
+    try {
+      const detail = await transport.getAgent(agentId);
+      setSelectedAgentDetail(detail);
+    } catch {
+      setSelectedAgentDetail(null);
+    } finally {
+      setAgentDetailLoading(false);
     }
   };
 
@@ -1450,63 +1479,152 @@ function SettingsPanel({
             {activeTab === "agents" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Registered Agents ({agentRegistry.length})</h3>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Select Agent</h3>
                   {agentRegistry.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No agents in registry.</div>
                   ) : (
-                    <div className="space-y-2">
+                    <select
+                      value={selectedAgentId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedAgentId(id);
+                        loadAgentDetail(id);
+                      }}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    >
                       {agentRegistry.map((a) => (
-                        <div key={a.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{a.display_name || a.id}</span>
-                            <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">{a.id}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            {a.has_heartbeat && (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Heartbeat</span>
-                            )}
-                            {agents.includes(a.id) ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Running</span>
-                            ) : (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400">Stopped</span>
-                            )}
-                          </div>
-                        </div>
+                        <option key={a.id} value={a.id}>
+                          {a.display_name || a.id}
+                        </option>
                       ))}
-                    </div>
+                    </select>
                   )}
                 </section>
-                <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Agent Parameters</h3>
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
+
+                {agentDetailLoading && (
+                  <div className="text-sm text-gray-500 dark:text-neutral-400 flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin" />
+                    Loading agent details...
+                  </div>
+                )}
+
+                {selectedAgentDetail && !agentDetailLoading && (
+                  <section className="space-y-4">
+                    {/* Agent header */}
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedAgentDetail.agent_id}</span>
+                    </div>
+
+                    {/* Config */}
+                    {selectedAgentDetail.config && (
                       <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
-                        <div className="flex items-center gap-2">
-                          <input type="range" min="0" max="2" step="0.1" value={da.temperature ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
-                          <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{da.temperature ?? 0.7}</span>
+                        <h4 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Configuration</h4>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Temperature</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{typeof (selectedAgentDetail.config as Record<string, unknown>).temperature === "number" ? ((selectedAgentDetail.config as Record<string, unknown>).temperature as number).toFixed(2) : "—"}</div>
+                          </div>
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Tokens</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_tokens ?? "—")}</div>
+                          </div>
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Turns</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_turns ?? "—")}</div>
+                          </div>
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Max Concurrent Tools</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.config as Record<string, unknown>).max_concurrent_tools ?? "—")}</div>
+                          </div>
+                        </div>
+                        {"workspace_only" in (selectedAgentDetail.config as Record<string, unknown>) && (
+                          <div className="mt-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 flex items-center justify-between">
+                            <span className="text-sm text-gray-700 dark:text-gray-300">Workspace Only</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                              {(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "Yes" : "No"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Personality */}
+                    {selectedAgentDetail.personality && (
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Personality</h4>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Display Name</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? "—")}</div>
+                          </div>
+                          <div className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">Valid</div>
+                            <div className="text-sm text-gray-900 dark:text-gray-100">{(selectedAgentDetail.personality as Record<string, unknown>).is_valid ? "Yes" : "No"}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {Boolean((selectedAgentDetail.personality as Record<string, unknown>).has_heartbeat) && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Heartbeat</span>
+                          )}
+                          {Boolean((selectedAgentDetail.personality as Record<string, unknown>).has_soul) && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">Soul</span>
+                          )}
+                          {Boolean((selectedAgentDetail.personality as Record<string, unknown>).has_identity) && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">Identity</span>
+                          )}
+                          {Boolean((selectedAgentDetail.personality as Record<string, unknown>).has_memory) && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Memory</span>
+                          )}
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-                        <input type="number" value={da.max_tokens ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
-                        <input type="number" value={da.max_turns ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
-                        <input type="number" value={da.max_concurrent_tools ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">System Prompt</label>
-                      <textarea rows={6} value={da.system_prompt || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono" />
-                    </div>
-                  </div>
+                    )}
+                  </section>
+                )}
+
+                <section>
+                  {(() => {
+                    const hasAgentCfg = selectedAgentDetail?.config != null;
+                    const ac = (selectedAgentDetail?.config as Record<string, unknown> | null) ?? (da as Record<string, unknown>);
+                    return (
+                      <>
+                        <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">
+                          {hasAgentCfg ? `${selectedAgentDetail!.agent_id} Parameters` : "Global Default Parameters"}
+                        </h3>
+                        {hasAgentCfg && (
+                          <div className="text-[11px] text-gray-400 dark:text-neutral-500 mb-2">Editing individual agent parameters is not yet supported. Changes here affect the global default.</div>
+                        )}
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+                              <div className="flex items-center gap-2">
+                                <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
+                                <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{((ac.temperature as number | undefined) ?? 0.7).toFixed(2)}</span>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
+                              <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
+                              <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                            </div>
+                            <div>
+                              <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
+                              <input type="number" value={(ac.max_concurrent_tools as number | undefined) ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">System Prompt</label>
+                            <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono" />
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </section>
               </div>
             )}

@@ -252,15 +252,35 @@ impl AgentPersonality {
 
     /// Get the agent's display name from identity
     pub fn display_name(&self) -> String {
-        // Try to extract name from IDENTITY.md first line
-        self.identity
-            .lines()
-            .next()
+        let lines: Vec<&str> = self.identity.lines().collect();
+
+        // 1. Try structured format:
+        //    # Agent Identity
+        //    ## name
+        //    小王
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("## name")
+                || trimmed.eq_ignore_ascii_case("##name")
+                || trimmed.eq_ignore_ascii_case("name:")
+            {
+                if let Some(val) = lines.get(i + 1) {
+                    let name = val.trim();
+                    if !name.is_empty() {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to first heading line
+        lines
+            .first()
             .and_then(|line| {
-                line.strip_prefix("#")
-                    .or_else(|| line.strip_prefix("Name:"))
+                let trimmed = line.trim();
+                // # Title  →  "Title"
+                trimmed.strip_prefix("#").map(|s| s.trim().to_string())
             })
-            .map(|s| s.trim().to_string())
             .unwrap_or_else(|| self.id.clone())
     }
 
