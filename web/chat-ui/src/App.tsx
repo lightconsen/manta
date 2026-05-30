@@ -810,6 +810,10 @@ function SettingsPanel({
     agent_id: "",
   });
   const [channelActionLoading, setChannelActionLoading] = useState<string>("");
+  const [showAddModel, setShowAddModel] = useState(false);
+  const [addModelError, setAddModelError] = useState("");
+  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "" });
+  const [modelActionLoading, setModelActionLoading] = useState<string>("");
 
   useEffect(() => {
     setLoading(true);
@@ -902,6 +906,59 @@ function SettingsPanel({
     await transport.setChannelEnabled(name, enabled);
     await refreshConfig();
     setChannelActionLoading("");
+  };
+
+  const handleAddModel = async () => {
+    setAddModelError("");
+    if (!newModel.name.trim()) {
+      setAddModelError("Model alias is required");
+      return;
+    }
+    if (!newModel.model.trim()) {
+      setAddModelError("Model ID is required");
+      return;
+    }
+    setModelActionLoading("add");
+    const ok = await transport.addModel({
+      name: newModel.name.trim(),
+      provider: newModel.provider,
+      model: newModel.model.trim(),
+    });
+    if (ok) {
+      setNewModel({ name: "", provider: "anthropic", model: "" });
+      setShowAddModel(false);
+      await refreshModels();
+    } else {
+      setAddModelError("Failed to add model");
+    }
+    setModelActionLoading("");
+  };
+
+  const handleRemoveModel = async (name: string) => {
+    if (!confirm(`Remove model "${name}"?`)) return;
+    setModelActionLoading(name);
+    await transport.removeModel(name);
+    await refreshModels();
+    setModelActionLoading("");
+  };
+
+  const handleSetDefaultModel = async (name: string) => {
+    setModelActionLoading(`default_${name}`);
+    const ok = await transport.setDefaultModel(name);
+    if (ok) {
+      await refreshModels();
+      setConfig((prev) => ({ ...prev, model: name }));
+    }
+    setModelActionLoading("");
+  };
+
+  const refreshModels = async () => {
+    try {
+      const mdl = await transport.listModels();
+      setModels(mdl.models || []);
+    } catch {
+      /* ignore */
+    }
   };
 
   const tabs = [
@@ -1200,10 +1257,67 @@ function SettingsPanel({
                 <section>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Available Models</h3>
-                    <button className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition">
-                      + Add
+                    <button
+                      onClick={() => { setShowAddModel(!showAddModel); setAddModelError(""); }}
+                      className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition"
+                    >
+                      {showAddModel ? "Cancel" : "+ Add"}
                     </button>
                   </div>
+
+                  {showAddModel && (
+                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Alias</label>
+                          <input
+                            type="text"
+                            value={newModel.name}
+                            onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
+                            placeholder="smart"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Provider</label>
+                          <select
+                            value={newModel.provider}
+                            onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })}
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          >
+                            <option value="anthropic">Anthropic</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="gemini">Gemini</option>
+                            <option value="qwen">Qwen</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Model ID</label>
+                        <input
+                          type="text"
+                          value={newModel.model}
+                          onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+                          placeholder="claude-3-5-sonnet-20241022"
+                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                        />
+                      </div>
+                      {addModelError && (
+                        <div className="text-xs text-red-600 dark:text-red-400">{addModelError}</div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleAddModel}
+                          disabled={modelActionLoading === "add"}
+                          className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition"
+                        >
+                          {modelActionLoading === "add" ? "Adding..." : "Add Model"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {models.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No models available.</div>
                   ) : (
@@ -1214,7 +1328,30 @@ function SettingsPanel({
                             <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{m.name}</span>
                             <span className="text-xs text-gray-500 dark:text-neutral-400">{m.provider}</span>
                           </div>
-                          {config.model === m.id && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Default</span>}
+                          <div className="flex items-center gap-2">
+                            {config.model === m.id ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Default</span>
+                            ) : (
+                              <button
+                                onClick={() => handleSetDefaultModel(m.id)}
+                                disabled={modelActionLoading === `default_${m.id}`}
+                                className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:text-emerald-700 dark:hover:text-emerald-400 transition"
+                              >
+                                {modelActionLoading === `default_${m.id}` ? "..." : "Set Default"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleRemoveModel(m.id)}
+                              disabled={modelActionLoading === m.id}
+                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition"
+                              title="Remove"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

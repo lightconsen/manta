@@ -556,6 +556,34 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { skills: [], count: 0 };
   }
 
+  /* ── Model operations ── */
+  async addModel(payload: { name: string; provider: string; model: string }): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("models.add", payload);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async removeModel(name: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("models.remove", { name });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async setDefaultModel(name: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("models.set_default", { name });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /* ── Channel operations ── */
   async addChannel(payload: { name: string; channel_type: string; enabled?: boolean; agent_id?: string; credentials?: Record<string, string> }): Promise<boolean> {
     try {

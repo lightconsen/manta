@@ -233,7 +233,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
         "chat.history" | "sessions.list" | "agents.list" | "agents.get"
         | "agents.registry" | "health" | "system.presence" | "commands.list"
-        | "config.get" | "models.list" | "cron.list" | "skills.list" => Some(SCOPE_READ),
+        | "config.get" | "models.list" | "models.add" | "models.remove" | "models.set_default"
+        | "cron.list" | "skills.list" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"

@@ -480,6 +480,9 @@ async fn dispatch_method(
         "config.get" => handle_config_get(req, state).await,
         "config.set" => handle_config_set(req, state).await,
         "models.list" => handle_models_list(req, state).await,
+        "models.add" => handle_models_add(req, state).await,
+        "models.remove" => handle_models_remove(req, state).await,
+        "models.set_default" => handle_models_set_default(req, state).await,
         "cron.list" => handle_cron_list(req, state).await,
         "skills.list" => handle_skills_list(req, state).await,
         "acp.list" => handle_acp_list(req, state).await,
@@ -2091,6 +2094,68 @@ async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
             "default_model": default_model,
         }),
     )
+}
+
+async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct ModelAddPayload {
+        name: String,
+        provider: String,
+        model: String,
+    }
+    let payload: ModelAddPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let alias = crate::model_router::ModelAlias {
+        name: payload.name.clone(),
+        provider: payload.provider,
+        model: payload.model,
+        temperature: None,
+        max_tokens: None,
+    };
+    state.model_router.set_alias(alias).await;
+    // Also register in catalog for discovery
+    let entry = crate::model_router::ModelCatalogEntry::new(
+        payload.name.clone(),
+        format!("{} ({})", payload.name, payload.name),
+        payload.name.clone(),
+    )
+    .with_alias(payload.name.clone());
+    state.model_router.model_catalog.register(entry).await;
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "added" }))
+}
+
+async fn handle_models_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct RemovePayload {
+        name: String,
+    }
+    let payload: RemovePayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let removed = state.model_router.remove_alias(&payload.name).await;
+    if removed {
+        WsResponse::ok(&req.id, serde_json::json!({ "status": "removed" }))
+    } else {
+        WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("Model alias '{}' not found", payload.name))
+    }
+}
+
+async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct SetDefaultPayload {
+        name: String,
+    }
+    let payload: SetDefaultPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    match state.model_router.switch_default_model(&payload.name).await {
+        Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "status": "ok", "default_model": payload.name })),
+        Err(e) => WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e)),
+    }
 }
 
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
