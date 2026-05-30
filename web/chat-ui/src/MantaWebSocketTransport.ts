@@ -703,6 +703,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     let toolCalls = new Map<string, ToolCallMessagePart>();
     let aborted = false;
     let aiMsgId = `a_${Date.now()}`;
+    let hasShownThinking = false;
 
     // Add empty AI message for streaming updates
     const aiMsg: ChatMessage = {
@@ -717,6 +718,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     // Show "Thinking..." placeholder immediately while waiting for first event
     aiMsg.parts = [{ type: "reasoning", text: "" }];
     aiMsg.liveStatus = { status: "thinking" };
+    hasShownThinking = true;
     this.messagesListeners.forEach((cb) => cb(this.messages));
     yield { content: [makeReasoningPart("")] };
 
@@ -767,7 +769,11 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
             parts.push(...newParts);
             aiMsg.content = currentText;
             aiMsg.parts = newParts.map(toChatPart);
-            aiMsg.liveStatus = { status: "thinking" };
+            // Only show thinking status on the first occurrence
+            if (!hasShownThinking) {
+              aiMsg.liveStatus = { status: "thinking" };
+              hasShownThinking = true;
+            }
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
