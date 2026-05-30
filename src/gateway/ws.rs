@@ -485,6 +485,7 @@ async fn dispatch_method(
         "models.set_default" => handle_models_set_default(req, state).await,
         "cron.list" => handle_cron_list(req, state).await,
         "skills.list" => handle_skills_list(req, state).await,
+        "skills.install" => handle_skills_install(req, state).await,
         "acp.list" => handle_acp_list(req, state).await,
         "acp.spawn" => handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => handle_acp_terminate(req, state).await,
@@ -1011,6 +1012,12 @@ async fn handle_sessions_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
                     serde_json::json!({
                         "session_id": meta.session_id,
                         "name": name,
+                        "agent_id": meta.agent_id,
+                        "channel": meta.channel,
+                        "message_count": meta.message_count,
+                        "last_activity": meta.last_activity.to_rfc3339(),
+                        "is_active": meta.is_active,
+                        "created_at": meta.created_at.to_rfc3339(),
                     })
                 })
                 .collect(),
@@ -2180,13 +2187,82 @@ async fn handle_skills_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         let sm = state.skills_manager.read().await;
         sm.list_skills().await
     };
+    let entries: Vec<_> = skills
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "description": s.description,
+                "version": s.version,
+                "author": s.author,
+                "triggers": s.triggers.iter().map(|t| {
+                    serde_json::json!({
+                        "type": format!("{:?}", t.trigger_type).to_lowercase(),
+                        "pattern": t.pattern,
+                    })
+                }).collect::<Vec<_>>(),
+                "depends_on": s.depends_on,
+                "provides": s.provides,
+                "chain": s.chain,
+            })
+        })
+        .collect();
     WsResponse::ok(
         &req.id,
         serde_json::json!({
-            "skills": skills,
-            "count": skills.len(),
+            "skills": entries,
+            "count": entries.len(),
         }),
     )
+}
+
+async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct InstallPayload {
+        name: String,
+        content: String,
+    }
+    let payload: InstallPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_PARAMS", "Skill name is required");
+    }
+
+    // Validate: check if the content has valid frontmatter
+    let (frontmatter, _prompt) = match crate::skills::parse_skill_md(&payload.content) {
+        Ok(v) => v,
+        Err(e) => return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill markdown: {}", e)),
+    };
+
+    // Try parsing the frontmatter as YAML to validate
+    if let Err(e) = serde_yaml::from_str::<crate::skills::Skill>(&frontmatter) {
+        return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill frontmatter: {}", e));
+    }
+
+    // Write to ~/.manta/skills/{name}.md
+    let skills_dir = crate::dirs::skills_dir();
+    if let Err(e) = tokio::fs::create_dir_all(&skills_dir).await {
+        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create skills directory: {}", e));
+    }
+
+    let skill_path = skills_dir.join(format!("{}.md", name));
+    if let Err(e) = tokio::fs::write(&skill_path, &payload.content).await {
+        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write skill file: {}", e));
+    }
+
+    // Reload skills
+    {
+        let mut sm = state.skills_manager.write().await;
+        if let Err(e) = sm.load_all().await {
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to reload skills: {}", e));
+        }
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "installed", "name": name }))
 }
 
 #[allow(clippy::result_large_err)]

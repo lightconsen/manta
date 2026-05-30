@@ -30,8 +30,8 @@ mod watcher;
 pub use config::{SkillConfig, SkillEntryConfig};
 pub use dependencies::{resolve_skill_chain, DependencyGraph, DependencySpec};
 pub use frontmatter::{
-    InstallSpec as SkillInstallSpec, OpenClawFrontmatter, SkillFile, SkillFrontmatter,
-    SkillTriggerItem,
+    parse_skill_md, InstallSpec as SkillInstallSpec, OpenClawFrontmatter, SkillFile,
+    SkillFrontmatter, SkillTriggerItem,
 };
 pub use install::{install_all, install_binary, InstallResult};
 pub use registry::{SkillListing, SkillRegistry, SkillUpdate};

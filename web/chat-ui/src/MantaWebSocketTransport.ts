@@ -556,6 +556,15 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { skills: [], count: 0 };
   }
 
+  async installSkill(name: string, content: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("skills.install", { name, content });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /* ── Model operations ── */
   async addModel(payload: { name: string; provider: string; model: string }): Promise<boolean> {
     try {
