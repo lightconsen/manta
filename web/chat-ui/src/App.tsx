@@ -138,6 +138,7 @@ function Sidebar({
   networkStatus,
   theme,
   onToggleTheme,
+  onOpenSettings,
 }: {
   collapsed: boolean;
   onToggle: () => void;
@@ -148,6 +149,7 @@ function Sidebar({
   networkStatus: NetworkStatus;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <aside
@@ -243,6 +245,7 @@ function Sidebar({
               )}
             </button>
             <button
+              onClick={onOpenSettings}
               className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-neutral-800 text-gray-500 dark:text-neutral-400 transition"
               title="Settings"
             >
@@ -682,6 +685,240 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
   );
 }
 
+/* ── Settings Panel ── */
+interface MantaConfig {
+  model?: string;
+  model_provider?: string;
+  default_agent?: {
+    temperature?: number;
+    max_tokens?: number;
+    max_turns?: number | null;
+    max_concurrent_tools?: number;
+    system_prompt?: string;
+    workspace_only?: boolean;
+  };
+  heartbeat?: {
+    enabled?: boolean;
+    interval_seconds?: number;
+    active_hours_start?: string;
+    active_hours_end?: string;
+    max_consecutive_idle?: number;
+  };
+}
+
+function SettingsPanel({
+  open,
+  onClose,
+  transport,
+}: {
+  open: boolean;
+  onClose: () => void;
+  transport: MantaWebSocketTransport;
+}) {
+  const [config, setConfig] = useState<MantaConfig>({});
+  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    Promise.all([transport.getConfig(), transport.listModels()])
+      .then(([cfg, mdl]) => {
+        setConfig(cfg as MantaConfig);
+        setModels(mdl.models || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [open, transport]);
+
+  const update = async (path: string, value: unknown) => {
+    const ok = await transport.setConfig(path, value);
+    if (ok) {
+      setConfig((prev) => {
+        const next = { ...prev };
+        const parts = path.split(".");
+        if (parts.length === 1) {
+          (next as Record<string, unknown>)[parts[0]] = value as never;
+        } else if (parts.length === 2 && next[parts[0] as keyof MantaConfig]) {
+          const section = { ...(next[parts[0] as keyof MantaConfig] as Record<string, unknown>) };
+          section[parts[1]] = value;
+          (next as Record<string, unknown>)[parts[0]] = section as never;
+        }
+        return next;
+      });
+    }
+  };
+
+  const da = config.default_agent || {};
+  const hb = config.heartbeat || {};
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-white dark:bg-neutral-800 shadow-2xl border border-gray-200 dark:border-neutral-700"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-neutral-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Settings</h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-neutral-700 text-gray-400 dark:text-neutral-400 transition"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="px-5 py-12 text-center text-gray-400 dark:text-neutral-500">
+            <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin mx-auto mb-3" />
+            Loading configuration...
+          </div>
+        ) : (
+          <div className="px-5 py-4 space-y-5">
+            {/* Model */}
+            <section>
+              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
+                  <select
+                    value={config.model || ""}
+                    onChange={(e) => update("model", e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  >
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.provider})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Provider</label>
+                  <input
+                    type="text"
+                    value={config.model_provider || ""}
+                    readOnly
+                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-100 dark:bg-neutral-800 px-3 py-2 text-sm text-gray-500 dark:text-neutral-400 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+            </section>
+
+            {/* Agent Parameters */}
+            <section>
+              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Agent Parameters</h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={da.temperature ?? 0.7}
+                        onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))}
+                        className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{da.temperature ?? 0.7}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
+                    <input
+                      type="number"
+                      value={da.max_tokens ?? 2048}
+                      onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
+                    <input
+                      type="number"
+                      value={da.max_turns ?? ""}
+                      placeholder="Unlimited"
+                      onChange={(e) => {
+                        const val = e.target.value ? parseInt(e.target.value) : null;
+                        update("default_agent.max_turns", val);
+                      }}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
+                    <input
+                      type="number"
+                      value={da.max_concurrent_tools ?? 5}
+                      onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Heartbeat */}
+            <section>
+              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Heartbeat</h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</label>
+                  <button
+                    onClick={() => update("heartbeat.enabled", !hb.enabled)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-neutral-600"}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hb.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
+                  <input
+                    type="number"
+                    value={hb.interval_seconds ?? 300}
+                    onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active From</label>
+                    <input
+                      type="text"
+                      value={hb.active_hours_start || ""}
+                      onChange={(e) => update("heartbeat.active_hours_start", e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active To</label>
+                    <input
+                      type="text"
+                      value={hb.active_hours_end || ""}
+                      onChange={(e) => update("heartbeat.active_hours_end", e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── App ── */
 function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
   const runtime = useLocalRuntime(transport);
@@ -741,6 +978,7 @@ function ChatApp() {
       : "light";
   });
   const [sessionKey, setSessionKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Apply theme
   useEffect(() => {
@@ -864,10 +1102,16 @@ function ChatApp() {
         networkStatus={networkStatus}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
         <ChatAppInner key={sessionKey} transport={transport} />
       </main>
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        transport={transport}
+      />
     </div>
   );
 }

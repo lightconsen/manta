@@ -232,13 +232,14 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
     match method {
         "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
         "chat.history" | "sessions.list" | "agents.list" | "agents.get" | "health"
-        | "system.presence" | "commands.list" => Some(SCOPE_READ),
+        | "system.presence" | "commands.list" | "config.get" | "models.list" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"
         | "sessions.subscribe"
         | "sessions.unsubscribe"
-        | "commands.execute" => Some(SCOPE_WRITE),
+        | "commands.execute"
+        | "config.set" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"

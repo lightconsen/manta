@@ -475,6 +475,9 @@ async fn dispatch_method(
         "commands.execute" => {
             crate::gateway::commands::handle_commands_execute(req, conn, state).await
         }
+        "config.get" => handle_config_get(req, state).await,
+        "config.set" => handle_config_set(req, state).await,
+        "models.list" => handle_models_list(req, state).await,
         "acp.list" => handle_acp_list(req, state).await,
         "acp.spawn" => handle_acp_spawn(req, conn, state).await,
         "acp.terminate" => handle_acp_terminate(req, state).await,
@@ -1832,6 +1835,149 @@ async fn handle_legacy_unsubscribe(
         .await;
 
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
+}
+
+async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let config = state.config.read().await;
+    let heartbeat = &config.heartbeat;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "model": config.model,
+            "model_provider": config.model_provider,
+            "default_agent": {
+                "temperature": config.default_agent.temperature,
+                "max_tokens": config.default_agent.max_tokens,
+                "max_turns": config.default_agent.max_turns,
+                "max_concurrent_tools": config.default_agent.max_concurrent_tools,
+                "system_prompt": config.default_agent.system_prompt,
+                "workspace_only": config.default_agent.workspace_only,
+            },
+            "heartbeat": {
+                "enabled": heartbeat.enabled,
+                "interval_seconds": heartbeat.interval_seconds,
+                "active_hours_start": heartbeat.active_hours_start,
+                "active_hours_end": heartbeat.active_hours_end,
+                "max_consecutive_idle": heartbeat.max_consecutive_idle,
+            },
+            "channels": config.channels.keys().collect::<Vec<_>>(),
+        }),
+    )
+}
+
+async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct SetParams {
+        path: String,
+        value: serde_json::Value,
+    }
+
+    let params: SetParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let mut config = state.config.write().await;
+
+    match params.path.as_str() {
+        "model" => {
+            if let Some(v) = params.value.as_str() {
+                config.model = v.to_string();
+                // Also update model router default alias
+                if let Err(e) = state.model_router.switch_default_model(v).await {
+                    return WsResponse::err(&req.id,
+                        "CONFIG_ERROR",
+                        format!("Failed to switch model: {}", e),
+                    );
+                }
+            }
+        }
+        "model_provider" => {
+            if let Some(v) = params.value.as_str() {
+                config.model_provider = v.to_string();
+            }
+        }
+        "default_agent.temperature" => {
+            if let Some(v) = params.value.as_f64() {
+                config.default_agent.temperature = v as f32;
+            }
+        }
+        "default_agent.max_tokens" => {
+            if let Some(v) = params.value.as_u64() {
+                config.default_agent.max_tokens = v as u32;
+            }
+        }
+        "default_agent.max_turns" => {
+            config.default_agent.max_turns = params.value.as_u64().map(|v| v as usize);
+        }
+        "default_agent.max_concurrent_tools" => {
+            if let Some(v) = params.value.as_u64() {
+                config.default_agent.max_concurrent_tools = v as usize;
+            }
+        }
+        "default_agent.system_prompt" => {
+            if let Some(v) = params.value.as_str() {
+                config.default_agent.system_prompt = v.to_string();
+            }
+        }
+        "default_agent.workspace_only" => {
+            if let Some(v) = params.value.as_bool() {
+                config.default_agent.workspace_only = v;
+            }
+        }
+        "heartbeat.enabled" => {
+            if let Some(v) = params.value.as_bool() {
+                config.heartbeat.enabled = v;
+            }
+        }
+        "heartbeat.interval_seconds" => {
+            if let Some(v) = params.value.as_u64() {
+                config.heartbeat.interval_seconds = v;
+            }
+        }
+        "heartbeat.active_hours_start" => {
+            if let Some(v) = params.value.as_str() {
+                config.heartbeat.active_hours_start = v.to_string();
+            }
+        }
+        "heartbeat.active_hours_end" => {
+            if let Some(v) = params.value.as_str() {
+                config.heartbeat.active_hours_end = v.to_string();
+            }
+        }
+        "heartbeat.max_consecutive_idle" => {
+            if let Some(v) = params.value.as_u64() {
+                config.heartbeat.max_consecutive_idle = v as u32;
+            }
+        }
+        _ => {
+            return WsResponse::err(
+                &req.id,
+                "UNKNOWN_CONFIG_PATH",
+                format!("Unknown config path: {}", params.path),
+            );
+        }
+    }
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": "updated",
+            "path": params.path,
+        }),
+    )
+}
+
+async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let entries = state.model_router.model_catalog.list().await;
+    let default_model = state.model_router.get_default_model().await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "models": entries,
+            "default_model": default_model,
+        }),
+    )
 }
 
 #[allow(clippy::result_large_err)]

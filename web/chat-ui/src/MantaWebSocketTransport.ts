@@ -507,6 +507,26 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     localStorage.removeItem(this.historyKey(sessionId));
   }
 
+  /* ── Config ── */
+  async getConfig(): Promise<Record<string, unknown>> {
+    const res = await this.sendRequestAndWait("config.get", {}) as Record<string, unknown> | undefined;
+    return res || {};
+  }
+
+  async setConfig(path: string, value: unknown): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("config.set", { path, value });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async listModels(): Promise<{ models: Array<{ id: string; name: string; provider: string }>; default_model: string }> {
+    const res = await this.sendRequestAndWait("models.list", {}) as { models: Array<{ id: string; name: string; provider: string }>; default_model: string } | undefined;
+    return res || { models: [], default_model: "" };
+  }
+
   /* ── In-memory message state for UI ── */
   getMessages(): ChatMessage[] {
     return this.messages;
