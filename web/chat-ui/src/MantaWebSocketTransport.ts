@@ -556,6 +556,43 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { skills: [], count: 0 };
   }
 
+  /* ── Channel operations ── */
+  async addChannel(payload: { name: string; channel_type: string; enabled?: boolean; agent_id?: string; credentials?: Record<string, string> }): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("config.set", { path: "channels.add", value: payload });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async updateChannel(payload: { name: string; enabled?: boolean; agent_id?: string; credentials?: Record<string, string> }): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("config.set", { path: "channels.update", value: payload });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async removeChannel(name: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("config.set", { path: "channels.remove", value: name });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async setChannelEnabled(name: string, enabled: boolean): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("config.set", { path: "channels.set_enabled", value: { name, enabled } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /* ── In-memory message state for UI ── */
   getServerInfo(): { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } {
     return this.serverInfo;

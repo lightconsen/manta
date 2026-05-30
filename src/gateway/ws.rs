@@ -24,6 +24,7 @@ use futures_util::{
     SinkExt, StreamExt,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -1885,7 +1886,17 @@ async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 "active_hours_end": heartbeat.active_hours_end,
                 "max_consecutive_idle": heartbeat.max_consecutive_idle,
             },
-            "channels": config.channels.keys().collect::<Vec<_>>(),
+            "channels": config.channels.iter().map(|(k, v)| {
+                serde_json::json!({
+                    "name": k,
+                    "channel_type": format!("{:?}", v.channel_type).to_lowercase(),
+                    "enabled": v.enabled,
+                    "agent_id": v.agent_id,
+                    "dm_policy": format!("{:?}", v.dm_policy).to_lowercase(),
+                    "require_mention": v.require_mention,
+                    "has_credentials": !v.credentials.is_empty(),
+                })
+            }).collect::<Vec<_>>(),
             "auth_mode": config.security.auth_mode,
         }),
     )
@@ -1974,6 +1985,82 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         "heartbeat.max_consecutive_idle" => {
             if let Some(v) = params.value.as_u64() {
                 config.heartbeat.max_consecutive_idle = v as u32;
+            }
+        }
+        "channels.add" => {
+            #[derive(Debug, Deserialize)]
+            struct ChannelAddPayload {
+                name: String,
+                channel_type: String,
+                enabled: Option<bool>,
+                agent_id: Option<String>,
+                credentials: Option<HashMap<String, String>>,
+            }
+            let payload: ChannelAddPayload = match serde_json::from_value(params.value) {
+                Ok(p) => p,
+                Err(e) => return WsResponse::err(&req.id, "INVALID_PARAMS", e.to_string()),
+            };
+            let channel_type = match payload.channel_type.as_str() {
+                "telegram" => crate::channels::ChannelType::Telegram,
+                "discord" => crate::channels::ChannelType::Discord,
+                "slack" => crate::channels::ChannelType::Slack,
+                "whatsapp" => crate::channels::ChannelType::Whatsapp,
+                "qq" => crate::channels::ChannelType::Qq,
+                "feishu" => crate::channels::ChannelType::Feishu,
+                "signal" => crate::channels::ChannelType::Signal,
+                "imessage" => crate::channels::ChannelType::Imessage,
+                "webchat" => crate::channels::ChannelType::Webchat,
+                "websocket" => crate::channels::ChannelType::Websocket,
+                "web_terminal" => crate::channels::ChannelType::WebTerminal,
+                other => return WsResponse::err(&req.id, "INVALID_CHANNEL_TYPE", format!("Unknown channel type: {}", other)),
+            };
+            let mut ch = crate::gateway::ChannelConfig::new(channel_type);
+            if let Some(v) = payload.enabled { ch.enabled = v; }
+            if let Some(v) = payload.agent_id { ch.agent_id = Some(v); }
+            if let Some(v) = payload.credentials { ch.credentials = v; }
+            config.channels.insert(payload.name.clone(), ch);
+        }
+        "channels.update" => {
+            #[derive(Debug, Deserialize)]
+            struct ChannelUpdatePayload {
+                name: String,
+                enabled: Option<bool>,
+                agent_id: Option<String>,
+                credentials: Option<HashMap<String, String>>,
+            }
+            let payload: ChannelUpdatePayload = match serde_json::from_value(params.value) {
+                Ok(p) => p,
+                Err(e) => return WsResponse::err(&req.id, "INVALID_PARAMS", e.to_string()),
+            };
+            match config.channels.get_mut(&payload.name) {
+                Some(ch) => {
+                    if let Some(v) = payload.enabled { ch.enabled = v; }
+                    if let Some(v) = payload.agent_id { ch.agent_id = Some(v); }
+                    if let Some(v) = payload.credentials { ch.credentials = v; }
+                }
+                None => return WsResponse::err(&req.id, "CHANNEL_NOT_FOUND", format!("Channel '{}' not found", payload.name)),
+            }
+        }
+        "channels.remove" => {
+            if let Some(name) = params.value.as_str() {
+                config.channels.remove(name);
+            } else {
+                return WsResponse::err(&req.id, "INVALID_PARAMS", "Expected channel name string");
+            }
+        }
+        "channels.set_enabled" => {
+            #[derive(Debug, Deserialize)]
+            struct SetEnabledPayload {
+                name: String,
+                enabled: bool,
+            }
+            let payload: SetEnabledPayload = match serde_json::from_value(params.value) {
+                Ok(p) => p,
+                Err(e) => return WsResponse::err(&req.id, "INVALID_PARAMS", e.to_string()),
+            };
+            match config.channels.get_mut(&payload.name) {
+                Some(ch) => ch.enabled = payload.enabled,
+                None => return WsResponse::err(&req.id, "CHANNEL_NOT_FOUND", format!("Channel '{}' not found", payload.name)),
             }
         }
         _ => {

@@ -754,6 +754,16 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
 }
 
 /* ── Settings Panel ── */
+interface ChannelConfig {
+  name: string;
+  channel_type: string;
+  enabled: boolean;
+  agent_id?: string;
+  dm_policy?: string;
+  require_mention?: boolean;
+  has_credentials?: boolean;
+}
+
 interface MantaConfig {
   model?: string;
   model_provider?: string;
@@ -772,6 +782,7 @@ interface MantaConfig {
     active_hours_end?: string;
     max_consecutive_idle?: number;
   };
+  channels?: ChannelConfig[];
 }
 
 function SettingsPanel({
@@ -790,6 +801,15 @@ function SettingsPanel({
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("general");
+  const [showAddChannel, setShowAddChannel] = useState(false);
+  const [addChannelError, setAddChannelError] = useState("");
+  const [newChannel, setNewChannel] = useState({
+    name: "",
+    channel_type: "telegram",
+    enabled: true,
+    agent_id: "",
+  });
+  const [channelActionLoading, setChannelActionLoading] = useState<string>("");
 
   useEffect(() => {
     setLoading(true);
@@ -835,7 +855,54 @@ function SettingsPanel({
 
   const da = config.default_agent || {};
   const hb = config.heartbeat || {};
-  const channels = (config as unknown as Record<string, unknown[]>).channels || [];
+  const channels = config.channels || [];
+
+  const refreshConfig = async () => {
+    try {
+      const cfg = await transport.getConfig();
+      setConfig(cfg as MantaConfig);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleAddChannel = async () => {
+    setAddChannelError("");
+    if (!newChannel.name.trim()) {
+      setAddChannelError("Channel name is required");
+      return;
+    }
+    setChannelActionLoading("add");
+    const ok = await transport.addChannel({
+      name: newChannel.name.trim(),
+      channel_type: newChannel.channel_type,
+      enabled: newChannel.enabled,
+      agent_id: newChannel.agent_id.trim() || undefined,
+    });
+    if (ok) {
+      setNewChannel({ name: "", channel_type: "telegram", enabled: true, agent_id: "" });
+      setShowAddChannel(false);
+      await refreshConfig();
+    } else {
+      setAddChannelError("Failed to add channel");
+    }
+    setChannelActionLoading("");
+  };
+
+  const handleRemoveChannel = async (name: string) => {
+    if (!confirm(`Remove channel "${name}"?`)) return;
+    setChannelActionLoading(name);
+    await transport.removeChannel(name);
+    await refreshConfig();
+    setChannelActionLoading("");
+  };
+
+  const handleToggleChannel = async (name: string, enabled: boolean) => {
+    setChannelActionLoading(name);
+    await transport.setChannelEnabled(name, enabled);
+    await refreshConfig();
+    setChannelActionLoading("");
+  };
 
   const tabs = [
     { id: "general", label: "General" },
@@ -995,18 +1062,131 @@ function SettingsPanel({
                 <section>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Configured Channels</h3>
-                    <button className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition">
-                      + Add
+                    <button
+                      onClick={() => { setShowAddChannel(!showAddChannel); setAddChannelError(""); }}
+                      className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition"
+                    >
+                      {showAddChannel ? "Cancel" : "+ Add"}
                     </button>
                   </div>
+
+                  {showAddChannel && (
+                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Name</label>
+                          <input
+                            type="text"
+                            value={newChannel.name}
+                            onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })}
+                            placeholder="my-bot"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Type</label>
+                          <select
+                            value={newChannel.channel_type}
+                            onChange={(e) => setNewChannel({ ...newChannel, channel_type: e.target.value })}
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          >
+                            <option value="telegram">Telegram</option>
+                            <option value="discord">Discord</option>
+                            <option value="slack">Slack</option>
+                            <option value="whatsapp">WhatsApp</option>
+                            <option value="qq">QQ</option>
+                            <option value="feishu">Feishu</option>
+                            <option value="signal">Signal</option>
+                            <option value="imessage">iMessage</option>
+                            <option value="webchat">WebChat</option>
+                            <option value="websocket">WebSocket</option>
+                            <option value="web_terminal">Web Terminal</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Agent ID (optional)</label>
+                          <input
+                            type="text"
+                            value={newChannel.agent_id}
+                            onChange={(e) => setNewChannel({ ...newChannel, agent_id: e.target.value })}
+                            placeholder="default"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 pt-5">
+                          <input
+                            id="ch-enabled"
+                            type="checkbox"
+                            checked={newChannel.enabled}
+                            onChange={(e) => setNewChannel({ ...newChannel, enabled: e.target.checked })}
+                            className="rounded border-gray-300 text-emerald-500 focus:ring-emerald-500"
+                          />
+                          <label htmlFor="ch-enabled" className="text-sm text-gray-700 dark:text-gray-300">Enabled</label>
+                        </div>
+                      </div>
+                      {addChannelError && (
+                        <div className="text-xs text-red-600 dark:text-red-400">{addChannelError}</div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleAddChannel}
+                          disabled={channelActionLoading === "add"}
+                          className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition"
+                        >
+                          {channelActionLoading === "add" ? "Adding..." : "Add Channel"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {channels.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No channels configured.</div>
                   ) : (
                     <div className="space-y-2">
-                      {(channels as string[]).map((ch) => (
-                        <div key={ch} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
-                          <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{ch}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Enabled</span>
+                      {channels.map((ch) => (
+                        <div key={ch.name} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{ch.name}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 uppercase">{ch.channel_type}</span>
+                            {ch.agent_id && (
+                              <span className="text-xs text-gray-500 dark:text-neutral-400 font-mono">{ch.agent_id}</span>
+                            )}
+                            {ch.dm_policy && ch.dm_policy !== "open" && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">{ch.dm_policy}</span>
+                            )}
+                            {ch.require_mention && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">mention</span>
+                            )}
+                            {ch.has_credentials && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">auth</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleToggleChannel(ch.name, !ch.enabled)}
+                              disabled={channelActionLoading === ch.name}
+                              className={`text-xs px-2 py-0.5 rounded-full transition ${
+                                ch.enabled
+                                  ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50"
+                                  : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-600"
+                              }`}
+                            >
+                              {channelActionLoading === ch.name ? "..." : ch.enabled ? "Enabled" : "Disabled"}
+                            </button>
+                            <button
+                              onClick={() => handleRemoveChannel(ch.name)}
+                              disabled={channelActionLoading === ch.name}
+                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition"
+                              title="Remove"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
