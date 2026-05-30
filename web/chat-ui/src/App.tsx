@@ -784,6 +784,7 @@ function SettingsPanel({
   const [config, setConfig] = useState<MantaConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("general");
 
   useEffect(() => {
     setLoading(true);
@@ -816,6 +817,23 @@ function SettingsPanel({
 
   const da = config.default_agent || {};
   const hb = config.heartbeat || {};
+  const channels = (config as unknown as Record<string, unknown[]>).channels || [];
+
+  const tabs = [
+    { id: "general", label: "General" },
+    { id: "model", label: "Model" },
+    { id: "agent", label: "Agent" },
+    { id: "heartbeat", label: "Heartbeat" },
+    { id: "channels", label: "Channels" },
+    { id: "advanced", label: "Advanced" },
+  ];
+
+  const tabCls = (id: string) =>
+    `w-full text-left px-3 py-1.5 rounded-md text-sm transition ${
+      activeTab === id
+        ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-medium"
+        : "text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800"
+    }`;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-neutral-900">
@@ -840,142 +858,180 @@ function SettingsPanel({
           Loading configuration...
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            {/* Model */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model</h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
-                  <select
-                    value={config.model || ""}
-                    onChange={(e) => update("model", e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                  >
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} ({m.provider})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Provider</label>
-                  <input
-                    type="text"
-                    value={config.model_provider || ""}
-                    readOnly
-                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-100 dark:bg-neutral-800 px-3 py-2 text-sm text-gray-500 dark:text-neutral-400 cursor-not-allowed"
-                  />
-                </div>
-              </div>
-            </section>
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left vertical tabs */}
+          <div className="w-44 border-r border-gray-200 dark:border-neutral-800 shrink-0 overflow-y-auto py-3 px-2 space-y-0.5">
+            {tabs.map((t) => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={tabCls(t.id)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-            {/* Agent Parameters */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Agent Parameters</h3>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={da.temperature ?? 0.7}
-                        onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))}
-                        className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                      />
-                      <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{da.temperature ?? 0.7}</span>
+          {/* Right content */}
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            {activeTab === "general" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Appearance</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Theme Mode</label>
+                      <div className="flex gap-2">
+                        {(["system", "light", "dark"] as const).map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => {
+                              localStorage.setItem("manta-theme", m);
+                              document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches));
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-600 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-neutral-800 transition capitalize"
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-                    <input
-                      type="number"
-                      value={da.max_tokens ?? 2048}
-                      onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
-                    <input
-                      type="number"
-                      value={da.max_turns ?? ""}
-                      placeholder="Unlimited"
-                      onChange={(e) => {
-                        const val = e.target.value ? parseInt(e.target.value) : null;
-                        update("default_agent.max_turns", val);
-                      }}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
-                    <input
-                      type="number"
-                      value={da.max_concurrent_tools ?? 5}
-                      onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    />
-                  </div>
-                </div>
+                </section>
               </div>
-            </section>
+            )}
 
-            {/* Heartbeat */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Heartbeat</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</label>
-                  <button
-                    onClick={() => update("heartbeat.enabled", !hb.enabled)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-neutral-600"}`}
-                  >
-                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hb.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
-                  <input
-                    type="number"
-                    value={hb.interval_seconds ?? 300}
-                    onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))}
-                    className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active From</label>
-                    <input
-                      type="text"
-                      value={hb.active_hours_start || ""}
-                      onChange={(e) => update("heartbeat.active_hours_start", e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    />
+            {activeTab === "model" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Model</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
+                      <select
+                        value={config.model || ""}
+                        onChange={(e) => update("model", e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      >
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} ({m.provider})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Provider</label>
+                      <input type="text" value={config.model_provider || ""} readOnly className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-100 dark:bg-neutral-800 px-3 py-2 text-sm text-gray-500 dark:text-neutral-400 cursor-not-allowed" />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active To</label>
-                    <input
-                      type="text"
-                      value={hb.active_hours_end || ""}
-                      onChange={(e) => update("heartbeat.active_hours_end", e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    />
-                  </div>
-                </div>
+                </section>
               </div>
-            </section>
+            )}
+
+            {activeTab === "agent" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Agent Parameters</h3>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+                        <div className="flex items-center gap-2">
+                          <input type="range" min="0" max="2" step="0.1" value={da.temperature ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
+                          <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{da.temperature ?? 0.7}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
+                        <input type="number" value={da.max_tokens ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
+                        <input type="number" value={da.max_turns ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
+                        <input type="number" value={da.max_concurrent_tools ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">System Prompt</label>
+                      <textarea
+                        rows={6}
+                        value={da.system_prompt || ""}
+                        onChange={(e) => update("default_agent.system_prompt", e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono"
+                      />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {activeTab === "heartbeat" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Heartbeat</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</label>
+                      <button onClick={() => update("heartbeat.enabled", !hb.enabled)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-neutral-600"}`}>
+                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hb.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
+                      <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active From</label>
+                        <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active To</label>
+                        <input type="text" value={hb.active_hours_end || ""} onChange={(e) => update("heartbeat.active_hours_end", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {activeTab === "channels" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Configured Channels</h3>
+                  {channels.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No channels configured.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(channels as string[]).map((ch) => (
+                        <div key={ch} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{ch}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Enabled</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {activeTab === "advanced" && (
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Raw Config</h3>
+                  <pre className="rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 px-3 py-2 text-xs text-gray-700 dark:text-neutral-300 overflow-auto max-h-96 font-mono">
+                    {JSON.stringify(config, null, 2)}
+                  </pre>
+                </section>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    );
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ── App ── */
