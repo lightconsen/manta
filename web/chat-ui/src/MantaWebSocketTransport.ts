@@ -527,6 +527,11 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     return res || { models: [], default_model: "" };
   }
 
+  async listAgents(): Promise<{ agents: string[] }> {
+    const res = await this.sendRequestAndWait("agents.list", {}) as { agents: string[] } | undefined;
+    return res || { agents: [] };
+  }
+
   /* ── In-memory message state for UI ── */
   getMessages(): ChatMessage[] {
     return this.messages;
