@@ -1245,19 +1245,36 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
 
 async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let registry = state.agent_registry.read().await;
-    let entries: Vec<_> = registry
-        .list()
-        .into_iter()
-        .filter_map(|id| registry.get(&id))
-        .map(|p| {
-            serde_json::json!({
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    // 1. Registry-discovered agents from disk
+    for id in registry.list() {
+        if let Some(p) = registry.get(&id) {
+            seen.insert(id.clone());
+            entries.push(serde_json::json!({
                 "id": p.id,
                 "display_name": p.display_name(),
                 "is_valid": p.is_valid,
                 "has_heartbeat": !p.heartbeat.is_empty(),
-            })
-        })
-        .collect();
+            }));
+        }
+    }
+
+    // 2. Runtime-spawned agents not in registry (e.g. default)
+    {
+        let agents = state.agents.read().await;
+        for id in agents.keys() {
+            if !seen.contains(id) {
+                entries.push(serde_json::json!({
+                    "id": id,
+                    "display_name": id.as_str(),
+                    "is_valid": true,
+                    "has_heartbeat": false,
+                }));
+            }
+        }
+    }
 
     WsResponse::ok(
         &req.id,
