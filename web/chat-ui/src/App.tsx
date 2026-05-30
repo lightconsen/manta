@@ -817,7 +817,7 @@ function SettingsPanel({
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [addSkillError, setAddSkillError] = useState("");
   const [newSkillName, setNewSkillName] = useState("");
-  const [newSkillContent, setNewSkillContent] = useState("");
+  const [newSkillZip, setNewSkillZip] = useState<File | null>(null);
   const [skillActionLoading, setSkillActionLoading] = useState<string>("");
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logsSubscribed, setLogsSubscribed] = useState(false);
@@ -1011,19 +1011,30 @@ function SettingsPanel({
       setAddSkillError("Skill name is required");
       return;
     }
-    if (!newSkillContent.trim()) {
-      setAddSkillError("Skill content is required");
+    if (!newSkillZip) {
+      setAddSkillError("ZIP file is required");
       return;
     }
     setSkillActionLoading("add");
-    const ok = await transport.installSkill(newSkillName.trim(), newSkillContent.trim());
-    if (ok) {
-      setNewSkillName("");
-      setNewSkillContent("");
-      setShowAddSkill(false);
-      await refreshSkills();
-    } else {
-      setAddSkillError("Failed to install skill");
+    try {
+      const arrayBuffer = await newSkillZip.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const zipBase64 = btoa(binary);
+      const ok = await transport.installSkill(newSkillName.trim(), zipBase64);
+      if (ok) {
+        setNewSkillName("");
+        setNewSkillZip(null);
+        setShowAddSkill(false);
+        await refreshSkills();
+      } else {
+        setAddSkillError("Failed to install skill");
+      }
+    } catch {
+      setAddSkillError("Failed to read ZIP file");
     }
     setSkillActionLoading("");
   };
@@ -1673,14 +1684,14 @@ function SettingsPanel({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Content (Markdown with YAML frontmatter)</label>
-                        <textarea
-                          rows={10}
-                          value={newSkillContent}
-                          onChange={(e) => setNewSkillContent(e.target.value)}
-                          placeholder={`---\nname: my-skill\ndescription: A useful skill\nversion: \"1.0.0\"\ntriggers:\n  - type: keyword\n    pattern: \"hello\"\n---\n\nYour skill prompt here...`}
-                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono"
+                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">ZIP File</label>
+                        <input
+                          type="file"
+                          accept=".zip"
+                          onChange={(e) => setNewSkillZip(e.target.files?.[0] || null)}
+                          className="w-full text-sm text-gray-700 dark:text-neutral-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-emerald-50 file:text-emerald-700 dark:file:bg-emerald-900/20 dark:file:text-emerald-400 hover:file:bg-emerald-100"
                         />
+                        <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">ZIP must contain a SKILL.md file at the root.</p>
                       </div>
                       {addSkillError && (
                         <div className="text-xs text-red-600 dark:text-red-400">{addSkillError}</div>

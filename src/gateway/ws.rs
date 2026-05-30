@@ -23,6 +23,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
+use base64::Engine;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -2223,7 +2224,10 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
     #[derive(Debug, Deserialize)]
     struct InstallPayload {
         name: String,
-        content: String,
+        #[serde(default)]
+        content: Option<String>,
+        #[serde(default, rename = "zip_base64")]
+        zip_base64: Option<String>,
     }
     let payload: InstallPayload = match parse_params(req) {
         Ok(p) => p,
@@ -2235,27 +2239,99 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         return WsResponse::err(&req.id, "INVALID_PARAMS", "Skill name is required");
     }
 
-    // Validate: check if the content has valid frontmatter
-    let (frontmatter, _prompt) = match crate::skills::parse_skill_md(&payload.content) {
-        Ok(v) => v,
-        Err(e) => return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill markdown: {}", e)),
-    };
-
-    // Try parsing the frontmatter as YAML to validate
-    if let Err(e) = serde_yaml::from_str::<crate::skills::Skill>(&frontmatter) {
-        return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill frontmatter: {}", e));
-    }
-
-    // Write to ~/.manta/skills/{name}/SKILL.md
     let skills_dir = crate::dirs::skills_dir();
     let skill_dir = skills_dir.join(name);
     if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
         return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create skill directory: {}", e));
     }
 
-    let skill_path = skill_dir.join("SKILL.md");
-    if let Err(e) = tokio::fs::write(&skill_path, &payload.content).await {
-        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write skill file: {}", e));
+    if let Some(zip_base64) = payload.zip_base64 {
+        // Decode base64 ZIP
+        let zip_bytes = match base64::engine::general_purpose::STANDARD.decode(&zip_base64) {
+            Ok(b) => b,
+            Err(e) => return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid base64: {}", e)),
+        };
+
+        let skill_dir_clone = skill_dir.clone();
+        // Extract ZIP synchronously (ZipFile is not Send)
+        let extract_task: tokio::task::JoinHandle<Result<Vec<(std::path::PathBuf, Vec<u8>)>, String>> = tokio::task::spawn_blocking(move || {
+            let cursor = std::io::Cursor::new(zip_bytes);
+            let mut archive = match zip::ZipArchive::new(cursor) {
+                Ok(a) => a,
+                Err(e) => return Err(format!("Invalid ZIP: {}", e)),
+            };
+
+            let mut files: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
+            for i in 0..archive.len() {
+                let mut file = match archive.by_index(i) {
+                    Ok(f) => f,
+                    Err(e) => return Err(format!("ZIP read error: {}", e)),
+                };
+                let outpath = match file.enclosed_name() {
+                    Some(p) => skill_dir_clone.join(p),
+                    None => continue,
+                };
+                if !file.is_dir() {
+                    let mut contents = Vec::new();
+                    if let Err(e) = std::io::Read::read_to_end(&mut file, &mut contents) {
+                        return Err(format!("Failed to read ZIP entry: {}", e));
+                    }
+                    files.push((outpath, contents));
+                }
+            }
+            Ok(files)
+        });
+
+        let files: Vec<(std::path::PathBuf, Vec<u8>)> = match extract_task.await {
+            Ok(Ok(f)) => f,
+            Ok(Err(msg)) => return WsResponse::err(&req.id, "INVALID_CONTENT", msg),
+            Err(e) => return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("ZIP extraction failed: {}", e)),
+        };
+
+        // Write extracted files
+        for (outpath, contents) in files {
+            if let Some(parent) = outpath.parent() {
+                if !parent.exists() {
+                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create directory: {}", e));
+                    }
+                }
+            }
+            if let Err(e) = tokio::fs::write(&outpath, &contents).await {
+                return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write file: {}", e));
+            }
+        }
+
+        // Validate SKILL.md exists and is valid
+        let skill_md_path = skill_dir.join("SKILL.md");
+        if !skill_md_path.exists() {
+            let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+            return WsResponse::err(&req.id, "INVALID_CONTENT", "ZIP must contain SKILL.md at the root");
+        }
+
+        let skill_md_content = match tokio::fs::read_to_string(&skill_md_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+                return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Failed to read SKILL.md: {}", e));
+            }
+        };
+
+        if let Err(e) = crate::skills::parse_skill_md(&skill_md_content) {
+            let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+            return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid SKILL.md: {}", e));
+        }
+    } else if let Some(content) = payload.content {
+        // Legacy single-file install
+        if let Err(e) = crate::skills::parse_skill_md(&content) {
+            return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill markdown: {}", e));
+        }
+        let skill_path = skill_dir.join("SKILL.md");
+        if let Err(e) = tokio::fs::write(&skill_path, &content).await {
+            return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write skill file: {}", e));
+        }
+    } else {
+        return WsResponse::err(&req.id, "INVALID_PARAMS", "Either content or zip_base64 is required");
     }
 
     // Reload skills
