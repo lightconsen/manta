@@ -842,7 +842,7 @@ function SettingsPanel({
     { id: "channels", label: "Channels" },
     { id: "models", label: "Models" },
     { id: "agents", label: "Agents" },
-    { id: "crons", label: "Crons" },
+    { id: "jobs", label: "Jobs" },
     { id: "sessions", label: "Sessions" },
     { id: "skills", label: "Skills" },
     { id: "logs", label: "Logs" },
@@ -1099,10 +1099,10 @@ function SettingsPanel({
               </div>
             )}
 
-            {activeTab === "crons" && (
+            {activeTab === "jobs" && (
               <div className="space-y-5">
                 <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Cron Jobs ({crons.length})</h3>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Jobs ({crons.length})</h3>
                   {crons.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-neutral-400">No cron jobs configured.</div>
                   ) : (
