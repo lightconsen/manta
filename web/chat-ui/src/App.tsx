@@ -1767,7 +1767,7 @@ function SettingsPanel({
                   </div>
                   <div
                     ref={logListRef}
-                    className="bg-gray-50 dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-neutral-700 flex-1 overflow-y-auto font-mono text-[11px] leading-4 p-3 min-h-0"
+                    className="bg-gray-50 dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-neutral-700 h-[90vh] overflow-y-auto font-mono text-[11px] leading-4 p-3"
                   >
                     {logLines.length === 0 && (
                       <div className="text-gray-400 dark:text-neutral-600 text-center py-20">
