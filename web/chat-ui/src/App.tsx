@@ -900,6 +900,10 @@ function SettingsPanel({
                       return (
                         <>
                           <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">URL</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{transport.getGatewayUrl() || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
                             <span className="text-sm text-gray-500 dark:text-neutral-400">Version</span>
                             <span className="text-sm text-gray-900 dark:text-gray-100 font-mono">{si.version || "—"}</span>
                           </div>
@@ -910,6 +914,10 @@ function SettingsPanel({
                           <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
                             <span className="text-sm text-gray-500 dark:text-neutral-400">Features</span>
                             <span className="text-sm text-gray-900 dark:text-gray-100">{(si.features || []).join(", ") || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                            <span className="text-sm text-gray-500 dark:text-neutral-400">Auth Mode</span>
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-mono capitalize">{String((config as Record<string, unknown>).auth_mode || "—")}</span>
                           </div>
                           <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
                             <span className="text-sm text-gray-500 dark:text-neutral-400">Scopes</span>

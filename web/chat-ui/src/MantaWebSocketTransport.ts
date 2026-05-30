@@ -127,6 +127,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   private runListeners: Set<(running: boolean) => void> = new Set();
   private currentAbortController: AbortController | null = null;
   private serverInfo: { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } = {};
+  private gatewayUrl: string = "";
 
   constructor() {
     this.deviceId =
@@ -196,6 +197,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     this.setStatus("connecting");
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws`;
+    this.gatewayUrl = url;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
@@ -557,6 +559,10 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   /* ── In-memory message state for UI ── */
   getServerInfo(): { version?: string; conn_id?: string; features?: string[]; scopes_granted?: string[] } {
     return this.serverInfo;
+  }
+
+  getGatewayUrl(): string {
+    return this.gatewayUrl;
   }
 
   getMessages(): ChatMessage[] {

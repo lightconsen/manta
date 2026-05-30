@@ -1886,6 +1886,7 @@ async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 "max_consecutive_idle": heartbeat.max_consecutive_idle,
             },
             "channels": config.channels.keys().collect::<Vec<_>>(),
+            "auth_mode": config.security.auth_mode,
         }),
     )
 }
