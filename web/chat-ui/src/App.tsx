@@ -1035,6 +1035,18 @@ function SettingsPanel({
             {activeTab === "agents" && (
               <div className="space-y-5">
                 <section>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Registered Agents</h3>
+                  {agents.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No agents registered.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {agents.map((a) => (
+                        <div key={a} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 text-sm text-gray-900 dark:text-gray-100 font-mono">{a}</div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+                <section>
                   <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Agent Parameters</h3>
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
@@ -1065,18 +1077,6 @@ function SettingsPanel({
                       <textarea rows={6} value={da.system_prompt || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono" />
                     </div>
                   </div>
-                </section>
-                <section>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-2">Registered Agents</h3>
-                  {agents.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">No agents registered.</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {agents.map((a) => (
-                        <div key={a} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 text-sm text-gray-900 dark:text-gray-100 font-mono">{a}</div>
-                      ))}
-                    </div>
-                  )}
                 </section>
               </div>
             )}
