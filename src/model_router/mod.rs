@@ -908,7 +908,7 @@ impl ModelRouter {
                 Ok(Arc::new(provider))
             }
             ProviderType::OpenAi => {
-                // Create OpenAI provider
+                // Create OpenAI-compatible provider (covers OpenAI, DeepSeek, Qwen, etc.)
                 let base_url = config
                     .base_url
                     .clone()
@@ -916,11 +916,34 @@ impl ModelRouter {
                 let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
                 Ok(Arc::new(provider))
             }
-            _ => Err(crate::error::ConfigError::InvalidValue {
-                key: "provider_type".to_string(),
-                message: format!("Provider type not supported: {:?}", config.provider_type),
+            ProviderType::Azure => {
+                let base_url = config.base_url.clone().ok_or_else(|| {
+                    crate::error::ConfigError::InvalidValue {
+                        key: "base_url".to_string(),
+                        message: "Azure OpenAI requires a base_url".to_string(),
+                    }
+                })?;
+                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
+                Ok(Arc::new(provider))
             }
-            .into()),
+            ProviderType::Ollama => {
+                let base_url = config
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:11434".to_string());
+                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
+                Ok(Arc::new(provider))
+            }
+            ProviderType::Custom { .. } => {
+                let base_url = config.base_url.clone().ok_or_else(|| {
+                    crate::error::ConfigError::InvalidValue {
+                        key: "base_url".to_string(),
+                        message: "Custom provider requires a base_url".to_string(),
+                    }
+                })?;
+                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
+                Ok(Arc::new(provider))
+            }
         }
     }
 
