@@ -482,6 +482,7 @@ async fn dispatch_method(
         "config.get" => handle_config_get(req, state).await,
         "config.set" => handle_config_set(req, state).await,
         "models.list" => handle_models_list(req, state).await,
+        "models.presets" => handle_models_presets(req, state).await,
         "models.add" => handle_models_add(req, state).await,
         "models.remove" => handle_models_remove(req, state).await,
         "models.set_default" => handle_models_set_default(req, state).await,
@@ -2197,6 +2198,22 @@ async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
     )
 }
 
+async fn handle_models_presets(req: &WsRequest, _state: &Arc<GatewayState>) -> WsResponse {
+    let presets = crate::model_router::provider_presets();
+    let list: Vec<serde_json::Value> = presets
+        .into_iter()
+        .map(|(name, p)| {
+            serde_json::json!({
+                "name": name,
+                "display_name": p.display_name,
+                "base_url": p.default_base_url,
+                "models": p.models,
+            })
+        })
+        .collect();
+    WsResponse::ok(&req.id, serde_json::json!({ "presets": list }))
+}
+
 async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
     struct ModelAddPayload {
@@ -2204,6 +2221,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         provider: String,
         model: String,
         api_key: Option<String>,
+        base_url: Option<String>,
     }
     let payload: ModelAddPayload = match parse_params(req) {
         Ok(p) => p,
@@ -2211,17 +2229,22 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     };
 
     let provider_name = payload.provider.clone();
+    let presets = crate::model_router::provider_presets();
+    let preset = presets.get(&provider_name);
 
     // If api_key provided, configure or update the provider
     if let Some(api_key) = payload.api_key.filter(|k| !k.is_empty()) {
-        let provider_type = match provider_name.as_str() {
-            "anthropic" => crate::model_router::ProviderType::Anthropic,
-            "openai" => crate::model_router::ProviderType::OpenAi,
-            "azure" => crate::model_router::ProviderType::Azure,
-            "ollama" => crate::model_router::ProviderType::Ollama,
-            other => crate::model_router::ProviderType::Custom {
-                name: other.to_string(),
-            },
+        let (provider_type, base_url) = match preset {
+            Some(p) => (
+                p.protocol.clone(),
+                payload.base_url.clone().or_else(|| p.default_base_url.clone()),
+            ),
+            None => (
+                crate::model_router::ProviderType::Custom {
+                    name: provider_name.clone(),
+                },
+                payload.base_url.clone(),
+            ),
         };
 
         let provider_config = crate::model_router::ProviderConfig {
@@ -2230,7 +2253,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
             api_keys: Vec::new(),
             auth_profile: None,
             oauth: None,
-            base_url: None,
+            base_url,
             timeout: std::time::Duration::from_secs(30),
             max_retries: 3,
             retry_delay_ms: 1000,

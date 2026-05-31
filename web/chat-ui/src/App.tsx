@@ -832,8 +832,9 @@ function SettingsPanel({
   const [channelActionLoading, setChannelActionLoading] = useState<string>("");
   const [showAddModel, setShowAddModel] = useState(false);
   const [addModelError, setAddModelError] = useState("");
-  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "", api_key: "" });
+  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
   const [modelActionLoading, setModelActionLoading] = useState<string>("");
+  const [modelPresets, setModelPresets] = useState<Array<{ name: string; display_name: string; base_url?: string; models: string[] }>>([]);
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [addSkillError, setAddSkillError] = useState("");
   const [newSkillName, setNewSkillName] = useState("");
@@ -861,8 +862,9 @@ function SettingsPanel({
       transport.listSessions(),
       transport.listCrons(),
       transport.listSkills(),
+      transport.listModelPresets(),
     ])
-      .then(([cfg, mdl, reg, sess, cronRes, skillRes]) => {
+      .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes]) => {
         setConfig(cfg as MantaConfig);
         setModels(mdl.models || []);
         const registry = reg.agents || [];
@@ -870,6 +872,7 @@ function SettingsPanel({
         setSessions(sess || []);
         setCrons(cronRes.jobs || []);
         setSkills(skillRes.skills || []);
+        setModelPresets(presetRes || []);
         // Auto-select default agent or first available
         const toSelect = registry.some((a) => a.id === "default") ? "default" : (registry[0]?.id || "");
         if (toSelect) {
@@ -1010,9 +1013,10 @@ function SettingsPanel({
       provider: newModel.provider,
       model: newModel.model.trim(),
       api_key: newModel.api_key.trim() || undefined,
+      base_url: newModel.base_url.trim() || undefined,
     });
     if (ok) {
-      setNewModel({ name: "", provider: "anthropic", model: "", api_key: "" });
+      setNewModel({ name: "", provider: "anthropic", model: "", api_key: "", base_url: "" });
       setShowAddModel(false);
       await refreshModels();
     } else {
@@ -1443,36 +1447,73 @@ function SettingsPanel({
                           <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Provider</label>
                           <select
                             value={newModel.provider}
-                            onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })}
+                            onChange={(e) => {
+                              const provider = e.target.value;
+                              const preset = modelPresets.find((p) => p.name === provider);
+                              setNewModel({
+                                ...newModel,
+                                provider,
+                                model: preset?.models[0] || "",
+                                base_url: preset?.base_url || "",
+                              });
+                            }}
                             className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
                           >
-                            <option value="anthropic">Anthropic</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="gemini">Gemini</option>
-                            <option value="qwen">Qwen</option>
+                            {modelPresets.map((p) => (
+                              <option key={p.name} value={p.name}>{p.display_name}</option>
+                            ))}
                           </select>
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Model ID</label>
-                        <input
-                          type="text"
-                          value={newModel.model}
-                          onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
-                          placeholder="claude-3-5-sonnet-20241022"
-                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">API Key (optional)</label>
-                        <input
-                          type="password"
-                          value={newModel.api_key}
-                          onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
-                          placeholder="sk-..."
-                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                        />
+                      {(() => {
+                        const preset = modelPresets.find((p) => p.name === newModel.provider);
+                        const hasModels = preset && preset.models.length > 0;
+                        return (
+                          <div>
+                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Model</label>
+                            {hasModels ? (
+                              <select
+                                value={newModel.model}
+                                onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                              >
+                                {preset.models.map((m) => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={newModel.model}
+                                onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+                                placeholder="model-id"
+                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">API Key</label>
+                          <input
+                            type="password"
+                            value={newModel.api_key}
+                            onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+                            placeholder="sk-..."
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Base URL</label>
+                          <input
+                            type="text"
+                            value={newModel.base_url}
+                            onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
+                            placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
                       </div>
                       {addModelError && (
                         <div className="text-xs text-red-600 dark:text-red-400">{addModelError}</div>

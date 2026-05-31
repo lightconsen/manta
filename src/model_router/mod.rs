@@ -466,6 +466,154 @@ pub enum ProviderType {
     Custom { name: String },
 }
 
+/// Preset for a known LLM provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderPreset {
+    /// Display name (e.g. "DeepSeek")
+    pub display_name: String,
+    /// Underlying protocol
+    pub protocol: ProviderType,
+    /// Default base URL (optional for native providers)
+    pub default_base_url: Option<String>,
+    /// Suggested model IDs
+    pub models: Vec<String>,
+}
+
+/// Built-in provider presets keyed by provider name.
+pub fn provider_presets() -> HashMap<String, ProviderPreset> {
+    let mut m = HashMap::new();
+    m.insert(
+        "anthropic".to_string(),
+        ProviderPreset {
+            display_name: "Anthropic".to_string(),
+            protocol: ProviderType::Anthropic,
+            default_base_url: None,
+            models: vec![
+                "claude-sonnet-4-20250514".to_string(),
+                "claude-3-5-sonnet-20241022".to_string(),
+                "claude-3-opus-20240229".to_string(),
+                "claude-3-sonnet-20240229".to_string(),
+                "claude-3-haiku-20240307".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "openai".to_string(),
+        ProviderPreset {
+            display_name: "OpenAI".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.openai.com/v1".to_string()),
+            models: vec![
+                "gpt-4o".to_string(),
+                "gpt-4o-mini".to_string(),
+                "gpt-4-turbo".to_string(),
+                "gpt-3.5-turbo".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "deepseek".to_string(),
+        ProviderPreset {
+            display_name: "DeepSeek".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.deepseek.com/v1".to_string()),
+            models: vec![
+                "deepseek-chat".to_string(),
+                "deepseek-reasoner".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "qwen".to_string(),
+        ProviderPreset {
+            display_name: "Qwen".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+            models: vec![
+                "qwen-max".to_string(),
+                "qwen-plus".to_string(),
+                "qwen-turbo".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "kimi".to_string(),
+        ProviderPreset {
+            display_name: "Kimi".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.moonshot.cn/v1".to_string()),
+            models: vec![
+                "kimi-k2".to_string(),
+                "kimi-moonshot-v1-8k".to_string(),
+                "kimi-moonshot-v1-32k".to_string(),
+                "kimi-moonshot-v1-128k".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "gemini".to_string(),
+        ProviderPreset {
+            display_name: "Gemini".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
+            models: vec![
+                "gemini-1.5-pro".to_string(),
+                "gemini-1.5-flash".to_string(),
+                "gemini-2.5-pro-preview-03-25".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "minimax".to_string(),
+        ProviderPreset {
+            display_name: "MiniMax".to_string(),
+            protocol: ProviderType::OpenAi,
+            default_base_url: Some("https://api.minimax.chat/v1".to_string()),
+            models: vec![
+                "abab6.5s-chat".to_string(),
+                "abab6-chat".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "azure".to_string(),
+        ProviderPreset {
+            display_name: "Azure OpenAI".to_string(),
+            protocol: ProviderType::Azure,
+            default_base_url: None,
+            models: vec![
+                "gpt-4o".to_string(),
+                "gpt-4".to_string(),
+                "gpt-35-turbo".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "ollama".to_string(),
+        ProviderPreset {
+            display_name: "Ollama".to_string(),
+            protocol: ProviderType::Ollama,
+            default_base_url: Some("http://localhost:11434".to_string()),
+            models: vec![
+                "llama3".to_string(),
+                "llama3.1".to_string(),
+                "mistral".to_string(),
+                "qwen2".to_string(),
+            ],
+        },
+    );
+    m.insert(
+        "custom".to_string(),
+        ProviderPreset {
+            display_name: "Custom".to_string(),
+            protocol: ProviderType::Custom { name: "custom".to_string() },
+            default_base_url: None,
+            models: vec![],
+        },
+    );
+    m
+}
+
 impl std::fmt::Display for ProviderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
