@@ -127,6 +127,26 @@ function StatusDot({ status }: { status: NetworkStatus }) {
   return <span className={`w-2 h-2 rounded-full ${color}`} />;
 }
 
+const channelCredentialFields: Record<string, Array<{ key: string; label: string; type?: string }>> = {
+  telegram: [{ key: "token", label: "Bot Token", type: "password" }],
+  discord: [{ key: "token", label: "Bot Token", type: "password" }],
+  slack: [{ key: "token", label: "Bot Token", type: "password" }],
+  whatsapp: [
+    { key: "phone_number_id", label: "Phone Number ID" },
+    { key: "access_token", label: "Access Token", type: "password" },
+  ],
+  qq: [
+    { key: "app_id", label: "App ID" },
+    { key: "app_secret", label: "App Secret", type: "password" },
+    { key: "bot_qq", label: "Bot QQ" },
+  ],
+  feishu: [
+    { key: "app_id", label: "App ID" },
+    { key: "app_secret", label: "App Secret", type: "password" },
+  ],
+  // signal, imessage, webchat, websocket, web_terminal: no credentials needed
+};
+
 /* ── Sidebar ── */
 function Sidebar({
   collapsed,
@@ -807,11 +827,12 @@ function SettingsPanel({
     channel_type: "telegram",
     enabled: true,
     agent_id: "",
+    credentials: {} as Record<string, string>,
   });
   const [channelActionLoading, setChannelActionLoading] = useState<string>("");
   const [showAddModel, setShowAddModel] = useState(false);
   const [addModelError, setAddModelError] = useState("");
-  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "" });
+  const [newModel, setNewModel] = useState({ name: "", provider: "anthropic", model: "", api_key: "" });
   const [modelActionLoading, setModelActionLoading] = useState<string>("");
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [addSkillError, setAddSkillError] = useState("");
@@ -933,15 +954,23 @@ function SettingsPanel({
       setAddChannelError("Channel name is required");
       return;
     }
+    const requiredFields = channelCredentialFields[newChannel.channel_type] || [];
+    for (const field of requiredFields) {
+      if (!newChannel.credentials[field.key]?.trim()) {
+        setAddChannelError(`${field.label} is required`);
+        return;
+      }
+    }
     setChannelActionLoading("add");
     const ok = await transport.addChannel({
       name: newChannel.name.trim(),
       channel_type: newChannel.channel_type,
       enabled: newChannel.enabled,
       agent_id: newChannel.agent_id.trim() || undefined,
+      credentials: requiredFields.length > 0 ? newChannel.credentials : undefined,
     });
     if (ok) {
-      setNewChannel({ name: "", channel_type: "telegram", enabled: true, agent_id: "" });
+      setNewChannel({ name: "", channel_type: "telegram", enabled: true, agent_id: "", credentials: {} });
       setShowAddChannel(false);
       await refreshConfig();
     } else {
@@ -980,9 +1009,10 @@ function SettingsPanel({
       name: newModel.name.trim(),
       provider: newModel.provider,
       model: newModel.model.trim(),
+      api_key: newModel.api_key.trim() || undefined,
     });
     if (ok) {
-      setNewModel({ name: "", provider: "anthropic", model: "" });
+      setNewModel({ name: "", provider: "anthropic", model: "", api_key: "" });
       setShowAddModel(false);
       await refreshModels();
     } else {
@@ -1260,7 +1290,7 @@ function SettingsPanel({
                           <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Type</label>
                           <select
                             value={newChannel.channel_type}
-                            onChange={(e) => setNewChannel({ ...newChannel, channel_type: e.target.value })}
+                            onChange={(e) => setNewChannel({ ...newChannel, channel_type: e.target.value, credentials: {} })}
                             className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
                           >
                             <option value="telegram">Telegram</option>
@@ -1299,6 +1329,21 @@ function SettingsPanel({
                           <label htmlFor="ch-enabled" className="text-sm text-gray-700 dark:text-gray-300">Enabled</label>
                         </div>
                       </div>
+                      {channelCredentialFields[newChannel.channel_type]?.map((field) => (
+                        <div key={field.key}>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">{field.label}</label>
+                          <input
+                            type={field.type || "text"}
+                            value={newChannel.credentials[field.key] || ""}
+                            onChange={(e) => setNewChannel({
+                              ...newChannel,
+                              credentials: { ...newChannel.credentials, [field.key]: e.target.value },
+                            })}
+                            placeholder={field.label}
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                      ))}
                       {addChannelError && (
                         <div className="text-xs text-red-600 dark:text-red-400">{addChannelError}</div>
                       )}
@@ -1416,6 +1461,16 @@ function SettingsPanel({
                           value={newModel.model}
                           onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
                           placeholder="claude-3-5-sonnet-20241022"
+                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">API Key (optional)</label>
+                        <input
+                          type="password"
+                          value={newModel.api_key}
+                          onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+                          placeholder="sk-..."
                           className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
                         />
                       </div>

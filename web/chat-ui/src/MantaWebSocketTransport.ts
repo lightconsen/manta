@@ -583,7 +583,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
   }
 
   /* ── Model operations ── */
-  async addModel(payload: { name: string; provider: string; model: string }): Promise<boolean> {
+  async addModel(payload: { name: string; provider: string; model: string; api_key?: string }): Promise<boolean> {
     try {
       await this.sendRequestAndWait("models.add", payload);
       return true;

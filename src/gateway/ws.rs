@@ -2152,6 +2152,30 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         }
     }
 
+    // Persist config to disk so changes survive restarts and trigger hot-reload
+    drop(config);
+    if let Some(config_path) = state.config_path.clone() {
+        let config_guard = state.config.read().await;
+        match toml::to_string_pretty(&*config_guard) {
+            Ok(toml_str) => {
+                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+                    return WsResponse::err(
+                        &req.id,
+                        "PERSIST_FAILED",
+                        format!("Config updated in memory but failed to write to disk: {}", e),
+                    );
+                }
+            }
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "PERSIST_FAILED",
+                    format!("Config updated in memory but TOML serialization failed: {}", e),
+                );
+            }
+        }
+    }
+
     WsResponse::ok(
         &req.id,
         serde_json::json!({
@@ -2179,20 +2203,70 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         name: String,
         provider: String,
         model: String,
+        api_key: Option<String>,
     }
     let payload: ModelAddPayload = match parse_params(req) {
         Ok(p) => p,
         Err(res) => return res,
     };
+
+    let provider_name = payload.provider.clone();
+
+    // If api_key provided, configure or update the provider
+    if let Some(api_key) = payload.api_key.filter(|k| !k.is_empty()) {
+        let provider_type = match provider_name.as_str() {
+            "anthropic" => crate::model_router::ProviderType::Anthropic,
+            "openai" => crate::model_router::ProviderType::OpenAi,
+            "azure" => crate::model_router::ProviderType::Azure,
+            "ollama" => crate::model_router::ProviderType::Ollama,
+            other => crate::model_router::ProviderType::Custom {
+                name: other.to_string(),
+            },
+        };
+
+        let provider_config = crate::model_router::ProviderConfig {
+            provider_type,
+            api_key: api_key.clone(),
+            api_keys: Vec::new(),
+            auth_profile: None,
+            oauth: None,
+            base_url: None,
+            timeout: std::time::Duration::from_secs(30),
+            max_retries: 3,
+            retry_delay_ms: 1000,
+        };
+
+        // Update GatewayConfig providers
+        {
+            let mut config = state.config.write().await;
+            config.providers.insert(provider_name.clone(), provider_config.clone());
+        }
+
+        // Register with model router
+        if let Err(e) = state
+            .model_router
+            .add_provider(&provider_name, provider_config)
+            .await
+        {
+            return WsResponse::err(
+                &req.id,
+                "PROVIDER_ERROR",
+                format!("Failed to register provider: {}", e),
+            );
+        }
+    }
+
+    // Set alias
     let alias = crate::model_router::ModelAlias {
         name: payload.name.clone(),
-        provider: payload.provider,
+        provider: provider_name,
         model: payload.model,
         temperature: None,
         max_tokens: None,
     };
     state.model_router.set_alias(alias).await;
-    // Also register in catalog for discovery
+
+    // Register in catalog for discovery
     let entry = crate::model_router::ModelCatalogEntry::new(
         payload.name.clone(),
         format!("{} ({})", payload.name, payload.name),
@@ -2200,6 +2274,30 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     )
     .with_alias(payload.name.clone());
     state.model_router.model_catalog.register(entry).await;
+
+    // Persist GatewayConfig to manta.toml
+    if let Some(config_path) = state.config_path.clone() {
+        let config_guard = state.config.read().await;
+        match toml::to_string_pretty(&*config_guard) {
+            Ok(toml_str) => {
+                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+                    return WsResponse::err(
+                        &req.id,
+                        "PERSIST_FAILED",
+                        format!("Model added but failed to write config: {}", e),
+                    );
+                }
+            }
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "PERSIST_FAILED",
+                    format!("Model added but TOML serialization failed: {}", e),
+                );
+            }
+        }
+    }
+
     WsResponse::ok(&req.id, serde_json::json!({ "status": "added" }))
 }
 
