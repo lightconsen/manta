@@ -2616,6 +2616,7 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 
         let skill_dir_clone = skill_dir.clone();
         // Extract ZIP synchronously (ZipFile is not Send)
+        #[allow(clippy::type_complexity)]
         let extract_task: tokio::task::JoinHandle<Result<Vec<(std::path::PathBuf, Vec<u8>)>, String>> = tokio::task::spawn_blocking(move || {
             let cursor = std::io::Cursor::new(zip_bytes);
             let mut archive = match zip::ZipArchive::new(cursor) {
@@ -2836,6 +2837,96 @@ async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_req(id: &str, method: &str, params: serde_json::Value) -> WsRequest {
+        WsRequest {
+            frame_type: "req".to_string(),
+            id: id.to_string(),
+            method: method.to_string(),
+            params: Some(params),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_list_empty() {
+        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let req = make_req("r1", "mcp.list", serde_json::json!({}));
+        let res = handle_mcp_list(&req, &state).await;
+        assert!(res.ok);
+        let payload = res.payload.unwrap();
+        let servers = payload.get("servers").unwrap().as_array().unwrap();
+        assert!(servers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_add_and_list() {
+        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let req = make_req("r1", "mcp.add", serde_json::json!({
+            "id": "test-server",
+            "transport": "stdio",
+            "command": "echo",
+            "args": ["hello"],
+            "auto_connect": false,
+        }));
+        let res = handle_mcp_add(&req, &state).await;
+        assert!(res.ok, "add failed: {:?}", res.error);
+        assert_eq!(res.payload.unwrap().get("status").unwrap(), "added");
+
+        let req = make_req("r2", "mcp.list", serde_json::json!({}));
+        let res = handle_mcp_list(&req, &state).await;
+        assert!(res.ok);
+        let servers = res.payload.unwrap().get("servers").unwrap().as_array().unwrap().clone();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].get("id").unwrap(), "test-server");
+        assert_eq!(servers[0].get("transport").unwrap(), "stdio");
+        assert_eq!(servers[0].get("connected").unwrap(), false);
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_remove() {
+        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        // Add first
+        let req = make_req("r1", "mcp.add", serde_json::json!({
+            "id": "to-remove",
+            "transport": "stdio",
+            "command": "echo",
+            "args": [],
+            "auto_connect": false,
+        }));
+        let res = handle_mcp_add(&req, &state).await;
+        assert!(res.ok);
+
+        // Remove
+        let req = make_req("r2", "mcp.remove", serde_json::json!({ "id": "to-remove" }));
+        let res = handle_mcp_remove(&req, &state).await;
+        assert!(res.ok);
+        assert_eq!(res.payload.unwrap().get("status").unwrap(), "removed");
+
+        // List should be empty
+        let req = make_req("r3", "mcp.list", serde_json::json!({}));
+        let res = handle_mcp_list(&req, &state).await;
+        let payload = res.payload.unwrap();
+        let servers = payload.get("servers").unwrap().as_array().unwrap();
+        assert!(servers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_connect_not_found() {
+        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let req = make_req("r1", "mcp.connect", serde_json::json!({ "id": "missing" }));
+        let res = handle_mcp_connect(&req, &state).await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "MCP_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_disconnect_not_connected() {
+        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let req = make_req("r1", "mcp.disconnect", serde_json::json!({ "id": "nobody" }));
+        let res = handle_mcp_disconnect(&req, &state).await;
+        assert!(res.ok);
+        assert_eq!(res.payload.unwrap().get("status").unwrap(), "disconnected");
+    }
 
     #[test]
     fn test_ws_request_deserialize() {
