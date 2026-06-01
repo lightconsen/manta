@@ -2186,6 +2186,7 @@ function ChatApp() {
   }, [transport, refreshSessions]);
 
   const handleNewSession = useCallback(() => {
+    setSettingsOpen(false);
     // Don't create a new session if the current one already has no messages
     if (transport.getMessages().length === 0) {
       transport.setMessages([]);
@@ -2200,6 +2201,7 @@ function ChatApp() {
 
   const handleSwitchSession = useCallback(
     async (id: string) => {
+      setSettingsOpen(false);
       transport.switchSession(id);
       // Load history for the new session from backend
       const history = await transport.loadHistory(id);
