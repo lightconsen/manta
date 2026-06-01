@@ -486,6 +486,11 @@ async fn dispatch_method(
         "models.add" => handle_models_add(req, state).await,
         "models.remove" => handle_models_remove(req, state).await,
         "models.set_default" => handle_models_set_default(req, state).await,
+        "mcp.list" => handle_mcp_list(req, state).await,
+        "mcp.add" => handle_mcp_add(req, state).await,
+        "mcp.remove" => handle_mcp_remove(req, state).await,
+        "mcp.connect" => handle_mcp_connect(req, state).await,
+        "mcp.disconnect" => handle_mcp_disconnect(req, state).await,
         "cron.list" => handle_cron_list(req, state).await,
         "skills.list" => handle_skills_list(req, state).await,
         "skills.install" => handle_skills_install(req, state).await,
@@ -2372,6 +2377,160 @@ async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -
     }
 }
 
+async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let connected = state.mcp_manager.list_servers().await;
+    let config_guard = state.config.read().await;
+    let servers: Vec<serde_json::Value> = config_guard
+        .mcp
+        .servers
+        .iter()
+        .map(|(id, cfg)| {
+            serde_json::json!({
+                "id": id,
+                "transport": match cfg.transport {
+                    crate::tools::mcp::McpTransport::Stdio => "stdio",
+                    crate::tools::mcp::McpTransport::Sse => "sse",
+                    crate::tools::mcp::McpTransport::StreamableHttp => "streamable_http",
+                },
+                "command": cfg.command,
+                "args": cfg.args,
+                "url": cfg.url,
+                "auto_connect": cfg.auto_connect,
+                "connected": connected.contains(id),
+            })
+        })
+        .collect();
+    WsResponse::ok(&req.id, serde_json::json!({ "servers": servers }))
+}
+
+async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct McpAddPayload {
+        id: String,
+        transport: String,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default = "default_true")]
+        auto_connect: bool,
+    }
+    fn default_true() -> bool { true }
+
+    let payload: McpAddPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let transport = match payload.transport.as_str() {
+        "sse" => crate::tools::mcp::McpTransport::Sse,
+        "streamable_http" => crate::tools::mcp::McpTransport::StreamableHttp,
+        _ => crate::tools::mcp::McpTransport::Stdio,
+    };
+
+    let config = crate::tools::mcp::McpServerConfig {
+        transport,
+        command: payload.command,
+        args: payload.args,
+        url: payload.url,
+        auto_connect: payload.auto_connect,
+        ..Default::default()
+    };
+
+    {
+        let mut cfg = state.config.write().await;
+        cfg.mcp.servers.insert(payload.id.clone(), config.clone());
+    }
+
+    if payload.auto_connect {
+        if let Err(e) = state.mcp_manager.connect(&payload.id, config).await {
+            return WsResponse::err(&req.id, "MCP_CONNECT_FAILED", format!("Saved config but failed to connect: {}", e));
+        }
+    }
+
+    if let Err(e) = persist_config(state).await {
+        return e;
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "added", "id": payload.id }))
+}
+
+async fn handle_mcp_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct McpRemovePayload {
+        id: String,
+    }
+    let payload: McpRemovePayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let _ = state.mcp_manager.disconnect(&payload.id).await;
+    let prefix = format!("mcp__{}__", payload.id);
+    state.tool_registry.deregister_prefix(&prefix);
+
+    {
+        let mut cfg = state.config.write().await;
+        cfg.mcp.servers.remove(&payload.id);
+    }
+
+    if let Err(e) = persist_config(state).await {
+        return e;
+    }
+
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "removed", "id": payload.id }))
+}
+
+async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct McpConnectPayload {
+        id: String,
+    }
+    let payload: McpConnectPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let config = {
+        let cfg = state.config.read().await;
+        match cfg.mcp.servers.get(&payload.id) {
+            Some(c) => c.clone(),
+            None => return WsResponse::err(&req.id, "MCP_NOT_FOUND", format!("MCP server '{}' not configured", payload.id)),
+        }
+    };
+
+    match state.mcp_manager.connect(&payload.id, config).await {
+        Ok(tools) => WsResponse::ok(&req.id, serde_json::json!({
+            "status": "connected",
+            "id": payload.id,
+            "tool_count": tools.len(),
+        })),
+        Err(e) => WsResponse::err(&req.id, "MCP_CONNECT_FAILED", format!("{}", e)),
+    }
+}
+
+async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct McpDisconnectPayload {
+        id: String,
+    }
+    let payload: McpDisconnectPayload = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    match state.mcp_manager.disconnect(&payload.id).await {
+        Ok(()) => {
+            let prefix = format!("mcp__{}__", payload.id);
+            state.tool_registry.deregister_prefix(&prefix);
+            WsResponse::ok(&req.id, serde_json::json!({ "status": "disconnected", "id": payload.id }))
+        }
+        Err(e) => WsResponse::err(&req.id, "MCP_DISCONNECT_FAILED", format!("{}", e)),
+    }
+}
+
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let jobs = {
         let scheduler_opt = state.cron_scheduler.read().await;
@@ -2646,6 +2805,32 @@ async fn handle_logs_unsubscribe(
         cg.log_cancel_tx = None;
     }
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
+}
+
+/// Persist GatewayConfig to manta.toml.
+async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
+    if let Some(config_path) = state.config_path.clone() {
+        let config_guard = state.config.read().await;
+        match toml::to_string_pretty(&*config_guard) {
+            Ok(toml_str) => {
+                if let Err(e) = tokio::fs::write(&config_path, toml_str).await {
+                    return Err(WsResponse::err(
+                        "persist",
+                        "PERSIST_FAILED",
+                        format!("Failed to write config: {}", e),
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(WsResponse::err(
+                    "persist",
+                    "PERSIST_FAILED",
+                    format!("TOML serialization failed: {}", e),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

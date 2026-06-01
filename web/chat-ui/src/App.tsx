@@ -843,6 +843,26 @@ function SettingsPanel({
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logsSubscribed, setLogsSubscribed] = useState(false);
   const logListRef = useRef<HTMLDivElement>(null);
+  const [mcpServers, setMcpServers] = useState<Array<{
+    id: string;
+    transport: string;
+    command?: string;
+    args: string[];
+    url?: string;
+    auto_connect: boolean;
+    connected: boolean;
+  }>>([]);
+  const [showAddMcp, setShowAddMcp] = useState(false);
+  const [addMcpError, setAddMcpError] = useState("");
+  const [newMcp, setNewMcp] = useState({
+    id: "",
+    transport: "stdio",
+    command: "",
+    args: "",
+    url: "",
+    auto_connect: true,
+  });
+  const [mcpActionLoading, setMcpActionLoading] = useState<string>("");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedAgentDetail, setSelectedAgentDetail] = useState<{
     agent_id: string;
@@ -863,8 +883,9 @@ function SettingsPanel({
       transport.listCrons(),
       transport.listSkills(),
       transport.listModelPresets(),
+      transport.listMcpServers(),
     ])
-      .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes]) => {
+      .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes, mcpRes]) => {
         setConfig(cfg as MantaConfig);
         setModels(mdl.models || []);
         const registry = reg.agents || [];
@@ -873,6 +894,7 @@ function SettingsPanel({
         setCrons(cronRes.jobs || []);
         setSkills(skillRes.skills || []);
         setModelPresets(presetRes || []);
+        setMcpServers(mcpRes.servers || []);
         // Auto-select default agent or first available
         const toSelect = registry.some((a) => a.id === "default") ? "default" : (registry[0]?.id || "");
         if (toSelect) {
@@ -1052,6 +1074,70 @@ function SettingsPanel({
     }
   };
 
+  const refreshMcp = async () => {
+    try {
+      const res = await transport.listMcpServers();
+      setMcpServers(res.servers || []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleAddMcp = async () => {
+    setAddMcpError("");
+    if (!newMcp.id.trim()) {
+      setAddMcpError("Server ID is required");
+      return;
+    }
+    if (newMcp.transport === "stdio" && !newMcp.command.trim()) {
+      setAddMcpError("Command is required for stdio transport");
+      return;
+    }
+    if (newMcp.transport !== "stdio" && !newMcp.url.trim()) {
+      setAddMcpError("URL is required for SSE/HTTP transport");
+      return;
+    }
+    setMcpActionLoading("add");
+    const ok = await transport.addMcpServer({
+      id: newMcp.id.trim(),
+      transport: newMcp.transport,
+      command: newMcp.command.trim() || undefined,
+      args: newMcp.args.split(",").map((s) => s.trim()).filter(Boolean),
+      url: newMcp.url.trim() || undefined,
+      auto_connect: newMcp.auto_connect,
+    });
+    if (ok) {
+      setNewMcp({ id: "", transport: "stdio", command: "", args: "", url: "", auto_connect: true });
+      setShowAddMcp(false);
+      await refreshMcp();
+    } else {
+      setAddMcpError("Failed to add MCP server");
+    }
+    setMcpActionLoading("");
+  };
+
+  const handleRemoveMcp = async (id: string) => {
+    if (!confirm(`Remove MCP server "${id}"?`)) return;
+    setMcpActionLoading(id);
+    await transport.removeMcpServer(id);
+    await refreshMcp();
+    setMcpActionLoading("");
+  };
+
+  const handleConnectMcp = async (id: string) => {
+    setMcpActionLoading(id);
+    await transport.connectMcpServer(id);
+    await refreshMcp();
+    setMcpActionLoading("");
+  };
+
+  const handleDisconnectMcp = async (id: string) => {
+    setMcpActionLoading(id);
+    await transport.disconnectMcpServer(id);
+    await refreshMcp();
+    setMcpActionLoading("");
+  };
+
   const handleAddSkill = async () => {
     setAddSkillError("");
     if (!newSkillName.trim()) {
@@ -1116,6 +1202,7 @@ function SettingsPanel({
     { id: "channels", label: "Channels" },
     { id: "models", label: "Models" },
     { id: "agents", label: "Agents" },
+    { id: "mcp", label: "MCP" },
     { id: "jobs", label: "Jobs" },
     { id: "sessions", label: "Sessions" },
     { id: "skills", label: "Skills" },
@@ -1721,6 +1808,95 @@ function SettingsPanel({
                       </>
                     );
                   })()}
+                </section>
+              </div>
+            )}
+
+            {activeTab === "mcp" && (
+              <div className="space-y-5">
+                <section>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">MCP Servers</h3>
+                    <button onClick={() => setShowAddMcp(true)} className="text-xs px-2 py-1 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition">+ Add</button>
+                  </div>
+                  {showAddMcp && (
+                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Server ID</label>
+                          <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Transport</label>
+                          <select value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30">
+                            <option value="stdio">stdio</option>
+                            <option value="sse">sse</option>
+                            <option value="streamable_http">streamable_http</option>
+                          </select>
+                        </div>
+                      </div>
+                      {newMcp.transport === "stdio" ? (
+                        <>
+                          <div>
+                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Command</label>
+                            <input type="text" value={newMcp.command} onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Args (comma-separated)</label>
+                            <input type="text" value={newMcp.args} onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })} placeholder="/home/user/docs" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                          </div>
+                        </>
+                      ) : (
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">URL</label>
+                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-gray-300 text-emerald-500 focus:ring-emerald-500" />
+                        <label htmlFor="mcp-auto" className="text-sm text-gray-700 dark:text-gray-300">Auto-connect</label>
+                      </div>
+                      {addMcpError && <div className="text-xs text-red-600 dark:text-red-400">{addMcpError}</div>}
+                      <div className="flex justify-end">
+                        <button onClick={handleAddMcp} disabled={mcpActionLoading === "add"} className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition">
+                          {mcpActionLoading === "add" ? "Adding..." : "Add Server"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {mcpServers.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">No MCP servers configured.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {mcpServers.map((srv) => (
+                        <div key={srv.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{srv.id}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 uppercase">{srv.transport}</span>
+                            {srv.connected ? (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">connected</span>
+                            ) : (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400">disconnected</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {srv.connected ? (
+                              <button onClick={() => handleDisconnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-600 transition">
+                                {mcpActionLoading === srv.id ? "..." : "Disconnect"}
+                              </button>
+                            ) : (
+                              <button onClick={() => handleConnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition">
+                                {mcpActionLoading === srv.id ? "..." : "Connect"}
+                              </button>
+                            )}
+                            <button onClick={() => handleRemoveMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 transition" title="Remove">
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </div>
             )}

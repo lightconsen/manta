@@ -619,6 +619,79 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /* ── MCP operations ── */
+  async listMcpServers(): Promise<{
+    servers: Array<{
+      id: string;
+      transport: string;
+      command?: string;
+      args: string[];
+      url?: string;
+      auto_connect: boolean;
+      connected: boolean;
+    }>;
+  }> {
+    try {
+      const res = (await this.sendRequestAndWait("mcp.list", {})) as {
+        servers: Array<{
+          id: string;
+          transport: string;
+          command?: string;
+          args: string[];
+          url?: string;
+          auto_connect: boolean;
+          connected: boolean;
+        }>;
+      };
+      return res;
+    } catch {
+      return { servers: [] };
+    }
+  }
+
+  async addMcpServer(payload: {
+    id: string;
+    transport: string;
+    command?: string;
+    args?: string[];
+    url?: string;
+    auto_connect?: boolean;
+  }): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("mcp.add", payload);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async removeMcpServer(id: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("mcp.remove", { id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async connectMcpServer(id: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("mcp.connect", { id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async disconnectMcpServer(id: string): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("mcp.disconnect", { id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /* ── Log streaming ── */
   subscribeLogs(): void {
     this.sendRequest("logs.subscribe", {});
