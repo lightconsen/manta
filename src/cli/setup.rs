@@ -5,11 +5,30 @@
 use crate::error::Result;
 use std::io::{self, Write};
 
+/// Check if user wants to quit the wizard.
+fn should_quit(input: &str) -> bool {
+    let trimmed = input.trim();
+    trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit")
+}
+
+/// Read a line from stdin, returning `Ok(None)` if the user wants to quit.
+fn read_line(prompt: &str) -> Result<Option<String>> {
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf).unwrap();
+    if should_quit(&buf) {
+        return Ok(None);
+    }
+    Ok(Some(buf))
+}
+
 /// Run the interactive setup wizard.
 /// Reads existing ~/.manta/manta.toml if present and allows editing.
 pub async fn run_setup() -> Result<()> {
     println!("🐙 Manta Setup Wizard");
-    println!("=====================\n");
+    println!("=====================");
+    println!("   Type 'q' or 'quit' at any prompt to exit without saving.\n");
 
     let manta_dir = crate::dirs::manta_dir();
     let config_path = manta_dir.join("manta.toml");
@@ -61,10 +80,13 @@ pub async fn run_setup() -> Result<()> {
     println!("   {}. Other (custom)", preset_names.len() + 1);
 
     let default_provider = config.model_provider.clone();
-    print!("   Select provider [{}]: ", default_provider);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
+    let input = match read_line(&format!("   Select provider [{}]: ", default_provider))? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
     let input = input.trim();
 
     let (provider_name, preset) = if input.is_empty() {
@@ -90,20 +112,27 @@ pub async fn run_setup() -> Result<()> {
         .map(|p| p.api_key.clone())
         .unwrap_or_default();
 
-    print!("\n2. API Key");
-    if !existing_key.is_empty() {
-        let masked = if existing_key.len() > 8 {
-            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len()-4..])
-        } else {
-            "***".to_string()
-        };
-        print!(" [{}]", masked);
-    }
-    print!(" (leave empty to keep existing): ");
-    io::stdout().flush().unwrap();
-    let mut api_key = String::new();
-    io::stdin().read_line(&mut api_key).unwrap();
-    let api_key = api_key.trim();
+    let prompt = {
+        let mut s = "\n2. API Key".to_string();
+        if !existing_key.is_empty() {
+            let masked = if existing_key.len() > 8 {
+                format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
+            } else {
+                "***".to_string()
+            };
+            s.push_str(&format!(" [{}]", masked));
+        }
+        s.push_str(" (leave empty to keep existing): ");
+        s
+    };
+    let api_key_input = match read_line(&prompt)? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
+    let api_key = api_key_input.trim();
     let api_key = if api_key.is_empty() {
         if existing_key.is_empty() {
             println!("   ⚠️  No API key provided. You can set it later via MANTA_API_KEY env var.");
@@ -126,14 +155,21 @@ pub async fn run_setup() -> Result<()> {
                 .and_then(|p| p.base_url.clone())
         });
 
-    print!("\n3. Base URL");
-    if let Some(ref url) = default_base_url {
-        print!(" [{}]", url);
-    }
-    print!(" (leave empty for default): ");
-    io::stdout().flush().unwrap();
-    let mut base_url_input = String::new();
-    io::stdin().read_line(&mut base_url_input).unwrap();
+    let prompt = {
+        let mut s = "\n3. Base URL".to_string();
+        if let Some(ref url) = default_base_url {
+            s.push_str(&format!(" [{}]", url));
+        }
+        s.push_str(" (leave empty for default): ");
+        s
+    };
+    let base_url_input = match read_line(&prompt)? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
     let base_url_input = base_url_input.trim();
     let base_url = if base_url_input.is_empty() {
         default_base_url
@@ -153,10 +189,13 @@ pub async fn run_setup() -> Result<()> {
         }
         println!("   {}. Other", suggested_models.len() + 1);
     }
-    print!("   Select model [{}]: ", default_model);
-    io::stdout().flush().unwrap();
-    let mut model_input = String::new();
-    io::stdin().read_line(&mut model_input).unwrap();
+    let model_input = match read_line(&format!("   Select model [{}]: ", default_model))? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
     let model_input = model_input.trim();
 
     let model = if model_input.is_empty() {
@@ -165,10 +204,13 @@ pub async fn run_setup() -> Result<()> {
         if idx > 0 && idx <= suggested_models.len() {
             suggested_models[idx - 1].clone()
         } else {
-            print!("   Enter model name: ");
-            io::stdout().flush().unwrap();
-            let mut custom = String::new();
-            io::stdin().read_line(&mut custom).unwrap();
+            let custom = match read_line("   Enter model name: ")? {
+                Some(v) => v,
+                None => {
+                    println!("\n❌ Setup cancelled. No changes saved.");
+                    return Ok(());
+                }
+            };
             custom.trim().to_string()
         }
     } else {
@@ -199,19 +241,25 @@ pub async fn run_setup() -> Result<()> {
 
     // ── 5. Server Host/Port (optional) ────────────────────────────────
     println!("\n5. Server Settings");
-    print!("   Host [{}]: ", config.host);
-    io::stdout().flush().unwrap();
-    let mut host_input = String::new();
-    io::stdin().read_line(&mut host_input).unwrap();
+    let host_input = match read_line(&format!("   Host [{}]: ", config.host))? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
     let host_input = host_input.trim();
     if !host_input.is_empty() {
         config.host = host_input.to_string();
     }
 
-    print!("   Port [{}]: ", config.port);
-    io::stdout().flush().unwrap();
-    let mut port_input = String::new();
-    io::stdin().read_line(&mut port_input).unwrap();
+    let port_input = match read_line(&format!("   Port [{}]: ", config.port))? {
+        Some(v) => v,
+        None => {
+            println!("\n❌ Setup cancelled. No changes saved.");
+            return Ok(());
+        }
+    };
     let port_input = port_input.trim();
     if !port_input.is_empty() {
         if let Ok(p) = port_input.parse::<u16>() {
