@@ -143,6 +143,12 @@ impl From<toml::ser::Error> for MantaError {
     }
 }
 
+impl From<toml::de::Error> for MantaError {
+    fn from(err: toml::de::Error) -> Self {
+        MantaError::Internal(format!("TOML deserialization error: {}", err))
+    }
+}
+
 impl From<serde_yaml::Error> for MantaError {
     fn from(err: serde_yaml::Error) -> Self {
         MantaError::Internal(format!("YAML error: {}", err))

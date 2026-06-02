@@ -89,7 +89,7 @@ pub enum Commands {
     Config {
         /// Config subcommand
         #[command(subcommand)]
-        command: ConfigCommands,
+        command: Option<ConfigCommands>,
     },
     /// Health check
     Health,
@@ -328,7 +328,10 @@ impl Cli {
         match &self.command {
             Commands::Entity { command } => entity::run_entity_command(command).await,
             Commands::Export { command } => export::run_export_command(command).await,
-            Commands::Config { command } => config_cmd::run_config_command(command).await,
+            Commands::Config { command } => match command {
+                Some(cmd) => config_cmd::run_config_command(cmd).await,
+                None => setup::run_setup().await,
+            },
             Commands::Health => daemon::run_health_check(config).await,
             Commands::Chat { conversation, message } => {
                 chat::run_chat(config, conversation.clone(), message.clone()).await
@@ -390,6 +393,15 @@ mod tests {
     fn parse_config_set_command() {
         let cli = Cli::try_parse_from(["manta", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
         assert!(matches!(cli.command, Commands::Config { .. }));
+    }
+
+    #[test]
+    fn parse_config_without_subcommand() {
+        let cli = Cli::try_parse_from(["manta", "config"]).unwrap();
+        match cli.command {
+            Commands::Config { command } => assert!(command.is_none()),
+            _ => panic!("expected Config command"),
+        }
     }
 
     // NOTE: `start` command has a clap conflict: `-h` is used by both `host`
