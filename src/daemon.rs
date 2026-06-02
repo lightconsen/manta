@@ -286,10 +286,11 @@ workspace_only = true
                 retry_delay_ms: 1000,
             };
 
-            let provider_name = if is_anthropic { "anthropic" } else { "openai" };
+            let provider_name = std::env::var("MANTA_MODEL_PROVIDER")
+                .unwrap_or_else(|_| if is_anthropic { "anthropic".to_string() } else { "openai".to_string() });
             gateway_config
                 .providers
-                .insert(provider_name.to_string(), provider_config);
+                .insert(provider_name.clone(), provider_config);
             println!("🤖 Configured {} provider from environment", provider_name);
         } else if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
             // Also support direct ANTHROPIC_API_KEY
