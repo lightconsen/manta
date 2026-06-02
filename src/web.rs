@@ -619,17 +619,18 @@ async fn web_terminal_chat_daemon_handler(
     }
 }
 
-/// HTML/CSS/JS for the terminal interface (loaded from web/dist/index.html)
+/// HTML/CSS/JS for the terminal interface (loaded from embedded assets)
 #[allow(clippy::incompatible_msrv)]
 static TERMINAL_HTML: LazyLock<String> = LazyLock::new(|| {
     let version = env!("CARGO_PKG_VERSION");
-    match std::fs::read_to_string("web/dist/index.html") {
-        Ok(html) => html.replace("{VERSION}", version),
-        Err(_) => {
+    let html = match crate::embed::WebAssets::get("index.html") {
+        Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
+        None => std::fs::read_to_string("web/dist/index.html").unwrap_or_else(|_| {
             "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
                 .to_string()
-        }
-    }
+        }),
+    };
+    html.replace("{VERSION}", version)
 });
 
 fn terminal_html() -> &'static str {

@@ -47,6 +47,7 @@ pub mod core;
 pub mod cron;
 pub mod daemon;
 pub mod dirs;
+pub mod embed;
 pub mod error;
 pub mod export;
 pub mod gateway;

@@ -113,6 +113,9 @@ zeroize = { version = "1.7", features = ["derive"] }
 flate2 = "1.1.9"
 zip = "2"
 
+# Embed frontend assets into binary for single-file distribution
+rust-embed = "8"
+
 # System resource limits and signals (Unix only)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
