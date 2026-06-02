@@ -1275,15 +1275,22 @@ impl Gateway {
             Arc::new(pm)
         };
 
-        // Create model router config with custom model settings
-        let mut model_router_config = crate::model_router::ModelRouterConfig {
-            default_model: "default".to_string(),
-            ..Default::default()
-        };
-        // Update the default alias to use the configured model and provider
-        if let Some(default_alias) = model_router_config.aliases.get_mut("default") {
-            default_alias.provider = config.model_provider.clone();
-            default_alias.model = config.model.clone();
+        // Create model router config — start empty, no hard-coded aliases.
+        let mut model_router_config = crate::model_router::ModelRouterConfig::default();
+
+        // If providers are configured (env vars or manta.toml), create a
+        // default alias from the first provider so the gateway is usable
+        // immediately without requiring a UI round-trip.
+        if let Some(first_provider) = config.providers.keys().next() {
+            let alias = crate::model_router::ModelAlias {
+                name: "default".to_string(),
+                provider: first_provider.clone(),
+                model: config.model.clone(),
+                temperature: None,
+                max_tokens: None,
+            };
+            model_router_config.aliases.insert("default".to_string(), alias);
+            model_router_config.default_model = "default".to_string();
         }
 
         // Create and initialize model router early so it can be shared

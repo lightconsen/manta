@@ -5,9 +5,11 @@
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "browser")]
 use chromiumoxide::page::ScreenshotParamsBuilder;

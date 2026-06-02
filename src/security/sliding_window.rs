@@ -328,7 +328,6 @@ pub struct SlidingWindowState {
 pub mod middleware {
     use super::*;
     use axum::{
-        body::Body,
         extract::{ConnectInfo, Request, State},
         http::StatusCode,
         middleware::Next,

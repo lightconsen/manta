@@ -2310,6 +2310,12 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     };
     state.model_router.set_alias(alias).await;
 
+    // If this is the first alias, auto-set it as default
+    let aliases = state.model_router.list_aliases().await;
+    if aliases.len() == 1 {
+        let _ = state.model_router.switch_default_model(&payload.name).await;
+    }
+
     // Register in catalog for discovery
     let entry = crate::model_router::ModelCatalogEntry::new(
         payload.name.clone(),

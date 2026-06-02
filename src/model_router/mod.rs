@@ -663,41 +663,9 @@ pub struct ModelRouterConfig {
 
 impl Default for ModelRouterConfig {
     fn default() -> Self {
-        let mut aliases = HashMap::new();
-        aliases.insert(
-            "default".to_string(),
-            ModelAlias {
-                name: "default".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3-sonnet-20240229".to_string(),
-                temperature: None,
-                max_tokens: None,
-            },
-        );
-        aliases.insert(
-            "fast".to_string(),
-            ModelAlias {
-                name: "fast".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3-haiku-20240307".to_string(),
-                temperature: None,
-                max_tokens: None,
-            },
-        );
-        aliases.insert(
-            "smart".to_string(),
-            ModelAlias {
-                name: "smart".to_string(),
-                provider: "anthropic".to_string(),
-                model: "claude-3-opus-20240229".to_string(),
-                temperature: None,
-                max_tokens: None,
-            },
-        );
-
         Self {
-            default_model: "default".to_string(),
-            aliases,
+            default_model: String::new(),
+            aliases: HashMap::new(),
             providers: HashMap::new(),
             fallback_chains: HashMap::new(),
             health_check_interval_secs: 60,
@@ -2408,23 +2376,17 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn default_config_has_three_aliases() {
+    async fn default_config_has_no_aliases() {
         let config = ModelRouterConfig::default();
-        assert_eq!(config.aliases.len(), 3);
-        assert!(config.aliases.contains_key("default"));
-        assert!(config.aliases.contains_key("fast"));
-        assert!(config.aliases.contains_key("smart"));
-        assert_eq!(config.default_model, "default");
+        assert!(config.aliases.is_empty());
+        assert_eq!(config.default_model, "");
     }
 
     #[tokio::test]
-    async fn list_aliases_returns_default_aliases() {
+    async fn list_aliases_returns_empty_by_default() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let aliases = router.list_aliases().await;
-        assert_eq!(aliases.len(), 3);
-        assert!(aliases.contains(&"default".to_string()));
-        assert!(aliases.contains(&"fast".to_string()));
-        assert!(aliases.contains(&"smart".to_string()));
+        assert!(aliases.is_empty());
     }
 
     #[tokio::test]
@@ -2440,22 +2402,28 @@ mod tests {
         router.set_alias(alias.clone()).await;
 
         let aliases = router.list_aliases().await;
-        assert_eq!(aliases.len(), 4);
+        assert_eq!(aliases.len(), 1);
         assert!(aliases.contains(&"coding".to_string()));
-
-        let default_model = router.get_default_model().await;
-        assert_eq!(default_model, "default");
     }
 
     #[tokio::test]
     async fn remove_alias_deletes_alias() {
         let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "fast".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-3.5".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+
         let removed = router.remove_alias("fast").await;
         assert!(removed);
 
         let aliases = router.list_aliases().await;
-        assert_eq!(aliases.len(), 2);
-        assert!(!aliases.contains(&"fast".to_string()));
+        assert!(aliases.is_empty());
     }
 
     #[tokio::test]
@@ -2468,8 +2436,25 @@ mod tests {
     #[tokio::test]
     async fn switch_default_model_changes_default() {
         let router = ModelRouter::new(ModelRouterConfig::default());
-        let result = router.switch_default_model("fast").await;
-        assert!(result.is_ok());
+        router
+            .set_alias(ModelAlias {
+                name: "default".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+        router
+            .set_alias(ModelAlias {
+                name: "fast".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-3.5".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+        router.switch_default_model("fast").await.unwrap();
 
         let default = router.get_default_model().await;
         assert_eq!(default, "fast");
@@ -2559,6 +2544,15 @@ mod tests {
     #[tokio::test]
     async fn fallback_chain_roundtrip() {
         let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "default".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
         router
             .set_fallback_chain("default", vec!["p1".to_string(), "p2".to_string()])
             .await
@@ -2679,6 +2673,15 @@ mod tests {
     #[tokio::test]
     async fn fallback_chain_set_and_clear() {
         let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "default".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
 
         // Set chain
         router
@@ -2706,6 +2709,33 @@ mod tests {
     #[tokio::test]
     async fn switch_default_model_persists() {
         let router = ModelRouter::new(ModelRouterConfig::default());
+        router
+            .set_alias(ModelAlias {
+                name: "default".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+        router
+            .set_alias(ModelAlias {
+                name: "fast".to_string(),
+                provider: "openai".to_string(),
+                model: "gpt-3.5".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
+        router
+            .set_alias(ModelAlias {
+                name: "smart".to_string(),
+                provider: "anthropic".to_string(),
+                model: "claude-3-opus".to_string(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await;
 
         router.switch_default_model("fast").await.unwrap();
         assert_eq!(router.get_default_model().await, "fast");
@@ -2719,10 +2749,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_model_is_default_alias() {
+    async fn default_model_is_empty_by_default() {
         let router = ModelRouter::new(ModelRouterConfig::default());
         let default = router.get_default_model().await;
-        assert_eq!(default, "default");
+        assert_eq!(default, "");
     }
 
     #[test]
