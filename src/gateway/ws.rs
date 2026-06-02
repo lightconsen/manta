@@ -1274,13 +1274,24 @@ async fn handle_agents_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         None => {
             // Agent not spawned but may have a personality on disk
             if let Some(p) = personality {
+                let cfg = p.to_agent_config();
+                let config_json = match serde_json::to_value(&cfg) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return WsResponse::err(
+                            &req.id,
+                            "SERIALIZE_FAILED",
+                            format!("Failed to serialize agent config: {}", e),
+                        );
+                    }
+                };
                 WsResponse::ok(
                     &req.id,
                     serde_json::json!({
                         "agent_id": params.agent_id,
                         "busy": false,
                         "status": "stopped",
-                        "config": null,
+                        "config": config_json,
                         "personality": {
                             "display_name": p.display_name(),
                             "is_valid": p.is_valid,
