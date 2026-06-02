@@ -49,7 +49,6 @@ pub use plugin::PluginCommands;
 pub use provider::ProviderCommands;
 pub use security::{GateCommands, PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
-pub use setup::SetupCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 
@@ -206,11 +205,7 @@ pub enum Commands {
         command: SessionCommands,
     },
     /// Initialize Manta with an interactive setup wizard
-    Setup {
-        /// Setup subcommand
-        #[command(subcommand)]
-        command: SetupCommands,
-    },
+    Setup,
     /// Device pairing management
     Device {
         /// Device subcommand
@@ -358,7 +353,7 @@ impl Cli {
             Commands::Memory { command } => memory::run_memory_command(command).await,
             Commands::Security { command } => security::run_security_command(command).await,
             Commands::Session { command } => session::run_session_command(command).await,
-            Commands::Setup { command } => setup::run_setup_command(command).await,
+            Commands::Setup => setup::run_setup().await,
             Commands::Device { command } => device::run_device_command(command).await,
             Commands::Approval { command } => approval::run_approval_command(command).await,
             Commands::Audit { command } => audit::run_audit_command(command).await,
