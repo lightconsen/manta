@@ -3,32 +3,14 @@
 //! Interactive CLI wizard to configure ~/.manta/manta.toml.
 
 use crate::error::Result;
-use std::io::{self, Write};
-
-/// Check if user wants to quit the wizard.
-fn should_quit(input: &str) -> bool {
-    let trimmed = input.trim();
-    trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit")
-}
-
-/// Read a line from stdin, returning `Ok(None)` if the user wants to quit.
-fn read_line(prompt: &str) -> Result<Option<String>> {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf).unwrap();
-    if should_quit(&buf) {
-        return Ok(None);
-    }
-    Ok(Some(buf))
-}
+use dialoguer::{Input, Password, Select};
 
 /// Run the interactive setup wizard.
 /// Reads existing ~/.manta/manta.toml if present and allows editing.
 pub async fn run_setup() -> Result<()> {
     println!("🐙 Manta Setup Wizard");
     println!("=====================");
-    println!("   Type 'q' or 'quit' at any prompt to exit without saving.\n");
+    println!("   Use ↑/↓ arrows to select, Enter to confirm.\n");
 
     let manta_dir = crate::dirs::manta_dir();
     let config_path = manta_dir.join("manta.toml");
@@ -71,38 +53,44 @@ pub async fn run_setup() -> Result<()> {
     let mut preset_names: Vec<_> = presets.keys().cloned().collect();
     preset_names.sort();
 
-    println!("1. LLM Provider");
-    for (i, name) in preset_names.iter().enumerate() {
-        if let Some(p) = presets.get(name) {
-            println!("   {}. {} - {}", i + 1, p.display_name, name);
-        }
-    }
-    println!("   {}. Other (custom)", preset_names.len() + 1);
+    let mut provider_items: Vec<String> = preset_names
+        .iter()
+        .map(|name| {
+            if let Some(p) = presets.get(name) {
+                format!("{} - {}", p.display_name, name)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    provider_items.push("Other (custom)".to_string());
+    provider_items.push("❌ Cancel setup".to_string());
 
-    let default_provider = config.model_provider.clone();
-    let input = match read_line(&format!("   Select provider [{}]: ", default_provider))? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let input = input.trim();
+    let default_provider_idx = preset_names
+        .iter()
+        .position(|n| *n == config.model_provider)
+        .unwrap_or(0);
 
-    let (provider_name, preset) = if input.is_empty() {
-        (default_provider.clone(), presets.get(&default_provider).cloned())
-    } else if let Ok(idx) = input.parse::<usize>() {
-        if idx > 0 && idx <= preset_names.len() {
-            let name = preset_names[idx - 1].clone();
-            (name.clone(), presets.get(&name).cloned())
-        } else {
-            println!("   Custom provider selected.");
-            ("custom".to_string(), None)
-        }
-    } else if presets.contains_key(input) {
-        (input.to_string(), presets.get(input).cloned())
+    let provider_selection = Select::new()
+        .with_prompt("1. LLM Provider")
+        .items(&provider_items)
+        .default(default_provider_idx)
+        .interact()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    let (provider_name, preset) = if provider_selection < preset_names.len() {
+        let name = preset_names[provider_selection].clone();
+        (name.clone(), presets.get(&name).cloned())
+    } else if provider_selection == preset_names.len() {
+        println!("   Custom provider selected.");
+        let custom: String = Input::new()
+            .with_prompt("   Enter provider name")
+            .interact_text()
+            .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        (custom.trim().to_string(), None)
     } else {
-        (input.to_string(), None)
+        println!("\n❌ Setup cancelled. No changes saved.");
+        return Ok(());
     };
 
     // ── 2. API Key ────────────────────────────────────────────────────
@@ -112,28 +100,24 @@ pub async fn run_setup() -> Result<()> {
         .map(|p| p.api_key.clone())
         .unwrap_or_default();
 
-    let prompt = {
-        let mut s = "\n2. API Key".to_string();
-        if !existing_key.is_empty() {
-            let masked = if existing_key.len() > 8 {
-                format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
-            } else {
-                "***".to_string()
-            };
-            s.push_str(&format!(" [{}]", masked));
-        }
-        s.push_str(" (leave empty to keep existing): ");
-        s
+    let prompt = if existing_key.is_empty() {
+        format!("\n2. API Key for {}", provider_name)
+    } else {
+        let masked = if existing_key.len() > 8 {
+            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
+        } else {
+            "***".to_string()
+        };
+        format!("\n2. API Key for {} [{}] (Enter to keep)", provider_name, masked)
     };
-    let api_key_input = match read_line(&prompt)? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let api_key = api_key_input.trim();
-    let api_key = if api_key.is_empty() {
+
+    let api_key_input = Password::new()
+        .with_prompt(prompt)
+        .allow_empty_password(true)
+        .interact()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    let api_key = if api_key_input.trim().is_empty() {
         if existing_key.is_empty() {
             println!("   ⚠️  No API key provided. You can set it later via MANTA_API_KEY env var.");
             String::new()
@@ -141,7 +125,7 @@ pub async fn run_setup() -> Result<()> {
             existing_key
         }
     } else {
-        api_key.to_string()
+        api_key_input.trim().to_string()
     };
 
     // ── 3. Base URL ───────────────────────────────────────────────────
@@ -155,66 +139,69 @@ pub async fn run_setup() -> Result<()> {
                 .and_then(|p| p.base_url.clone())
         });
 
-    let prompt = {
-        let mut s = "\n3. Base URL".to_string();
-        if let Some(ref url) = default_base_url {
-            s.push_str(&format!(" [{}]", url));
-        }
-        s.push_str(" (leave empty for default): ");
-        s
+    let base_url_prompt = if let Some(ref url) = default_base_url {
+        format!("\n3. Base URL [{}] (Enter to keep)", url)
+    } else {
+        "\n3. Base URL (leave empty for none)".to_string()
     };
-    let base_url_input = match read_line(&prompt)? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let base_url_input = base_url_input.trim();
-    let base_url = if base_url_input.is_empty() {
+
+    let base_url_input: String = Input::new()
+        .with_prompt(base_url_prompt)
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    let base_url = if base_url_input.trim().is_empty() {
         default_base_url
     } else {
-        Some(base_url_input.to_string())
+        Some(base_url_input.trim().to_string())
     };
 
     // ── 4. Model ──────────────────────────────────────────────────────
-    let suggested_models = preset.as_ref().map(|p| p.models.clone()).unwrap_or_default();
+    let suggested_models = preset
+        .as_ref()
+        .map(|p| p.models.clone())
+        .unwrap_or_default();
     let default_model = config.model.clone();
 
-    println!("\n4. Model");
-    if !suggested_models.is_empty() {
-        for (i, m) in suggested_models.iter().enumerate() {
-            let marker = if *m == default_model { " (current)" } else { "" };
-            println!("   {}. {}{}", i + 1, m, marker);
+    let mut model_items: Vec<String> = suggested_models.clone();
+    if !model_items.is_empty() {
+        // Mark current model
+        for item in &mut model_items {
+            if *item == default_model {
+                *item = format!("{} (current)", item);
+            }
         }
-        println!("   {}. Other", suggested_models.len() + 1);
+        model_items.push("Other".to_string());
     }
-    let model_input = match read_line(&format!("   Select model [{}]: ", default_model))? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let model_input = model_input.trim();
+    model_items.push("❌ Cancel setup".to_string());
 
-    let model = if model_input.is_empty() {
-        default_model
-    } else if let Ok(idx) = model_input.parse::<usize>() {
-        if idx > 0 && idx <= suggested_models.len() {
-            suggested_models[idx - 1].clone()
-        } else {
-            let custom = match read_line("   Enter model name: ")? {
-                Some(v) => v,
-                None => {
-                    println!("\n❌ Setup cancelled. No changes saved.");
-                    return Ok(());
-                }
-            };
-            custom.trim().to_string()
-        }
+    let default_model_idx = suggested_models
+        .iter()
+        .position(|m| *m == default_model)
+        .unwrap_or(0);
+
+    let model_selection = Select::new()
+        .with_prompt("\n4. Model")
+        .items(&model_items)
+        .default(default_model_idx)
+        .interact()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    let model = if !suggested_models.is_empty() && model_selection < suggested_models.len() {
+        suggested_models[model_selection].clone()
+    } else if !suggested_models.is_empty() && model_selection == suggested_models.len() {
+        let custom: String = Input::new()
+            .with_prompt("   Enter model name")
+            .interact_text()
+            .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        custom.trim().to_string()
+    } else if model_selection == model_items.len() - 1 {
+        println!("\n❌ Setup cancelled. No changes saved.");
+        return Ok(());
     } else {
-        model_input.to_string()
+        // Should not reach here, but fallback
+        default_model
     };
 
     // ── Build provider config ─────────────────────────────────────────
@@ -235,34 +222,33 @@ pub async fn run_setup() -> Result<()> {
         retry_delay_ms: 1000,
     };
 
-    config.providers.insert(provider_name.clone(), provider_config);
+    config
+        .providers
+        .insert(provider_name.clone(), provider_config);
     config.model = model;
     config.model_provider = provider_name;
 
     // ── 5. Server Host/Port (optional) ────────────────────────────────
     println!("\n5. Server Settings");
-    let host_input = match read_line(&format!("   Host [{}]: ", config.host))? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let host_input = host_input.trim();
-    if !host_input.is_empty() {
-        config.host = host_input.to_string();
+
+    let host_input: String = Input::new()
+        .with_prompt(format!("   Host [{}] (Enter to keep)", config.host))
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    if !host_input.trim().is_empty() {
+        config.host = host_input.trim().to_string();
     }
 
-    let port_input = match read_line(&format!("   Port [{}]: ", config.port))? {
-        Some(v) => v,
-        None => {
-            println!("\n❌ Setup cancelled. No changes saved.");
-            return Ok(());
-        }
-    };
-    let port_input = port_input.trim();
-    if !port_input.is_empty() {
-        if let Ok(p) = port_input.parse::<u16>() {
+    let port_input: String = Input::new()
+        .with_prompt(format!("   Port [{}] (Enter to keep)", config.port))
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    if !port_input.trim().is_empty() {
+        if let Ok(p) = port_input.trim().parse::<u16>() {
             config.port = p;
         }
     }
