@@ -93,71 +93,7 @@ pub async fn run_setup() -> Result<()> {
         return Ok(());
     };
 
-    // ── 2. API Key ────────────────────────────────────────────────────
-    let existing_key = config
-        .providers
-        .get(&provider_name)
-        .map(|p| p.api_key.clone())
-        .unwrap_or_default();
-
-    let prompt = if existing_key.is_empty() {
-        format!("\n2. API Key for {}", provider_name)
-    } else {
-        let masked = if existing_key.len() > 8 {
-            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
-        } else {
-            "***".to_string()
-        };
-        format!("\n2. API Key for {} [{}] (Enter to keep)", provider_name, masked)
-    };
-
-    let api_key_input = Password::new()
-        .with_prompt(prompt)
-        .allow_empty_password(true)
-        .interact()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
-
-    let api_key = if api_key_input.trim().is_empty() {
-        if existing_key.is_empty() {
-            println!("   ⚠️  No API key provided. You can set it later via MANTA_API_KEY env var.");
-            String::new()
-        } else {
-            existing_key
-        }
-    } else {
-        api_key_input.trim().to_string()
-    };
-
-    // ── 3. Base URL ───────────────────────────────────────────────────
-    let default_base_url = preset
-        .as_ref()
-        .and_then(|p| p.default_base_url.clone())
-        .or_else(|| {
-            config
-                .providers
-                .get(&provider_name)
-                .and_then(|p| p.base_url.clone())
-        });
-
-    let base_url_prompt = if let Some(ref url) = default_base_url {
-        format!("\n3. Base URL [{}] (Enter to keep)", url)
-    } else {
-        "\n3. Base URL (leave empty for none)".to_string()
-    };
-
-    let base_url_input: String = Input::new()
-        .with_prompt(base_url_prompt)
-        .allow_empty(true)
-        .interact_text()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
-
-    let base_url = if base_url_input.trim().is_empty() {
-        default_base_url
-    } else {
-        Some(base_url_input.trim().to_string())
-    };
-
-    // ── 4. Model ──────────────────────────────────────────────────────
+    // ── 2. Model ──────────────────────────────────────────────────────
     let suggested_models = preset
         .as_ref()
         .map(|p| p.models.clone())
@@ -182,7 +118,7 @@ pub async fn run_setup() -> Result<()> {
         .unwrap_or(0);
 
     let model_selection = Select::new()
-        .with_prompt("\n4. Model")
+        .with_prompt("\n2. Model")
         .items(&model_items)
         .default(default_model_idx)
         .interact()
@@ -203,6 +139,52 @@ pub async fn run_setup() -> Result<()> {
         // Should not reach here, but fallback
         default_model
     };
+
+    // ── 3. API Key ────────────────────────────────────────────────────
+    let existing_key = config
+        .providers
+        .get(&provider_name)
+        .map(|p| p.api_key.clone())
+        .unwrap_or_default();
+
+    let prompt = if existing_key.is_empty() {
+        format!("\n3. API Key for {}", provider_name)
+    } else {
+        let masked = if existing_key.len() > 8 {
+            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
+        } else {
+            "***".to_string()
+        };
+        format!("\n3. API Key for {} [{}] (Enter to keep)", provider_name, masked)
+    };
+
+    let api_key_input = Password::new()
+        .with_prompt(prompt)
+        .allow_empty_password(true)
+        .interact()
+        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+
+    let api_key = if api_key_input.trim().is_empty() {
+        if existing_key.is_empty() {
+            println!("   ⚠️  No API key provided. You can set it later via MANTA_API_KEY env var.");
+            String::new()
+        } else {
+            existing_key
+        }
+    } else {
+        api_key_input.trim().to_string()
+    };
+
+    // ── 4. Base URL (uses preset default, no user prompt) ─────────────
+    let base_url = preset
+        .as_ref()
+        .and_then(|p| p.default_base_url.clone())
+        .or_else(|| {
+            config
+                .providers
+                .get(&provider_name)
+                .and_then(|p| p.base_url.clone())
+        });
 
     // ── Build provider config ─────────────────────────────────────────
     let provider_type = preset
@@ -228,8 +210,8 @@ pub async fn run_setup() -> Result<()> {
     config.model = model;
     config.model_provider = provider_name;
 
-    // ── 5. Server Host/Port (optional) ────────────────────────────────
-    println!("\n5. Server Settings");
+    // ── 4. Server Host/Port (optional) ────────────────────────────────
+    println!("\n4. Server Settings");
 
     let host_input: String = Input::new()
         .with_prompt(format!("   Host [{}] (Enter to keep)", config.host))
