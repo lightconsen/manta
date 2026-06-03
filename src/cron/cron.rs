@@ -577,7 +577,14 @@ impl CronScheduler {
 
                 // Run jobs (result unused)
                 async {
-                    Self::run_due_jobs(&jobs, &agent, &store_path, &announce_tx, &heartbeat_wake_tx).await;
+                    Self::run_due_jobs(
+                        &jobs,
+                        &agent,
+                        &store_path,
+                        &announce_tx,
+                        &heartbeat_wake_tx,
+                    )
+                    .await;
                 }
                 .await;
 
@@ -653,7 +660,16 @@ impl CronScheduler {
         info!("Running {} due cron jobs", due_job_ids.len());
 
         for job_id in due_job_ids {
-            Self::execute_job(jobs, &job_id, agent, store_path, announce_tx, heartbeat_wake_tx, false).await;
+            Self::execute_job(
+                jobs,
+                &job_id,
+                agent,
+                store_path,
+                announce_tx,
+                heartbeat_wake_tx,
+                false,
+            )
+            .await;
         }
     }
 
@@ -684,7 +700,9 @@ impl CronScheduler {
 
                 // Persist
                 if let Some(ref path) = store_path {
-                    Self::save_jobs(jobs, path).await.unwrap_or_else(|e| warn!("Failed to persist cron jobs (Add): {}", e));
+                    Self::save_jobs(jobs, path)
+                        .await
+                        .unwrap_or_else(|e| warn!("Failed to persist cron jobs (Add): {}", e));
                 }
             }
             CronCommand::Remove(id) => {
@@ -692,7 +710,9 @@ impl CronScheduler {
                 jobs.write().await.remove(&id);
 
                 if let Some(ref path) = store_path {
-                    Self::save_jobs(jobs, path).await.unwrap_or_else(|e| warn!("Failed to persist cron jobs (Remove): {}", e));
+                    Self::save_jobs(jobs, path)
+                        .await
+                        .unwrap_or_else(|e| warn!("Failed to persist cron jobs (Remove): {}", e));
                 }
             }
             CronCommand::SetEnabled(id, enabled) => {
@@ -709,12 +729,23 @@ impl CronScheduler {
                 drop(jobs_lock);
 
                 if let Some(ref path) = store_path {
-                    Self::save_jobs(jobs, path).await.unwrap_or_else(|e| warn!("Failed to persist cron jobs (SetEnabled): {}", e));
+                    Self::save_jobs(jobs, path).await.unwrap_or_else(|e| {
+                        warn!("Failed to persist cron jobs (SetEnabled): {}", e)
+                    });
                 }
             }
             CronCommand::Trigger(id) => {
                 info!("Triggering job: {}", id);
-                Self::execute_job(jobs, &id, agent, store_path, announce_tx, heartbeat_wake_tx, true).await;
+                Self::execute_job(
+                    jobs,
+                    &id,
+                    agent,
+                    store_path,
+                    announce_tx,
+                    heartbeat_wake_tx,
+                    true,
+                )
+                .await;
             }
             CronCommand::GetNextRun(id, tx) => {
                 let jobs_lock = jobs.read().await;

@@ -360,14 +360,24 @@ pub async fn multi_tier_rate_limit_middleware(
     let endpoint = req.uri().path().to_string();
 
     // Check multi-tier rate limit using the shared instance from GatewayState
-    let result = state.multi_tier_rate_limiter.check(&user_id, ip, &endpoint).await;
+    let result = state
+        .multi_tier_rate_limiter
+        .check(&user_id, ip, &endpoint)
+        .await;
 
     match result {
         MultiTierResult::Allowed { remaining } => {
             let mut response = next.run(req).await;
             let headers = response.headers_mut();
-            headers.insert("X-RateLimit-Limit", "100".parse().expect("failed to parse header value"));
-            headers.insert("X-RateLimit-Remaining", remaining.to_string().parse().expect("failed to parse header value"));
+            headers
+                .insert("X-RateLimit-Limit", "100".parse().expect("failed to parse header value"));
+            headers.insert(
+                "X-RateLimit-Remaining",
+                remaining
+                    .to_string()
+                    .parse()
+                    .expect("failed to parse header value"),
+            );
             Ok(response)
         }
         MultiTierResult::Denied { tier, retry_after_secs } => {
@@ -379,9 +389,13 @@ pub async fn multi_tier_rate_limit_middleware(
                     tier, retry_after_secs
                 )))
                 .expect("failed to build response");
-            response
-                .headers_mut()
-                .insert("Retry-After", retry_after_secs.to_string().parse().expect("failed to parse header value"));
+            response.headers_mut().insert(
+                "Retry-After",
+                retry_after_secs
+                    .to_string()
+                    .parse()
+                    .expect("failed to parse header value"),
+            );
             response
                 .headers_mut()
                 .insert("X-RateLimit-Tier", tier.parse().expect("failed to parse header value"));

@@ -7,7 +7,9 @@ use tracing::{debug, error, info, warn};
 
 use super::config::HeartbeatConfig;
 use super::events::{HeartbeatEvent, HeartbeatStatus};
-use super::parser::{is_heartbeat_content_empty, parse_heartbeat_tasks, HeartbeatTask, TaskDedupTracker};
+use super::parser::{
+    is_heartbeat_content_empty, parse_heartbeat_tasks, HeartbeatTask, TaskDedupTracker,
+};
 use super::wake::{WakePriority, WakeRequest};
 use crate::channels::IncomingMessage;
 use crate::gateway::GatewayState;
@@ -86,10 +88,7 @@ impl HeartbeatRunner {
             let now = Instant::now();
             let sleep_duration = next_wake.saturating_duration_since(now);
 
-            info!(
-                "Heartbeat runner waiting: next_wake_in={:.1}s",
-                sleep_duration.as_secs_f64()
-            );
+            info!("Heartbeat runner waiting: next_wake_in={:.1}s", sleep_duration.as_secs_f64());
 
             tokio::select! {
                 _ = tokio::time::sleep(sleep_duration) => {
@@ -114,7 +113,10 @@ impl HeartbeatRunner {
             if config.enabled {
                 info!(
                     "Heartbeat initialized for agent {}: interval={}s, active_hours={}-{}",
-                    agent_id, config.interval_seconds, config.active_hours_start, config.active_hours_end
+                    agent_id,
+                    config.interval_seconds,
+                    config.active_hours_start,
+                    config.active_hours_end
                 );
             } else {
                 debug!("Heartbeat disabled for agent {}", agent_id);
@@ -237,10 +239,7 @@ impl HeartbeatRunner {
 
     /// Handle a single wake request (from cron or external triggers)
     async fn handle_wake_request(&self, req: &WakeRequest) {
-        info!(
-            "Heartbeat wake request: agent={}, priority={:?}",
-            req.agent_id, req.priority
-        );
+        info!("Heartbeat wake request: agent={}, priority={:?}", req.agent_id, req.priority);
 
         let agents = self.state.agents.read().await;
         let handle = match agents.get(&req.agent_id) {
@@ -269,10 +268,7 @@ impl HeartbeatRunner {
 
         // Check active hours for wake requests too
         if !is_within_active_hours(&agent_config) {
-            debug!(
-                "Heartbeat wake skipped: agent {} outside active hours",
-                req.agent_id
-            );
+            debug!("Heartbeat wake skipped: agent {} outside active hours", req.agent_id);
             self._emit_event(HeartbeatEvent::Skipped {
                 reason: "outside_active_hours".to_string(),
                 agent_id: req.agent_id.clone(),
@@ -298,7 +294,8 @@ impl HeartbeatRunner {
             return;
         }
 
-        self.run_heartbeat_for_agent(&handle, req.prompt.as_deref()).await;
+        self.run_heartbeat_for_agent(&handle, req.prompt.as_deref())
+            .await;
     }
 
     /// Read HEARTBEAT.md content
@@ -312,7 +309,9 @@ impl HeartbeatRunner {
         }
 
         // Try per-agent directory: ~/.manta/agents/{id}/HEARTBEAT.md
-        let agent_path = crate::dirs::agents_dir().join(&handle.id).join(HEARTBEAT_FILENAME);
+        let agent_path = crate::dirs::agents_dir()
+            .join(&handle.id)
+            .join(HEARTBEAT_FILENAME);
         if let Ok(content) = tokio::fs::read_to_string(&agent_path).await {
             return Some(content);
         }
@@ -352,7 +351,9 @@ impl HeartbeatRunner {
 
         // If HEARTBEAT.md is empty and no custom prompt, mark idle
         if custom_prompt.is_none()
-            && heartbeat_content.as_ref().map_or(true, |c| is_heartbeat_content_empty(c))
+            && heartbeat_content
+                .as_ref()
+                .map_or(true, |c| is_heartbeat_content_empty(c))
         {
             self._emit_event(HeartbeatEvent::Completed {
                 status: HeartbeatStatus::Idle,
@@ -393,7 +394,9 @@ impl HeartbeatRunner {
                 } else if due_tasks.is_empty() {
                     "Read HEARTBEAT.md. No tasks are due at this time. If nothing else needs attention, reply HEARTBEAT_OK.".to_string()
                 } else {
-                    let mut prompt = "Read HEARTBEAT.md. The following tasks are due for execution:\n\n".to_string();
+                    let mut prompt =
+                        "Read HEARTBEAT.md. The following tasks are due for execution:\n\n"
+                            .to_string();
                     for task in &due_tasks {
                         prompt.push_str(&format!("- **{}**: {}\n", task.name, task.prompt));
                     }
@@ -407,10 +410,11 @@ impl HeartbeatRunner {
 
         info!("Heartbeat poll for agent {}", agent_id);
 
-        let message = IncomingMessage::new("system", &session_id, &prompt)
-            .with_provenance(crate::channels::InputProvenance::InternalSystem {
+        let message = IncomingMessage::new("system", &session_id, &prompt).with_provenance(
+            crate::channels::InputProvenance::InternalSystem {
                 source: "heartbeat".to_string(),
-            });
+            },
+        );
 
         match handle.agent.process_message(message).await {
             Ok(response) => {
@@ -483,10 +487,7 @@ impl HeartbeatRunner {
 
     /// Resolve heartbeat config for an agent.
     /// Uses agent-specific config if set, otherwise falls back to global GatewayConfig.
-    async fn resolve_agent_config(
-        &self,
-        handle: &crate::gateway::AgentHandle,
-    ) -> HeartbeatConfig {
+    async fn resolve_agent_config(&self, handle: &crate::gateway::AgentHandle) -> HeartbeatConfig {
         if let Some(ref agent_heartbeat) = handle.config.heartbeat {
             return agent_heartbeat.clone();
         }
@@ -549,13 +550,10 @@ mod tests {
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (query_tx, _query_rx) = tokio::sync::mpsc::channel(1);
-        let provider: Arc<dyn crate::providers::Provider> = Arc::new(crate::providers::MockProvider);
+        let provider: Arc<dyn crate::providers::Provider> =
+            Arc::new(crate::providers::MockProvider);
         let tools = Arc::new(crate::tools::ToolRegistry::new());
-        let agent = Arc::new(crate::agent::Agent::new(
-            agent_config.clone(),
-            provider,
-            tools,
-        ));
+        let agent = Arc::new(crate::agent::Agent::new(agent_config.clone(), provider, tools));
         crate::gateway::AgentHandle {
             id: id.to_string(),
             config: agent_config,
@@ -568,10 +566,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_agent_config_falls_back_to_global() {
-        let state = crate::gateway::state_tests::make_test_state(
-            crate::gateway::GatewayConfig::default(),
-        )
-        .await;
+        let state =
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await;
         let state = Arc::new(state);
         let runner = HeartbeatRunner::new(state.clone());
 
@@ -684,7 +681,9 @@ mod tests {
 
         info!(
             "Integration test results: fast={}, slow={}, total_events={}",
-            fast_count, slow_count, events.len()
+            fast_count,
+            slow_count,
+            events.len()
         );
 
         // Agent-fast (1s interval) should have run at least 2-3 times in 3.5s

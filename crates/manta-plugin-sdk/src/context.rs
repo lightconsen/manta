@@ -2,8 +2,8 @@
 //!
 //! Read session ID and arbitrary context values set by Manta.
 
-use std::string::String;
 use crate::ffi_call_to_string;
+use std::string::String;
 
 /// Get the current session ID. Returns `None` if no session is active.
 ///
@@ -14,9 +14,7 @@ use crate::ffi_call_to_string;
 /// }
 /// ```
 pub fn session_id() -> Option<String> {
-    ffi_call_to_string(|out_ptr, out_len| unsafe {
-        super::get_session_id(out_ptr, out_len)
-    })
+    ffi_call_to_string(|out_ptr, out_len| unsafe { super::get_session_id(out_ptr, out_len) })
 }
 
 /// Get a context value by key. Returns `None` if the key does not exist.

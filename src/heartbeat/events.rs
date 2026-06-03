@@ -25,15 +25,9 @@ pub enum HeartbeatEvent {
         session_id: Option<String>,
     },
     /// Heartbeat skipped for an agent
-    Skipped {
-        reason: String,
-        agent_id: String,
-    },
+    Skipped { reason: String, agent_id: String },
     /// Heartbeat failed for an agent
-    Failed {
-        error: String,
-        agent_id: String,
-    },
+    Failed { error: String, agent_id: String },
 }
 
 #[cfg(test)]

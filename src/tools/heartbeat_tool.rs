@@ -22,14 +22,13 @@ impl HeartbeatTool {
 
     /// Get the path to an agent's HEARTBEAT.md
     fn heartbeat_path(&self, agent_id: &str) -> PathBuf {
-        crate::dirs::agents_dir().join(agent_id).join("HEARTBEAT.md")
+        crate::dirs::agents_dir()
+            .join(agent_id)
+            .join("HEARTBEAT.md")
     }
 
     /// Read and parse HEARTBEAT.md for an agent
-    async fn read_heartbeat(
-        &self,
-        agent_id: &str,
-    ) -> crate::Result<(String, Vec<HeartbeatTask>)> {
+    async fn read_heartbeat(&self, agent_id: &str) -> crate::Result<(String, Vec<HeartbeatTask>)> {
         let path = self.heartbeat_path(agent_id);
         let content = if path.exists() {
             match tokio::fs::read_to_string(&path).await {
@@ -221,11 +220,8 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
             "read" => {
                 let (content, tasks) = self.read_heartbeat(agent_id).await?;
 
-                let mut output = format!(
-                    "HEARTBEAT.md for agent '{}' ({} tasks):\n\n",
-                    agent_id,
-                    tasks.len()
-                );
+                let mut output =
+                    format!("HEARTBEAT.md for agent '{}' ({} tasks):\n\n", agent_id, tasks.len());
 
                 if tasks.is_empty() {
                     output.push_str("No tasks configured.\n");
@@ -313,8 +309,8 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
                 }
 
                 // Parse interval
-                let interval = crate::heartbeat::parser::parse_duration(task_interval)
-                    .ok_or_else(|| {
+                let interval =
+                    crate::heartbeat::parser::parse_duration(task_interval).ok_or_else(|| {
                         crate::error::MantaError::Validation(format!(
                             "Invalid interval format: {}. Use formats like '5m', '1h', '30s'.",
                             task_interval

@@ -440,7 +440,11 @@ impl TranscriptStore {
     }
 
     /// Export a transcript to a file.
-    pub async fn export(&self, session_id: &str, format: TranscriptFormat) -> Result<PathBuf, String> {
+    pub async fn export(
+        &self,
+        session_id: &str,
+        format: TranscriptFormat,
+    ) -> Result<PathBuf, String> {
         let transcript = self.get(session_id).ok_or("Transcript not found")?;
         let content = render_transcript(&transcript, format);
 
@@ -452,7 +456,9 @@ impl TranscriptStore {
         );
         let path = self.root_dir.join(&filename);
 
-        tokio::fs::write(&path, content).await.map_err(|e| format!("Failed to write transcript: {}", e))?;
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| format!("Failed to write transcript: {}", e))?;
         info!("Exported transcript to {:?}", path);
         Ok(path)
     }
@@ -484,7 +490,8 @@ impl TranscriptStore {
     /// Load a transcript from a JSON file.
     pub async fn load(&self, filename: &str) -> Result<Transcript, String> {
         let path = self.root_dir.join(filename);
-        let content = tokio::fs::read_to_string(&path).await
+        let content = tokio::fs::read_to_string(&path)
+            .await
             .map_err(|e| format!("Failed to read transcript file: {}", e))?;
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse transcript JSON: {}", e))
@@ -599,7 +606,10 @@ mod tests {
         store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("user", "Hello"));
         store.append("s1", "telegram", "user1", "dm", TranscriptMessage::new("assistant", "Hi!"));
 
-        let path = store.export("s1", TranscriptFormat::Markdown).await.unwrap();
+        let path = store
+            .export("s1", TranscriptFormat::Markdown)
+            .await
+            .unwrap();
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("Hello"));
@@ -618,7 +628,9 @@ mod tests {
         let files = store.list_files().await;
         assert_eq!(files.len(), 1);
 
-        let loaded = store.load(files[0].file_name().unwrap().to_str().unwrap()).await;
+        let loaded = store
+            .load(files[0].file_name().unwrap().to_str().unwrap())
+            .await;
         assert!(loaded.is_ok());
         let transcript = loaded.unwrap();
         assert_eq!(transcript.session_id, "s1");

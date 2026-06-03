@@ -21,8 +21,10 @@ pub fn emit(event_type: &str, payload: &serde_json::Value) -> bool {
     let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
     unsafe {
         super::emit_event(
-            event_type.as_ptr(), event_type.len(),
-            payload_str.as_ptr(), payload_str.len(),
+            event_type.as_ptr(),
+            event_type.len(),
+            payload_str.as_ptr(),
+            payload_str.len(),
         ) > 0
     }
 }

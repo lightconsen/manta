@@ -82,9 +82,19 @@ extern "C" {
     fn config_get_all(out_ptr: *mut u8, out_len: usize) -> usize;
 
     // Memory
-    fn memory_store(key_ptr: *const u8, key_len: usize, val_ptr: *const u8, val_len: usize) -> usize;
+    fn memory_store(
+        key_ptr: *const u8,
+        key_len: usize,
+        val_ptr: *const u8,
+        val_len: usize,
+    ) -> usize;
     fn memory_load(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;
-    fn memory_search(prefix_ptr: *const u8, prefix_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;
+    fn memory_search(
+        prefix_ptr: *const u8,
+        prefix_len: usize,
+        out_ptr: *mut u8,
+        out_len: usize,
+    ) -> usize;
 
     // Persistent Store
     fn store_get(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;
@@ -92,11 +102,24 @@ extern "C" {
 
     // HTTP
     fn http_get(url_ptr: *const u8, url_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;
-    fn http_post(url_ptr: *const u8, url_len: usize, body_ptr: *const u8, body_len: usize,
-                 ct_ptr: *const u8, ct_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;
+    fn http_post(
+        url_ptr: *const u8,
+        url_len: usize,
+        body_ptr: *const u8,
+        body_len: usize,
+        ct_ptr: *const u8,
+        ct_len: usize,
+        out_ptr: *mut u8,
+        out_len: usize,
+    ) -> usize;
 
     // Events
-    fn emit_event(type_ptr: *const u8, type_len: usize, payload_ptr: *const u8, payload_len: usize) -> usize;
+    fn emit_event(
+        type_ptr: *const u8,
+        type_len: usize,
+        payload_ptr: *const u8,
+        payload_len: usize,
+    ) -> usize;
 
     // Context
     fn get_context(key_ptr: *const u8, key_len: usize, out_ptr: *mut u8, out_len: usize) -> usize;

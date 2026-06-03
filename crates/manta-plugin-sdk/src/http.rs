@@ -2,8 +2,8 @@
 //!
 //! Blocking HTTP calls from within the WASM sandbox.
 
-use std::string::String;
 use crate::ffi_call_to_string;
+use std::string::String;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
 
@@ -41,10 +41,14 @@ pub fn post_json(url: &str, body: &serde_json::Value) -> Option<String> {
 pub fn post(url: &str, body: &str, content_type: &str) -> Option<String> {
     ffi_call_to_string(|out_ptr, out_len| unsafe {
         super::http_post(
-            url.as_ptr(), url.len(),
-            body.as_ptr(), body.len(),
-            content_type.as_ptr(), content_type.len(),
-            out_ptr, out_len,
+            url.as_ptr(),
+            url.len(),
+            body.as_ptr(),
+            body.len(),
+            content_type.as_ptr(),
+            content_type.len(),
+            out_ptr,
+            out_len,
         )
     })
 }

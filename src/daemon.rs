@@ -286,8 +286,13 @@ workspace_only = true
                 retry_delay_ms: 1000,
             };
 
-            let provider_name = std::env::var("MANTA_MODEL_PROVIDER")
-                .unwrap_or_else(|_| if is_anthropic { "anthropic".to_string() } else { "openai".to_string() });
+            let provider_name = std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| {
+                if is_anthropic {
+                    "anthropic".to_string()
+                } else {
+                    "openai".to_string()
+                }
+            });
             gateway_config
                 .providers
                 .insert(provider_name.clone(), provider_config);

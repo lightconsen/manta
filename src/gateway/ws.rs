@@ -19,11 +19,11 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use base64::Engine;
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
-use base64::Engine;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -90,17 +90,15 @@ pub async fn ws_auth_middleware(
     }
 
     // Extract optional token from query parameter
-    let query_token = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find(|p| p.starts_with("token="))
-                .and_then(|p| urlencoding::decode(&p["token=".len()..]).ok())
-                .map(|s| s.to_string())
-        });
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&')
+            .find(|p| p.starts_with("token="))
+            .and_then(|p| urlencoding::decode(&p["token=".len()..]).ok())
+            .map(|s| s.to_string())
+    });
 
-    let auth_result = validate_ws_upgrade_request(&state, req.headers(), query_token.as_deref()).await;
+    let auth_result =
+        validate_ws_upgrade_request(&state, req.headers(), query_token.as_deref()).await;
     match auth_result {
         Ok(result) => {
             req.extensions_mut().insert(result);
@@ -850,7 +848,10 @@ async fn handle_chat_send(
             if !name.is_empty() {
                 if let Some((personality, _matched_alias)) = registry.find_by_alias(name) {
                     let agent_id = personality.id.clone();
-                    info!("Smart-routing session {} to agent '{}' (matched name: '{}' in message)", session_id, agent_id, name);
+                    info!(
+                        "Smart-routing session {} to agent '{}' (matched name: '{}' in message)",
+                        session_id, agent_id, name
+                    );
                     let route = crate::inbound::RouteResult {
                         agent_id: agent_id.clone(),
                         workspace_id: None,
@@ -1342,10 +1343,7 @@ async fn handle_agents_registry(req: &WsRequest, state: &Arc<GatewayState>) -> W
         }
     }
 
-    WsResponse::ok(
-        &req.id,
-        serde_json::json!({ "agents": entries, "count": entries.len() }),
-    )
+    WsResponse::ok(&req.id, serde_json::json!({ "agents": entries, "count": entries.len() }))
 }
 
 async fn handle_health(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -2019,7 +2017,8 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 config.model = v.to_string();
                 // Also update model router default alias
                 if let Err(e) = state.model_router.switch_default_model(v).await {
-                    return WsResponse::err(&req.id,
+                    return WsResponse::err(
+                        &req.id,
                         "CONFIG_ERROR",
                         format!("Failed to switch model: {}", e),
                     );
@@ -2109,12 +2108,24 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
                 "webchat" => crate::channels::ChannelType::Webchat,
                 "websocket" => crate::channels::ChannelType::Websocket,
                 "web_terminal" => crate::channels::ChannelType::WebTerminal,
-                other => return WsResponse::err(&req.id, "INVALID_CHANNEL_TYPE", format!("Unknown channel type: {}", other)),
+                other => {
+                    return WsResponse::err(
+                        &req.id,
+                        "INVALID_CHANNEL_TYPE",
+                        format!("Unknown channel type: {}", other),
+                    )
+                }
             };
             let mut ch = crate::gateway::ChannelConfig::new(channel_type);
-            if let Some(v) = payload.enabled { ch.enabled = v; }
-            if let Some(v) = payload.agent_id { ch.agent_id = Some(v); }
-            if let Some(v) = payload.credentials { ch.credentials = v; }
+            if let Some(v) = payload.enabled {
+                ch.enabled = v;
+            }
+            if let Some(v) = payload.agent_id {
+                ch.agent_id = Some(v);
+            }
+            if let Some(v) = payload.credentials {
+                ch.credentials = v;
+            }
             config.channels.insert(payload.name.clone(), ch);
         }
         "channels.update" => {
@@ -2131,11 +2142,23 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
             };
             match config.channels.get_mut(&payload.name) {
                 Some(ch) => {
-                    if let Some(v) = payload.enabled { ch.enabled = v; }
-                    if let Some(v) = payload.agent_id { ch.agent_id = Some(v); }
-                    if let Some(v) = payload.credentials { ch.credentials = v; }
+                    if let Some(v) = payload.enabled {
+                        ch.enabled = v;
+                    }
+                    if let Some(v) = payload.agent_id {
+                        ch.agent_id = Some(v);
+                    }
+                    if let Some(v) = payload.credentials {
+                        ch.credentials = v;
+                    }
                 }
-                None => return WsResponse::err(&req.id, "CHANNEL_NOT_FOUND", format!("Channel '{}' not found", payload.name)),
+                None => {
+                    return WsResponse::err(
+                        &req.id,
+                        "CHANNEL_NOT_FOUND",
+                        format!("Channel '{}' not found", payload.name),
+                    )
+                }
             }
         }
         "channels.remove" => {
@@ -2157,7 +2180,13 @@ async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
             };
             match config.channels.get_mut(&payload.name) {
                 Some(ch) => ch.enabled = payload.enabled,
-                None => return WsResponse::err(&req.id, "CHANNEL_NOT_FOUND", format!("Channel '{}' not found", payload.name)),
+                None => {
+                    return WsResponse::err(
+                        &req.id,
+                        "CHANNEL_NOT_FOUND",
+                        format!("Channel '{}' not found", payload.name),
+                    )
+                }
             }
         }
         _ => {
@@ -2269,12 +2298,13 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         let (provider_type, base_url) = match preset {
             Some(p) => (
                 p.protocol.clone(),
-                payload.base_url.clone().or_else(|| p.default_base_url.clone()),
+                payload
+                    .base_url
+                    .clone()
+                    .or_else(|| p.default_base_url.clone()),
             ),
             None => (
-                crate::model_router::ProviderType::Custom {
-                    name: provider_name.clone(),
-                },
+                crate::model_router::ProviderType::Custom { name: provider_name.clone() },
                 payload.base_url.clone(),
             ),
         };
@@ -2294,7 +2324,9 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
         // Update GatewayConfig providers
         {
             let mut config = state.config.write().await;
-            config.providers.insert(provider_name.clone(), provider_config.clone());
+            config
+                .providers
+                .insert(provider_name.clone(), provider_config.clone());
         }
 
         // Register with model router
@@ -2375,7 +2407,11 @@ async fn handle_models_remove(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
     if removed {
         WsResponse::ok(&req.id, serde_json::json!({ "status": "removed" }))
     } else {
-        WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("Model alias '{}' not found", payload.name))
+        WsResponse::err(
+            &req.id,
+            "MODEL_NOT_FOUND",
+            format!("Model alias '{}' not found", payload.name),
+        )
     }
 }
 
@@ -2389,7 +2425,10 @@ async fn handle_models_set_default(req: &WsRequest, state: &Arc<GatewayState>) -
         Err(res) => return res,
     };
     match state.model_router.switch_default_model(&payload.name).await {
-        Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "status": "ok", "default_model": payload.name })),
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "status": "ok", "default_model": payload.name }),
+        ),
         Err(e) => WsResponse::err(&req.id, "MODEL_NOT_FOUND", format!("{}", e)),
     }
 }
@@ -2434,7 +2473,9 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
         #[serde(default = "default_true")]
         auto_connect: bool,
     }
-    fn default_true() -> bool { true }
+    fn default_true() -> bool {
+        true
+    }
 
     let payload: McpAddPayload = match parse_params(req) {
         Ok(p) => p,
@@ -2463,7 +2504,11 @@ async fn handle_mcp_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsRespons
 
     if payload.auto_connect {
         if let Err(e) = state.mcp_manager.connect(&payload.id, config).await {
-            return WsResponse::err(&req.id, "MCP_CONNECT_FAILED", format!("Saved config but failed to connect: {}", e));
+            return WsResponse::err(
+                &req.id,
+                "MCP_CONNECT_FAILED",
+                format!("Saved config but failed to connect: {}", e),
+            );
         }
     }
 
@@ -2514,16 +2559,25 @@ async fn handle_mcp_connect(req: &WsRequest, state: &Arc<GatewayState>) -> WsRes
         let cfg = state.config.read().await;
         match cfg.mcp.servers.get(&payload.id) {
             Some(c) => c.clone(),
-            None => return WsResponse::err(&req.id, "MCP_NOT_FOUND", format!("MCP server '{}' not configured", payload.id)),
+            None => {
+                return WsResponse::err(
+                    &req.id,
+                    "MCP_NOT_FOUND",
+                    format!("MCP server '{}' not configured", payload.id),
+                )
+            }
         }
     };
 
     match state.mcp_manager.connect(&payload.id, config).await {
-        Ok(tools) => WsResponse::ok(&req.id, serde_json::json!({
-            "status": "connected",
-            "id": payload.id,
-            "tool_count": tools.len(),
-        })),
+        Ok(tools) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "status": "connected",
+                "id": payload.id,
+                "tool_count": tools.len(),
+            }),
+        ),
         Err(e) => WsResponse::err(&req.id, "MCP_CONNECT_FAILED", format!("{}", e)),
     }
 }
@@ -2542,7 +2596,10 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         Ok(()) => {
             let prefix = format!("mcp__{}__", payload.id);
             state.tool_registry.deregister_prefix(&prefix);
-            WsResponse::ok(&req.id, serde_json::json!({ "status": "disconnected", "id": payload.id }))
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "status": "disconnected", "id": payload.id }),
+            )
         }
         Err(e) => WsResponse::err(&req.id, "MCP_DISCONNECT_FAILED", format!("{}", e)),
     }
@@ -2621,20 +2678,32 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
     let skills_dir = crate::dirs::skills_dir();
     let skill_dir = skills_dir.join(name);
     if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
-        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create skill directory: {}", e));
+        return WsResponse::err(
+            &req.id,
+            "INTERNAL_ERROR",
+            format!("Failed to create skill directory: {}", e),
+        );
     }
 
     if let Some(zip_base64) = payload.zip_base64 {
         // Decode base64 ZIP
         let zip_bytes = match base64::engine::general_purpose::STANDARD.decode(&zip_base64) {
             Ok(b) => b,
-            Err(e) => return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid base64: {}", e)),
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_CONTENT",
+                    format!("Invalid base64: {}", e),
+                )
+            }
         };
 
         let skill_dir_clone = skill_dir.clone();
         // Extract ZIP synchronously (ZipFile is not Send)
         #[allow(clippy::type_complexity)]
-        let extract_task: tokio::task::JoinHandle<Result<Vec<(std::path::PathBuf, Vec<u8>)>, String>> = tokio::task::spawn_blocking(move || {
+        let extract_task: tokio::task::JoinHandle<
+            Result<Vec<(std::path::PathBuf, Vec<u8>)>, String>,
+        > = tokio::task::spawn_blocking(move || {
             let cursor = std::io::Cursor::new(zip_bytes);
             let mut archive = match zip::ZipArchive::new(cursor) {
                 Ok(a) => a,
@@ -2665,7 +2734,13 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         let files: Vec<(std::path::PathBuf, Vec<u8>)> = match extract_task.await {
             Ok(Ok(f)) => f,
             Ok(Err(msg)) => return WsResponse::err(&req.id, "INVALID_CONTENT", msg),
-            Err(e) => return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("ZIP extraction failed: {}", e)),
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "INTERNAL_ERROR",
+                    format!("ZIP extraction failed: {}", e),
+                )
+            }
         };
 
         // Write extracted files
@@ -2673,12 +2748,20 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
             if let Some(parent) = outpath.parent() {
                 if !parent.exists() {
                     if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                        return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to create directory: {}", e));
+                        return WsResponse::err(
+                            &req.id,
+                            "INTERNAL_ERROR",
+                            format!("Failed to create directory: {}", e),
+                        );
                     }
                 }
             }
             if let Err(e) = tokio::fs::write(&outpath, &contents).await {
-                return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write file: {}", e));
+                return WsResponse::err(
+                    &req.id,
+                    "INTERNAL_ERROR",
+                    format!("Failed to write file: {}", e),
+                );
             }
         }
 
@@ -2686,14 +2769,22 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         let skill_md_path = skill_dir.join("SKILL.md");
         if !skill_md_path.exists() {
             let _ = tokio::fs::remove_dir_all(&skill_dir).await;
-            return WsResponse::err(&req.id, "INVALID_CONTENT", "ZIP must contain SKILL.md at the root");
+            return WsResponse::err(
+                &req.id,
+                "INVALID_CONTENT",
+                "ZIP must contain SKILL.md at the root",
+            );
         }
 
         let skill_md_content = match tokio::fs::read_to_string(&skill_md_path).await {
             Ok(c) => c,
             Err(e) => {
                 let _ = tokio::fs::remove_dir_all(&skill_dir).await;
-                return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Failed to read SKILL.md: {}", e));
+                return WsResponse::err(
+                    &req.id,
+                    "INVALID_CONTENT",
+                    format!("Failed to read SKILL.md: {}", e),
+                );
             }
         };
 
@@ -2704,21 +2795,37 @@ async fn handle_skills_install(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
     } else if let Some(content) = payload.content {
         // Legacy single-file install
         if let Err(e) = crate::skills::parse_skill_md(&content) {
-            return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid skill markdown: {}", e));
+            return WsResponse::err(
+                &req.id,
+                "INVALID_CONTENT",
+                format!("Invalid skill markdown: {}", e),
+            );
         }
         let skill_path = skill_dir.join("SKILL.md");
         if let Err(e) = tokio::fs::write(&skill_path, &content).await {
-            return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to write skill file: {}", e));
+            return WsResponse::err(
+                &req.id,
+                "INTERNAL_ERROR",
+                format!("Failed to write skill file: {}", e),
+            );
         }
     } else {
-        return WsResponse::err(&req.id, "INVALID_PARAMS", "Either content or zip_base64 is required");
+        return WsResponse::err(
+            &req.id,
+            "INVALID_PARAMS",
+            "Either content or zip_base64 is required",
+        );
     }
 
     // Reload skills
     {
         let mut sm = state.skills_manager.write().await;
         if let Err(e) = sm.load_all().await {
-            return WsResponse::err(&req.id, "INTERNAL_ERROR", format!("Failed to reload skills: {}", e));
+            return WsResponse::err(
+                &req.id,
+                "INTERNAL_ERROR",
+                format!("Failed to reload skills: {}", e),
+            );
         }
     }
 
@@ -2776,7 +2883,8 @@ async fn handle_logs_subscribe(
                         payload: serde_json::to_value(serde_json::json!({
                             "line": line,
                             "historical": true,
-                        })).ok(),
+                        }))
+                        .ok(),
                         seq: None,
                     };
                     if let Ok(text) = serde_json::to_string(&event) {
@@ -2866,7 +2974,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mcp_list_empty() {
-        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
         let req = make_req("r1", "mcp.list", serde_json::json!({}));
         let res = handle_mcp_list(&req, &state).await;
         assert!(res.ok);
@@ -2877,14 +2988,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mcp_add_and_list() {
-        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
-        let req = make_req("r1", "mcp.add", serde_json::json!({
-            "id": "test-server",
-            "transport": "stdio",
-            "command": "echo",
-            "args": ["hello"],
-            "auto_connect": false,
-        }));
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
+        let req = make_req(
+            "r1",
+            "mcp.add",
+            serde_json::json!({
+                "id": "test-server",
+                "transport": "stdio",
+                "command": "echo",
+                "args": ["hello"],
+                "auto_connect": false,
+            }),
+        );
         let res = handle_mcp_add(&req, &state).await;
         assert!(res.ok, "add failed: {:?}", res.error);
         assert_eq!(res.payload.unwrap().get("status").unwrap(), "added");
@@ -2892,7 +3010,14 @@ mod tests {
         let req = make_req("r2", "mcp.list", serde_json::json!({}));
         let res = handle_mcp_list(&req, &state).await;
         assert!(res.ok);
-        let servers = res.payload.unwrap().get("servers").unwrap().as_array().unwrap().clone();
+        let servers = res
+            .payload
+            .unwrap()
+            .get("servers")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].get("id").unwrap(), "test-server");
         assert_eq!(servers[0].get("transport").unwrap(), "stdio");
@@ -2901,15 +3026,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mcp_remove() {
-        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
         // Add first
-        let req = make_req("r1", "mcp.add", serde_json::json!({
-            "id": "to-remove",
-            "transport": "stdio",
-            "command": "echo",
-            "args": [],
-            "auto_connect": false,
-        }));
+        let req = make_req(
+            "r1",
+            "mcp.add",
+            serde_json::json!({
+                "id": "to-remove",
+                "transport": "stdio",
+                "command": "echo",
+                "args": [],
+                "auto_connect": false,
+            }),
+        );
         let res = handle_mcp_add(&req, &state).await;
         assert!(res.ok);
 
@@ -2929,7 +3061,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mcp_connect_not_found() {
-        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
         let req = make_req("r1", "mcp.connect", serde_json::json!({ "id": "missing" }));
         let res = handle_mcp_connect(&req, &state).await;
         assert!(!res.ok);
@@ -2938,7 +3073,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mcp_disconnect_not_connected() {
-        let state = Arc::new(crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default()).await);
+        let state = Arc::new(
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await,
+        );
         let req = make_req("r1", "mcp.disconnect", serde_json::json!({ "id": "nobody" }));
         let res = handle_mcp_disconnect(&req, &state).await;
         assert!(res.ok);

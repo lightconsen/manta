@@ -585,13 +585,10 @@ pub struct GatewayState {
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
     /// Heartbeat wake channel sender (for requesting immediate heartbeat)
-    pub heartbeat_wake_tx: RwLock<
-        Option<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>,
-    >,
+    pub heartbeat_wake_tx: RwLock<Option<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>>,
     /// Heartbeat event broadcast sender (RwLock for late initialization)
-    pub heartbeat_event_tx: RwLock<
-        Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>,
-    >,
+    pub heartbeat_event_tx:
+        RwLock<Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>>,
     /// Dream scheduler for background memory consolidation (RwLock for late initialization)
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
     /// Auth manager for authentication
@@ -1289,7 +1286,9 @@ impl Gateway {
                 temperature: None,
                 max_tokens: None,
             };
-            model_router_config.aliases.insert("default".to_string(), alias);
+            model_router_config
+                .aliases
+                .insert("default".to_string(), alias);
             model_router_config.default_model = "default".to_string();
         }
 
@@ -2108,7 +2107,9 @@ impl Gateway {
                                     match tokio::fs::File::open(&log_path).await {
                                         Ok(file) => {
                                             let mut reader = tokio::io::BufReader::new(file);
-                                            if let Err(e) = reader.seek(tokio::io::SeekFrom::Start(pos)).await {
+                                            if let Err(e) =
+                                                reader.seek(tokio::io::SeekFrom::Start(pos)).await
+                                            {
                                                 tracing::warn!("Log tail seek error: {}", e);
                                             } else {
                                                 let mut lines = reader.lines();

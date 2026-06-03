@@ -3,9 +3,9 @@
 //! Per-plugin, in-memory storage. Data is lost when the plugin is reloaded.
 //! Use [`store`](super::store) for persistent storage.
 
+use crate::ffi_call_to_string;
 use std::string::{String, ToString};
 use std::vec::Vec;
-use crate::ffi_call_to_string;
 
 /// Store a value in memory. Returns `true` on success.
 ///
@@ -14,9 +14,7 @@ use crate::ffi_call_to_string;
 /// memory::store("temp_data", b"hello world");
 /// ```
 pub fn store(key: &str, value: &[u8]) -> bool {
-    unsafe {
-        super::memory_store(key.as_ptr(), key.len(), value.as_ptr(), value.len()) > 0
-    }
+    unsafe { super::memory_store(key.as_ptr(), key.len(), value.as_ptr(), value.len()) > 0 }
 }
 
 /// Store a string value in memory.
@@ -79,7 +77,8 @@ pub fn search(prefix: &str) -> String {
 /// `out_ptr` must be a valid writable pointer into WASM linear memory,
 /// and `out_max` must not exceed the buffer size.
 pub unsafe fn write_result(out_ptr: *mut u8, out_max: usize, result: &serde_json::Value) -> usize {
-    let json = serde_json::to_string(result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string());
+    let json = serde_json::to_string(result)
+        .unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string());
     let bytes = json.as_bytes();
     let to_write = bytes.len().min(out_max);
     unsafe {

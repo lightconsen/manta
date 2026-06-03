@@ -333,7 +333,14 @@ impl AgentPersonality {
             }
             // Also try last 2-4 chars as a common nickname pattern (Chinese)
             if display.chars().count() >= 3 {
-                let suffix: String = display.chars().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+                let suffix: String = display
+                    .chars()
+                    .rev()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
                 if suffix.len() >= 2 && !aliases.iter().any(|a| a == &suffix) {
                     aliases.push(suffix);
                 }

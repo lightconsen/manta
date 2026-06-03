@@ -364,10 +364,7 @@ impl Context {
             // conversation continuity breaks.  For simple text-only conversations
             // (no tool calls) this protection is not needed.
             let has_tool_calls = self.messages.iter().any(|m| m.tool_calls.is_some());
-            if index == 0
-                && msg.role == crate::providers::Role::User
-                && has_tool_calls
-            {
+            if index == 0 && msg.role == crate::providers::Role::User && has_tool_calls {
                 continue;
             }
 

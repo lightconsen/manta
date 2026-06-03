@@ -231,11 +231,10 @@ pub const DEFAULT_SCOPES: &[&str] = &[SCOPE_CHAT, SCOPE_READ];
 pub fn method_scope(method: &str) -> Option<&'static str> {
     match method {
         "chat.send" | "chat.abort" => Some(SCOPE_CHAT),
-        "chat.history" | "sessions.list" | "agents.list" | "agents.get"
-        | "agents.registry" | "health" | "system.presence" | "commands.list"
-        | "config.get" | "models.list" | "models.add" | "models.remove" | "models.set_default"
-        | "cron.list" | "skills.list" | "skills.install"
-        | "logs.subscribe" | "logs.unsubscribe" => Some(SCOPE_READ),
+        "chat.history" | "sessions.list" | "agents.list" | "agents.get" | "agents.registry"
+        | "health" | "system.presence" | "commands.list" | "config.get" | "models.list"
+        | "models.add" | "models.remove" | "models.set_default" | "cron.list" | "skills.list"
+        | "skills.install" | "logs.subscribe" | "logs.unsubscribe" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"

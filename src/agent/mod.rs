@@ -648,9 +648,7 @@ impl Agent {
                 // `reasoning` parameter so that the API accepts reasoning_content
                 // in conversation history.
                 else if model.starts_with("deepseek") {
-                    request.extra = Some(
-                        serde_json::json!({ "reasoning": { "enabled": true } }),
-                    );
+                    request.extra = Some(serde_json::json!({ "reasoning": { "enabled": true } }));
                 }
             }
             crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
@@ -3046,7 +3044,8 @@ impl AgentBuilder {
             // Update the task planner with the correct model name so it
             // doesn't fall back to the provider's hardcoded default
             let provider = agent.provider.clone();
-            agent.task_planner = Arc::new(crate::agent::planner::TaskPlanner::new(provider).with_model(model));
+            agent.task_planner =
+                Arc::new(crate::agent::planner::TaskPlanner::new(provider).with_model(model));
         }
 
         if let Some(manager) = self.skill_manager {

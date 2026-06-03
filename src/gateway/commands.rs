@@ -1340,7 +1340,10 @@ async fn handle_export_session(
     let _path_hint = args.trim();
 
     if let Some(sid) = session_id {
-        match state.transcript_store.export(&sid, TranscriptFormat::Html).await
+        match state
+            .transcript_store
+            .export(&sid, TranscriptFormat::Html)
+            .await
         {
             Ok(path) => {
                 let text =

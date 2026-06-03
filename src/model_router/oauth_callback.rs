@@ -60,8 +60,14 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
         // Send a simple success response and close
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
             <html><body><h2>Authorization successful</h2><p>You can close this window.</p></body></html>";
-        stream.write_all(response.as_bytes()).await.unwrap_or_else(|e| warn!("Failed to send OAuth response: {}", e));
-        stream.shutdown().await.unwrap_or_else(|e| warn!("Failed to shutdown OAuth stream: {}", e));
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .unwrap_or_else(|e| warn!("Failed to send OAuth response: {}", e));
+        stream
+            .shutdown()
+            .await
+            .unwrap_or_else(|e| warn!("Failed to shutdown OAuth stream: {}", e));
 
         Ok::<_, crate::error::MantaError>((code, state))
     };

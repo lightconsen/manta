@@ -517,10 +517,7 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             display_name: "DeepSeek".to_string(),
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.deepseek.com/v1".to_string()),
-            models: vec![
-                "deepseek-chat".to_string(),
-                "deepseek-reasoner".to_string(),
-            ],
+            models: vec!["deepseek-chat".to_string(), "deepseek-reasoner".to_string()],
         },
     );
     m.insert(
@@ -555,7 +552,9 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         ProviderPreset {
             display_name: "Gemini".to_string(),
             protocol: ProviderType::OpenAi,
-            default_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
+            default_base_url: Some(
+                "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+            ),
             models: vec![
                 "gemini-1.5-pro".to_string(),
                 "gemini-1.5-flash".to_string(),
@@ -569,10 +568,7 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
             display_name: "MiniMax".to_string(),
             protocol: ProviderType::OpenAi,
             default_base_url: Some("https://api.minimax.chat/v1".to_string()),
-            models: vec![
-                "abab6.5s-chat".to_string(),
-                "abab6-chat".to_string(),
-            ],
+            models: vec!["abab6.5s-chat".to_string(), "abab6-chat".to_string()],
         },
     );
     m.insert(

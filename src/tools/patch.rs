@@ -87,11 +87,15 @@ impl Tool for ApplyPatchTool {
         };
 
         // Path sandboxing: validate that target_dir stays within working_directory
-        let canonical_workdir = tokio::fs::canonicalize(&context.working_directory).await.ok();
+        let canonical_workdir = tokio::fs::canonicalize(&context.working_directory)
+            .await
+            .ok();
         let canonical_target = if target_dir.is_absolute() {
             tokio::fs::canonicalize(&target_dir).await.ok()
         } else {
-            tokio::fs::canonicalize(context.working_directory.join(&target_dir)).await.ok()
+            tokio::fs::canonicalize(context.working_directory.join(&target_dir))
+                .await
+                .ok()
         };
         if let (Some(ref workdir), Some(ref target)) = (&canonical_workdir, &canonical_target) {
             if !target.starts_with(workdir) {

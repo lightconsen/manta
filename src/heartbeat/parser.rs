@@ -63,9 +63,9 @@ pub fn parse_heartbeat_tasks(content: &str) -> Vec<HeartbeatTask> {
     let mut current_prompt: Option<String> = None;
 
     let flush_task = |name: &mut Option<String>,
-                          interval: &mut Option<String>,
-                          prompt: &mut Option<String>,
-                          tasks: &mut Vec<HeartbeatTask>| {
+                      interval: &mut Option<String>,
+                      prompt: &mut Option<String>,
+                      tasks: &mut Vec<HeartbeatTask>| {
         if let (Some(n), Some(i), Some(p)) = (name.take(), interval.take(), prompt.take()) {
             if let Some(duration) = parse_duration(&i) {
                 tasks.push(HeartbeatTask {
@@ -108,12 +108,7 @@ pub fn parse_heartbeat_tasks(content: &str) -> Vec<HeartbeatTask> {
 
         // New task entry: "- name:"
         if let Some(name) = trimmed.strip_prefix("- name:") {
-            flush_task(
-                &mut current_name,
-                &mut current_interval,
-                &mut current_prompt,
-                &mut tasks,
-            );
+            flush_task(&mut current_name, &mut current_interval, &mut current_prompt, &mut tasks);
             current_name = Some(name.trim().to_string());
         } else if let Some(val) = trimmed.strip_prefix("interval:") {
             current_interval = Some(val.trim().to_string());
@@ -123,12 +118,7 @@ pub fn parse_heartbeat_tasks(content: &str) -> Vec<HeartbeatTask> {
     }
 
     // Flush last task
-    flush_task(
-        &mut current_name,
-        &mut current_interval,
-        &mut current_prompt,
-        &mut tasks,
-    );
+    flush_task(&mut current_name, &mut current_interval, &mut current_prompt, &mut tasks);
 
     tasks
 }

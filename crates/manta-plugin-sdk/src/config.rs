@@ -2,8 +2,8 @@
 //!
 //! Access plugin configuration values set in `plugin.json` / `config.json`.
 
-use std::string::String;
 use crate::ffi_call_to_string;
+use std::string::String;
 
 /// Get a config value by key. Returns `None` if the key does not exist.
 ///
@@ -27,8 +27,6 @@ pub fn get(key: &str) -> Option<String> {
 /// let config: serde_json::Value = serde_json::from_str(&config_json).unwrap();
 /// ```
 pub fn get_all() -> String {
-    ffi_call_to_string(|out_ptr, out_len| unsafe {
-        super::config_get_all(out_ptr, out_len)
-    })
-    .unwrap_or_else(|| "{}".to_string())
+    ffi_call_to_string(|out_ptr, out_len| unsafe { super::config_get_all(out_ptr, out_len) })
+        .unwrap_or_else(|| "{}".to_string())
 }

@@ -131,7 +131,11 @@ pub struct PluginState {
 
 #[cfg(feature = "plugins")]
 impl PluginState {
-    pub fn new(config: serde_json::Value, shared_state: Arc<PluginSharedState>, plugin_id: String) -> Self {
+    pub fn new(
+        config: serde_json::Value,
+        shared_state: Arc<PluginSharedState>,
+        plugin_id: String,
+    ) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(HashMap::new())),
@@ -140,7 +144,12 @@ impl PluginState {
         }
     }
 
-    pub fn new_with_memory(config: serde_json::Value, memory: HashMap<String, Vec<u8>>, shared_state: Arc<PluginSharedState>, plugin_id: String) -> Self {
+    pub fn new_with_memory(
+        config: serde_json::Value,
+        memory: HashMap<String, Vec<u8>>,
+        shared_state: Arc<PluginSharedState>,
+        plugin_id: String,
+    ) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(memory)),
@@ -221,7 +230,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let data = memory.data(&caller);
                     let message = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
                         .unwrap_or("<invalid utf8>");
@@ -247,7 +258,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
                     if let Some(value) = state.config.get(&key) {
@@ -277,10 +290,12 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let state = caller.data();
-                    let config_str = serde_json::to_string(&state.config)
-                        .unwrap_or_else(|_| "{}".to_string());
+                    let config_str =
+                        serde_json::to_string(&state.config).unwrap_or_else(|_| "{}".to_string());
                     let bytes = config_str.as_bytes();
                     let to_write = bytes.len().min(out_len as usize);
                     let data_mut = memory.data_mut(&mut caller);
@@ -307,10 +322,13 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let value: Vec<u8> = memory.data(&caller)
-                        [val_ptr as usize..(val_ptr + val_len) as usize].to_vec();
+                        [val_ptr as usize..(val_ptr + val_len) as usize]
+                        .to_vec();
                     let state = caller.data();
                     let rt = tokio::runtime::Handle::current();
                     let mem = state.memory.clone();
@@ -336,7 +354,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
                     let rt = tokio::runtime::Handle::current();
@@ -372,7 +392,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let prefix = read_memory_string(&memory, &mut caller, prefix_ptr, prefix_len)?;
                     let state = caller.data();
                     let rt = tokio::runtime::Handle::current();
@@ -387,12 +409,12 @@ impl PluginRuntime {
                             .cloned()
                             .collect();
                         drop(mem_guard);
-                        let result = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string());
+                        let result =
+                            serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string());
                         let bytes = result.as_bytes();
                         let to_write = bytes.len().min(out_len);
                         let mem_data = memory.data_mut(&mut caller);
-                        mem_data[out_ptr..out_ptr + to_write]
-                            .copy_from_slice(&bytes[..to_write]);
+                        mem_data[out_ptr..out_ptr + to_write].copy_from_slice(&bytes[..to_write]);
                         to_write as i32
                     }))
                 },
@@ -415,7 +437,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
                     let plugin_id = state.plugin_id.clone();
@@ -425,10 +449,7 @@ impl PluginRuntime {
                     let out_len = out_len as usize;
                     Ok(rt.block_on(async move {
                         let store = kv.read().await;
-                        let value = store
-                            .get(&plugin_id)
-                            .and_then(|m| m.get(&key))
-                            .cloned();
+                        let value = store.get(&plugin_id).and_then(|m| m.get(&key)).cloned();
                         drop(store);
                         if let Some(value) = value {
                             let bytes = value.as_bytes();
@@ -459,7 +480,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let value = read_memory_string(&memory, &mut caller, val_ptr, val_len)?;
                     let state = caller.data();
@@ -467,7 +490,8 @@ impl PluginRuntime {
                     let kv = state.shared_state.kv_store.clone();
                     let rt = tokio::runtime::Handle::current();
                     Ok(rt.block_on(async move {
-                        kv.write().await
+                        kv.write()
+                            .await
                             .entry(plugin_id)
                             .or_default()
                             .insert(key, value);
@@ -493,7 +517,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                     let out_ptr = out_ptr as usize;
                     let out_len = out_len as usize;
@@ -503,8 +529,7 @@ impl PluginRuntime {
                     let bytes = body.as_bytes();
                     let to_write = bytes.len().min(out_len);
                     let mem_data = memory.data_mut(&mut caller);
-                    mem_data[out_ptr..out_ptr + to_write]
-                        .copy_from_slice(&bytes[..to_write]);
+                    mem_data[out_ptr..out_ptr + to_write].copy_from_slice(&bytes[..to_write]);
                     Ok(to_write as i32)
                 },
             )
@@ -528,7 +553,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                     let body = read_memory_string(&memory, &mut caller, body_ptr, body_len)?;
                     let content_type = read_memory_string(&memory, &mut caller, ct_ptr, ct_len)?;
@@ -544,8 +571,7 @@ impl PluginRuntime {
                     let bytes = response.as_bytes();
                     let to_write = bytes.len().min(out_len);
                     let mem_data = memory.data_mut(&mut caller);
-                    mem_data[out_ptr..out_ptr + to_write]
-                        .copy_from_slice(&bytes[..to_write]);
+                    mem_data[out_ptr..out_ptr + to_write].copy_from_slice(&bytes[..to_write]);
                     Ok(to_write as i32)
                 },
             )
@@ -567,19 +593,18 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let event_type = read_memory_string(&memory, &mut caller, type_ptr, type_len)?;
-                    let payload_str = read_memory_string(&memory, &mut caller, payload_ptr, payload_len)?;
+                    let payload_str =
+                        read_memory_string(&memory, &mut caller, payload_ptr, payload_len)?;
                     let payload: serde_json::Value = serde_json::from_str(&payload_str)
                         .unwrap_or_else(|_| serde_json::json!({ "raw": payload_str }));
                     let state = caller.data();
                     let plugin_id = state.plugin_id.clone();
                     if let Some(ref tx) = state.shared_state.event_tx {
-                        let _ = tx.send(PluginEvent {
-                            plugin_id,
-                            event_type,
-                            payload,
-                        });
+                        let _ = tx.send(PluginEvent { plugin_id, event_type, payload });
                         Ok(1)
                     } else {
                         Ok(0)
@@ -604,7 +629,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
                     let ctx = state.shared_state.context.clone();
@@ -639,7 +666,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let state = caller.data();
                     let sid = state.shared_state.session_id.clone();
                     let rt = tokio::runtime::Handle::current();
@@ -675,7 +704,9 @@ impl PluginRuntime {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
-                        .ok_or_else(|| anyhow::anyhow!("Plugin does not export a memory segment"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Plugin does not export a memory segment")
+                        })?;
                     let state = caller.data();
                     let plugin_id = state.plugin_id.clone();
                     let bytes = plugin_id.as_bytes();
@@ -789,7 +820,12 @@ impl PluginRuntime {
         })?;
 
         let state = if let Some(memory) = preserved_memory {
-            PluginState::new_with_memory(config, memory, self.shared_state.clone(), plugin_id.to_string())
+            PluginState::new_with_memory(
+                config,
+                memory,
+                self.shared_state.clone(),
+                plugin_id.to_string(),
+            )
         } else {
             PluginState::new(config, self.shared_state.clone(), plugin_id.to_string())
         };
@@ -1634,7 +1670,11 @@ mod tests {
     #[test]
     fn test_plugin_state_new() {
         let shared_state = Arc::new(PluginSharedState::new());
-        let state = PluginState::new(serde_json::json!({"key": "value"}), shared_state, "test.plugin".to_string());
+        let state = PluginState::new(
+            serde_json::json!({"key": "value"}),
+            shared_state,
+            "test.plugin".to_string(),
+        );
         assert_eq!(state.config["key"], "value");
     }
 
@@ -1643,7 +1683,12 @@ mod tests {
         let shared_state = Arc::new(PluginSharedState::new());
         let mut memory = HashMap::new();
         memory.insert("data".to_string(), vec![1, 2, 3]);
-        let state = PluginState::new_with_memory(serde_json::json!({}), memory, shared_state, "test.plugin".to_string());
+        let state = PluginState::new_with_memory(
+            serde_json::json!({}),
+            memory,
+            shared_state,
+            "test.plugin".to_string(),
+        );
         let rt = tokio::runtime::Runtime::new().unwrap();
         let stored = rt.block_on(async {
             let m = state.memory.read().await;
