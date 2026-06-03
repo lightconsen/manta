@@ -70,7 +70,9 @@ impl TieredStore {
             working: InMemoryStore::new(),
             short_term: DatabaseStore::new_in_memory().await?,
             long_term: DatabaseStore::new_in_memory().await?,
-            archival: CompressedJsonlStore::new(std::env::temp_dir().join("syscity_archival_test")),
+            archival: CompressedJsonlStore::new(
+                std::env::temp_dir().join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4())),
+            ),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
         })
@@ -107,6 +109,75 @@ impl TieredStore {
     pub fn with_evaluator(mut self, evaluator: TierEvaluator) -> Self {
         self.evaluator = Arc::new(evaluator);
         self
+    }
+
+    /// Access the tier index (for testing and diagnostics).
+    pub fn tier_index(&self) -> &Arc<TierIndex> {
+        &self.index
+    }
+
+    /// Access the tier evaluator (for testing and diagnostics).
+    pub fn evaluator(&self) -> &Arc<TierEvaluator> {
+        &self.evaluator
+    }
+
+    /// Explicitly migrate a memory to a target tier.
+    ///
+    /// Used by the effectiveness feedback loop and dream scheduler
+    /// to move memories between tiers based on importance/access changes.
+    pub async fn migrate_memory(
+        &self,
+        memory: &Memory,
+        target_tier: MemoryTier,
+    ) -> crate::Result<()> {
+        let id = &memory.id;
+
+        // Find current tier
+        let current_tier = if let Some(t) = self.index.get_tier(&id.0) {
+            t
+        } else {
+            // Fallback scan
+            let mut found = None;
+            for tier in [
+                MemoryTier::Working,
+                MemoryTier::ShortTerm,
+                MemoryTier::LongTerm,
+                MemoryTier::Archival,
+            ] {
+                if self.backend_for(tier).get(id).await?.is_some() {
+                    found = Some(tier);
+                    break;
+                }
+            }
+            match found {
+                Some(t) => t,
+                None => {
+                    return Err(crate::error::SyscityError::NotFound {
+                        resource: format!("Memory {}", id),
+                    });
+                }
+            }
+        };
+
+        if current_tier == target_tier {
+            return Ok(());
+        }
+
+        // Clone the memory for insertion into the new backend
+        let memory_clone = memory.clone();
+
+        // Delete from old backend
+        self.backend_for(current_tier).delete(id).await?;
+        // Store in new backend
+        self.backend_for(target_tier).store(memory_clone).await?;
+        // Update index
+        self.index.update_tier(&id.0, target_tier);
+
+        info!(
+            "Memory {} explicitly migrated from {} to {}",
+            id, current_tier, target_tier
+        );
+        Ok(())
     }
 
     /// Return the backend responsible for the given tier.
@@ -201,9 +272,36 @@ impl MemoryStore for TieredStore {
     async fn update(&self, memory: Memory) -> crate::Result<()> {
         let id = memory.id.clone();
 
-        if let Some(tier) = self.index.get_tier(&id.0) {
-            self.backend_for(tier).update(memory).await?;
-            return Ok(());
+        // Fast path: known tier — check if migration is needed
+        if let Some(current_tier) = self.index.get_tier(&id.0) {
+            if let Some(tiered) = self.index.get(&id.0) {
+                match self.evaluator.evaluate(&memory, &tiered) {
+                    super::tier::TierAction::Keep => {
+                        // Same tier, just update in place
+                        return self.backend_for(current_tier).update(memory).await;
+                    }
+                    super::tier::TierAction::Promote(target)
+                    | super::tier::TierAction::Demote(target) => {
+                        // Migrate: delete from old backend, store in new backend
+                        self.backend_for(current_tier).delete(&id).await?;
+                        self.backend_for(target).store(memory).await?;
+                        self.index.update_tier(&id.0, target);
+                        info!(
+                            "Memory {} migrated from {} to {} (importance={:.2}, access_count={})",
+                            id, current_tier, target, tiered.relevance_score, tiered.access_count
+                        );
+                        return Ok(());
+                    }
+                    super::tier::TierAction::Evict => {
+                        self.backend_for(current_tier).delete(&id).await?;
+                        self.index.remove(&id.0);
+                        info!("Memory {} evicted from {}", id, current_tier);
+                        return Ok(());
+                    }
+                }
+            }
+            // No tiered metadata found in index — update in place and trust the index
+            return self.backend_for(current_tier).update(memory).await;
         }
 
         // Fallback: scan all backends
@@ -213,9 +311,37 @@ impl MemoryStore for TieredStore {
             MemoryTier::LongTerm,
             MemoryTier::Archival,
         ] {
-            if self.backend_for(tier).get(&id).await?.is_some() {
-                self.backend_for(tier).update(memory).await?;
-                self.index.insert(&id.0, tier);
+            if let Some(existing) = self.backend_for(tier).get(&id).await? {
+                // Check if the memory should migrate based on its new state
+                let tiered = super::tier::TieredMemory {
+                    id: id.0.clone(),
+                    tier,
+                    tier_entered_at: std::time::SystemTime::now(),
+                    access_count: 0,
+                    last_accessed: None,
+                    relevance_score: existing.importance_score,
+                };
+                match self.evaluator.evaluate(&memory, &tiered) {
+                    super::tier::TierAction::Keep => {
+                        self.backend_for(tier).update(memory).await?;
+                        self.index.insert(&id.0, tier);
+                    }
+                    super::tier::TierAction::Promote(target)
+                    | super::tier::TierAction::Demote(target) => {
+                        self.backend_for(tier).delete(&id).await?;
+                        self.backend_for(target).store(memory).await?;
+                        self.index.insert(&id.0, target);
+                        info!(
+                            "Memory {} migrated from {} to {} during fallback scan",
+                            id, tier, target
+                        );
+                    }
+                    super::tier::TierAction::Evict => {
+                        self.backend_for(tier).delete(&id).await?;
+                        // Do not re-insert into index
+                        info!("Memory {} evicted during fallback scan", id);
+                    }
+                }
                 return Ok(());
             }
         }
@@ -409,5 +535,116 @@ mod tests {
 
         let fetched = store.get(&id).await.unwrap().unwrap();
         assert_eq!(fetched.content, "Updated");
+    }
+
+    #[tokio::test]
+    async fn test_tiered_update_triggers_promotion() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        // Start with low importance → Working tier
+        let mem = Memory::new("u1", "Promote me", "fact").with_importance_score(0.1);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        // Manually bump access count so promotion criteria are met
+        store.index.record_access(&id.0);
+        store.index.record_access(&id.0);
+        store.index.record_access(&id.0);
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::Working));
+
+        // Increase importance to trigger promotion
+        let mut updated = mem.clone();
+        updated.id = id.clone();
+        updated.importance_score = 0.8;
+
+        store.update(updated.clone()).await.unwrap();
+
+        // TierEvaluator promotes one tier at a time: Working → ShortTerm
+        assert_eq!(
+            store.index.get_tier(&id.0),
+            Some(MemoryTier::ShortTerm),
+            "Memory should have been promoted to ShortTerm on first update"
+        );
+
+        // Second update promotes ShortTerm → LongTerm
+        store.update(updated.clone()).await.unwrap();
+
+        assert_eq!(
+            store.index.get_tier(&id.0),
+            Some(MemoryTier::LongTerm),
+            "Memory should have been promoted to LongTerm on second update"
+        );
+
+        // Should still be retrievable
+        let fetched = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.content, "Promote me");
+        assert_eq!(fetched.importance_score, 0.8);
+    }
+
+    #[tokio::test]
+    async fn test_tiered_update_triggers_demotion() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        // Start with high importance → LongTerm tier
+        let mem = Memory::new("u1", "Demote me", "fact").with_importance_score(0.8);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::LongTerm));
+
+        // Decrease importance below LongTerm threshold (0.5)
+        let mut updated = mem.clone();
+        updated.id = id.clone();
+        updated.importance_score = 0.3;
+
+        store.update(updated).await.unwrap();
+
+        // Should have demoted to ShortTerm (importance < 0.5 but >= 0.2)
+        assert_eq!(
+            store.index.get_tier(&id.0),
+            Some(MemoryTier::ShortTerm),
+            "Memory should have been demoted to ShortTerm"
+        );
+
+        let fetched = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.importance_score, 0.3);
+    }
+
+    #[tokio::test]
+    async fn test_tiered_update_no_change_when_tier_kept() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        // Medium importance → ShortTerm
+        let mem = Memory::new("u1", "Stay put", "fact").with_importance_score(0.4);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::ShortTerm));
+
+        // Small change still within ShortTerm range
+        let mut updated = mem.clone();
+        updated.id = id.clone();
+        updated.importance_score = 0.45;
+
+        store.update(updated).await.unwrap();
+
+        // Should stay in ShortTerm
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::ShortTerm));
+    }
+
+    #[tokio::test]
+    async fn test_migrate_memory_explicit() {
+        let store = TieredStore::new_in_memory().await.unwrap();
+
+        let mem = Memory::new("u1", "Explicit move", "fact").with_importance_score(0.5);
+        let id = store.store(mem.clone()).await.unwrap();
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::ShortTerm));
+
+        // Explicitly migrate to Archival
+        store.migrate_memory(&mem, MemoryTier::Archival).await.unwrap();
+
+        assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::Archival));
+
+        let fetched = store.get(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.content, "Explicit move");
     }
 }
