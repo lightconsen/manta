@@ -39,6 +39,7 @@ config = "0.14"
 
 # HTTP client
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
+openssl = { version = "0.10", features = ["vendored"] }
 bytes = "1.5"
 
 # HTTP server
