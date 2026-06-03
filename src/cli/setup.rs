@@ -64,6 +64,7 @@ pub async fn run_setup() -> Result<()> {
         })
         .collect();
     provider_items.push("Other (custom)".to_string());
+    provider_items.push("⏭  Skip this step".to_string());
     provider_items.push("❌ Cancel setup".to_string());
 
     let default_provider_idx = preset_names
@@ -82,13 +83,19 @@ pub async fn run_setup() -> Result<()> {
         let name = preset_names[provider_selection].clone();
         (name.clone(), presets.get(&name).cloned())
     } else if provider_selection == preset_names.len() {
+        // "Other (custom)"
         println!("   Custom provider selected.");
         let custom: String = Input::new()
             .with_prompt("   Enter provider name")
             .interact_text()
             .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
         (custom.trim().to_string(), None)
+    } else if provider_selection == preset_names.len() + 1 {
+        // "Skip this step" — keep existing provider
+        println!("   Skipping provider selection.");
+        (config.model_provider.clone(), presets.get(&config.model_provider).cloned())
     } else {
+        // "Cancel setup"
         println!("\n❌ Setup cancelled. No changes saved.");
         return Ok(());
     };
@@ -110,6 +117,7 @@ pub async fn run_setup() -> Result<()> {
         }
         model_items.push("Other".to_string());
     }
+    model_items.push("⏭  Skip this step".to_string());
     model_items.push("❌ Cancel setup".to_string());
 
     let default_model_idx = suggested_models
@@ -127,12 +135,18 @@ pub async fn run_setup() -> Result<()> {
     let model = if !suggested_models.is_empty() && model_selection < suggested_models.len() {
         suggested_models[model_selection].clone()
     } else if !suggested_models.is_empty() && model_selection == suggested_models.len() {
+        // "Other"
         let custom: String = Input::new()
             .with_prompt("   Enter model name")
             .interact_text()
             .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
         custom.trim().to_string()
+    } else if model_selection == model_items.len() - 2 {
+        // "Skip this step"
+        println!("   Skipping model selection.");
+        config.model.clone()
     } else if model_selection == model_items.len() - 1 {
+        // "Cancel setup"
         println!("\n❌ Setup cancelled. No changes saved.");
         return Ok(());
     } else {
@@ -148,10 +162,14 @@ pub async fn run_setup() -> Result<()> {
         .unwrap_or_default();
 
     let prompt = if existing_key.is_empty() {
-        format!("\n3. API Key for {}", provider_name)
+        format!("\n3. API Key for {} (Enter to skip)", provider_name)
     } else {
         let masked = if existing_key.len() > 8 {
-            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
+            format!(
+                "{}...{}",
+                &existing_key[..4],
+                &existing_key[existing_key.len() - 4..]
+            )
         } else {
             "***".to_string()
         };
@@ -214,7 +232,10 @@ pub async fn run_setup() -> Result<()> {
     println!("\n4. Server Settings");
 
     let host_input: String = Input::new()
-        .with_prompt(format!("   Host [{}] (Enter to keep)", config.host))
+        .with_prompt(format!(
+            "   Host [{}] (Enter to keep)",
+            config.host
+        ))
         .allow_empty(true)
         .interact_text()
         .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
@@ -224,7 +245,10 @@ pub async fn run_setup() -> Result<()> {
     }
 
     let port_input: String = Input::new()
-        .with_prompt(format!("   Port [{}] (Enter to keep)", config.port))
+        .with_prompt(format!(
+            "   Port [{}] (Enter to keep)",
+            config.port
+        ))
         .allow_empty(true)
         .interact_text()
         .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
