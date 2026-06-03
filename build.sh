@@ -18,6 +18,7 @@ echo "🚀 Starting Syscity build..."
 # Build web frontend
 echo "📦 Building web frontend..."
 cd web/chat-ui
+pnpm install --frozen-lockfile
 pnpm build
 cd ../..
 
