@@ -1,4 +1,4 @@
-//! Memory tools for Manta
+//! Memory tools for Syscity
 //!
 //! Provides three distinct tools:
 //!
@@ -24,7 +24,7 @@ pub struct MemoryTool {
 impl MemoryTool {
     /// Create a new memory tool with SQLite storage
     pub async fn new() -> crate::Result<Self> {
-        // Use centralized ~/.manta/memory directory
+        // Use centralized ~/.syscity/memory directory
         let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:///{}", db_path.display());
 
@@ -152,13 +152,13 @@ Memories are automatically searched and relevant ones injected into new conversa
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'action' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'action' argument".to_string())
         })?;
 
         match action {
             "store" => {
                 let content = args["content"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'content' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'content' argument".to_string())
                 })?;
 
                 let memory_type = args["category"].as_str().unwrap_or("fact");
@@ -179,7 +179,7 @@ Memories are automatically searched and relevant ones injected into new conversa
 
             "retrieve" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id' argument".to_string())
                 })?;
 
                 let memory_id = MemoryId::new(id);
@@ -201,7 +201,7 @@ Memories are automatically searched and relevant ones injected into new conversa
 
             "search" => {
                 let query = args["query"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'query' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'query' argument".to_string())
                 })?;
 
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(10);
@@ -292,7 +292,7 @@ Memories are automatically searched and relevant ones injected into new conversa
 
             "delete" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id' argument".to_string())
                 })?;
 
                 let memory_id = MemoryId::new(id);
@@ -306,7 +306,7 @@ Memories are automatically searched and relevant ones injected into new conversa
 
             "update" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id' argument".to_string())
                 })?;
 
                 let memory_id = MemoryId::new(id);
@@ -333,7 +333,7 @@ Memories are automatically searched and relevant ones injected into new conversa
                 Ok(ToolExecutionResult::success(format!("Memory '{}' updated", id)))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unknown action: {}. Valid actions: store, retrieve, search, list, delete, update",
                 action
             ))),
@@ -359,7 +359,7 @@ pub struct MemorySearchTool {
 }
 
 impl MemorySearchTool {
-    /// Create with the default `~/.manta/memory` database.
+    /// Create with the default `~/.syscity/memory` database.
     pub async fn new() -> crate::Result<Self> {
         let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:///{}", db_path.display());
@@ -430,12 +430,12 @@ Actions:
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"]
             .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'action'".to_string()))?;
+            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action'".to_string()))?;
 
         match action {
             "search" => {
                 let query = args["query"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'query'".to_string())
+                    crate::error::SyscityError::Validation("Missing 'query'".to_string())
                 })?;
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(6);
                 let category = args["category"].as_str();
@@ -479,7 +479,7 @@ Actions:
 
             "store" => {
                 let content = args["content"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'content'".to_string())
+                    crate::error::SyscityError::Validation("Missing 'content'".to_string())
                 })?;
                 let memory_type = args["category"].as_str().unwrap_or("fact");
                 let memory = Memory::new(
@@ -495,7 +495,7 @@ Actions:
                     .with_data(serde_json::json!({"id": id.0})))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unknown action '{}'. Use: search, store",
                 action
             ))),
@@ -516,7 +516,7 @@ pub struct MemoryGetTool {
 }
 
 impl MemoryGetTool {
-    /// Create with the default `~/.manta/memory` database.
+    /// Create with the default `~/.syscity/memory` database.
     pub async fn new() -> crate::Result<Self> {
         let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:///{}", db_path.display());
@@ -584,12 +584,12 @@ Actions:
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"]
             .as_str()
-            .ok_or_else(|| crate::error::MantaError::Validation("Missing 'action'".to_string()))?;
+            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action'".to_string()))?;
 
         match action {
             "retrieve" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id'".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id'".to_string())
                 })?;
                 let memory_id = MemoryId::new(id);
                 match self.storage.get(&memory_id).await? {
@@ -635,7 +635,7 @@ Actions:
 
             "delete" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id'".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id'".to_string())
                 })?;
                 let memory_id = MemoryId::new(id);
                 if self.storage.delete(&memory_id).await? {
@@ -648,7 +648,7 @@ Actions:
 
             "update" => {
                 let id = args["id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'id'".to_string())
+                    crate::error::SyscityError::Validation("Missing 'id'".to_string())
                 })?;
                 let memory_id = MemoryId::new(id);
                 let mut memory = match self.storage.get(&memory_id).await? {
@@ -668,7 +668,7 @@ Actions:
                 Ok(ToolExecutionResult::success(format!("Memory '{}' updated", id)))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unknown action '{}'. Use: retrieve, list, delete, update",
                 action
             ))),

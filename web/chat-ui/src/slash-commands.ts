@@ -1,5 +1,5 @@
 /**
- * Slash command parser and types for Manta chat UI.
+ * Slash command parser and types for Syscity chat UI.
  * Matches OpenClaw-style `/command [args]` syntax.
  */
 

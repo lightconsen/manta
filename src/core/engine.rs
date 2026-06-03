@@ -1,10 +1,10 @@
-//! Core engine for Manta
+//! Core engine for Syscity
 //!
 //! The engine contains the main business logic and orchestrates
 //! operations. It is independent of external adapters.
 
 use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, instrument, warn};
@@ -44,7 +44,7 @@ impl Engine {
 
     /// Create a new engine with custom configuration
     pub fn with_config(config: EngineConfig) -> Self {
-        info!("Initializing Manta engine");
+        info!("Initializing Syscity engine");
         Self {
             entities: Arc::new(RwLock::new(HashMap::new())),
             config,
@@ -62,10 +62,10 @@ impl Engine {
             let entities = self
                 .entities
                 .read()
-                .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
+                .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
 
             if entities.len() >= self.config.max_entities {
-                return Err(MantaError::Validation(format!(
+                return Err(SyscityError::Validation(format!(
                     "Maximum number of entities ({}) reached",
                     self.config.max_entities
                 )));
@@ -75,7 +75,7 @@ impl Engine {
             if !self.config.allow_duplicate_names
                 && entities.values().any(|e| e.name == request.name)
             {
-                return Err(MantaError::Validation(format!(
+                return Err(SyscityError::Validation(format!(
                     "Entity with name '{}' already exists",
                     request.name
                 )));
@@ -89,7 +89,7 @@ impl Engine {
             let mut entities = self
                 .entities
                 .write()
-                .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
+                .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
             entities.insert(id, entity.clone());
         }
 
@@ -103,12 +103,12 @@ impl Engine {
         let entities = self
             .entities
             .read()
-            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
 
         entities
             .get(&id)
             .cloned()
-            .ok_or_else(|| MantaError::NotFound {
+            .ok_or_else(|| SyscityError::NotFound {
                 resource: format!("Entity with ID '{}' not found", id),
             })
     }
@@ -119,7 +119,7 @@ impl Engine {
         let entities = self
             .entities
             .read()
-            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
 
         let mut result: Vec<Entity> = if let Some(status) = filter {
             entities
@@ -144,9 +144,9 @@ impl Engine {
         let mut entities = self
             .entities
             .write()
-            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
-        let entity = entities.get_mut(&id).ok_or_else(|| MantaError::NotFound {
+        let entity = entities.get_mut(&id).ok_or_else(|| SyscityError::NotFound {
             resource: format!("Entity with ID '{}' not found", id),
         })?;
 
@@ -162,10 +162,10 @@ impl Engine {
         let mut entities = self
             .entities
             .write()
-            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
         if entities.remove(&id).is_none() {
-            return Err(MantaError::NotFound {
+            return Err(SyscityError::NotFound {
                 resource: format!("Entity with ID '{}' not found", id),
             });
         }
@@ -179,7 +179,7 @@ impl Engine {
         let entities = self
             .entities
             .read()
-            .map_err(|_| MantaError::Internal("Failed to acquire read lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
         Ok(entities.len())
     }
 
@@ -194,7 +194,7 @@ impl Engine {
         let mut entities = self
             .entities
             .write()
-            .map_err(|_| MantaError::Internal("Failed to acquire write lock".to_string()))?;
+            .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
         for entity in entities.values_mut() {
             if entity.is_terminal()

@@ -1,4 +1,4 @@
-//! Persistent Audit Log for Manta
+//! Persistent Audit Log for Syscity
 //!
 //! Provides SQLite-backed persistent storage of audit entries,
 //! complementing the in-memory RuntimeAuditLog with durability.
@@ -66,7 +66,7 @@ impl PersistentAuditLog {
             )
             .execute(pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to create audit table".into(),
                 details: e.to_string(),
             })?;

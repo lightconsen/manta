@@ -6,14 +6,14 @@
 //! Flow:
 //! 1. User sends first DM to bot
 //! 2. System auto-captures user ID and generates a pairing code
-//! 3. Admin lists pending requests: `manta pairing list --channel telegram`
-//! 4. Admin approves by code: `manta pairing approve telegram ABC123`
+//! 3. Admin lists pending requests: `syscity pairing list --channel telegram`
+//! 4. Admin approves by code: `syscity pairing approve telegram ABC123`
 //! 5. User is notified and can now chat
 //!
 //! # Example
 //!
 //! ```rust
-//! use manta::security::pairing::{PairingStore, DmPolicy};
+//! use syscity::security::pairing::{PairingStore, DmPolicy};
 //! use std::time::Duration;
 //!
 //! # async fn example() {
@@ -22,7 +22,7 @@
 //! // User initiates pairing (called by channel handler)
 //! let result = store.request_access("telegram", "123456", Some("@alice")).await.unwrap();
 //! let code = match result {
-//!     manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
+//!     syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
 //!     _ => panic!("Expected new request"),
 //! };
 //!

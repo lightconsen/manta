@@ -1,6 +1,6 @@
-//! Plugin management commands for Manta
+//! Plugin management commands for Syscity
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -82,18 +82,18 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
 
         PluginCommands::Install { path, name } => {
-            // Resolve destination inside the Manta plugins directory.
+            // Resolve destination inside the Syscity plugins directory.
             let plugins_dir = crate::dirs::config_dir().join("plugins");
             tokio::fs::create_dir_all(&plugins_dir)
                 .await
-                .map_err(|e| MantaError::Internal(format!("Cannot create plugins dir: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Cannot create plugins dir: {}", e)))?;
 
             let dest_name = name
                 .clone()
@@ -112,11 +112,11 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
             } else {
                 tokio::fs::copy(path, &dest)
                     .await
-                    .map_err(|e| MantaError::Internal(format!("Copy failed: {}", e)))?;
+                    .map_err(|e| SyscityError::Internal(format!("Copy failed: {}", e)))?;
             }
 
             println!("Plugin installed to {:?}", dest);
-            println!("Restart the daemon (manta restart) to load it.");
+            println!("Restart the daemon (syscity restart) to load it.");
         }
 
         PluginCommands::Uninstall { name, force } => {
@@ -141,7 +141,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -160,7 +160,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -179,7 +179,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -211,7 +211,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -233,7 +233,7 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -246,11 +246,11 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
 async fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
     tokio::fs::create_dir_all(dst)
         .await
-        .map_err(|e| MantaError::Internal(format!("mkdir {:?}: {}", dst, e)))?;
+        .map_err(|e| SyscityError::Internal(format!("mkdir {:?}: {}", dst, e)))?;
 
     let mut entries = tokio::fs::read_dir(src)
         .await
-        .map_err(|e| MantaError::Internal(format!("read_dir {:?}: {}", src, e)))?;
+        .map_err(|e| SyscityError::Internal(format!("read_dir {:?}: {}", src, e)))?;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let src_path = entry.path();
@@ -260,7 +260,7 @@ async fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
         } else {
             tokio::fs::copy(&src_path, &dst_path)
                 .await
-                .map_err(|e| MantaError::Internal(format!("copy {:?}: {}", src_path, e)))?;
+                .map_err(|e| SyscityError::Internal(format!("copy {:?}: {}", src_path, e)))?;
         }
     }
 

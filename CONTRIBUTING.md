@@ -1,6 +1,6 @@
-# Contributing to Manta
+# Contributing to Syscity
 
-Thank you for your interest in contributing to Manta! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Syscity! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 
@@ -40,8 +40,8 @@ This project and everyone participating in it is governed by our commitment to:
 
 ```bash
 # Clone the repository
-git clone https://github.com/anthropics/manta
-cd manta
+git clone https://github.com/anthropics/syscity
+cd syscity
 
 # Build in development mode
 cargo build
@@ -99,7 +99,7 @@ To add a new skill:
 
 1. Create a directory in `examples/skills/`
 2. Add a `SKILL.md` file following the template
-3. Test the skill with Manta
+3. Test the skill with Syscity
 4. Submit a PR with examples of usage
 
 Example skill structure:
@@ -209,7 +209,7 @@ test(memory): add tests for session search
 
 4. **After Merge**
    - Your contribution will be in the next release
-   - Thank you for helping improve Manta!
+   - Thank you for helping improve Syscity!
 
 ## Development Tips
 
@@ -253,9 +253,9 @@ cargo test --features "telegram discord"
 
 ## Questions?
 
-- Join our [Discord](https://discord.gg/manta)
-- Open a [GitHub Discussion](https://github.com/anthropics/manta/discussions)
-- Check existing [Issues](https://github.com/anthropics/manta/issues)
+- Join our [Discord](https://discord.gg/syscity)
+- Open a [GitHub Discussion](https://github.com/anthropics/syscity/discussions)
+- Check existing [Issues](https://github.com/anthropics/syscity/issues)
 
 ## License
 
@@ -263,4 +263,4 @@ By contributing, you agree that your contributions will be licensed under the sa
 
 ---
 
-Thank you for contributing to Manta! 🎉
+Thank you for contributing to Syscity! 🎉

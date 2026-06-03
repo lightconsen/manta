@@ -4,7 +4,7 @@
 //! the OpenAI and Anthropic providers correctly serialize requests and
 //! deserialize responses. Tests run serially to avoid mock server conflicts.
 
-use manta::providers::{
+use syscity::providers::{
     AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider, Role, ToolDefinition,
 };
 use serde_json::json;
@@ -124,7 +124,7 @@ async fn openai_provider_handles_tool_calls() {
         messages: vec![Message::user("List files")],
         tools: Some(vec![ToolDefinition {
             tool_type: "function".to_string(),
-            function: manta::providers::FunctionDefinition {
+            function: syscity::providers::FunctionDefinition {
                 name: "shell".to_string(),
                 description: "Run shell commands".to_string(),
                 parameters: json!({"type": "object"}),

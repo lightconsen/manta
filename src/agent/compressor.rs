@@ -339,8 +339,8 @@ impl ContextCompressor {
     ///
     /// ```rust,no_run
     /// # use std::sync::Arc;
-    /// # use manta::agent::compressor::ContextCompressor;
-    /// # async fn example(provider: Arc<dyn manta::providers::Provider>, messages: Vec<manta::providers::Message>) {
+    /// # use syscity::agent::compressor::ContextCompressor;
+    /// # async fn example(provider: Arc<dyn syscity::providers::Provider>, messages: Vec<syscity::providers::Message>) {
     /// let compressor = ContextCompressor::new(4096);
     /// let compacted = compressor.compact_with_llm(&messages, &provider, None, 2, 6).await;
     /// # }
@@ -845,7 +845,7 @@ mod tests {
 
         async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
             if self.should_fail {
-                return Err(crate::error::MantaError::Internal("mock error".to_string()));
+                return Err(crate::error::SyscityError::Internal("mock error".to_string()));
             }
             Ok(CompletionResponse {
                 message: Message {

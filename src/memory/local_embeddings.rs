@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use tracing::info;
 
 /// HuggingFace model cache directory
-const HF_CACHE_DIR: &str = ".manta/models";
+const HF_CACHE_DIR: &str = ".syscity/models";
 
 /// Global backend singleton (llama.cpp requires single backend instance)
 static LLAMA_BACKEND: OnceLock<crate::Result<LlamaBackend>> = OnceLock::new();
@@ -23,12 +23,12 @@ static LLAMA_BACKEND: OnceLock<crate::Result<LlamaBackend>> = OnceLock::new();
 fn get_backend() -> crate::Result<&'static LlamaBackend> {
     let result = LLAMA_BACKEND.get_or_init(|| {
         LlamaBackend::init().map_err(|e| {
-            crate::error::MantaError::Validation(format!("Failed to init llama.cpp backend: {}", e))
+            crate::error::SyscityError::Validation(format!("Failed to init llama.cpp backend: {}", e))
         })
     });
     match result {
         Ok(ref backend) => Ok(backend),
-        Err(ref e) => Err(crate::error::MantaError::Validation(format!(
+        Err(ref e) => Err(crate::error::SyscityError::Validation(format!(
             "Backend initialization failed: {}",
             e
         ))),
@@ -103,17 +103,17 @@ async fn download_from_hf(repo_id: &str, filename: &str) -> crate::Result<PathBu
         .map(|h| h.join(HF_CACHE_DIR))
         .unwrap_or_else(|| PathBuf::from(HF_CACHE_DIR));
 
-    std::fs::create_dir_all(&cache_dir).map_err(crate::error::MantaError::Io)?;
+    std::fs::create_dir_all(&cache_dir).map_err(crate::error::SyscityError::Io)?;
 
     // Use hf-hub for download
     let api = hf_hub::api::tokio::Api::new().map_err(|e| {
-        crate::error::MantaError::Validation(format!("Failed to create HF API: {}", e))
+        crate::error::SyscityError::Validation(format!("Failed to create HF API: {}", e))
     })?;
 
     let repo = api.model(repo_id.to_string());
 
     let local_path = repo.get(filename).await.map_err(|e| {
-        crate::error::MantaError::Validation(format!("Failed to download model: {}", e))
+        crate::error::SyscityError::Validation(format!("Failed to download model: {}", e))
     })?;
 
     info!("Model downloaded to: {:?}", local_path);
@@ -171,7 +171,7 @@ impl LazyEmbeddingModel {
 
                 let model =
                     LlamaModel::load_from_file(backend, &path, &model_params).map_err(|e| {
-                        crate::error::MantaError::Validation(format!("Failed to load model: {}", e))
+                        crate::error::SyscityError::Validation(format!("Failed to load model: {}", e))
                     })?;
 
                 let context_params = LlamaContextParams::default().with_n_batch(512);
@@ -210,7 +210,7 @@ impl LazyEmbeddingModel {
             .model
             .new_context(inner.backend, inner.context_params.clone())
             .map_err(|e| {
-                crate::error::MantaError::Validation(format!("Failed to create context: {}", e))
+                crate::error::SyscityError::Validation(format!("Failed to create context: {}", e))
             })?;
 
         // Create batch
@@ -220,17 +220,17 @@ impl LazyEmbeddingModel {
         for (i, token) in tokens.iter().enumerate() {
             let is_last = i == tokens.len() - 1;
             batch.add(*token, i as i32, &[0], is_last).map_err(|e| {
-                crate::error::MantaError::Validation(format!("Failed to add token: {}", e))
+                crate::error::SyscityError::Validation(format!("Failed to add token: {}", e))
             })?;
         }
 
         // Decode
         ctx.decode(&mut batch)
-            .map_err(|e| crate::error::MantaError::Validation(format!("Decode failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Validation(format!("Decode failed: {}", e)))?;
 
         // Extract embeddings from the last token
         let embedding = ctx.embeddings_seq_ith(0).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Failed to get embeddings: {}", e))
+            crate::error::SyscityError::Validation(format!("Failed to get embeddings: {}", e))
         })?;
 
         // Convert to Vec<f32> and normalize
@@ -253,7 +253,7 @@ impl LazyEmbeddingModel {
             .model
             .str_to_token(text, AddBos::Always)
             .map_err(|e| {
-                crate::error::MantaError::Validation(format!("Tokenization failed: {}", e))
+                crate::error::SyscityError::Validation(format!("Tokenization failed: {}", e))
             })?;
 
         Ok(tokens)
@@ -328,7 +328,7 @@ impl LocalEmbeddingProvider {
         match self {
             LocalEmbeddingProvider::Gguf(model) => model.embed_batch(texts).await,
             LocalEmbeddingProvider::FtsOnly { reason } => Err(
-                crate::error::MantaError::Validation(format!(
+                crate::error::SyscityError::Validation(format!(
                     "Embeddings unavailable (FTS-only mode): {}. To enable embeddings, configure a valid embedding model.",
                     reason
                 ))

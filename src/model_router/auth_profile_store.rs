@@ -46,7 +46,7 @@ impl AuthProfileStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create auth_profile_states table".to_string(),
             details: e.to_string(),
         })?;
@@ -56,7 +56,7 @@ impl AuthProfileStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create auth_profile_states index".to_string(),
             details: e.to_string(),
         })?;
@@ -112,7 +112,7 @@ impl AuthProfileStore {
             .bind(&now)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!(
                     "Failed to save auth profile state for {}:{}",
                     provider, key.label
@@ -135,7 +135,7 @@ impl AuthProfileStore {
             }
             query.execute(&self.pool).await.map_err(|e| {
                 warn!("Failed to clean up stale auth profile rows for {}: {}", provider, e);
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to clean up stale auth profile rows for {}", provider),
                     details: e.to_string(),
                 }
@@ -168,7 +168,7 @@ impl AuthProfileStore {
         .bind(provider)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to load auth profile state for {}", provider),
             details: e.to_string(),
         })?;
@@ -212,7 +212,7 @@ impl AuthProfileStore {
             .bind(provider)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to delete auth profile state for {}", provider),
                 details: e.to_string(),
             })?;

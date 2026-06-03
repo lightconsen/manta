@@ -4,7 +4,7 @@
 //! Tests for private methods (scoring, issue collection) are in
 //! src/security/audit.rs's #[cfg(test)] module.
 
-use manta::security::audit::*;
+use syscity::security::audit::*;
 
 // ── RiskLevel Tests ──────────────────────────────────────────────────────────
 

@@ -144,7 +144,7 @@ impl Team {
             self.update_timestamp();
             Ok(())
         } else {
-            Err(crate::error::MantaError::Validation(format!(
+            Err(crate::error::SyscityError::Validation(format!(
                 "Member '{}' not found in team '{}'",
                 name, self.name
             )))
@@ -158,7 +158,7 @@ impl Team {
             self.update_timestamp();
             Ok(())
         } else {
-            Err(crate::error::MantaError::Validation(format!(
+            Err(crate::error::SyscityError::Validation(format!(
                 "Member '{}' not found in team '{}'",
                 name, self.name
             )))
@@ -172,7 +172,7 @@ impl Team {
             self.update_timestamp();
             Ok(())
         } else {
-            Err(crate::error::MantaError::Validation(format!(
+            Err(crate::error::SyscityError::Validation(format!(
                 "Member '{}' not found in team '{}'",
                 name, self.name
             )))
@@ -193,7 +193,7 @@ impl Team {
 
             // Find the colon separator (only split on first colon)
             let colon_pos = part.find(':').ok_or_else(|| {
-                crate::error::MantaError::Validation(format!(
+                crate::error::SyscityError::Validation(format!(
                     "Invalid hierarchy format: '{}' (expected 'manager:worker1,worker2')",
                     part
                 ))
@@ -210,14 +210,14 @@ impl Team {
 
             // Validate that all agents exist
             if !self.members.contains_key(&manager) {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Manager '{}' is not a team member",
                     manager
                 )));
             }
             for worker in &workers {
                 if !self.members.contains_key(worker) {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Worker '{}' is not a team member",
                         worker
                     )));
@@ -269,7 +269,7 @@ impl Team {
     pub async fn save(&self) -> crate::Result<()> {
         let team_dir = crate::dirs::teams_dir().join(&self.name);
         tokio::fs::create_dir_all(&team_dir).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to create team directory: {:?}", team_dir),
                 details: e.to_string(),
             }
@@ -277,14 +277,14 @@ impl Team {
 
         let config_path = team_dir.join("team.yaml");
         let yaml = serde_yaml::to_string(self).map_err(|e| {
-            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+            crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                 "YAML error: {}",
                 e
             )))
         })?;
 
         tokio::fs::write(&config_path, yaml).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to write team config: {:?}", config_path),
                 details: e.to_string(),
             }
@@ -299,14 +299,14 @@ impl Team {
         let config_path = crate::dirs::teams_dir().join(name).join("team.yaml");
 
         let yaml = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to read team config: {:?}", config_path),
                 details: e.to_string(),
             }
         })?;
 
         let team: Team = serde_yaml::from_str(&yaml).map_err(|e| {
-            crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+            crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                 "YAML error: {}",
                 e
             )))
@@ -321,7 +321,7 @@ impl Team {
 
         if team_dir.exists() {
             tokio::fs::remove_dir_all(&team_dir).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to delete team directory: {:?}", team_dir),
                     details: e.to_string(),
                 }
@@ -342,7 +342,7 @@ impl Team {
 
         let mut teams = vec![];
         let mut entries = tokio::fs::read_dir(&teams_dir).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to read teams directory: {:?}", teams_dir),
                 details: e.to_string(),
             }
@@ -352,7 +352,7 @@ impl Team {
             entries
                 .next_entry()
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to read directory entry".to_string(),
                     details: e.to_string(),
                 })?
@@ -375,15 +375,15 @@ impl Team {
     pub fn export(&self, format: &str) -> crate::Result<String> {
         match format.to_lowercase().as_str() {
             "json" => {
-                serde_json::to_string_pretty(self).map_err(crate::error::MantaError::Serialization)
+                serde_json::to_string_pretty(self).map_err(crate::error::SyscityError::Serialization)
             }
             "yaml" | "yml" => serde_yaml::to_string(self).map_err(|e| {
-                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML serialization error: {}",
                     e
                 )))
             }),
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unsupported export format: '{}' (use 'yaml' or 'json')",
                 format
             ))),
@@ -394,16 +394,16 @@ impl Team {
     pub fn import(data: &str, format: &str, rename: Option<String>) -> crate::Result<Self> {
         let mut team: Team = match format.to_lowercase().as_str() {
             "json" => {
-                serde_json::from_str(data).map_err(crate::error::MantaError::Serialization)?
+                serde_json::from_str(data).map_err(crate::error::SyscityError::Serialization)?
             }
             "yaml" | "yml" => serde_yaml::from_str(data).map_err(|e| {
-                crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                     "YAML deserialization error: {}",
                     e
                 )))
             })?,
             _ => {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Unsupported import format: '{}' (use 'yaml' or 'json')",
                     format
                 )))

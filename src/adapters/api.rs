@@ -1,10 +1,10 @@
-//! API client adapter for Manta
+//! API client adapter for Syscity
 //!
 //! This module provides an HTTP client for communicating with
 //! external APIs.
 
 use crate::config::ServiceConfig;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use crate::secrets::SecretRef;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
@@ -31,7 +31,7 @@ impl ApiClient {
             .timeout(Duration::from_secs(config.timeout_seconds))
             .no_proxy()
             .build()
-            .map_err(|e| MantaError::Internal(format!("Failed to build HTTP client: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
         // Resolve API key if it's a SecretRef
         let api_key = if let Some(ref key_ref) = config.api_key {
@@ -84,7 +84,7 @@ impl ApiClient {
             .timeout(Duration::from_secs(config.timeout_seconds))
             .no_proxy()
             .build()
-            .map_err(|e| MantaError::Internal(format!("Failed to build HTTP client: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
         Ok(Self {
             client,
@@ -123,7 +123,7 @@ impl ApiClient {
         builder = builder
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-            .header("User-Agent", format!("manta/{} (Rust)", env!("CARGO_PKG_VERSION")));
+            .header("User-Agent", format!("syscity/{} (Rust)", env!("CARGO_PKG_VERSION")));
 
         builder
     }
@@ -137,7 +137,7 @@ impl ApiClient {
         loop {
             let req = request
                 .try_clone()
-                .ok_or_else(|| MantaError::Internal("Failed to clone request".to_string()))?;
+                .ok_or_else(|| SyscityError::Internal("Failed to clone request".to_string()))?;
 
             match req.send().await {
                 Ok(response) => {
@@ -152,21 +152,21 @@ impl ApiClient {
                     // Don't retry client errors (4xx) except for rate limiting (429)
                     if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
                         let body = response.text().await.unwrap_or_default();
-                        return Err(MantaError::ExternalService {
+                        return Err(SyscityError::ExternalService {
                             source: format!("HTTP {}: {}", status, body),
                             cause: None,
                         });
                     }
 
                     // Retry server errors and rate limiting
-                    last_error = Some(MantaError::ExternalService {
+                    last_error = Some(SyscityError::ExternalService {
                         source: format!("HTTP {}", status),
                         cause: None,
                     });
                 }
                 Err(e) => {
                     error!(error = %e, "Request failed");
-                    last_error = Some(MantaError::Http(e));
+                    last_error = Some(SyscityError::Http(e));
                 }
             }
 
@@ -181,7 +181,7 @@ impl ApiClient {
         }
 
         Err(last_error
-            .unwrap_or_else(|| MantaError::Internal("Request failed after retries".to_string())))
+            .unwrap_or_else(|| SyscityError::Internal("Request failed after retries".to_string())))
     }
 
     /// Make a GET request
@@ -198,7 +198,7 @@ impl ApiClient {
         response
             .json()
             .await
-            .map_err(|e| MantaError::ExternalService {
+            .map_err(|e| SyscityError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -220,7 +220,7 @@ impl ApiClient {
         response
             .json()
             .await
-            .map_err(|e| MantaError::ExternalService {
+            .map_err(|e| SyscityError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -241,7 +241,7 @@ impl ApiClient {
         response
             .json()
             .await
-            .map_err(|e| MantaError::ExternalService {
+            .map_err(|e| SyscityError::ExternalService {
                 source: "Failed to parse response".to_string(),
                 cause: Some(Box::new(e)),
             })

@@ -1,4 +1,4 @@
-//! Error types for Manta
+//! Error types for Syscity
 //!
 //! This module defines all error types used throughout the application.
 //! It uses `thiserror` for defining structured errors that can be
@@ -7,9 +7,9 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// The main error type for Manta operations
+/// The main error type for Syscity operations
 #[derive(Error, Debug)]
-pub enum MantaError {
+pub enum SyscityError {
     /// Configuration-related errors
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),
@@ -115,8 +115,8 @@ pub enum ConfigError {
     Env(#[from] std::env::VarError),
 }
 
-/// Result type alias for Manta operations
-pub type Result<T> = std::result::Result<T, MantaError>;
+/// Result type alias for Syscity operations
+pub type Result<T> = std::result::Result<T, SyscityError>;
 
 /// Extension trait for adding context to results
 pub trait ResultExt<T, E> {
@@ -133,25 +133,25 @@ impl<T> ResultExt<T, std::io::Error> for std::result::Result<T, std::io::Error> 
         F: FnOnce() -> C,
         C: Into<String>,
     {
-        self.map_err(MantaError::Io)
+        self.map_err(SyscityError::Io)
     }
 }
 
-impl From<toml::ser::Error> for MantaError {
+impl From<toml::ser::Error> for SyscityError {
     fn from(err: toml::ser::Error) -> Self {
-        MantaError::Internal(format!("TOML serialization error: {}", err))
+        SyscityError::Internal(format!("TOML serialization error: {}", err))
     }
 }
 
-impl From<toml::de::Error> for MantaError {
+impl From<toml::de::Error> for SyscityError {
     fn from(err: toml::de::Error) -> Self {
-        MantaError::Internal(format!("TOML deserialization error: {}", err))
+        SyscityError::Internal(format!("TOML deserialization error: {}", err))
     }
 }
 
-impl From<serde_yaml::Error> for MantaError {
+impl From<serde_yaml::Error> for SyscityError {
     fn from(err: serde_yaml::Error) -> Self {
-        MantaError::Internal(format!("YAML error: {}", err))
+        SyscityError::Internal(format!("YAML error: {}", err))
     }
 }
 
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = MantaError::Validation("test error".to_string());
+        let err = SyscityError::Validation("test error".to_string());
         assert_eq!(err.to_string(), "Validation error: test error");
     }
 
@@ -173,16 +173,16 @@ mod tests {
 
     #[test]
     fn test_error_variants_display() {
-        let err = MantaError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing"));
+        let err = SyscityError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing"));
         assert!(err.to_string().contains("I/O error"));
 
-        let err = MantaError::Internal("something broke".to_string());
+        let err = SyscityError::Internal("something broke".to_string());
         assert!(err.to_string().contains("Internal error: something broke"));
 
-        let err = MantaError::NotFound { resource: "user".to_string() };
+        let err = SyscityError::NotFound { resource: "user".to_string() };
         assert!(err.to_string().contains("Resource not found: user"));
 
-        let err = MantaError::Storage {
+        let err = SyscityError::Storage {
             context: "db".to_string(),
             details: "connection failed".to_string(),
         };
@@ -190,34 +190,34 @@ mod tests {
             .to_string()
             .contains("Storage error: db - connection failed"));
 
-        let err = MantaError::Plugin("wasm error".to_string());
+        let err = SyscityError::Plugin("wasm error".to_string());
         assert!(err.to_string().contains("Plugin error: wasm error"));
 
-        let err = MantaError::MaxSpawnDepth(5);
+        let err = SyscityError::MaxSpawnDepth(5);
         assert!(err
             .to_string()
             .contains("Maximum subagent spawn depth (5) exceeded"));
 
-        let err = MantaError::MaxConcurrentSubagents(10);
+        let err = SyscityError::MaxConcurrentSubagents(10);
         assert!(err
             .to_string()
             .contains("Maximum concurrent subagents (10) already active"));
 
-        let err = MantaError::SubagentTimeout;
+        let err = SyscityError::SubagentTimeout;
         assert!(err
             .to_string()
             .contains("Subagent timed out waiting for completion"));
 
-        let err = MantaError::SubagentNotFound;
+        let err = SyscityError::SubagentNotFound;
         assert!(err.to_string().contains("Subagent run not found"));
 
-        let err = MantaError::SubagentFailed("crash".to_string());
+        let err = SyscityError::SubagentFailed("crash".to_string());
         assert!(err.to_string().contains("Subagent failed: crash"));
 
-        let err = MantaError::SubagentKilled;
+        let err = SyscityError::SubagentKilled;
         assert!(err.to_string().contains("Subagent was killed"));
 
-        let err = MantaError::SandboxViolation("no network".to_string());
+        let err = SyscityError::SandboxViolation("no network".to_string());
         assert!(err.to_string().contains("Sandbox violation: no network"));
     }
 
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_external_service_error_display() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "openai".to_string(),
             cause: Some(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "timeout"))),
         };
@@ -256,7 +256,7 @@ mod tests {
     fn test_result_ext_io() {
         let result: std::result::Result<i32, std::io::Error> =
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
-        let manta_result: Result<i32> = result.with_context(|| "file op");
-        assert!(manta_result.is_err());
+        let syscity_result: Result<i32> = result.with_context(|| "file op");
+        assert!(syscity_result.is_err());
     }
 }

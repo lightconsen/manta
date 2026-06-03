@@ -1,4 +1,4 @@
-//! Export CLI commands for Manta
+//! Export CLI commands for Syscity
 //!
 //! Provides export functionality for conversations and memories
 //! to various formats (Markdown, JSON, JSONL).
@@ -104,7 +104,7 @@ impl From<ExportFormatArg> for ExportFormat {
 /// Run export commands
 pub async fn run_export_command(command: &ExportCommands) -> Result<()> {
     // Initialize the database store
-    let db_path = crate::dirs::data_dir().join("manta.db");
+    let db_path = crate::dirs::data_dir().join("syscity.db");
     let database_url = format!("sqlite://{}", db_path.display());
 
     let store = UnifiedStore::new(&database_url).await?;

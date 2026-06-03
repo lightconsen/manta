@@ -1,4 +1,4 @@
-//! Log management for Manta
+//! Log management for Syscity
 //!
 //! Provides functionality to view and tail daemon logs.
 
@@ -23,7 +23,7 @@ pub async fn show_logs(n: usize) -> crate::Result<()> {
 
     let file = File::open(&log_path)
         .await
-        .map_err(crate::error::MantaError::Io)?;
+        .map_err(crate::error::SyscityError::Io)?;
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
@@ -64,7 +64,7 @@ pub async fn tail_logs(n: usize) -> crate::Result<()> {
 
     let file = File::open(&log_path)
         .await
-        .map_err(crate::error::MantaError::Io)?;
+        .map_err(crate::error::SyscityError::Io)?;
 
     let mut reader = BufReader::new(file);
 
@@ -134,7 +134,7 @@ impl LogWriter {
             .append(true)
             .open(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         Ok(Self { file: Some(file), path })
     }
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_log_file_path() {
         let path = log_file_path();
-        assert!(path.to_string_lossy().contains("manta"));
+        assert!(path.to_string_lossy().contains("syscity"));
     }
 
     #[tokio::test]

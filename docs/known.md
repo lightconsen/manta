@@ -1,4 +1,4 @@
-# Manta Codebase Overview
+# Syscity Codebase Overview
 
 Complete inventory of all Rust source modules, files, and architectural patterns.
 
@@ -9,9 +9,9 @@ Complete inventory of all Rust source modules, files, and architectural patterns
 ```
 src/
 ├── main.rs / lib.rs          # Entrypoint: CLI/Gateway/Web three-mode launch
-├── config.rs                 # Layered config (default → TOML → env MANTA_*), hot reload
+├── config.rs                 # Layered config (default → TOML → env SYSCITY_*), hot reload
 ├── error.rs                  # thiserror unified error taxonomy
-├── dirs.rs                   # ~/.manta/ directory layout
+├── dirs.rs                   # ~/.syscity/ directory layout
 ├── secrets.rs                # Multi-source secret resolution (env/file/cmd), zeroize secure memory
 ├── client.rs                 # HTTP/WS client (CLI → Daemon)
 ├── web.rs                    # Browser Web Terminal (WS + SSE)

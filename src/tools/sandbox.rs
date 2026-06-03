@@ -2,7 +2,7 @@
 //!
 //! [`SandboxedTool`] wraps any [`Tool`] with path-access restrictions, network
 //! access control, and a hard execution timeout.  Violations return
-//! [`MantaError::SandboxViolation`] rather than panicking.
+//! [`SyscityError::SandboxViolation`] rather than panicking.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
-use crate::error::MantaError;
+use crate::error::SyscityError;
 
 /// Configuration for the sandbox around a tool.
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ impl SandboxConfig {
     /// Check whether `path` is permitted under this sandbox configuration.
     pub fn check_path(&self, path: &Path) -> crate::Result<()> {
         if !self.allow_file_access {
-            return Err(MantaError::SandboxViolation(
+            return Err(SyscityError::SandboxViolation(
                 "file access is disabled in this sandbox".to_string(),
             ));
         }
@@ -66,7 +66,7 @@ impl SandboxConfig {
         // Blocklist takes priority.
         for blocked in &self.blocked_paths {
             if path.starts_with(blocked) {
-                return Err(MantaError::SandboxViolation(format!(
+                return Err(SyscityError::SandboxViolation(format!(
                     "access to '{}' is blocked",
                     path.display()
                 )));
@@ -77,7 +77,7 @@ impl SandboxConfig {
         if !self.allowed_paths.is_empty() {
             let permitted = self.allowed_paths.iter().any(|a| path.starts_with(a));
             if !permitted {
-                return Err(MantaError::SandboxViolation(format!(
+                return Err(SyscityError::SandboxViolation(format!(
                     "'{}' is not in the sandbox allowlist",
                     path.display()
                 )));
@@ -95,8 +95,8 @@ impl SandboxConfig {
 /// ```rust,no_run
 /// # use std::path::PathBuf;
 /// # use std::time::Duration;
-/// # use manta::tools::sandbox::{SandboxConfig, SandboxedTool};
-/// # use manta::tools::shell::ShellTool;
+/// # use syscity::tools::sandbox::{SandboxConfig, SandboxedTool};
+/// # use syscity::tools::shell::ShellTool;
 /// # fn make_shell_tool() -> ShellTool { ShellTool::new() }
 /// let config = SandboxConfig {
 ///     allowed_paths: vec![
@@ -191,7 +191,7 @@ impl Tool for SandboxedTool {
         if !self.config.allow_network_access {
             let name = self.inner.name();
             if name.contains("web") || name.contains("http") || name.contains("fetch") {
-                return Err(MantaError::SandboxViolation(format!(
+                return Err(SyscityError::SandboxViolation(format!(
                     "network access is disabled; tool '{}' requires network",
                     name
                 )));
@@ -205,7 +205,7 @@ impl Tool for SandboxedTool {
         tokio::time::timeout(self.config.timeout, exec_future)
             .await
             .map_err(|_| {
-                MantaError::SandboxViolation(format!(
+                SyscityError::SandboxViolation(format!(
                     "tool '{}' timed out after {:?}",
                     self.inner.name(),
                     self.config.timeout
@@ -307,7 +307,7 @@ mod tests {
         let tool = SandboxedTool::new(EchoTool, config);
         let args = json!({"path": "/etc/passwd"});
         let result = tool.execute(args, &dummy_context()).await;
-        assert!(matches!(result, Err(MantaError::SandboxViolation(_))));
+        assert!(matches!(result, Err(SyscityError::SandboxViolation(_))));
     }
 
     #[tokio::test]
@@ -319,7 +319,7 @@ mod tests {
         let tool = SandboxedTool::new(EchoTool, config);
         let args = json!({"path": "/home/user/secret"});
         let result = tool.execute(args, &dummy_context()).await;
-        assert!(matches!(result, Err(MantaError::SandboxViolation(_))));
+        assert!(matches!(result, Err(SyscityError::SandboxViolation(_))));
     }
 
     #[tokio::test]
@@ -331,7 +331,7 @@ mod tests {
         let tool = SandboxedTool::new(EchoTool, config);
         let args = json!({"path": "/tmp/anything"});
         let result = tool.execute(args, &dummy_context()).await;
-        assert!(matches!(result, Err(MantaError::SandboxViolation(_))));
+        assert!(matches!(result, Err(SyscityError::SandboxViolation(_))));
     }
 
     #[tokio::test]
@@ -342,7 +342,7 @@ mod tests {
         };
         let tool = SandboxedTool::new(SlowTool, config);
         let result = tool.execute(json!({}), &dummy_context()).await;
-        assert!(matches!(result, Err(MantaError::SandboxViolation(_))));
+        assert!(matches!(result, Err(SyscityError::SandboxViolation(_))));
     }
 
     #[tokio::test]
@@ -375,6 +375,6 @@ mod tests {
 
         let tool = SandboxedTool::new(WebTool, config);
         let result = tool.execute(json!({}), &dummy_context()).await;
-        assert!(matches!(result, Err(MantaError::SandboxViolation(_))));
+        assert!(matches!(result, Err(SyscityError::SandboxViolation(_))));
     }
 }

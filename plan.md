@@ -1,8 +1,8 @@
-# Manta - Personal AI Assistant
+# Syscity - Personal AI Assistant
 
 ## Vision
 
-Manta is a lightweight, fast, and secure Personal AI Assistant written in Rust. It combines the simplicity philosophy of NanoClaw with the performance characteristics of ZeroClaw, targeting <10MB binary size and <20MB RAM usage.
+Syscity is a lightweight, fast, and secure Personal AI Assistant written in Rust. It combines the simplicity philosophy of NanoClaw with the performance characteristics of ZeroClaw, targeting <10MB binary size and <20MB RAM usage.
 
 ## Core Principles
 
@@ -15,7 +15,7 @@ Manta is a lightweight, fast, and secure Personal AI Assistant written in Rust. 
 ## Architecture
 
 ```
-manta/
+syscity/
 ├── src/
 │   ├── main.rs           # CLI entry point
 │   ├── config.rs         # Configuration management
@@ -177,7 +177,7 @@ security:
 
 ### 7. Autonomy Features (Hermes-Agent Inspired)
 
-Manta incorporates advanced autonomy mechanisms from Hermes-Agent to enable self-directed behavior and continuous improvement:
+Syscity incorporates advanced autonomy mechanisms from Hermes-Agent to enable self-directed behavior and continuous improvement:
 
 #### 7.1 Agent Loop with Iteration Budget
 
@@ -226,8 +226,8 @@ pub struct Task {
 
 | Memory Type | Storage | Purpose | Access |
 |-------------|---------|---------|--------|
-| **Procedural Memory** | `~/.manta/memory/agent.md` | Environment facts, tool quirks, conventions | Agent R/W |
-| **User Model** | `~/.manta/memory/user.md` | Preferences, communication style, habits | Agent R/W |
+| **Procedural Memory** | `~/.syscity/memory/agent.md` | Environment facts, tool quirks, conventions | Agent R/W |
+| **User Model** | `~/.syscity/memory/user.md` | Preferences, communication style, habits | Agent R/W |
 | **Ephemeral Memory** | SQLite | Session-specific context, temporary data | Tool-based |
 
 **Features:**
@@ -348,7 +348,7 @@ pub struct ScheduledJob {
 
 #### 7.10 Persistent Assistant Spawning
 
-Manta can create and manage other specialized Personal AI Assistants, each with their own identity, memory, and capabilities.
+Syscity can create and manage other specialized Personal AI Assistants, each with their own identity, memory, and capabilities.
 
 ```rust
 pub struct AssistantSpawner;
@@ -360,7 +360,7 @@ pub struct PersistentAssistant {
     pub system_prompt: String,
     pub memory: AssistantMemory,
     pub channels: Vec<ChannelConfig>,
-    pub parent_id: Option<String>, // Manta's ID if spawned by Manta
+    pub parent_id: Option<String>, // Syscity's ID if spawned by Syscity
 }
 
 pub enum AssistantType {
@@ -406,7 +406,7 @@ impl AssistantSpawner {
 **Assistant Lifecycle:**
 
 ```
-1. Manta decides to spawn specialized assistant
+1. Syscity decides to spawn specialized assistant
    ↓
 2. Generate configuration (name, specialization, channels)
    ↓
@@ -489,7 +489,7 @@ Each spawned assistant has:
 Updated directory structure with autonomy components:
 
 ```
-manta/
+syscity/
 ├── src/
 │   ├── agent/
 │   │   ├── mod.rs              # Core agent orchestration
@@ -624,7 +624,7 @@ manta/
 - [✅] Create rich output formatting
 - [✅] Add `exit`, `clear`, `help`, `tools` commands
 - [✅] Support single message mode (-m flag)
-- [✅] Provider-agnostic configuration (MANTA_BASE_URL, MANTA_API_KEY, MANTA_MODEL)
+- [✅] Provider-agnostic configuration (SYSCITY_BASE_URL, SYSCITY_API_KEY, SYSCITY_MODEL)
 
 ### Phase 3: Tools & Memory (Week 3-4)
 
@@ -984,7 +984,7 @@ local-llm = ["ollama-rs"]
 
 ## Configuration
 
-### File: `~/.manta/config.yaml`
+### File: `~/.syscity/config.yaml`
 ```yaml
 # LLM Configuration
 provider:
@@ -995,9 +995,9 @@ provider:
 
 # Bot Personality
 agent:
-  name: "Manta"
+  name: "Syscity"
   system_prompt: |
-    You are Manta, a helpful personal AI assistant.
+    You are Syscity, a helpful personal AI assistant.
     You have access to tools for file operations, web search,
     and memory. Always be concise and helpful.
 
@@ -1018,12 +1018,12 @@ security:
   allow_by_default: false
 
 # Storage
-data_dir: "~/.local/share/manta"
+data_dir: "~/.local/share/syscity"
 ```
 
 ## Skills System
 
-Skills extend Manta's capabilities through declarative definitions:
+Skills extend Syscity's capabilities through declarative definitions:
 
 ```yaml
 # skills/weather.yaml
@@ -1049,27 +1049,27 @@ cargo run -- --config dev.yaml
 ### Production Build
 ```bash
 cargo build --release --features all
-strip target/release/manta
+strip target/release/syscity
 ```
 
 ### Docker
 ```dockerfile
 FROM scratch
-COPY target/release/manta /manta
+COPY target/release/syscity /syscity
 COPY config.yaml /config.yaml
-ENTRYPOINT ["/manta", "--config", "/config.yaml"]
+ENTRYPOINT ["/syscity", "--config", "/config.yaml"]
 ```
 
 ### Systemd Service
 ```ini
 [Unit]
-Description=Manta AI Assistant
+Description=Syscity AI Assistant
 After=network.target
 
 [Service]
 Type=simple
-User=manta
-ExecStart=/usr/local/bin/manta
+User=syscity
+ExecStart=/usr/local/bin/syscity
 Restart=always
 RestartSec=10
 

@@ -4,7 +4,7 @@
 //! 1. Client connects via WS and sends `connect` with `device` identity
 //! 2. If device not paired: server generates a short pairing code
 //! 3. Server broadcasts `device.pair.requested` event to admin clients
-//! 4. Admin runs `manta device approve <code>`
+//! 4. Admin runs `syscity device approve <code>`
 //! 5. Server issues a device token to the client
 //! 6. Client reconnects using the device token in `auth.token`
 

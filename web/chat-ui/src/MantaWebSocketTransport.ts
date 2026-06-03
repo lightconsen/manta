@@ -97,11 +97,11 @@ function toChatPart(
 }
 
 /**
- * Manta WebSocket-native protocol client implementing ChatModelAdapter.
+ * Syscity WebSocket-native protocol client implementing ChatModelAdapter.
  *
  * Uses AsyncGenerator to stream updates for assistant-ui consumption.
  */
-export class MantaWebSocketTransport implements ChatModelAdapter {
+export class SyscityWebSocketTransport implements ChatModelAdapter {
   private ws: WebSocket | null = null;
   private reqId = 0;
   private sessionId: string;
@@ -131,12 +131,12 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
   constructor() {
     this.deviceId =
-      localStorage.getItem("manta_device_id") || this.generateId();
-    localStorage.setItem("manta_device_id", this.deviceId);
+      localStorage.getItem("syscity_device_id") || this.generateId();
+    localStorage.setItem("syscity_device_id", this.deviceId);
 
-    const storedSession = localStorage.getItem("manta_session");
+    const storedSession = localStorage.getItem("syscity_session");
     this.sessionId = storedSession || `web:${this.deviceId}`;
-    localStorage.setItem("manta_session", this.sessionId);
+    localStorage.setItem("syscity_session", this.sessionId);
 
     this.connect();
   }
@@ -301,7 +301,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     for (const sid of sessions) {
       if (this.getHistory(sid).length === 0) {
         this.sessionId = sid;
-        localStorage.setItem("manta_session", this.sessionId);
+        localStorage.setItem("syscity_session", this.sessionId);
         this.subscribedSessions = [];
         this.sendRequest("sessions.create", {
           session_id: this.sessionId,
@@ -313,7 +313,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
     const newSessionId = `web:${this.deviceId}_${Date.now()}`;
     this.sessionId = newSessionId;
-    localStorage.setItem("manta_session", this.sessionId);
+    localStorage.setItem("syscity_session", this.sessionId);
     this.subscribedSessions = [];
     this.sendRequest("sessions.create", {
       session_id: this.sessionId,
@@ -321,7 +321,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
     // Persist session in local list
     if (!sessions.includes(newSessionId)) {
       sessions.unshift(newSessionId);
-      localStorage.setItem("manta_sessions", JSON.stringify(sessions));
+      localStorage.setItem("syscity_sessions", JSON.stringify(sessions));
     }
     this.notifySessionChange();
     return this.sessionId;
@@ -329,7 +329,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
   getLocalSessions(): string[] {
     try {
-      return JSON.parse(localStorage.getItem("manta_sessions") || "[]");
+      return JSON.parse(localStorage.getItem("syscity_sessions") || "[]");
     } catch {
       return [];
     }
@@ -419,7 +419,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
   switchSession(sessionId: string): void {
     this.sessionId = sessionId;
-    localStorage.setItem("manta_session", this.sessionId);
+    localStorage.setItem("syscity_session", this.sessionId);
     if (!this.subscribedSessions.includes(sessionId)) {
       this.subscribedSessions.push(sessionId);
       this.sendRequest("sessions.subscribe", {
@@ -431,7 +431,7 @@ export class MantaWebSocketTransport implements ChatModelAdapter {
 
   /* ── Session history (localStorage) ── */
   private historyKey(sessionId: string): string {
-    return `manta_history_${sessionId}`;
+    return `syscity_history_${sessionId}`;
   }
 
   saveMessage(msg: ChatMessage): void {

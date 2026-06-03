@@ -276,7 +276,7 @@ impl QqChannel {
             .json(&params)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to get QQ access token: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -285,7 +285,7 @@ impl QqChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse QQ token response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -320,7 +320,7 @@ impl QqChannel {
             request
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("QQ API request failed: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -329,7 +329,7 @@ impl QqChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse QQ response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -350,7 +350,7 @@ impl QqChannel {
             .as_ref()
             .or(req.guild_id.as_ref())
             .ok_or_else(|| {
-                crate::error::MantaError::Validation("Channel ID or Guild ID required".to_string())
+                crate::error::SyscityError::Validation("Channel ID or Guild ID required".to_string())
             })?;
 
         let endpoint = endpoint.replace("{channel_id}", channel_id);
@@ -364,7 +364,7 @@ impl QqChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("QQ API error {}: {}", response.code, response.message),
                 cause: None,
             });
@@ -469,7 +469,7 @@ impl Channel for QqChannel {
 
         // Check if allowed
         if !self.is_qq_allowed(recipient) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "QQ {} is not in allow list",
                 recipient
             )));
@@ -533,7 +533,7 @@ impl Channel for QqChannel {
             let map = self.message_map.read().await;
             map.get(&msg_id_str)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found", msg_id_str),
                 })?
         };
@@ -550,7 +550,7 @@ impl Channel for QqChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("QQ edit failed: {}", response.message),
                 cause: None,
             });
@@ -567,7 +567,7 @@ impl Channel for QqChannel {
             let map = self.message_map.read().await;
             map.get(&msg_id_str)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found", msg_id_str),
                 })?
         };
@@ -580,7 +580,7 @@ impl Channel for QqChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("QQ delete failed: {}", response.message),
                 cause: None,
             });

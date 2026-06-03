@@ -1,4 +1,4 @@
-//! Fallback provider implementation for Manta
+//! Fallback provider implementation for Syscity
 //!
 //! This provider wraps multiple providers and tries them in order until one succeeds.
 
@@ -97,7 +97,7 @@ impl Provider for FallbackProvider {
         }
 
         error!("All providers in fallback chain failed");
-        Err(crate::error::MantaError::ExternalService {
+        Err(crate::error::SyscityError::ExternalService {
             source: "All providers in fallback chain failed".to_string(),
             cause: last_error.map(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
         })
@@ -128,7 +128,7 @@ impl Provider for FallbackProvider {
         }
 
         error!("All providers in fallback chain failed for streaming");
-        Err(crate::error::MantaError::ExternalService {
+        Err(crate::error::SyscityError::ExternalService {
             source: "All providers in fallback chain failed for streaming".to_string(),
             cause: last_error.map(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
         })
@@ -249,7 +249,7 @@ mod tests {
         }
         async fn complete(&self, _req: CompletionRequest) -> crate::Result<CompletionResponse> {
             if self.fail_complete {
-                Err(crate::error::MantaError::Internal("fail".to_string()))
+                Err(crate::error::SyscityError::Internal("fail".to_string()))
             } else {
                 Ok(CompletionResponse {
                     message: Message::assistant("ok"),
@@ -261,7 +261,7 @@ mod tests {
         }
         async fn stream(&self, _req: CompletionRequest) -> crate::Result<CompletionStream> {
             if self.fail_stream {
-                Err(crate::error::MantaError::Internal("fail".to_string()))
+                Err(crate::error::SyscityError::Internal("fail".to_string()))
             } else {
                 Ok(Box::pin(tokio_stream::iter(vec![])))
             }

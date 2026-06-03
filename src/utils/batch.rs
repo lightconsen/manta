@@ -1,4 +1,4 @@
-//! Request batching utilities for Manta
+//! Request batching utilities for Syscity
 //!
 //! Provides batching of requests to improve throughput and reduce overhead.
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Manta Systemd Service Installation Script
+# Syscity Systemd Service Installation Script
 # Run as root or with sudo
 
 set -e
@@ -11,13 +11,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-MANTA_USER="manta"
-MANTA_GROUP="manta"
-MANTA_HOME="/var/lib/manta"
-MANTA_CONFIG="/etc/manta"
-BINARY_PATH="/usr/local/bin/manta"
+SYSCITY_USER="syscity"
+SYSCITY_GROUP="syscity"
+SYSCITY_HOME="/var/lib/syscity"
+SYSCITY_CONFIG="/etc/syscity"
+BINARY_PATH="/usr/local/bin/syscity"
 
-echo -e "${GREEN}Installing Manta AI Assistant Systemd Service...${NC}"
+echo -e "${GREEN}Installing Syscity AI Assistant Systemd Service...${NC}"
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -25,12 +25,12 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Check if manta binary exists
+# Check if syscity binary exists
 if [ ! -f "$BINARY_PATH" ]; then
-    echo -e "${YELLOW}Warning: Manta binary not found at $BINARY_PATH${NC}"
+    echo -e "${YELLOW}Warning: Syscity binary not found at $BINARY_PATH${NC}"
     echo "Please build and install the binary first:"
     echo "  cargo build --release"
-    echo "  sudo cp target/release/manta $BINARY_PATH"
+    echo "  sudo cp target/release/syscity $BINARY_PATH"
     read -p "Continue anyway? (y/N) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -40,63 +40,63 @@ fi
 
 # Create user and group
 echo -e "${GREEN}Creating user and group...${NC}"
-if ! id "$MANTA_USER" &>/dev/null; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin "$MANTA_USER"
-    echo "Created user: $MANTA_USER"
+if ! id "$SYSCITY_USER" &>/dev/null; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin "$SYSCITY_USER"
+    echo "Created user: $SYSCITY_USER"
 else
-    echo "User $MANTA_USER already exists"
+    echo "User $SYSCITY_USER already exists"
 fi
 
 # Create directories
 echo -e "${GREEN}Creating directories...${NC}"
-mkdir -p "$MANTA_HOME"
-mkdir -p "$MANTA_CONFIG"
-mkdir -p "$MANTA_CONFIG/skills"
+mkdir -p "$SYSCITY_HOME"
+mkdir -p "$SYSCITY_CONFIG"
+mkdir -p "$SYSCITY_CONFIG/skills"
 
 # Set permissions
-chown -R "$MANTA_USER:$MANTA_GROUP" "$MANTA_HOME"
-chown -R "$MANTA_USER:$MANTA_GROUP" "$MANTA_CONFIG"
-chmod 750 "$MANTA_HOME"
-chmod 755 "$MANTA_CONFIG"
+chown -R "$SYSCITY_USER:$SYSCITY_GROUP" "$SYSCITY_HOME"
+chown -R "$SYSCITY_USER:$SYSCITY_GROUP" "$SYSCITY_CONFIG"
+chmod 750 "$SYSCITY_HOME"
+chmod 755 "$SYSCITY_CONFIG"
 
 # Copy service file
 echo -e "${GREEN}Installing systemd service...${NC}"
-cp "$(dirname "$0")/manta.service" /etc/systemd/system/
+cp "$(dirname "$0")/syscity.service" /etc/systemd/system/
 
 # Create environment file template
-ENV_FILE="$MANTA_CONFIG/manta.env"
+ENV_FILE="$SYSCITY_CONFIG/syscity.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo -e "${GREEN}Creating environment file template...${NC}"
     cat > "$ENV_FILE" << 'EOF'
-# Manta AI Assistant Environment Configuration
+# Syscity AI Assistant Environment Configuration
 # Add your API keys and configuration here
 
 # Required: LLM Provider
-MANTA_BASE_URL=https://api.openai.com/v1
-MANTA_API_KEY=your_api_key_here
-MANTA_MODEL=gpt-4o-mini
+SYSCITY_BASE_URL=https://api.openai.com/v1
+SYSCITY_API_KEY=your_api_key_here
+SYSCITY_MODEL=gpt-4o-mini
 
 # Optional: Anthropic API format
-# MANTA_IS_ANTHROPIC=false
+# SYSCITY_IS_ANTHROPIC=false
 
 # Optional: Agent Configuration
-# MANTA_AGENT_NAME=Manta
+# SYSCITY_AGENT_NAME=Syscity
 
 # Optional: Security
-# MANTA_ALLOW_SHELL=true
-# MANTA_SANDBOXED=true
+# SYSCITY_ALLOW_SHELL=true
+# SYSCITY_SANDBOXED=true
 EOF
     chmod 600 "$ENV_FILE"
-    chown "$MANTA_USER:$MANTA_GROUP" "$ENV_FILE"
+    chown "$SYSCITY_USER:$SYSCITY_GROUP" "$ENV_FILE"
     echo -e "${YELLOW}Please edit $ENV_FILE with your API keys${NC}"
 fi
 
 # Create config.yaml template
-CONFIG_FILE="$MANTA_CONFIG/config.yaml"
+CONFIG_FILE="$SYSCITY_CONFIG/config.yaml"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo -e "${GREEN}Creating config.yaml template...${NC}"
     cat > "$CONFIG_FILE" << 'EOF'
-# Manta AI Assistant Configuration
+# Syscity AI Assistant Configuration
 
 provider:
   type: openai
@@ -104,9 +104,9 @@ provider:
   temperature: 0.7
 
 agent:
-  name: Manta
+  name: Syscity
   system_prompt: |
-    You are Manta, a helpful AI assistant.
+    You are Syscity, a helpful AI assistant.
     You have access to tools for file operations,
     web search, shell commands, and more.
 
@@ -121,7 +121,7 @@ security:
   max_budget: 50
 EOF
     chmod 644 "$CONFIG_FILE"
-    chown "$MANTA_USER:$MANTA_GROUP" "$CONFIG_FILE"
+    chown "$SYSCITY_USER:$SYSCITY_GROUP" "$CONFIG_FILE"
 fi
 
 # Reload systemd
@@ -129,8 +129,8 @@ echo -e "${GREEN}Reloading systemd...${NC}"
 systemctl daemon-reload
 
 # Enable service
-echo -e "${GREEN}Enabling manta service...${NC}"
-systemctl enable manta.service
+echo -e "${GREEN}Enabling syscity service...${NC}"
+systemctl enable syscity.service
 
 echo
 echo -e "${GREEN}Installation complete!${NC}"
@@ -138,8 +138,8 @@ echo
 echo "Next steps:"
 echo "  1. Edit $ENV_FILE with your API keys"
 echo "  2. Customize $CONFIG_FILE as needed"
-echo "  3. Copy example skills: cp -r examples/skills/* $MANTA_CONFIG/skills/"
-echo "  4. Start the service: sudo systemctl start manta"
-echo "  5. Check status: sudo systemctl status manta"
-echo "  6. View logs: sudo journalctl -u manta -f"
+echo "  3. Copy example skills: cp -r examples/skills/* $SYSCITY_CONFIG/skills/"
+echo "  4. Start the service: sudo systemctl start syscity"
+echo "  5. Check status: sudo systemctl status syscity"
+echo "  6. View logs: sudo journalctl -u syscity -f"
 echo

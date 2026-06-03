@@ -2,7 +2,7 @@
 name: github
 description: "GitHub operations via gh CLI"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "github"

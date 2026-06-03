@@ -1,4 +1,4 @@
-//! Manta WebSocket Protocol
+//! Syscity WebSocket Protocol
 //!
 //! Implements the WebSocket-native RPC protocol defined in docs/protocol.md.
 //! Uses req/res/event framing aligned with OpenClaw's protocol.
@@ -194,7 +194,7 @@ pub struct ServerInfo {
 
 // ── Scopes (Operator Scope system) ────────────────────────────────────────────
 //
-// Manta uses an Operator Scope model aligned with OpenClaw's
+// Syscity uses an Operator Scope model aligned with OpenClaw's
 // `method-scopes.ts`. Each WebSocket method declares a required scope;
 // the gateway verifies the connection's granted scopes before dispatch.
 //

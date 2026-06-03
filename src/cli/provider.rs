@@ -1,8 +1,8 @@
-//! Provider management commands for Manta
+//! Provider management commands for Syscity
 //!
 //! Top-level CLI for listing, enabling, disabling, and switching model providers.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -105,7 +105,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -119,7 +119,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -137,7 +137,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -155,7 +155,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -174,7 +174,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -188,7 +188,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -224,7 +224,7 @@ pub async fn run_provider_command(
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -312,7 +312,7 @@ async fn run_auth_command(
         oauth_callback::wait_for_callback(redirect_port, timeout_secs).await?;
 
     if returned_state != flow.state() {
-        return Err(MantaError::ExternalService {
+        return Err(SyscityError::ExternalService {
             source: "OAuth state mismatch — possible CSRF attack".to_string(),
             cause: None,
         });

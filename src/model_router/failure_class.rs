@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::MantaError;
+use crate::error::SyscityError;
 
 /// Classified failure type for a provider request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ impl FailureClass {
     ///
     /// When the status code is known (e.g. from an HTTP response), it is used
     /// as the primary signal.  Otherwise the error message is parsed.
-    pub fn from_error(error: &MantaError, status_code: Option<u16>) -> Self {
+    pub fn from_error(error: &SyscityError, status_code: Option<u16>) -> Self {
         if let Some(code) = status_code {
             return Self::from_status_code(code, error);
         }
@@ -113,7 +113,7 @@ impl FailureClass {
     // Private helpers
     // ------------------------------------------------------------------
 
-    fn from_status_code(code: u16, error: &MantaError) -> Self {
+    fn from_status_code(code: u16, error: &SyscityError) -> Self {
         match code {
             400 => {
                 let msg = error.to_string().to_lowercase();
@@ -156,7 +156,7 @@ impl FailureClass {
         }
     }
 
-    fn from_error_string(error: &MantaError) -> Self {
+    fn from_error_string(error: &SyscityError) -> Self {
         let msg = error.to_string().to_lowercase();
 
         // Extract status code from message if present (e.g. "OpenAI API error 429: ...")
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_401() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "OpenAI API error 401: Unauthorized".into(),
             cause: None,
         };
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_403_billing() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "OpenAI API error 403: Billing quota exceeded".into(),
             cause: None,
         };
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_429() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Anthropic API error 429: Rate limit".into(),
             cause: None,
         };
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_404_model_not_found() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Model gpt-99 not found".into(),
             cause: None,
         };
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_400_context_length() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Context length too long".into(),
             cause: None,
         };
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_400_content_policy() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Content policy violation".into(),
             cause: None,
         };
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_from_status_code_503() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Service overloaded".into(),
             cause: None,
         };
@@ -306,14 +306,14 @@ mod tests {
 
     #[test]
     fn test_from_error_string_timeout() {
-        let err = MantaError::Internal("request timed out".into());
+        let err = SyscityError::Internal("request timed out".into());
         let class = FailureClass::from_error(&err, None);
         assert_eq!(class, FailureClass::Timeout);
     }
 
     #[test]
     fn test_extract_status_code_from_message() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "OpenAI API error 429: Too many requests".into(),
             cause: None,
         };
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_extract_status_code_from_message_anthropic() {
-        let err = MantaError::ExternalService {
+        let err = SyscityError::ExternalService {
             source: "Anthropic API error 401: invalid x-api-key".into(),
             cause: None,
         };
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_unknown_error() {
-        let err = MantaError::Internal("something weird".into());
+        let err = SyscityError::Internal("something weird".into());
         let class = FailureClass::from_error(&err, None);
         assert_eq!(class, FailureClass::Unknown);
         assert!(!class.is_retryable());

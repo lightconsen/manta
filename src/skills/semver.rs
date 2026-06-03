@@ -27,27 +27,27 @@ impl Version {
 }
 
 impl FromStr for Version {
-    type Err = crate::error::MantaError;
+    type Err = crate::error::SyscityError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
         let trimmed = s.trim_start_matches('v').trim_start_matches('V');
         let parts: Vec<&str> = trimmed.split('.').collect();
 
         if parts.len() != 3 {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Invalid version '{}': expected major.minor.patch",
                 s
             )));
         }
 
         let major = parts[0].parse::<u64>().map_err(|_| {
-            crate::error::MantaError::Validation(format!("Invalid major version in '{}'", s))
+            crate::error::SyscityError::Validation(format!("Invalid major version in '{}'", s))
         })?;
         let minor = parts[1].parse::<u64>().map_err(|_| {
-            crate::error::MantaError::Validation(format!("Invalid minor version in '{}'", s))
+            crate::error::SyscityError::Validation(format!("Invalid minor version in '{}'", s))
         })?;
         let patch = parts[2].parse::<u64>().map_err(|_| {
-            crate::error::MantaError::Validation(format!("Invalid patch version in '{}'", s))
+            crate::error::SyscityError::Validation(format!("Invalid patch version in '{}'", s))
         })?;
 
         Ok(Self { major, minor, patch })
@@ -123,7 +123,7 @@ impl VersionReq {
 }
 
 impl FromStr for VersionReq {
-    type Err = crate::error::MantaError;
+    type Err = crate::error::SyscityError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
         let s = s.trim();

@@ -325,12 +325,12 @@ impl Channel for SlackChannel {
                 .send()
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Slack API request failed: {}", e))
+                    crate::error::SyscityError::Internal(format!("Slack API request failed: {}", e))
                 })?;
 
             let status = resp.status();
             if !status.is_success() {
-                return Err(crate::error::MantaError::Internal(format!(
+                return Err(crate::error::SyscityError::Internal(format!(
                     "Slack API returned error: {}",
                     status
                 )));
@@ -344,7 +344,7 @@ impl Channel for SlackChannel {
 
         #[cfg(not(feature = "slack"))]
         {
-            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
@@ -384,7 +384,7 @@ impl Channel for SlackChannel {
                 .send()
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Slack send failed: {}", e))
+                    crate::error::SyscityError::Internal(format!("Slack send failed: {}", e))
                 })?;
 
             let resp_status = resp.status();
@@ -404,7 +404,7 @@ impl Channel for SlackChannel {
                 debug!("Slack message sent successfully");
                 Ok(msg_id)
             } else {
-                Err(crate::error::MantaError::Internal(format!(
+                Err(crate::error::SyscityError::Internal(format!(
                     "Slack API error: {} — {}",
                     resp_status,
                     resp_json["error"].as_str().unwrap_or("unknown")
@@ -415,7 +415,7 @@ impl Channel for SlackChannel {
         #[cfg(not(feature = "slack"))]
         {
             let _ = message;
-            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
@@ -431,7 +431,7 @@ impl Channel for SlackChannel {
             let (slack_channel, slack_ts) = {
                 let map = self.message_ids.read().await;
                 map.get(&msg_key).cloned().ok_or_else(|| {
-                    crate::error::MantaError::NotFound {
+                    crate::error::SyscityError::NotFound {
                         resource: format!(
                             "Slack message {} not found in tracking (may have been sent before bot started)",
                             msg_key
@@ -453,12 +453,12 @@ impl Channel for SlackChannel {
                 .send()
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Slack edit request failed: {}", e))
+                    crate::error::SyscityError::Internal(format!("Slack edit request failed: {}", e))
                 })?;
 
             let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
             if !resp_json["ok"].as_bool().unwrap_or(false) {
-                return Err(crate::error::MantaError::ExternalService {
+                return Err(crate::error::SyscityError::ExternalService {
                     source: format!(
                         "Slack chat.update failed: {}",
                         resp_json["error"].as_str().unwrap_or("unknown")
@@ -473,7 +473,7 @@ impl Channel for SlackChannel {
         #[cfg(not(feature = "slack"))]
         {
             let _ = (message_id, new_content);
-            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Slack feature not enabled".to_string()))
         }
     }
 
@@ -484,7 +484,7 @@ impl Channel for SlackChannel {
             let (slack_channel, slack_ts) = {
                 let map = self.message_ids.read().await;
                 map.get(&msg_key).cloned().ok_or_else(|| {
-                    crate::error::MantaError::NotFound {
+                    crate::error::SyscityError::NotFound {
                         resource: format!(
                             "Slack message {} not found in tracking (may have been sent before bot started)",
                             msg_key
@@ -505,7 +505,7 @@ impl Channel for SlackChannel {
                 .send()
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!(
+                    crate::error::SyscityError::Internal(format!(
                         "Slack delete request failed: {}",
                         e
                     ))
@@ -513,7 +513,7 @@ impl Channel for SlackChannel {
 
             let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();
             if !resp_json["ok"].as_bool().unwrap_or(false) {
-                return Err(crate::error::MantaError::ExternalService {
+                return Err(crate::error::SyscityError::ExternalService {
                     source: format!(
                         "Slack chat.delete failed: {}",
                         resp_json["error"].as_str().unwrap_or("unknown")
@@ -532,7 +532,7 @@ impl Channel for SlackChannel {
         #[cfg(not(feature = "slack"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Slack feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Slack feature not enabled".to_string()))
         }
     }
 

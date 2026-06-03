@@ -201,13 +201,13 @@ impl KnowledgeGraph {
     /// Save the knowledge graph to disk as JSON.
     pub async fn save_to_disk(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
         let json =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Storage {
+            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to serialize knowledge graph".to_string(),
                 details: e.to_string(),
             })?;
         if let Some(parent) = path.as_ref().parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to create knowledge graph directory: {:?}", parent),
                     details: e.to_string(),
                 }
@@ -215,7 +215,7 @@ impl KnowledgeGraph {
         }
         tokio::fs::write(path, json)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to write knowledge graph".to_string(),
                 details: e.to_string(),
             })?;
@@ -225,12 +225,12 @@ impl KnowledgeGraph {
     /// Load the knowledge graph from disk.
     pub async fn load_from_disk(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
         let json = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: "Failed to read knowledge graph".to_string(),
                 details: e.to_string(),
             }
         })?;
-        serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
+        serde_json::from_str(&json).map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to deserialize knowledge graph".to_string(),
             details: e.to_string(),
         })
@@ -1255,14 +1255,14 @@ impl DreamReviewQueue {
         }
         let items = self.items.read().await;
         let json = serde_json::to_string_pretty(&*items).map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: "Failed to serialize review queue".to_string(),
                 details: e.to_string(),
             }
         })?;
         tokio::fs::write(path, json)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to write review queue".to_string(),
                 details: e.to_string(),
             })?;
@@ -1276,13 +1276,13 @@ impl DreamReviewQueue {
             return Ok(Self::new());
         }
         let json = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: "Failed to read review queue".to_string(),
                 details: e.to_string(),
             }
         })?;
         let items: Vec<DreamReviewItem> =
-            serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
+            serde_json::from_str(&json).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to deserialize review queue".to_string(),
                 details: e.to_string(),
             })?;

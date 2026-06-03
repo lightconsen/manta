@@ -1,4 +1,4 @@
-//! Runtime Audit Log for Manta
+//! Runtime Audit Log for Syscity
 //!
 //! Provides an in-memory ring buffer of audit entries capturing runtime
 //! security-relevant events: access decisions, pairing operations,

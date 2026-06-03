@@ -35,7 +35,7 @@ impl HeartbeatTool {
                 Ok(c) => c,
                 Err(e) => {
                     error!("Failed to read HEARTBEAT.md for {}: {}", agent_id, e);
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("Failed to read HEARTBEAT.md: {}", e),
                         cause: Some(Box::new(e)),
                     });
@@ -57,7 +57,7 @@ impl HeartbeatTool {
         if let Some(parent) = path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
                 error!("Failed to create agent directory for {}: {}", agent_id, e);
-                return Err(crate::error::MantaError::ExternalService {
+                return Err(crate::error::SyscityError::ExternalService {
                     source: format!("Failed to create directory: {}", e),
                     cause: Some(Box::new(e)),
                 });
@@ -71,7 +71,7 @@ impl HeartbeatTool {
             }
             Err(e) => {
                 error!("Failed to write HEARTBEAT.md for {}: {}", agent_id, e);
-                Err(crate::error::MantaError::ExternalService {
+                Err(crate::error::SyscityError::ExternalService {
                     source: format!("Failed to write HEARTBEAT.md: {}", e),
                     cause: Some(Box::new(e)),
                 })
@@ -180,11 +180,11 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("action is required".to_string())
+            crate::error::SyscityError::Validation("action is required".to_string())
         })?;
 
         let raw_agent_id = args["agent_id"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("agent_id is required".to_string())
+            crate::error::SyscityError::Validation("agent_id is required".to_string())
         })?;
 
         // Resolve "me" or "self" to the actual agent ID
@@ -253,7 +253,7 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
 
             "update" => {
                 let content = args["content"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "content is required for update action".to_string(),
                     )
                 })?;
@@ -275,19 +275,19 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
 
             "add_task" => {
                 let task_name = args["task_name"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "task_name is required for add_task action".to_string(),
                     )
                 })?;
 
                 let task_interval = args["task_interval"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "task_interval is required for add_task action".to_string(),
                     )
                 })?;
 
                 let task_prompt = args["task_prompt"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "task_prompt is required for add_task action".to_string(),
                     )
                 })?;
@@ -311,7 +311,7 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
                 // Parse interval
                 let interval =
                     crate::heartbeat::parser::parse_duration(task_interval).ok_or_else(|| {
-                        crate::error::MantaError::Validation(format!(
+                        crate::error::SyscityError::Validation(format!(
                             "Invalid interval format: {}. Use formats like '5m', '1h', '30s'.",
                             task_interval
                         ))
@@ -342,7 +342,7 @@ You may also use "me" or "self" as agent_id to refer to yourself."#
 
             "remove_task" => {
                 let task_name = args["task_name"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "task_name is required for remove_task action".to_string(),
                     )
                 })?;

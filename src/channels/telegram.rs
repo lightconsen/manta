@@ -372,7 +372,7 @@ impl Channel for TelegramChannel {
 
         #[cfg(not(feature = "telegram"))]
         {
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -390,7 +390,7 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
@@ -399,7 +399,7 @@ impl Channel for TelegramChannel {
 
             let chat_id: i64 = chat_id_str.parse().map_err(|e| {
                 error!("DEBUG: Failed to parse chat_id '{}': {:?}", chat_id_str, e);
-                crate::error::MantaError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
+                crate::error::SyscityError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
             })?;
 
             // Format content
@@ -433,7 +433,7 @@ impl Channel for TelegramChannel {
             }
 
             let sent = req.await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Telegram send error: {}", e))
+                crate::error::SyscityError::Internal(format!("Telegram send error: {}", e))
             })?;
 
             // Store the message ID mapping for edit/delete operations
@@ -450,7 +450,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = message;
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -460,19 +460,19 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
             let chat_id: i64 = conversation_id
                 .0
                 .parse()
-                .map_err(|_| crate::error::MantaError::Validation("Invalid chat ID".to_string()))?;
+                .map_err(|_| crate::error::SyscityError::Validation("Invalid chat ID".to_string()))?;
 
             bot.send_chat_action(ChatId(chat_id), teloxide::types::ChatAction::Typing)
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram typing error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram typing error: {}", e))
                 })?;
 
             Ok(())
@@ -481,7 +481,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = conversation_id;
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -491,7 +491,7 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
@@ -499,7 +499,7 @@ impl Channel for TelegramChannel {
             let (chat_id, telegram_msg_id) = {
                 let map = self.message_map.read().await;
                 map.get(&message_id).copied().ok_or_else(|| {
-                    crate::error::MantaError::Validation(format!(
+                    crate::error::SyscityError::Validation(format!(
                         "Message ID {} not found",
                         message_id
                     ))
@@ -510,7 +510,7 @@ impl Channel for TelegramChannel {
             bot.edit_message_text(ChatId(chat_id), MessageId(telegram_msg_id), new_content)
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram edit error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram edit error: {}", e))
                 })?;
 
             info!("Edited message {} in chat {}", telegram_msg_id, chat_id);
@@ -520,7 +520,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = (message_id, new_content);
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -530,7 +530,7 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
@@ -538,7 +538,7 @@ impl Channel for TelegramChannel {
             let (chat_id, telegram_msg_id) = {
                 let map = self.message_map.read().await;
                 map.get(&message_id).copied().ok_or_else(|| {
-                    crate::error::MantaError::Validation(format!(
+                    crate::error::SyscityError::Validation(format!(
                         "Message ID {} not found",
                         message_id
                     ))
@@ -549,7 +549,7 @@ impl Channel for TelegramChannel {
             bot.delete_message(ChatId(chat_id), MessageId(telegram_msg_id))
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram delete error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram delete error: {}", e))
                 })?;
 
             // Remove from mapping after successful deletion
@@ -565,7 +565,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -593,13 +593,13 @@ impl Channel for TelegramChannel {
 
     async fn add_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
         // teloxide 0.12 does not expose set_message_reaction (Bot API 7.0+)
-        Err(crate::MantaError::Unsupported(
+        Err(crate::SyscityError::Unsupported(
             "Telegram reactions require teloxide >= 0.13".into(),
         ))
     }
 
     async fn remove_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
-        Err(crate::MantaError::Unsupported(
+        Err(crate::SyscityError::Unsupported(
             "Telegram reactions require teloxide >= 0.13".into(),
         ))
     }
@@ -610,14 +610,14 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
             let (chat_id, telegram_msg_id) = {
                 let map = self.message_map.read().await;
                 map.get(&message_id).copied().ok_or_else(|| {
-                    crate::error::MantaError::Validation(format!(
+                    crate::error::SyscityError::Validation(format!(
                         "Message ID {} not found",
                         message_id
                     ))
@@ -627,7 +627,7 @@ impl Channel for TelegramChannel {
             bot.pin_chat_message(ChatId(chat_id), MessageId(telegram_msg_id))
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram pin error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram pin error: {}", e))
                 })?;
 
             Ok(())
@@ -636,7 +636,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -646,14 +646,14 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
             let (chat_id, telegram_msg_id) = {
                 let map = self.message_map.read().await;
                 map.get(&message_id).copied().ok_or_else(|| {
-                    crate::error::MantaError::Validation(format!(
+                    crate::error::SyscityError::Validation(format!(
                         "Message ID {} not found",
                         message_id
                     ))
@@ -664,7 +664,7 @@ impl Channel for TelegramChannel {
                 .message_id(MessageId(telegram_msg_id))
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram unpin error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram unpin error: {}", e))
                 })?;
 
             Ok(())
@@ -673,7 +673,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 
@@ -684,7 +684,7 @@ impl Channel for TelegramChannel {
     ) -> crate::Result<ConversationId> {
         // Telegram does not have a native "create thread from message" API
         // Forum topics exist but require a forum supergroup
-        Err(crate::MantaError::Unsupported(
+        Err(crate::SyscityError::Unsupported(
             "Telegram does not support thread creation from messages".into(),
         ))
     }
@@ -700,14 +700,14 @@ impl Channel for TelegramChannel {
             let bot = {
                 let bot_guard = self.bot.read().await;
                 bot_guard.as_ref().cloned().ok_or_else(|| {
-                    crate::error::MantaError::Internal("Bot not initialized".to_string())
+                    crate::error::SyscityError::Internal("Bot not initialized".to_string())
                 })?
             };
 
             let chat_id: i64 = conversation_id
                 .0
                 .parse()
-                .map_err(|_| crate::error::MantaError::Validation("Invalid chat ID".to_string()))?;
+                .map_err(|_| crate::error::SyscityError::Validation("Invalid chat ID".to_string()))?;
 
             let poll_options: Vec<String> = options.into_iter().collect();
 
@@ -715,7 +715,7 @@ impl Channel for TelegramChannel {
                 .send_poll(ChatId(chat_id), question, poll_options)
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Telegram poll error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Telegram poll error: {}", e))
                 })?;
 
             let internal_id = Id::new();
@@ -731,7 +731,7 @@ impl Channel for TelegramChannel {
         #[cfg(not(feature = "telegram"))]
         {
             let _ = (conversation_id, question, options);
-            Err(crate::error::MantaError::Internal("Telegram feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Telegram feature not enabled".to_string()))
         }
     }
 }
@@ -805,7 +805,7 @@ async fn handle_message_with_sender(
                                         Your pairing code: **{}**\n\n\
                                         Please share this code with an admin to get access.\n\
                                         Or ask an admin to run:\n\
-                                        `manta pairing approve telegram {}`",
+                                        `syscity pairing approve telegram {}`",
                                         code, code
                                     ),
                                 )

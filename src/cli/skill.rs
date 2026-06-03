@@ -1,7 +1,7 @@
-//! Skill management commands for Manta
+//! Skill management commands for Syscity
 
 use crate::cli::OutputFormat;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use crate::skills::{install_all, SkillFile};
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -109,8 +109,8 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -123,7 +123,7 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -138,10 +138,10 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
             let skill_dir = crate::dirs::skills_dir().join(name);
             if !skill_dir.exists() {
                 eprintln!("Skill '{}' not found at {:?}", name, skill_dir);
-                return Err(MantaError::Internal(format!("Skill '{}' not installed", name)));
+                return Err(SyscityError::Internal(format!("Skill '{}' not installed", name)));
             }
             tokio::fs::remove_dir_all(&skill_dir).await.map_err(|e| {
-                MantaError::Internal(format!("Failed to remove skill directory: {}", e))
+                SyscityError::Internal(format!("Failed to remove skill directory: {}", e))
             })?;
             println!("Skill '{}' uninstalled", name);
         }
@@ -159,7 +159,7 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -177,7 +177,7 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -211,7 +211,7 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -251,23 +251,23 @@ async fn install_skill_local(source: &str, name: Option<&str>) -> Result<()> {
             ])
             .status()
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to run git clone: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to run git clone: {}", e)))?;
         if !status.success() {
-            return Err(MantaError::Internal(format!("git clone failed for '{}'", source)));
+            return Err(SyscityError::Internal(format!("git clone failed for '{}'", source)));
         }
     } else {
         // Local directory copy
         let src_path = std::path::Path::new(source);
         if !src_path.exists() {
-            return Err(MantaError::Internal(format!("Source path does not exist: {}", source)));
+            return Err(SyscityError::Internal(format!("Source path does not exist: {}", source)));
         }
         copy_dir_recursive(src_path, &dest)
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to copy skill directory: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to copy skill directory: {}", e)))?;
     }
 
     println!("Skill '{}' installed to {:?}", skill_name, dest);
-    println!("Run 'manta skill setup {}' to install its dependencies.", skill_name);
+    println!("Run 'syscity skill setup {}' to install its dependencies.", skill_name);
     Ok(())
 }
 
@@ -313,7 +313,7 @@ async fn setup_skill_deps(name: Option<&str>) -> Result<()> {
         }
         let content = tokio::fs::read_to_string(&skill_md)
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to read {:?}: {}", skill_md, e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to read {:?}: {}", skill_md, e)))?;
 
         let skill_file = match SkillFile::parse(&content, skill_md.clone()) {
             Ok(sf) => sf,
@@ -357,7 +357,7 @@ async fn init_skill_template(
     };
 
     tokio::fs::create_dir_all(&target_dir).await.map_err(|e| {
-        MantaError::Internal(format!("Failed to create directory {:?}: {}", target_dir, e))
+        SyscityError::Internal(format!("Failed to create directory {:?}: {}", target_dir, e))
     })?;
 
     let skill_md_content = match template {
@@ -405,7 +405,7 @@ install: []
     let skill_md_path = target_dir.join("SKILL.md");
     tokio::fs::write(&skill_md_path, skill_md_content)
         .await
-        .map_err(|e| MantaError::Internal(format!("Failed to write SKILL.md: {}", e)))?;
+        .map_err(|e| SyscityError::Internal(format!("Failed to write SKILL.md: {}", e)))?;
 
     println!("Created skill '{}' at {:?}", name, target_dir);
     println!("Edit {:?} to configure your skill.", skill_md_path);

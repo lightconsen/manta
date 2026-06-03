@@ -108,10 +108,10 @@ fn content_key(text: &str) -> String {
 ///
 /// ```rust,no_run
 /// # use std::sync::Arc;
-/// # use manta::memory::hybrid::{HybridSearchConfig, hybrid_search};
+/// # use syscity::memory::hybrid::{HybridSearchConfig, hybrid_search};
 /// # async fn example(
-/// #     vector: Arc<manta::memory::VectorMemoryService>,
-/// #     fts: Arc<manta::memory::SessionSearch>,
+/// #     vector: Arc<syscity::memory::VectorMemoryService>,
+/// #     fts: Arc<syscity::memory::SessionSearch>,
 /// # ) {
 /// let results = hybrid_search("what did we decide about the API?", &vector, &fts,
 ///                              &HybridSearchConfig::default()).await;
@@ -330,7 +330,7 @@ impl Default for MmrConfig {
 /// # Example
 ///
 /// ```rust
-/// use manta::memory::hybrid::{HybridSearchResult, MmrConfig, mmr_rerank};
+/// use syscity::memory::hybrid::{HybridSearchResult, MmrConfig, mmr_rerank};
 ///
 /// let results = vec![
 ///     HybridSearchResult { content: "Rust ownership model".into(), score: 0.9,

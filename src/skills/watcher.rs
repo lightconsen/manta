@@ -98,7 +98,7 @@ impl SkillWatcher {
             }
         })
         .map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to create file watcher: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to create file watcher: {}", e))
         })?;
 
         // Watch all provided paths
@@ -180,7 +180,7 @@ impl SkillWatcher {
                 Err(e) => error!("File watcher error: {}", e),
             })
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!(
+                crate::error::SyscityError::Internal(format!(
                     "Failed to recreate file watcher: {}",
                     e
                 ))

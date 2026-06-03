@@ -9,7 +9,7 @@
 //!
 //! ```markdown
 //! ---
-//! name: Manta
+//! name: Syscity
 //! persona: Helpful AI assistant with a curious edge
 //! voice: concise, direct, no filler
 //! emoji: "🦑"
@@ -208,7 +208,7 @@ impl SoulFile {
             .to_string();
 
         let config: SoulConfig = serde_yaml::from_str(yaml_text).map_err(|e| {
-            crate::error::MantaError::Validation(format!(
+            crate::error::SyscityError::Validation(format!(
                 "Failed to parse SOUL.md frontmatter: {}",
                 e
             ))
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn test_soul_config_prompt_fragment() {
         let config = SoulConfig {
-            name: Some("Manta".to_string()),
+            name: Some("Syscity".to_string()),
             persona: Some("Helpful squid".to_string()),
             voice: Some("concise".to_string()),
             emoji: Some("🦑".to_string()),
@@ -261,7 +261,7 @@ mod tests {
         };
 
         let fragment = config.to_prompt_fragment();
-        assert!(fragment.contains("**Name**: Manta"));
+        assert!(fragment.contains("**Name**: Syscity"));
         assert!(fragment.contains("**Persona**: Helpful squid"));
         assert!(fragment.contains("**Voice**: concise"));
         assert!(fragment.contains("**Emoji**: 🦑"));
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn test_soul_file_parse_with_frontmatter() {
         let content = r#"---
-name: Manta
+name: Syscity
 persona: Curious AI
 voice: snarky
 emoji: "🦑"
@@ -289,7 +289,7 @@ Be helpful.
 
         let soul = SoulFile::parse(content).unwrap();
         assert!(soul.has_frontmatter);
-        assert_eq!(soul.config.name, Some("Manta".to_string()));
+        assert_eq!(soul.config.name, Some("Syscity".to_string()));
         assert_eq!(soul.config.persona, Some("Curious AI".to_string()));
         assert_eq!(soul.config.voice, Some("snarky".to_string()));
         assert_eq!(soul.config.emoji, Some("🦑".to_string()));
@@ -332,7 +332,7 @@ Be helpful.
     #[test]
     fn test_soul_file_invalid_frontmatter_falls_back() {
         // Opening --- but no closing ---
-        let content = "---\nname: Manta\n# No closing delimiter";
+        let content = "---\nname: Syscity\n# No closing delimiter";
         let soul = SoulFile::parse(content).unwrap();
         assert!(!soul.has_frontmatter);
         assert_eq!(soul.config.name, None);

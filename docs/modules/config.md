@@ -22,7 +22,7 @@ Config File ──▶ File Watcher ──▶ HotReloadManager ──▶ ConfigCh
 ### Supported Config Files
 
 - `config.yaml` / `config.toml` — Main configuration
-- `manta.yaml` — Workspace-level overrides
+- `syscity.yaml` — Workspace-level overrides
 - Feature-specific configs (channels, providers, memory)
 
 ## Key Types
@@ -48,4 +48,4 @@ pub struct HotReloadManager {
 - **📝 Partial**: Config schema validation beyond serde — `Config::validate()` performs manual checks (port != 0, log level enum, etc.). See `src/config.rs:724-755`. Missing: JSON Schema validation, cross-field validation.
 - **Missing**: Config migration system for version upgrades.
 - **Missing**: Encrypted secrets in config (currently uses separate secrets module).
-- **📝 Partial**: Environment variable interpolation — `load_from_env()` overrides specific fields via `MANTA_*` environment variables (`src/config.rs:614-721`). Missing: general interpolation syntax inside config files (e.g., `host = "${HOST}"`).
+- **📝 Partial**: Environment variable interpolation — `load_from_env()` overrides specific fields via `SYSCITY_*` environment variables (`src/config.rs:614-721`). Missing: general interpolation syntax inside config files (e.g., `host = "${HOST}"`).

@@ -1,4 +1,4 @@
-//! API Client for connecting to Manta daemon
+//! API Client for connecting to Syscity daemon
 //!
 //! Provides a client for CLI/web commands to connect to the running daemon.
 
@@ -166,13 +166,13 @@ impl DaemonClient {
         let url = format!("{}/health", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to connect: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to connect: {}", e))
             })?;
 
         let health: HealthResponse = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
 
         Ok(health)
     }
@@ -195,14 +195,14 @@ impl DaemonClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Server error: {}",
                 error_text
             )));
@@ -211,7 +211,7 @@ impl DaemonClient {
         let chat_response: ChatResponse = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
 
         Ok(chat_response)
     }
@@ -224,7 +224,7 @@ impl DaemonClient {
     ) -> crate::Result<ChatResponse> {
         let url = &self.ws_url;
         let (ws_stream, _) = connect_async(url).await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("WebSocket connect failed: {}", e))
+            crate::error::SyscityError::Internal(format!("WebSocket connect failed: {}", e))
         })?;
 
         let (mut write, mut read) = ws_stream.split();
@@ -235,10 +235,10 @@ impl DaemonClient {
             conversation_id: conversation_id.map(|s| s.to_string()),
         };
         let msg = serde_json::to_string(&request)
-            .map_err(|e| crate::error::MantaError::Internal(format!("JSON error: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("JSON error: {}", e)))?;
 
         write.send(Message::Text(msg)).await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("WebSocket send failed: {}", e))
+            crate::error::SyscityError::Internal(format!("WebSocket send failed: {}", e))
         })?;
 
         // Receive response
@@ -246,20 +246,20 @@ impl DaemonClient {
             match msg {
                 Ok(Message::Text(text)) => {
                     let response: ChatResponse = serde_json::from_str(&text).map_err(|e| {
-                        crate::error::MantaError::Internal(format!("Invalid response: {}", e))
+                        crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
                     })?;
                     Ok(response)
                 }
                 Ok(Message::Close(_)) => {
-                    Err(crate::error::MantaError::Internal("WebSocket closed".to_string()))
+                    Err(crate::error::SyscityError::Internal("WebSocket closed".to_string()))
                 }
                 Err(e) => {
-                    Err(crate::error::MantaError::Internal(format!("WebSocket error: {}", e)))
+                    Err(crate::error::SyscityError::Internal(format!("WebSocket error: {}", e)))
                 }
-                _ => Err(crate::error::MantaError::Internal("Unexpected message type".to_string())),
+                _ => Err(crate::error::SyscityError::Internal("Unexpected message type".to_string())),
             }
         } else {
-            Err(crate::error::MantaError::Internal("No response received".to_string()))
+            Err(crate::error::SyscityError::Internal("No response received".to_string()))
         }
     }
 
@@ -280,13 +280,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/status", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let status = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(status)
     }
 
@@ -295,13 +295,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let providers = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(providers)
     }
 
@@ -310,13 +310,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/models", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let models = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(models)
     }
 
@@ -325,13 +325,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/models/default", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let model = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(model)
     }
 
@@ -346,12 +346,12 @@ impl DaemonClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Request failed: {}", e)))?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -360,13 +360,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers/{}/enable", self.base_url, provider);
         let response =
             self.client.post(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -375,13 +375,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers/{}/disable", self.base_url, provider);
         let response =
             self.client.post(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -393,13 +393,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers/{}/check", self.base_url, provider);
         let response =
             self.client.post(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -408,13 +408,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/providers/fallback/{}", self.base_url, alias);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -423,13 +423,13 @@ impl DaemonClient {
         let url = format!("{}/api/v1/agents", self.base_url);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         let agents = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(agents)
     }
 
@@ -454,12 +454,12 @@ impl DaemonClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Request failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Request failed: {}", e)))?;
 
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 
@@ -475,11 +475,11 @@ impl DaemonClient {
         );
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Failed to get chat history: {}",
                 response.status()
             )));
@@ -488,7 +488,7 @@ impl DaemonClient {
         let history = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(history)
     }
 
@@ -500,11 +500,11 @@ impl DaemonClient {
         let url = format!("{}/api/v1/conversations/last?user_id={}", self.base_url, user_id);
         let response =
             self.client.get(&url).send().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Failed to get last conversation: {}",
                 response.status()
             )));
@@ -513,7 +513,7 @@ impl DaemonClient {
         let result = response
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::Internal(format!("Invalid response: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
         Ok(result)
     }
 }
@@ -679,16 +679,16 @@ pub async fn check_daemon() -> crate::Result<DaemonClient> {
             if health.agent == "ready" {
                 Ok(client)
             } else {
-                Err(crate::error::MantaError::Internal(
+                Err(crate::error::SyscityError::Internal(
                     "Daemon is running but AI agent is not configured.\n\
-                     Set MANTA_BASE_URL and MANTA_API_KEY, then restart daemon."
+                     Set SYSCITY_BASE_URL and SYSCITY_API_KEY, then restart daemon."
                         .to_string(),
                 ))
             }
         }
-        Err(_) => Err(crate::error::MantaError::Internal(
+        Err(_) => Err(crate::error::SyscityError::Internal(
             "Daemon is not running.\n\
-                 Start it with: manta start"
+                 Start it with: syscity start"
                 .to_string(),
         )),
     }

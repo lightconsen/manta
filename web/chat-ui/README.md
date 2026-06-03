@@ -1,6 +1,6 @@
-# Manta Chat UI (assistant-ui)
+# Syscity Chat UI (assistant-ui)
 
-Web frontend for Manta, built with [assistant-ui](https://assistant-ui.com) and the WebSocket-native protocol.
+Web frontend for Syscity, built with [assistant-ui](https://assistant-ui.com) and the WebSocket-native protocol.
 
 ## Build
 
@@ -18,5 +18,5 @@ If `assets/chat/index.html` does not exist, the server falls back to `assets/cha
 
 ## Architecture
 
-- `src/MantaWebSocketTransport.ts` — Custom `ChatModelAdapter` that speaks the Manta WebSocket protocol (`connect` handshake → `chat.send` → `chat.delta`/`chat.final` events).
+- `src/SyscityWebSocketTransport.ts` — Custom `ChatModelAdapter` that speaks the Syscity WebSocket protocol (`connect` handshake → `chat.send` → `chat.delta`/`chat.final` events).
 - `src/App.tsx` — React app wrapping `AssistantRuntimeProvider` + `Thread`.

@@ -1,4 +1,4 @@
-//! File operation tools for Manta
+//! File operation tools for Syscity
 //!
 //! Tools for reading, writing, and editing files.
 
@@ -79,7 +79,7 @@ impl Tool for FileReadTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let path_str = args["path"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'path' argument".to_string())
         })?;
 
         let path = context.resolve_path(std::path::Path::new(path_str));
@@ -108,7 +108,7 @@ impl Tool for FileReadTool {
         // Check file size
         let metadata = tokio_fs::metadata(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         if metadata.len() > MAX_FILE_SIZE {
             return Ok(ToolExecutionResult::error(format!(
@@ -124,7 +124,7 @@ impl Tool for FileReadTool {
         // Read file
         let data = tokio_fs::read(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         // Check if binary
         if Self::is_binary(&data) {
@@ -209,11 +209,11 @@ impl Tool for FileWriteTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let path_str = args["path"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'path' argument".to_string())
         })?;
 
         let content = args["content"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'content' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'content' argument".to_string())
         })?;
 
         let path = context.resolve_path(std::path::Path::new(path_str));
@@ -240,19 +240,19 @@ impl Tool for FileWriteTool {
         if let Some(parent) = path.parent() {
             tokio_fs::create_dir_all(parent)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
         }
 
         // Write file
         let mut file = tokio_fs::File::create(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         file.write_all(content.as_bytes())
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
-        file.flush().await.map_err(crate::error::MantaError::Io)?;
+        file.flush().await.map_err(crate::error::SyscityError::Io)?;
 
         info!("Wrote {} bytes to {}", content.len(), path.display());
 
@@ -312,15 +312,15 @@ impl Tool for FileEditTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let path_str = args["path"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'path' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'path' argument".to_string())
         })?;
 
         let old_string = args["old_string"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'old_string' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'old_string' argument".to_string())
         })?;
 
         let new_string = args["new_string"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'new_string' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'new_string' argument".to_string())
         })?;
 
         let path = context.resolve_path(std::path::Path::new(path_str));
@@ -344,7 +344,7 @@ impl Tool for FileEditTool {
         // Read file
         let content = tokio_fs::read_to_string(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         // Check if old_string exists
         if !content.contains(old_string) {
@@ -361,7 +361,7 @@ impl Tool for FileEditTool {
         // Write back
         tokio_fs::write(&path, new_content)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         info!("Made {} replacement(s) in {}", replacements, path.display());
 
@@ -417,7 +417,7 @@ impl Tool for GlobTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let pattern = args["pattern"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'pattern' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'pattern' argument".to_string())
         })?;
 
         let base_path = args["path"]
@@ -497,7 +497,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_write_and_read() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_test_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_test_{}.txt", uuid::Uuid::new_v4()));
 
         // Write
         let write_tool = FileWriteTool::new();
@@ -602,7 +602,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_read_binary() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_bin_{}.bin", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_bin_{}.bin", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, b"Hello\x00World")
             .await
@@ -621,7 +621,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_read_with_limit() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_limit_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_limit_{}.txt", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, "abcdefghij").await.unwrap();
 
@@ -677,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_write_without_backup() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_nobak_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_nobak_{}.txt", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, "original").await.unwrap();
 
@@ -702,7 +702,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_write_creates_parent_dirs() {
         let temp_dir = std::env::temp_dir();
-        let parent = temp_dir.join(format!("manta_parent_{}", uuid::Uuid::new_v4()));
+        let parent = temp_dir.join(format!("syscity_parent_{}", uuid::Uuid::new_v4()));
         let test_file = parent.join("nested/file.txt");
 
         let tool = FileWriteTool::new();
@@ -769,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_edit_string_not_found() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_edit_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_edit_{}.txt", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, "hello world").await.unwrap();
 
@@ -794,7 +794,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_edit_success() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_edit_ok_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_edit_ok_{}.txt", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, "foo bar foo").await.unwrap();
 
@@ -858,14 +858,14 @@ mod tests {
     #[tokio::test]
     async fn test_glob_success() {
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_glob_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_glob_{}.txt", uuid::Uuid::new_v4()));
 
         tokio_fs::write(&test_file, "test").await.unwrap();
 
         let tool = GlobTool::new();
         let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
         let args = serde_json::json!({
-            "pattern": "manta_glob_*.txt"
+            "pattern": "syscity_glob_*.txt"
         });
         let result = tool.execute(args, &context).await.unwrap();
         assert!(result.success);

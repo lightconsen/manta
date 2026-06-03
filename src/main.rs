@@ -1,14 +1,14 @@
-//! Manta - Main entry point
+//! Syscity - Main entry point
 //!
-//! This is the main entry point for the Manta application.
+//! This is the main entry point for the Syscity application.
 //! It initializes the application and runs the CLI.
 
-use manta::cli::Cli;
+use syscity::cli::Cli;
 
 #[tokio::main]
 async fn main() {
     // Initialize the application
-    if let Err(e) = manta::init() {
+    if let Err(e) = syscity::init() {
         eprintln!("Failed to initialize: {}", e);
         std::process::exit(1);
     }
@@ -20,35 +20,35 @@ async fn main() {
 }
 
 /// Handle an error and exit the application
-fn handle_error(error: manta::error::MantaError) {
-    use manta::error::MantaError;
+fn handle_error(error: syscity::error::SyscityError) {
+    use syscity::error::SyscityError;
 
     let exit_code = match &error {
-        MantaError::Config(_) => 2,
-        MantaError::Validation(_) => 3,
-        MantaError::NotFound { .. } => 4,
-        MantaError::ExternalService { .. } => 5,
+        SyscityError::Config(_) => 2,
+        SyscityError::Validation(_) => 3,
+        SyscityError::NotFound { .. } => 4,
+        SyscityError::ExternalService { .. } => 5,
         _ => 1,
     };
 
     // Use different formatting based on the error type
     match &error {
-        MantaError::Validation(msg) => {
+        SyscityError::Validation(msg) => {
             eprintln!("❌ Validation error: {}", msg);
         }
-        MantaError::NotFound { resource } => {
+        SyscityError::NotFound { resource } => {
             eprintln!("🔍 Not found: {}", resource);
         }
-        MantaError::Config(e) => {
+        SyscityError::Config(e) => {
             eprintln!("⚙️  Configuration error: {}", e);
         }
-        MantaError::Io(e) => {
+        SyscityError::Io(e) => {
             eprintln!("📁 I/O error: {}", e);
         }
-        MantaError::Http(e) => {
+        SyscityError::Http(e) => {
             eprintln!("🌐 HTTP error: {}", e);
         }
-        MantaError::ExternalService { source, .. } => {
+        SyscityError::ExternalService { source, .. } => {
             eprintln!("🔌 External service error: {}", source);
         }
         _ => {
@@ -57,10 +57,10 @@ fn handle_error(error: manta::error::MantaError) {
     }
 
     // Add helpful hints for common errors
-    if let MantaError::Config(_) = &error {
+    if let SyscityError::Config(_) = &error {
         eprintln!();
         eprintln!("Hint: Check your configuration file or environment variables.");
-        eprintln!("      Run 'manta config' to see the current configuration.");
+        eprintln!("      Run 'syscity config' to see the current configuration.");
     }
 
     std::process::exit(exit_code);
@@ -71,6 +71,6 @@ mod tests {
 
     #[test]
     fn test_version_available() {
-        assert!(!manta::VERSION.is_empty());
+        assert!(!syscity::VERSION.is_empty());
     }
 }

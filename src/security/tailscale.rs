@@ -1,4 +1,4 @@
-//! Tailscale authentication for Manta Gateway
+//! Tailscale authentication for Syscity Gateway
 //!
 //! Verifies connections using the Tailscale local API (`tailscale whois`)
 //! and caches results to avoid repeated lookups.

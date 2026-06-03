@@ -90,7 +90,7 @@ pub async fn aria_snapshot(
     let title = page.get_title().await.ok().flatten().unwrap_or_default();
 
     // JavaScript to extract accessible/interactive elements
-    // We assign data-manta-ref attributes for later interaction
+    // We assign data-syscity-ref attributes for later interaction
     let script = r#"
 () => {
     // Interactive roles and selectors
@@ -229,7 +229,7 @@ pub async fn aria_snapshot(
         if (isInteractive(el)) {
             refId++;
             id = refId;
-            el.setAttribute('data-manta-ref', String(refId));
+            el.setAttribute('data-syscity-ref', String(refId));
         }
 
         results.push({
@@ -251,7 +251,7 @@ pub async fn aria_snapshot(
     let result =
         page.evaluate(script)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to extract ARIA snapshot".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -322,7 +322,7 @@ pub async fn act_by_ref(
     ref_id: usize,
     action: ActKind,
 ) -> crate::Result<String> {
-    let selector = format!("[data-manta-ref=\"{}\"]", ref_id);
+    let selector = format!("[data-syscity-ref=\"{}\"]", ref_id);
 
     match action {
         ActKind::Click => {
@@ -336,14 +336,14 @@ pub async fn act_by_ref(
                 selector
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: "Click failed".to_string(),
                     cause: Some(Box::new(e)),
                 }
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Element with ref {} not found",
                     ref_id
                 )));
@@ -371,14 +371,14 @@ pub async fn act_by_ref(
                     .replace('\'', "\\'")
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: "Type failed".to_string(),
                     cause: Some(Box::new(e)),
                 }
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Element with ref {} not found or not an input",
                     ref_id
                 )));
@@ -398,14 +398,14 @@ pub async fn act_by_ref(
                 selector
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: "Hover failed".to_string(),
                     cause: Some(Box::new(e)),
                 }
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Element with ref {} not found",
                     ref_id
                 )));
@@ -434,14 +434,14 @@ pub async fn act_by_ref(
                     .replace('\'', "\\'")
             );
             let result = page.evaluate(script.as_str()).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: "Fill failed".to_string(),
                     cause: Some(Box::new(e)),
                 }
             })?;
             let value = result.value().cloned().unwrap_or_default();
             if value.get("error").is_some() {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Element with ref {} not found or not an input",
                     ref_id
                 )));

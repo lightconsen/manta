@@ -1,4 +1,4 @@
-//! Memory system for Manta
+//! Memory system for Syscity
 //!
 //! Provides persistent storage for conversations, messages, and memories
 //! with support for semantic search using embeddings.

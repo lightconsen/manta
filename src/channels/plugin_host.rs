@@ -1,7 +1,7 @@
 //! WASM Plugin Host for Channel Extensions
 //!
 //! This module provides the runtime for loading and executing WASM-based
-//! channel plugins, enabling third-party channels without recompiling Manta.
+//! channel plugins, enabling third-party channels without recompiling Syscity.
 
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, Id, IncomingMessage, MessageMetadata,
@@ -70,7 +70,7 @@ fn write_string_to_memory(
 
     // Check buffer size limit
     if len > MAX_WASM_BUFFER_SIZE {
-        return Err(crate::error::MantaError::Plugin(format!(
+        return Err(crate::error::SyscityError::Plugin(format!(
             "String too large: {} bytes (max: {})",
             len, MAX_WASM_BUFFER_SIZE
         )));
@@ -80,12 +80,12 @@ fn write_string_to_memory(
 
     // Allocate memory in the guest
     let ptr = alloc_fn.call(&mut *store, len_i32).map_err(|e| {
-        crate::error::MantaError::Plugin(format!("Failed to allocate memory: {}", e))
+        crate::error::SyscityError::Plugin(format!("Failed to allocate memory: {}", e))
     })?;
 
     // Validate pointer
     if ptr < 0 {
-        return Err(crate::error::MantaError::Plugin(
+        return Err(crate::error::SyscityError::Plugin(
             "Allocator returned invalid pointer".to_string(),
         ));
     }
@@ -93,12 +93,12 @@ fn write_string_to_memory(
     // Check memory bounds
     let mem_size = memory.data_size(&*store);
     if (ptr as usize + len) > mem_size {
-        return Err(crate::error::MantaError::Plugin("Allocated memory out of bounds".to_string()));
+        return Err(crate::error::SyscityError::Plugin("Allocated memory out of bounds".to_string()));
     }
 
     // Write the string
     memory.write(store, ptr as usize, bytes).map_err(|e| {
-        crate::error::MantaError::Plugin(format!("Failed to write to memory: {}", e))
+        crate::error::SyscityError::Plugin(format!("Failed to write to memory: {}", e))
     })?;
 
     Ok((ptr, len_i32))
@@ -113,14 +113,14 @@ fn read_string_from_memory(
 ) -> crate::Result<String> {
     // Validate parameters
     if ptr < 0 || len < 0 {
-        return Err(crate::error::MantaError::Plugin("Invalid pointer or length".to_string()));
+        return Err(crate::error::SyscityError::Plugin("Invalid pointer or length".to_string()));
     }
 
     let len = len as usize;
 
     // Check buffer size limit
     if len > MAX_WASM_BUFFER_SIZE {
-        return Err(crate::error::MantaError::Plugin(format!(
+        return Err(crate::error::SyscityError::Plugin(format!(
             "Buffer too large: {} bytes (max: {})",
             len, MAX_WASM_BUFFER_SIZE
         )));
@@ -129,18 +129,18 @@ fn read_string_from_memory(
     // Check memory bounds
     let mem_size = memory.data_size(&*store);
     if (ptr as usize + len) > mem_size {
-        return Err(crate::error::MantaError::Plugin("Read out of bounds".to_string()));
+        return Err(crate::error::SyscityError::Plugin("Read out of bounds".to_string()));
     }
 
     let mut buffer = vec![0u8; len];
     memory
         .read(&mut *store, ptr as usize, &mut buffer)
         .map_err(|e| {
-            crate::error::MantaError::Plugin(format!("Failed to read from memory: {}", e))
+            crate::error::SyscityError::Plugin(format!("Failed to read from memory: {}", e))
         })?;
 
     String::from_utf8(buffer)
-        .map_err(|e| crate::error::MantaError::Plugin(format!("Invalid UTF-8: {}", e)))
+        .map_err(|e| crate::error::SyscityError::Plugin(format!("Invalid UTF-8: {}", e)))
 }
 
 /// Encode a Result<String, String> as i64: high 32 bits = error ptr (0 = ok), low 32 bits = value/error ptr
@@ -173,7 +173,7 @@ impl PluginChannel {
         let wasm_bytes =
             tokio::fs::read(wasm_path)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to read WASM file: {:?}", wasm_path),
                     details: e.to_string(),
                 })?;
@@ -190,7 +190,7 @@ impl PluginChannel {
         let (mut store, instance, memory, alloc_fn, free_fn) = tokio::task::spawn_blocking(move || {
             let engine = Engine::default();
             let module = Module::new(&engine, &wasm_bytes).map_err(|e| {
-                crate::error::MantaError::Plugin(format!("Failed to compile WASM: {}", e))
+                crate::error::SyscityError::Plugin(format!("Failed to compile WASM: {}", e))
             })?;
 
             // Create linker with host functions
@@ -236,7 +236,7 @@ impl PluginChannel {
                         eprintln!("[WARN] Plugin log: no memory export");
                     }
                 },
-            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define log: {}", e)))?;
+            ).map_err(|e| crate::error::SyscityError::Plugin(format!("Failed to define log: {}", e)))?;
 
             // Define host.receive_message function
             linker.func_wrap(
@@ -305,7 +305,7 @@ impl PluginChannel {
                         eprintln!("[WARN] Plugin receive_message: no memory export");
                     }
                 },
-            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define receive_message: {}", e)))?;
+            ).map_err(|e| crate::error::SyscityError::Plugin(format!("Failed to define receive_message: {}", e)))?;
 
             // Define host.get_config function - returns packed i64: high 32 = len, low 32 = ptr
             linker.func_wrap(
@@ -346,7 +346,7 @@ impl PluginChannel {
                         0i64
                     }
                 },
-            ).map_err(|e| crate::error::MantaError::Plugin(format!("Failed to define get_config: {}", e)))?;
+            ).map_err(|e| crate::error::SyscityError::Plugin(format!("Failed to define get_config: {}", e)))?;
 
             let host_state = HostState {
                 name: plugin_name_for_spawn,
@@ -356,25 +356,25 @@ impl PluginChannel {
 
             let mut store = Store::new(&engine, host_state);
             let instance = linker.instantiate(&mut store, &module).map_err(|e| {
-                crate::error::MantaError::Plugin(format!("Failed to instantiate: {}", e))
+                crate::error::SyscityError::Plugin(format!("Failed to instantiate: {}", e))
             })?;
 
             // Get memory export
             let memory = instance.get_export(&mut store, "memory")
                 .and_then(|e| e.into_memory())
-                .ok_or_else(|| crate::error::MantaError::Plugin("No memory export".to_string()))?;
+                .ok_or_else(|| crate::error::SyscityError::Plugin("No memory export".to_string()))?;
 
             // Get alloc function
             let alloc_fn = instance.get_typed_func::<i32, i32>(&mut store, "alloc"
-            ).map_err(|e| crate::error::MantaError::Plugin(format!("No alloc export: {}", e)))?;
+            ).map_err(|e| crate::error::SyscityError::Plugin(format!("No alloc export: {}", e)))?;
 
             // Get free function
             let free_fn = instance.get_typed_func::<(i32, i32), ()>(
                 &mut store, "free"
-            ).map_err(|e| crate::error::MantaError::Plugin(format!("No free export: {}", e)))?;
+            ).map_err(|e| crate::error::SyscityError::Plugin(format!("No free export: {}", e)))?;
 
-            Ok::<_, crate::error::MantaError>((store, instance, memory, alloc_fn, free_fn))
-        }).await.map_err(|e| crate::error::MantaError::Plugin(format!("Task failed: {}", e)))??;
+            Ok::<_, crate::error::SyscityError>((store, instance, memory, alloc_fn, free_fn))
+        }).await.map_err(|e| crate::error::SyscityError::Plugin(format!("Task failed: {}", e)))??;
 
         // Get function pointers
         let (
@@ -391,47 +391,47 @@ impl PluginChannel {
         ) = {
             let init_fn = instance
                 .get_typed_func::<(i32, i32), i64>(&mut store, "init")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No init: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No init: {}", e)))?;
 
             let start_fn = instance
                 .get_typed_func::<(), i32>(&mut store, "start")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No start: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No start: {}", e)))?;
 
             let stop_fn = instance
                 .get_typed_func::<(), i32>(&mut store, "stop")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No stop: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No stop: {}", e)))?;
 
             let get_name_fn = instance
                 .get_typed_func::<(), (i32, i32)>(&mut store, "get_name")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No get_name: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No get_name: {}", e)))?;
 
             let get_capabilities_fn = instance
                 .get_typed_func::<(), i64>(&mut store, "get_capabilities")
                 .map_err(|e| {
-                    crate::error::MantaError::Plugin(format!("No get_capabilities: {}", e))
+                    crate::error::SyscityError::Plugin(format!("No get_capabilities: {}", e))
                 })?;
 
             let send_fn = instance
                 .get_typed_func::<(i32, i32), i64>(&mut store, "send")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No send: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No send: {}", e)))?;
 
             let send_typing_fn = instance
                 .get_typed_func::<(i32, i32), i32>(&mut store, "send_typing")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No send_typing: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No send_typing: {}", e)))?;
 
             let edit_message_fn = instance
                 .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "edit_message")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No edit_message: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No edit_message: {}", e)))?;
 
             let delete_message_fn = instance
                 .get_typed_func::<(i32, i32), i32>(&mut store, "delete_message")
                 .map_err(|e| {
-                    crate::error::MantaError::Plugin(format!("No delete_message: {}", e))
+                    crate::error::SyscityError::Plugin(format!("No delete_message: {}", e))
                 })?;
 
             let health_check_fn = instance
                 .get_typed_func::<(), i32>(&mut store, "health_check")
-                .map_err(|e| crate::error::MantaError::Plugin(format!("No health_check: {}", e)))?;
+                .map_err(|e| crate::error::SyscityError::Plugin(format!("No health_check: {}", e)))?;
 
             (
                 init_fn,
@@ -450,7 +450,7 @@ impl PluginChannel {
         // Fetch capabilities from the plugin
         let capabilities = {
             let result = get_capabilities_fn.call(&mut store, ()).map_err(|e| {
-                crate::error::MantaError::Plugin(format!("Get capabilities failed: {}", e))
+                crate::error::SyscityError::Plugin(format!("Get capabilities failed: {}", e))
             })?;
 
             // Decode result: high 32 bits = ptr, low 32 bits = len (or error indicator)
@@ -481,7 +481,7 @@ impl PluginChannel {
                 // Free the memory
                 free_fn
                     .call(&mut store, (result_ptr, result_len))
-                    .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+                    .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
                 // Parse JSON
                 match serde_json::from_str::<CapabilitiesJson>(&caps_json) {
@@ -541,18 +541,18 @@ impl PluginChannel {
         let result = self
             .init_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Init failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Init failed: {}", e)))?;
 
         // Free the input string
         self.free_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
         // Parse result - simplified
         if result == 0 {
             Ok("initialized".to_string())
         } else {
-            Err(crate::error::MantaError::Plugin("Init returned error".to_string()))
+            Err(crate::error::SyscityError::Plugin("Init returned error".to_string()))
         }
     }
 }
@@ -639,13 +639,13 @@ impl Channel for PluginChannel {
         let result = self
             .start_fn
             .call(&mut *store, ())
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Start failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Start failed: {}", e)))?;
 
         if result == 0 {
             info!("Started plugin channel '{}'", self.name);
             Ok(())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Start returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Start returned {}", result)))
         }
     }
 
@@ -654,13 +654,13 @@ impl Channel for PluginChannel {
         let result = self
             .stop_fn
             .call(&mut *store, ())
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Stop failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Stop failed: {}", e)))?;
 
         if result == 0 {
             info!("Stopped plugin channel '{}'", self.name);
             Ok(())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Stop returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Stop returned {}", result)))
         }
     }
 
@@ -678,16 +678,16 @@ impl Channel for PluginChannel {
         let result = self
             .send_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Send failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Send failed: {}", e)))?;
 
         self.free_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
         if result >= 0 {
             Ok(Id::new())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Send returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Send returned {}", result)))
         }
     }
 
@@ -703,16 +703,16 @@ impl Channel for PluginChannel {
         let result = self
             .send_typing_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Send_typing failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Send_typing failed: {}", e)))?;
 
         self.free_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
         if result == 0 {
             Ok(())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Send_typing returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Send_typing returned {}", result)))
         }
     }
 
@@ -730,19 +730,19 @@ impl Channel for PluginChannel {
         let result = self
             .edit_message_fn
             .call(&mut *store, (ptr1, len1, ptr2, len2))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Edit failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Edit failed: {}", e)))?;
 
         self.free_fn
             .call(&mut *store, (ptr1, len1))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
         self.free_fn
             .call(&mut *store, (ptr2, len2))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
         if result == 0 {
             Ok(())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Edit returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Edit returned {}", result)))
         }
     }
 
@@ -758,16 +758,16 @@ impl Channel for PluginChannel {
         let result = self
             .delete_message_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Delete failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Delete failed: {}", e)))?;
 
         self.free_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Free failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
 
         if result == 0 {
             Ok(())
         } else {
-            Err(crate::error::MantaError::Plugin(format!("Delete returned {}", result)))
+            Err(crate::error::SyscityError::Plugin(format!("Delete returned {}", result)))
         }
     }
 
@@ -776,7 +776,7 @@ impl Channel for PluginChannel {
         let result = self
             .health_check_fn
             .call(&mut *store, ())
-            .map_err(|e| crate::error::MantaError::Plugin(format!("Health check failed: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Plugin(format!("Health check failed: {}", e)))?;
 
         Ok(result == 1)
     }
@@ -817,7 +817,7 @@ impl PluginChannelRegistry {
         }
 
         let mut entries = tokio::fs::read_dir(&self.plugin_dir).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to read plugin directory: {:?}", self.plugin_dir),
                 details: e.to_string(),
             }
@@ -827,7 +827,7 @@ impl PluginChannelRegistry {
             entries
                 .next_entry()
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to read directory entry".to_string(),
                     details: e.to_string(),
                 })?
@@ -854,7 +854,7 @@ impl PluginChannelRegistry {
         let wasm_path = self.plugin_dir.join(format!("{}.wasm", name));
 
         if !wasm_path.exists() {
-            return Err(crate::error::MantaError::NotFound {
+            return Err(crate::error::SyscityError::NotFound {
                 resource: format!("Plugin '{}'", name),
             });
         }

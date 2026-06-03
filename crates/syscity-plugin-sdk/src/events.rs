@@ -1,6 +1,6 @@
 //! Event emission
 //!
-//! Plugins can emit events that Manta consumers (hooks, other plugins,
+//! Plugins can emit events that Syscity consumers (hooks, other plugins,
 //! external systems) can subscribe to.
 
 /// Emit an event with a type name and a JSON payload.

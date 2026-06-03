@@ -1,4 +1,4 @@
-//! Command-line interface for Manta
+//! Command-line interface for Syscity
 //!
 //! This module handles argument parsing and command execution
 //! using the `clap` crate.
@@ -52,10 +52,10 @@ pub use session::SessionCommands;
 pub use skill::SkillCommands;
 pub use team::TeamCommands;
 
-/// Manta - Your AI assistant
+/// Syscity - Your AI assistant
 #[derive(Debug, Parser)]
-#[command(name = "manta")]
-#[command(about = "Manta - Your AI assistant")]
+#[command(name = "syscity")]
+#[command(about = "Syscity - Your AI assistant")]
 #[command(version)]
 pub struct Cli {
     /// Configuration file path
@@ -151,7 +151,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
-    /// Start the Manta daemon (background server)
+    /// Start the Syscity daemon (background server)
     Start {
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
@@ -163,7 +163,7 @@ pub enum Commands {
         #[arg(long)]
         foreground: bool,
     },
-    /// Stop the Manta daemon
+    /// Stop the Syscity daemon
     Stop {
         /// Force kill if graceful shutdown fails
         #[arg(short, long)]
@@ -204,7 +204,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
-    /// Initialize Manta with an interactive setup wizard
+    /// Initialize Syscity with an interactive setup wizard
     Setup,
     /// Device pairing management
     Device {
@@ -293,7 +293,7 @@ pub enum StorageType {
 fn init_logging(log_level: Option<&str>) {
     let level = log_level.unwrap_or("info");
     let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(format!("manta={},hyper=warn,reqwest=warn", level))
+        .with_env_filter(format!("syscity={},hyper=warn,reqwest=warn", level))
         .with_target(false)
         .with_thread_ids(false)
         .with_file(false)
@@ -373,31 +373,31 @@ mod tests {
 
     #[test]
     fn parse_health_command() {
-        let cli = Cli::try_parse_from(["manta", "health"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "health"]).unwrap();
         assert!(matches!(cli.command, Commands::Health));
     }
 
     #[test]
     fn parse_config_show_command() {
-        let cli = Cli::try_parse_from(["manta", "config", "show"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "config", "show"]).unwrap();
         assert!(matches!(cli.command, Commands::Config { .. }));
     }
 
     #[test]
     fn parse_config_get_command() {
-        let cli = Cli::try_parse_from(["manta", "config", "get", "gateway.host"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "config", "get", "gateway.host"]).unwrap();
         assert!(matches!(cli.command, Commands::Config { .. }));
     }
 
     #[test]
     fn parse_config_set_command() {
-        let cli = Cli::try_parse_from(["manta", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
         assert!(matches!(cli.command, Commands::Config { .. }));
     }
 
     #[test]
     fn parse_config_without_subcommand() {
-        let cli = Cli::try_parse_from(["manta", "config"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "config"]).unwrap();
         match cli.command {
             Commands::Config { command } => assert!(command.is_none()),
             _ => panic!("expected Config command"),
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn parse_chat_command_with_message() {
-        let cli = Cli::try_parse_from(["manta", "chat", "--message", "hello"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "chat", "--message", "hello"]).unwrap();
         match cli.command {
             Commands::Chat { conversation, message } => {
                 assert_eq!(message, Some("hello".to_string()));
@@ -423,13 +423,13 @@ mod tests {
 
     #[test]
     fn parse_status_command() {
-        let cli = Cli::try_parse_from(["manta", "status"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "status"]).unwrap();
         assert!(matches!(cli.command, Commands::Status));
     }
 
     #[test]
     fn parse_stop_command_with_force() {
-        let cli = Cli::try_parse_from(["manta", "stop", "--force"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "stop", "--force"]).unwrap();
         match cli.command {
             Commands::Stop { force } => assert!(force),
             _ => panic!("expected Stop command"),
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn parse_logs_command_defaults() {
-        let cli = Cli::try_parse_from(["manta", "logs"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "logs"]).unwrap();
         match cli.command {
             Commands::Logs { lines, follow } => {
                 assert_eq!(lines, 50);
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn parse_logs_command_with_follow() {
-        let cli = Cli::try_parse_from(["manta", "logs", "--follow", "-n", "100"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "logs", "--follow", "-n", "100"]).unwrap();
         match cli.command {
             Commands::Logs { lines, follow } => {
                 assert_eq!(lines, 100);
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn parse_admin_status_subcommand() {
-        let cli = Cli::try_parse_from(["manta", "admin", "status"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "admin", "status"]).unwrap();
         match cli.command {
             Commands::Admin { command } => {
                 assert!(matches!(command, AdminCommands::Status));
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn parse_security_pairing_list() {
-        let cli = Cli::try_parse_from(["manta", "security", "pairing", "list"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "security", "pairing", "list"]).unwrap();
         match cli.command {
             Commands::Security { command } => {
                 assert!(matches!(
@@ -494,19 +494,19 @@ mod tests {
 
     #[test]
     fn parse_with_log_level() {
-        let cli = Cli::try_parse_from(["manta", "--log-level", "debug", "status"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "--log-level", "debug", "status"]).unwrap();
         assert_eq!(cli.log_level, Some("debug".to_string()));
     }
 
     #[test]
     fn parse_with_config_path() {
-        let cli = Cli::try_parse_from(["manta", "-c", "/tmp/config.toml", "health"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "-c", "/tmp/config.toml", "health"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/config.toml")));
     }
 
     #[test]
     fn parse_doctor_run_command() {
-        let cli = Cli::try_parse_from(["manta", "doctor", "run"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "doctor", "run"]).unwrap();
         match cli.command {
             Commands::Doctor { command } => {
                 assert!(matches!(command, DoctorCommands::Run { provider: None, verbose: false }));
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn parse_doctor_run_with_provider_and_verbose() {
         let cli = Cli::try_parse_from([
-            "manta",
+            "syscity",
             "doctor",
             "run",
             "--provider",
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn parse_doctor_report_command() {
-        let cli = Cli::try_parse_from(["manta", "doctor", "report"]).unwrap();
+        let cli = Cli::try_parse_from(["syscity", "doctor", "report"]).unwrap();
         match cli.command {
             Commands::Doctor { command } => {
                 assert!(matches!(command, DoctorCommands::Report));
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn parse_unknown_command_fails() {
-        let result = Cli::try_parse_from(["manta", "unknown-cmd"]);
+        let result = Cli::try_parse_from(["syscity", "unknown-cmd"]);
         assert!(result.is_err());
     }
 }

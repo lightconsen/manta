@@ -1,4 +1,4 @@
-//! Export module for Manta
+//! Export module for Syscity
 //!
 //! Provides functionality to export conversations and memories to various
 //! file formats (Markdown, JSON, JSONL) for backup, portability, and

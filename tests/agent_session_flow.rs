@@ -4,11 +4,11 @@
 //! disk budget, session files) work correctly in isolation and can be wired
 //! into the Agent via the builder pattern. Tests use isolated temp directories.
 
-use manta::agent::{
+use syscity::agent::{
     AgentBuilder, AgentConfig, ArtifactStore, BudgetCategory, DiskBudgetManager,
     SessionFileManager, TranscriptStore,
 };
-use manta::tools::ToolRegistry;
+use syscity::tools::ToolRegistry;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -133,7 +133,7 @@ async fn session_file_manager_cleanup_removes_session() {
 
 #[tokio::test]
 async fn artifact_store_adds_and_retrieves() {
-    use manta::agent::{Artifact, ArtifactType};
+    use syscity::agent::{Artifact, ArtifactType};
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
@@ -159,7 +159,7 @@ async fn artifact_store_adds_and_retrieves() {
 
 #[tokio::test]
 async fn artifact_store_lists_by_session() {
-    use manta::agent::Artifact;
+    use syscity::agent::Artifact;
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
@@ -178,7 +178,7 @@ async fn artifact_store_lists_by_session() {
 
 #[tokio::test]
 async fn artifact_store_link_artifact_contract() {
-    use manta::agent::{Artifact, ArtifactType};
+    use syscity::agent::{Artifact, ArtifactType};
 
     let dir = TempDir::new().unwrap();
     let store = ArtifactStore::new(dir.path());
@@ -198,7 +198,7 @@ async fn artifact_store_link_artifact_contract() {
 
 #[tokio::test]
 async fn transcript_store_appends_and_exports() {
-    use manta::agent::TranscriptMessage;
+    use syscity::agent::TranscriptMessage;
 
     let dir = TempDir::new().unwrap();
     let store = TranscriptStore::new(dir.path());
@@ -231,7 +231,7 @@ async fn transcript_store_appends_and_exports() {
 
 #[tokio::test]
 async fn transcript_store_multiple_sessions_isolated() {
-    use manta::agent::TranscriptMessage;
+    use syscity::agent::TranscriptMessage;
 
     let dir = TempDir::new().unwrap();
     let store = TranscriptStore::new(dir.path());

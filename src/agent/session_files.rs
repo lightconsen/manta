@@ -61,7 +61,7 @@ impl SessionFileManager {
     pub async fn init(&self) -> crate::Result<()> {
         tokio::fs::create_dir_all(&self.root_dir)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to create session files root".into(),
                 details: e.to_string(),
             })?;
@@ -79,7 +79,7 @@ impl SessionFileManager {
         // Create directory if it doesn't exist
         tokio::fs::create_dir_all(&session_path)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create session dir for {}", session_id),
                 details: e.to_string(),
             })?;
@@ -177,7 +177,7 @@ impl SessionFileManager {
 
         if let Some(path) = path {
             tokio::fs::remove_dir_all(&path).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to cleanup session dir for {}", session_id),
                     details: e.to_string(),
                 }
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_file_manager() {
-        let tmp = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         let manager = SessionFileManager::new(&tmp);
         manager.init().await.unwrap();
 

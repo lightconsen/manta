@@ -1,7 +1,7 @@
-//! Entity management commands for Manta
+//! Entity management commands for Syscity
 
 use crate::core::models::Status;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -121,8 +121,8 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -156,7 +156,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -175,7 +175,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -202,7 +202,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -224,7 +224,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -247,7 +247,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -261,7 +261,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                     let body = resp.text().await.unwrap_or_default();
                     if let Some(path) = output {
                         tokio::fs::write(path, &body).await.map_err(|e| {
-                            MantaError::Internal(format!("Failed to write export file: {}", e))
+                            SyscityError::Internal(format!("Failed to write export file: {}", e))
                         })?;
                         println!("Entities exported to {:?}", path);
                     } else {
@@ -270,13 +270,13 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
         EntityCommands::Import { path, no_validate } => {
             let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-                MantaError::Internal(format!("Failed to read file {:?}: {}", path, e))
+                SyscityError::Internal(format!("Failed to read file {:?}: {}", path, e))
             })?;
             let url = format!("{}/api/v1/entities/import", DAEMON_URL);
             let body = serde_json::json!({
@@ -296,7 +296,7 @@ pub async fn run_entity_command(command: &EntityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }

@@ -1,4 +1,4 @@
-//! Command Gating for Manta
+//! Command Gating for Syscity
 //!
 //! Separates *chat* (conversational) interactions from *command* invocations
 //! (e.g. `/skill install`, `/cron add`), allowing different permission levels
@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use manta::tools::command_gate::{CommandGate, UserLevel, AccessDecision};
+//! use syscity::tools::command_gate::{CommandGate, UserLevel, AccessDecision};
 //!
 //! let gate = CommandGate::new();
 //! gate.set_user_level("alice", UserLevel::User);

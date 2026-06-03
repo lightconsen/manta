@@ -1,5 +1,5 @@
-# Manta - Personal AI Assistant Configuration Example
-# Copy this file to ~/.manta/config.yaml and customize for your setup
+# Syscity - Personal AI Assistant Configuration Example
+# Copy this file to ~/.syscity/config.yaml and customize for your setup
 
 # LLM Provider Configuration
 provider:
@@ -33,11 +33,11 @@ fallback_providers:
 # Agent Configuration
 agent:
   # Bot name
-  name: "Manta"
+  name: "Syscity"
 
   # System prompt - defines the bot's personality and capabilities
   system_prompt: |
-    You are Manta, a helpful personal AI assistant.
+    You are Syscity, a helpful personal AI assistant.
     You have access to tools for file operations, web search,
     memory storage, and task management.
 
@@ -59,7 +59,7 @@ channels:
     # Enable command history
     history: true
     # History file location
-    history_file: "~/.local/share/manta/history.txt"
+    history_file: "~/.local/share/syscity/history.txt"
 
   # Telegram Bot
   telegram:
@@ -121,20 +121,20 @@ security:
 # Memory Configuration
 memory:
   # Data directory for SQLite database and files
-  data_dir: "~/.local/share/manta"
+  data_dir: "~/.local/share/syscity"
 
   # SQLite configuration
   sqlite:
     # Database file name
-    database: "manta.db"
+    database: "syscity.db"
     # Connection pool size
     pool_size: 5
     # Enable WAL mode for better concurrency
     wal_mode: true
 
   # Dual memory files
-  procedural_memory: "~/.manta/memory/agent.md"
-  user_model: "~/.manta/memory/user.md"
+  procedural_memory: "~/.syscity/memory/agent.md"
+  user_model: "~/.syscity/memory/user.md"
 
   # Memory size limits (bytes)
   max_procedural_memory_size: 4096
@@ -162,7 +162,7 @@ tools:
     # Request timeout (seconds)
     timeout_seconds: 30
     # User agent string
-    user_agent: "MantaBot/1.0"
+    user_agent: "SyscityBot/1.0"
 
   # Web search settings
   search:
@@ -178,7 +178,7 @@ cron:
   # Enable scheduled jobs
   enabled: true
   # Job persistence file
-  jobs_file: "~/.local/share/manta/cron_jobs.json"
+  jobs_file: "~/.local/share/syscity/cron_jobs.json"
   # Maximum concurrent jobs
   max_concurrent_jobs: 5
   # Default timezone
@@ -193,7 +193,7 @@ logging:
   format: "pretty"
 
   # Log to file (in addition to stdout)
-  file: "~/.local/share/manta/manta.log"
+  file: "~/.local/share/syscity/syscity.log"
 
   # Log rotation
   rotation:

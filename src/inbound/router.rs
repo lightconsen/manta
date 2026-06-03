@@ -129,7 +129,7 @@ impl SqliteBindingStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create session_bindings table".to_string(),
             details: e.to_string(),
         })?;
@@ -143,7 +143,7 @@ impl BindingStore for SqliteBindingStore {
         let rows = sqlx::query("SELECT session_id, agent_id, workspace_id FROM session_bindings")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to load session bindings".to_string(),
                 details: e.to_string(),
             })?;
@@ -179,7 +179,7 @@ impl BindingStore for SqliteBindingStore {
         .bind(workspace_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to save session binding".to_string(),
             details: e.to_string(),
         })?;
@@ -191,7 +191,7 @@ impl BindingStore for SqliteBindingStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to remove session binding".to_string(),
                 details: e.to_string(),
             })?;

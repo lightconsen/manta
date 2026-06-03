@@ -1,4 +1,4 @@
-//! Task Planning System (Todo) for Manta
+//! Task Planning System (Todo) for Syscity
 //!
 //! This module implements a task management system that allows the agent
 //! to track and manage complex multi-step tasks.
@@ -272,12 +272,12 @@ impl TodoStore {
 
     /// Serialize to JSON
     pub fn to_json(&self) -> crate::Result<String> {
-        serde_json::to_string_pretty(self).map_err(crate::error::MantaError::Serialization)
+        serde_json::to_string_pretty(self).map_err(crate::error::SyscityError::Serialization)
     }
 
     /// Deserialize from JSON
     pub fn from_json(json: &str) -> crate::Result<Self> {
-        serde_json::from_str(json).map_err(crate::error::MantaError::Serialization)
+        serde_json::from_str(json).map_err(crate::error::SyscityError::Serialization)
     }
 }
 

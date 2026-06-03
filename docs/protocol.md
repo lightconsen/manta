@@ -1,7 +1,7 @@
-# Manta 协议规范 v1.0
+# Syscity 协议规范 v1.0
 
 > **状态**: 草案
-> **目标**: 将 Manta 的前后端通信统一到单一的 WebSocket-native 协议，与 OpenClaw 架构对齐，并支持 `assistant-ui` 作为主力 Web 前端。
+> **目标**: 将 Syscity 的前后端通信统一到单一的 WebSocket-native 协议，与 OpenClaw 架构对齐，并支持 `assistant-ui` 作为主力 Web 前端。
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### 1.1 为什么采用 WebSocket-Native
 
-Manta 目前使用混合架构（REST API + SSE + WebSocket），这带来了以下问题：
+Syscity 目前使用混合架构（REST API + SSE + WebSocket），这带来了以下问题：
 
 - **协议碎片化**: Web UI 用 `POST /api/chat` + `SSE /api/events`；CLI 用裸 HTTP；WebSocket 存在但未被充分利用。
 - **鉴权不一致**: Web 端用 OAuth2，CLI 无鉴权，WS 用 query token。
@@ -22,14 +22,14 @@ Manta 目前使用混合架构（REST API + SSE + WebSocket），这带来了以
 | 传输层 | REST + SSE + WS | 单一 WebSocket |
 | 鉴权 | OAuth2 / 无 / token | 统一设备配对 + 作用域 |
 | 前端 | 自建 React | `assistant-ui` |
-| 配置管理 | Web UI + REST API | 仅 CLI (`manta config`) |
+| 配置管理 | Web UI + REST API | 仅 CLI (`syscity config`) |
 | 多端接入 | 每个客户端单独集成 | Web/App/CLI 共享一套协议 |
 
 ### 1.2 设计原则
 
 1. **WebSocket 为主，HTTP 为辅**: 所有实时和交互式 API 走 WebSocket。HTTP 仅保留 OpenAI 兼容端点 (`/v1/*`) 和健康探针。
 2. **统一鉴权**: 每个客户端（Web、App、CLI）使用相同的鉴权方式。
-3. **配置仅限 CLI**: 管理/配置类 API 从 Web 面移除。管理员通过 `manta` 二进制或配置文件配置 Manta。
+3. **配置仅限 CLI**: 管理/配置类 API 从 Web 面移除。管理员通过 `syscity` 二进制或配置文件配置 Syscity。
 4. **原生集成 Assistant-UI**: Web 前端基于 `assistant-ui` 重建，直接消费 WebSocket 协议。
 
 ---
@@ -178,7 +178,7 @@ Query 参数：
       "version": "1.0.0"
     },
     "auth": {
-      "token": "manta_shared_token_xxx"
+      "token": "syscity_shared_token_xxx"
     },
     "device": {
       "id": "device_abc",
@@ -251,12 +251,12 @@ Query 参数：
 
 ### 5.1 鉴权模式（服务端配置）
 
-通过 `manta.yaml` 中的 `gateway.auth.mode` 配置：
+通过 `syscity.yaml` 中的 `gateway.auth.mode` 配置：
 
 | 模式 | 说明 |
 |------|-------------|
 | `none` | 无鉴权。仅用于本地开发。 |
-| `token` | 共享 secret token（通过 `MANTA_GATEWAY_TOKEN` 环境变量或配置） |
+| `token` | 共享 secret token（通过 `SYSCITY_GATEWAY_TOKEN` 环境变量或配置） |
 | `device` | 需要设备配对。新设备须经管理员批准。 |
 | `tailscale` | 通过 Tailscale identity header 自动鉴权 |
 
@@ -275,7 +275,7 @@ Query 参数：
 3. 若未配对：
    - 服务端生成一个短配对码（如 `A3F7K`）。
    - 向管理员客户端广播 `device.pair.requested` 事件。
-   - 管理员通过 CLI 执行 `manta device approve <code>`。
+   - 管理员通过 CLI 执行 `syscity device approve <code>`。
 4. 批准后，服务端向客户端颁发 **设备 token**。
 5. 后续重连使用设备 token，无需再使用共享 token。
 
@@ -349,69 +349,69 @@ Query 参数：
 
 ### 6.2 管理 API（仅限 CLI）
 
-这些操作从 WebSocket 协议和 HTTP 面中 **移除**。仅通过 `manta` CLI 二进制可用。
+这些操作从 WebSocket 协议和 HTTP 面中 **移除**。仅通过 `syscity` CLI 二进制可用。
 
 ```bash
 # Agent 管理
-manta agent list
-manta agent create --name myagent --model gpt-4
-manta agent delete <id>
+syscity agent list
+syscity agent create --name myagent --model gpt-4
+syscity agent delete <id>
 
 # Provider 管理
-manta provider list
-manta provider enable <id>
-manta provider disable <id>
-manta provider switch <alias>
+syscity provider list
+syscity provider enable <id>
+syscity provider disable <id>
+syscity provider switch <alias>
 
 # Plugin 管理
-manta plugin list
-manta plugin reload
-manta plugin enable/disable <id>
+syscity plugin list
+syscity plugin reload
+syscity plugin enable/disable <id>
 
 # Skill 管理
-manta skill list
-manta skill run <id>
+syscity skill list
+syscity skill run <id>
 
 # Cron 管理
-manta cron list
-manta cron add --schedule "0 9 * * *" --prompt "Daily summary"
-manta cron remove/enable/disable <id>
+syscity cron list
+syscity cron add --schedule "0 9 * * *" --prompt "Daily summary"
+syscity cron remove/enable/disable <id>
 
 # Memory 管理
-manta memory search <query>
-manta memory add --content "..."
+syscity memory search <query>
+syscity memory add --content "..."
 
 # 配置
-manta config get
-manta config set key=value
-manta config validate
+syscity config get
+syscity config set key=value
+syscity config validate
 
 # 初始化配置（交互式向导）
-manta setup
+syscity setup
 # 引导用户完成：
 #   - 选择鉴权模式（none/token/device）
 #   - 设置共享 token / 密码
 #   - 配置默认模型和 Provider
 #   - 设置数据目录路径
 #   - 启用/禁用内置 Channel（web/cli/telegram 等）
-#   - 生成初始 `manta.yaml` 并写入磁盘
+#   - 生成初始 `syscity.yaml` 并写入磁盘
 
 # 设备配对
-manta device list
-manta device approve <code>
-manta device revoke <id>
+syscity device list
+syscity device approve <code>
+syscity device revoke <id>
 
 # 审批（高危工具）
-manta approval list
-manta approval approve/deny <id>
+syscity approval list
+syscity approval approve/deny <id>
 
 # 审计
-manta audit log
+syscity audit log
 
 # 安全
-manta security gate set <user> <level>
-manta security pairing list
-manta security pairing approve <channel> <code>
+syscity security gate set <user> <level>
+syscity security pairing list
+syscity security pairing approve <channel> <code>
 ```
 
 **理由**: 管理操作仅限管理员、频率低、需要严格校验。保留在 CLI 中可确保：
@@ -427,7 +427,7 @@ manta security pairing approve <channel> <code>
 
 ### 7.1 Transport 适配器
 
-`assistant-ui` 支持自定义 transport。Manta 提供 `MantaWebSocketTransport` 适配器，负责：
+`assistant-ui` 支持自定义 transport。Syscity 提供 `SyscityWebSocketTransport` 适配器，负责：
 
 1. 管理 WebSocket 连接（连接、重连、鉴权）。
 2. 将 `assistant-ui` 的消息流映射到 `chat.send` + `chat.delta`/`chat.final` 事件。
@@ -436,7 +436,7 @@ manta security pairing approve <channel> <code>
 
 ### 7.2 消息映射
 
-| Assistant-UI 概念 | Manta 协议 |
+| Assistant-UI 概念 | Syscity 协议 |
 |---------------------|----------------|
 | `Message` | `chat.final` payload |
 | `TextStreamPart` | `chat.delta` 事件 |
@@ -476,14 +476,14 @@ Session key 统一采用 `{channel}:{user_id}` 格式：
 
 ### 第三阶段: CLI 管理命令
 
-- 将所有 **管理 API** 命令加入 `manta` CLI。
+- 将所有 **管理 API** 命令加入 `syscity` CLI。
 - 从 REST 面中移除管理端点。
 - 确保配置持久化到磁盘（而非仅内存）。
 
 ### 第四阶段: 前端重写
 
 - 用 `assistant-ui` 替换现有 Web 前端。
-- 实现 `MantaWebSocketTransport`。
+- 实现 `SyscityWebSocketTransport`。
 - 移除所有 Admin UI 组件。
 
 ### 第五阶段: 清理

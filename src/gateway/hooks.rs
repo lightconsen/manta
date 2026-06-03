@@ -1,4 +1,4 @@
-//! Event Hooks System for Manta Gateway
+//! Event Hooks System for Syscity Gateway
 //!
 //! Provides a hook registry that allows plugins and internal modules to
 //! intercept, transform, or suppress GatewayEvents before/after broadcast.

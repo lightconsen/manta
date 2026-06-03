@@ -3,7 +3,7 @@
 //! This tool allows the agent to create, update, and manage tasks
 //! during complex multi-step operations.
 //!
-//! Tasks are persisted to disk in ~/.manta/todos/{conversation_id}.json
+//! Tasks are persisted to disk in ~/.syscity/todos/{conversation_id}.json
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::todo::{TaskStatus, TodoStore};
@@ -293,7 +293,7 @@ Examples:
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("action is required".to_string())
+            crate::error::SyscityError::Validation("action is required".to_string())
         })?;
 
         let conversation_id = &context.conversation_id;
@@ -302,7 +302,7 @@ Examples:
         match action {
             "create" => {
                 let content = args["content"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "content is required for create".to_string(),
                     )
                 })?;
@@ -326,13 +326,13 @@ Examples:
 
             "update" => {
                 let task_id = args["task_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "task_id is required for update".to_string(),
                     )
                 })?;
 
                 let task = store.get_mut(task_id).ok_or_else(|| {
-                    crate::error::MantaError::Validation(format!("Task {} not found", task_id))
+                    crate::error::SyscityError::Validation(format!("Task {} not found", task_id))
                 })?;
 
                 if let Some(status_str) = args["status"].as_str() {
@@ -342,7 +342,7 @@ Examples:
                         "completed" => TaskStatus::Completed,
                         "cancelled" => TaskStatus::Cancelled,
                         _ => {
-                            return Err(crate::error::MantaError::Validation(format!(
+                            return Err(crate::error::SyscityError::Validation(format!(
                                 "Invalid status: {}",
                                 status_str
                             )))
@@ -419,7 +419,7 @@ Examples:
                 })))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
+            _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }
@@ -431,7 +431,7 @@ mod tests {
     #[tokio::test]
     async fn test_todo_tool_create() {
         let temp_dir =
-            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         let tool = TodoTool::with_dir(temp_dir.clone());
@@ -456,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn test_todo_tool_persistence() {
         let temp_dir =
-            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         // Create first tool instance and add task
@@ -503,7 +503,7 @@ mod tests {
     #[tokio::test]
     async fn test_todo_cleanup() {
         let temp_dir =
-            std::env::temp_dir().join(format!("manta_todo_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("syscity_todo_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
         let tool = TodoTool::with_dir(temp_dir.clone());

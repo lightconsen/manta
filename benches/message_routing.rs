@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use manta::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
-use manta::core::Engine;
+use syscity::core::models::{CreateEntityRequest, Status, UpdateEntityRequest};
+use syscity::core::Engine;
 
 fn bench_engine_create_entity(c: &mut Criterion) {
     let engine = Engine::new();

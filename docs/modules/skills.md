@@ -7,12 +7,12 @@ OpenClaw-compatible skill system for extending agent behavior with modular, trig
 A **skill** is a reusable prompt bundle with YAML frontmatter metadata, trigger conditions, runtime requirements, and optional dependencies. Skills are stored at multiple levels and can be hot-reloaded.
 
 - **`Skill`** — Core skill struct: name, description, prompt, triggers, metadata, dependencies
-- **`SkillRegistry`** — Remote registry client for discovery and installation (ClawHub, skills.manta.dev)
+- **`SkillRegistry`** — Remote registry client for discovery and installation (ClawHub, skills.syscity.dev)
 - **`SkillStorage`** / **`StorageLevel`** — Multi-level storage:
   - `Bundled` — Built into the binary
-  - `User` — `~/.manta/skills/`
+  - `User` — `~/.syscity/skills/`
   - `Workspace` — `{workspace}/skills/`
-  - `Project` — `{project}/.manta/skills/`
+  - `Project` — `{project}/.syscity/skills/`
 - **`SkillWatcher`** — File system watcher for hot reload
 - **`SkillFrontmatter`** — YAML frontmatter parser for `SKILL.md` format
 - **`DependencyGraph`** — Resolves skill dependency chains before activation

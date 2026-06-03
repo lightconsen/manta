@@ -1,7 +1,7 @@
 //! MCP (Model Context Protocol) Integration
 //!
 //! This module implements a client for the Model Context Protocol,
-//! allowing Manta to connect to MCP servers and use their tools.
+//! allowing Syscity to connect to MCP servers and use their tools.
 //!
 //! Supported transports:
 //! - `stdio` – spawn a subprocess and communicate over stdin/stdout
@@ -44,7 +44,7 @@ pub enum McpTransport {
 // Configuration types (9.1)
 // ─────────────────────────────────────────────
 
-/// Per-server MCP configuration (used in manta.toml `[mcp.servers.*]`)
+/// Per-server MCP configuration (used in syscity.toml `[mcp.servers.*]`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Transport to use (default: stdio)
@@ -99,7 +99,7 @@ impl Default for McpServerConfig {
     }
 }
 
-/// Top-level `[mcp]` section in manta.toml / GatewayConfig
+/// Top-level `[mcp]` section in syscity.toml / GatewayConfig
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpSettings {
     /// Named server configurations
@@ -306,7 +306,7 @@ impl McpClient {
     /// Connect via stdio subprocess (9.1, 9.3, 9.4, 9.8)
     pub async fn connect_stdio(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let command = config.command.as_deref().ok_or_else(|| {
-            crate::error::MantaError::Internal(
+            crate::error::SyscityError::Internal(
                 "stdio transport requires 'command' field".to_string(),
             )
         })?;
@@ -330,16 +330,16 @@ impl McpClient {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to spawn MCP server: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to spawn MCP server: {}", e))
         })?;
 
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| crate::error::MantaError::Internal("Failed to get stdin".to_string()))?;
+            .ok_or_else(|| crate::error::SyscityError::Internal("Failed to get stdin".to_string()))?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            crate::error::MantaError::Internal("Failed to get stdout".to_string())
+            crate::error::SyscityError::Internal("Failed to get stdout".to_string())
         })?;
 
         let (request_tx, mut request_rx) = mpsc::unbounded_channel::<McpRequest>();
@@ -425,7 +425,7 @@ impl McpClient {
     /// Connect to an MCP server via Server-Sent Events
     pub async fn connect_sse(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let url = config.url.as_deref().ok_or_else(|| {
-            crate::error::MantaError::Internal("SSE transport requires 'url' field".to_string())
+            crate::error::SyscityError::Internal("SSE transport requires 'url' field".to_string())
         })?;
 
         info!("Connecting to MCP server via SSE: {}", url);
@@ -441,7 +441,7 @@ impl McpClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to build HTTP client: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
 
         // Channel for sending JSON-RPC requests to the writer task
@@ -511,7 +511,7 @@ impl McpClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to build HTTP client: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
         let env_for_writer = resolved_env.clone();
         tokio::spawn(async move {
@@ -544,7 +544,7 @@ impl McpClient {
     /// Connect to an MCP server via Streamable-HTTP (POST returning SSE body)
     pub async fn connect_streamable_http(&mut self, config: McpServerConfig) -> crate::Result<()> {
         let url = config.url.as_deref().ok_or_else(|| {
-            crate::error::MantaError::Internal(
+            crate::error::SyscityError::Internal(
                 "streamable_http transport requires 'url' field".to_string(),
             )
         })?;
@@ -665,7 +665,7 @@ impl McpClient {
                     "resources": {}
                 },
                 "clientInfo": {
-                    "name": "manta",
+                    "name": "syscity",
                     "version": crate::VERSION,
                 },
             })),
@@ -700,10 +700,10 @@ impl McpClient {
 
         if let Some(ref req_tx) = self.request_tx {
             req_tx.send(request).map_err(|_| {
-                crate::error::MantaError::Internal("Request channel closed".to_string())
+                crate::error::SyscityError::Internal("Request channel closed".to_string())
             })?;
         } else {
-            return Err(crate::error::MantaError::Internal("Not connected".to_string()));
+            return Err(crate::error::SyscityError::Internal("Not connected".to_string()));
         }
 
         let timeout = tokio::time::Duration::from_secs(self.timeout_secs);
@@ -713,7 +713,7 @@ impl McpClient {
                 channels.remove(&id);
 
                 if let Some(error) = response.error {
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("MCP error {}: {}", error.code, error.message),
                         cause: None,
                     });
@@ -722,9 +722,9 @@ impl McpClient {
                 Ok(response)
             }
             Ok(None) => {
-                Err(crate::error::MantaError::Internal("Response channel closed".to_string()))
+                Err(crate::error::SyscityError::Internal("Response channel closed".to_string()))
             }
-            Err(_) => Err(crate::error::MantaError::Internal(format!(
+            Err(_) => Err(crate::error::SyscityError::Internal(format!(
                 "Request timeout after {}s",
                 self.timeout_secs
             ))),
@@ -775,7 +775,7 @@ impl McpClient {
 
         let response = self.send_request(request).await?;
         response.result.ok_or_else(|| {
-            crate::error::MantaError::Internal("No result from tool call".to_string())
+            crate::error::SyscityError::Internal("No result from tool call".to_string())
         })
     }
 
@@ -997,7 +997,7 @@ impl McpManager {
                 }
             }
         }
-        Err(crate::error::MantaError::Internal(format!(
+        Err(crate::error::SyscityError::Internal(format!(
             "Failed to reconnect to MCP server '{}' after {} attempts",
             server_id,
             delays.len()
@@ -1098,13 +1098,13 @@ Actions:
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("action is required".to_string())
+            crate::error::SyscityError::Validation("action is required".to_string())
         })?;
 
         match action {
             "connect" => {
                 let server_id = args["server_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "server_id is required for connect".to_string(),
                     )
                 })?;
@@ -1141,7 +1141,7 @@ Actions:
 
             "disconnect" => {
                 let server_id = args["server_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "server_id is required for disconnect".to_string(),
                     )
                 })?;
@@ -1166,7 +1166,7 @@ Actions:
 
             "tools" => {
                 let server_id = args["server_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "server_id is required for tools".to_string(),
                     )
                 })?;
@@ -1190,7 +1190,7 @@ Actions:
 
             "resources" => {
                 let server_id = args["server_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "server_id is required for resources".to_string(),
                     )
                 })?;
@@ -1214,12 +1214,12 @@ Actions:
 
             "resource_read" => {
                 let server_id = args["server_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "server_id is required for resource_read".to_string(),
                     )
                 })?;
                 let uri = args["uri"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "uri is required for resource_read".to_string(),
                     )
                 })?;
@@ -1241,7 +1241,7 @@ Actions:
                 }
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
+            _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }

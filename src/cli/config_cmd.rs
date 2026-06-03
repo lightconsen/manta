@@ -1,4 +1,4 @@
-//! Configuration management commands for Manta
+//! Configuration management commands for Syscity
 //!
 //! Get, set, unset, and validate configuration values directly.
 //! Supports nested dot-notation paths (e.g., providers.deepseek.api_key).
@@ -55,13 +55,13 @@ pub async fn run_config_command(command: &ConfigCommands) -> Result<()> {
 }
 
 async fn show_config_file() -> Result<()> {
-    let path = crate::dirs::manta_dir().join("manta.toml");
+    let path = crate::dirs::syscity_dir().join("syscity.toml");
     println!("{}", path.display());
     Ok(())
 }
 
 async fn show_config(format: &super::ConfigFormat) -> Result<()> {
-    let config_path = crate::dirs::manta_dir().join("manta.toml");
+    let config_path = crate::dirs::syscity_dir().join("syscity.toml");
 
     if !config_path.exists() {
         println!("# No configuration file found at {:?}", config_path);
@@ -90,7 +90,7 @@ async fn show_config(format: &super::ConfigFormat) -> Result<()> {
 }
 
 async fn get_config_value(key: &str) -> Result<()> {
-    let config_path = crate::dirs::manta_dir().join("manta.toml");
+    let config_path = crate::dirs::syscity_dir().join("syscity.toml");
 
     if !config_path.exists() {
         eprintln!("Configuration file not found at {:?}", config_path);
@@ -120,7 +120,7 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
 
     let config_path = file
         .cloned()
-        .unwrap_or_else(|| crate::dirs::manta_dir().join("manta.toml"));
+        .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
 
     let mut toml_value = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path).await?;
@@ -142,7 +142,7 @@ async fn set_config_value(key_value: &str, file: Option<&PathBuf>) -> Result<()>
 async fn unset_config_value(key: &str, file: Option<&PathBuf>) -> Result<()> {
     let config_path = file
         .cloned()
-        .unwrap_or_else(|| crate::dirs::manta_dir().join("manta.toml"));
+        .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
 
     if !config_path.exists() {
         eprintln!("Configuration file not found at {:?}", config_path);
@@ -212,7 +212,7 @@ fn get_value_at_path<'a>(value: &'a toml::Value, path: &str) -> Option<&'a toml:
 fn set_value_at_path(value: &mut toml::Value, path: &str, new_value: toml::Value) -> Result<()> {
     let parts: Vec<&str> = path.split('.').collect();
     if parts.is_empty() {
-        return Err(crate::error::MantaError::Validation("Empty config path".to_string()));
+        return Err(crate::error::SyscityError::Validation("Empty config path".to_string()));
     }
 
     // Navigate to the parent of the target key
@@ -226,7 +226,7 @@ fn set_value_at_path(value: &mut toml::Value, path: &str, new_value: toml::Value
                 current = next;
             }
             _ => {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Cannot navigate through non-table value at '{}'",
                     part
                 )));
@@ -241,7 +241,7 @@ fn set_value_at_path(value: &mut toml::Value, path: &str, new_value: toml::Value
             map.insert(last.to_string(), new_value);
         }
         _ => {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Cannot set key '{}' on non-table value",
                 last
             )));
@@ -254,7 +254,7 @@ fn set_value_at_path(value: &mut toml::Value, path: &str, new_value: toml::Value
 fn remove_value_at_path(value: &mut toml::Value, path: &str) -> Result<()> {
     let parts: Vec<&str> = path.split('.').collect();
     if parts.is_empty() {
-        return Err(crate::error::MantaError::Validation("Empty config path".to_string()));
+        return Err(crate::error::SyscityError::Validation("Empty config path".to_string()));
     }
 
     let mut current = value;
@@ -265,14 +265,14 @@ fn remove_value_at_path(value: &mut toml::Value, path: &str) -> Result<()> {
             match current {
                 toml::Value::Table(map) => {
                     if map.remove(*part).is_none() {
-                        return Err(crate::error::MantaError::Validation(format!(
+                        return Err(crate::error::SyscityError::Validation(format!(
                             "Key '{}' not found",
                             path
                         )));
                     }
                 }
                 _ => {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Cannot remove key '{}' from non-table value",
                         part
                     )));
@@ -282,14 +282,14 @@ fn remove_value_at_path(value: &mut toml::Value, path: &str) -> Result<()> {
             match current {
                 toml::Value::Table(map) => {
                     current = map.get_mut(*part).ok_or_else(|| {
-                        crate::error::MantaError::Validation(format!(
+                        crate::error::SyscityError::Validation(format!(
                             "Key '{}' not found in path",
                             part
                         ))
                     })?;
                 }
                 _ => {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Cannot navigate through non-table value at '{}'",
                         part
                     )));

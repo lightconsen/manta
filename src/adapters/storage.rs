@@ -1,9 +1,9 @@
-//! Storage adapter for Manta
+//! Storage adapter for Syscity
 //!
 //! This module provides storage abstractions and implementations.
 
 use crate::core::models::{Entity, Id};
-use crate::error::MantaError;
+use crate::error::SyscityError;
 use async_trait::async_trait;
 use sqlx::Row;
 use std::collections::HashMap;
@@ -36,18 +36,18 @@ pub enum StorageError {
     Backend(String),
 }
 
-impl From<StorageError> for MantaError {
+impl From<StorageError> for SyscityError {
     fn from(err: StorageError) -> Self {
         match err {
-            StorageError::NotFound(id) => MantaError::NotFound {
+            StorageError::NotFound(id) => SyscityError::NotFound {
                 resource: format!("Entity {} not found", id),
             },
-            StorageError::Full => MantaError::Validation("Storage is full".to_string()),
-            StorageError::Io(e) => MantaError::Io(e),
+            StorageError::Full => SyscityError::Validation("Storage is full".to_string()),
+            StorageError::Io(e) => SyscityError::Io(e),
             StorageError::Serialization(msg) => {
-                MantaError::Internal(format!("Serialization error: {}", msg))
+                SyscityError::Internal(format!("Serialization error: {}", msg))
             }
-            StorageError::Backend(msg) => MantaError::Internal(format!("Storage backend: {}", msg)),
+            StorageError::Backend(msg) => SyscityError::Internal(format!("Storage backend: {}", msg)),
         }
     }
 }
@@ -735,7 +735,7 @@ impl VectorStore for SqliteStorage {
         .bind(system_time_to_secs(std::time::SystemTime::now()))
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to store vector chunk".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -756,7 +756,7 @@ impl VectorStore for SqliteStorage {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to search vectors".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -801,7 +801,7 @@ impl VectorStore for SqliteStorage {
             .bind(source_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to delete vector chunks".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -815,7 +815,7 @@ impl VectorStore for SqliteStorage {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get vector stats".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -827,7 +827,7 @@ impl VectorStore for SqliteStorage {
         let first_chunk = sqlx::query("SELECT embedding FROM vector_chunks LIMIT 1")
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to get vector dimension".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -850,7 +850,7 @@ impl VectorStore for SqliteStorage {
         sqlx::query("DELETE FROM vector_chunks")
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to clear vectors".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -883,7 +883,7 @@ impl ChatHistoryStore for SqliteStorage {
         .bind(metadata_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to store chat message".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -909,7 +909,7 @@ impl ChatHistoryStore for SqliteStorage {
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get conversation history".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -957,7 +957,7 @@ impl ChatHistoryStore for SqliteStorage {
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get user conversations".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -975,7 +975,7 @@ impl ChatHistoryStore for SqliteStorage {
             .bind(conversation_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to delete conversation".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -994,7 +994,7 @@ impl ChatHistoryStore for SqliteStorage {
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get last conversation".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -1034,7 +1034,7 @@ impl MemoryStore for SqliteStorage {
         .bind(metadata_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to store memory".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -1047,7 +1047,7 @@ impl MemoryStore for SqliteStorage {
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to get memory".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -1056,7 +1056,7 @@ impl MemoryStore for SqliteStorage {
             Some(row) => {
                 let created_at_secs: i64 = row.get("created_at");
                 let created_at = secs_to_system_time(created_at_secs).ok_or_else(|| {
-                    crate::error::MantaError::Internal("Invalid created_at".to_string())
+                    crate::error::SyscityError::Internal("Invalid created_at".to_string())
                 })?;
 
                 let expires_at = row
@@ -1100,7 +1100,7 @@ impl MemoryStore for SqliteStorage {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to delete memory".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -1145,7 +1145,7 @@ impl MemoryStore for SqliteStorage {
         }
 
         let rows = query_builder.fetch_all(&self.pool).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to search memories".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -1210,7 +1210,7 @@ impl MemoryStore for SqliteStorage {
                 .bind(now)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: "Failed to cleanup expired memories".to_string(),
                     cause: Some(Box::new(e)),
                 })?;
@@ -1231,7 +1231,7 @@ impl MemoryStore for SqliteStorage {
         .bind(now)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get memory stats".to_string(),
             cause: Some(Box::new(e)),
         })?;

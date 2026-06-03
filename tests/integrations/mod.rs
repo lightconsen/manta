@@ -2,7 +2,7 @@
 //!
 //! Each file tests a category of tools without going through Gateway/WebSocket.
 
-pub use manta::tools::{
+pub use syscity::tools::{
     AcpSessionTool, AcpSpawnTool, ApplyPatchTool, BrowserTool, CanvasTool, CodeExecutionTool,
     CronTool, DelegateTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
     ImageGenerateTool, ImageTool, McpConnectionTool, MemoryGetTool, MemorySearchTool, MemoryTool,

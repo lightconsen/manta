@@ -1,4 +1,4 @@
-//! Utility modules for Manta
+//! Utility modules for Syscity
 //!
 //! This module contains shared utilities used across the application.
 

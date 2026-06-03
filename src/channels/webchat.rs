@@ -47,7 +47,7 @@ impl WebchatConfig {
             bind_addr: format!("0.0.0.0:{}", DEFAULT_WEBCHAT_PORT),
             allowed_sessions: Vec::new(),
             message_tx: None,
-            page_title: "Manta Chat".to_string(),
+            page_title: "Syscity Chat".to_string(),
         }
     }
 
@@ -235,7 +235,7 @@ impl WebchatChannel {
             }
             Ok(())
         } else {
-            Err(crate::error::MantaError::NotFound {
+            Err(crate::error::SyscityError::NotFound {
                 resource: format!("WebChat session {} not connected", session_id),
             })
         }
@@ -384,8 +384,8 @@ impl WebchatChannel {
         <button onclick="send()">Send</button>
     </div>
     <script>
-        const sessionId = localStorage.getItem('manta_session') || crypto.randomUUID();
-        localStorage.setItem('manta_session', sessionId);
+        const sessionId = localStorage.getItem('syscity_session') || crypto.randomUUID();
+        localStorage.setItem('syscity_session', sessionId);
         const chat = document.getElementById('chat');
         const input = document.getElementById('input');
         const typing = document.getElementById('typing');
@@ -500,7 +500,7 @@ impl Channel for WebchatChannel {
 
         let listener = tokio::net::TcpListener::bind(&self.config.bind_addr)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         let server = axum::serve(listener, app);
 
@@ -568,11 +568,11 @@ impl Channel for WebchatChannel {
     }
 
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
-        Err(crate::error::MantaError::Internal("WebChat edit not implemented".to_string()))
+        Err(crate::error::SyscityError::Internal("WebChat edit not implemented".to_string()))
     }
 
     async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
-        Err(crate::error::MantaError::Internal("WebChat delete not implemented".to_string()))
+        Err(crate::error::SyscityError::Internal("WebChat delete not implemented".to_string()))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
@@ -638,7 +638,7 @@ mod tests {
     fn test_webchat_config_default() {
         let config = WebchatConfig::default();
         assert_eq!(config.bind_addr, format!("0.0.0.0:{}", DEFAULT_WEBCHAT_PORT));
-        assert_eq!(config.page_title, "Manta Chat");
+        assert_eq!(config.page_title, "Syscity Chat");
     }
 
     #[test]

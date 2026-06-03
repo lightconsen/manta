@@ -1,4 +1,4 @@
-//! Outbound Pipeline for Manta
+//! Outbound Pipeline for Syscity
 //!
 //! The outbound pipeline handles everything that happens *after* the agent
 //! produces a response.  It mirrors OpenClaw's layered output architecture:

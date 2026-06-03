@@ -130,11 +130,11 @@ impl Credential {
                 .form(&params)
                 .send()
                 .await
-                .map_err(crate::error::MantaError::Http)?;
+                .map_err(crate::error::SyscityError::Http)?;
 
             if !resp.status().is_success() {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(crate::error::MantaError::ExternalService {
+                return Err(crate::error::SyscityError::ExternalService {
                     source: format!("OAuth2 refresh failed: {}", body),
                     cause: None,
                 });
@@ -143,7 +143,7 @@ impl Credential {
             let data: TokenResponse =
                 resp.json()
                     .await
-                    .map_err(|e| crate::error::MantaError::ExternalService {
+                    .map_err(|e| crate::error::SyscityError::ExternalService {
                         source: format!("OAuth2 refresh response invalid: {}", e),
                         cause: None,
                     })?;
@@ -160,7 +160,7 @@ impl Credential {
 
 /// Resolve a credential following the priority chain:
 ///
-/// 1. Environment variable (e.g. `MANTA_PROVIDER_{NAME}_KEY`) — highest priority
+/// 1. Environment variable (e.g. `SYSCITY_PROVIDER_{NAME}_KEY`) — highest priority
 /// 2. Bearer token / OAuth2 from auth_profile
 /// 3. API key from config `api_keys` list
 /// 4. Single `api_key` from config — lowest priority
@@ -171,7 +171,7 @@ pub fn resolve_from_env_and_config(
     config_api_key: &str,
     config_api_keys: &[String],
 ) -> Option<Credential> {
-    let env_key = format!("MANTA_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
+    let env_key = format!("SYSCITY_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
 
     // 1. Environment variable (highest priority)
     if let Ok(key) = std::env::var(&env_key) {

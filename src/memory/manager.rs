@@ -1,4 +1,4 @@
-//! Memory Manager — unified orchestrator for Manta's memory system
+//! Memory Manager — unified orchestrator for Syscity's memory system
 //!
 //! Wires together:
 //! - UnifiedStore (SQLite + WAL + FTS5)

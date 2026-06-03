@@ -1,4 +1,4 @@
-//! Tool abstractions for Manta
+//! Tool abstractions for Syscity
 //!
 //! Tools are capabilities that the AI assistant can use to interact
 //! with the world (execute shell commands, read files, search the web, etc.).
@@ -1055,7 +1055,7 @@ impl ToolRegistry {
                 // Proceed with execution
             }
             ToolPolicyDecision::Deny { reason } => {
-                return Some(Err(crate::error::MantaError::Validation(format!(
+                return Some(Err(crate::error::SyscityError::Validation(format!(
                     "Tool '{}' denied: {}",
                     name, reason
                 ))));
@@ -1072,7 +1072,7 @@ impl ToolRegistry {
                 let approval_queue = match &self.approval_queue {
                     Some(q) => q.clone(),
                     None => {
-                        return Some(Err(crate::error::MantaError::Validation(
+                        return Some(Err(crate::error::SyscityError::Validation(
                             "Tool requires approval but no approval queue configured".into(),
                         )));
                     }
@@ -1105,13 +1105,13 @@ impl ToolRegistry {
                         // Proceed with execution below
                     }
                     Ok(ApprovalDecision::Deny { reason }) => {
-                        return Some(Err(crate::error::MantaError::Validation(format!(
+                        return Some(Err(crate::error::SyscityError::Validation(format!(
                             "Tool '{}' denied by user: {}",
                             name, reason
                         ))));
                     }
                     Err(_) => {
-                        return Some(Err(crate::error::MantaError::Validation(
+                        return Some(Err(crate::error::SyscityError::Validation(
                             "Approval channel closed".into(),
                         )));
                     }
@@ -1210,7 +1210,7 @@ impl ToolRegistry {
             serde_json::json!({})
         } else {
             serde_json::from_str(&call.arguments).map_err(|e| {
-                crate::error::MantaError::Validation(format!(
+                crate::error::SyscityError::Validation(format!(
                     "Invalid arguments for tool {}: {}",
                     call.name, e
                 ))
@@ -1235,7 +1235,7 @@ impl ToolRegistry {
             }
         }
 
-        Err(crate::error::MantaError::Validation(format!(
+        Err(crate::error::SyscityError::Validation(format!(
             "Unknown tool: {}. Available tools: {}",
             call.name,
             self.list().join(", ")
@@ -1539,7 +1539,7 @@ impl ToolRegistrar {
     ) -> Option<crate::Result<ToolExecutionResult>> {
         // Validate input first
         if let Err(e) = self.validate_input(name, &args) {
-            return Some(Err(crate::error::MantaError::Validation(e.to_string())));
+            return Some(Err(crate::error::SyscityError::Validation(e.to_string())));
         }
 
         self.registry.execute(name, args, context).await

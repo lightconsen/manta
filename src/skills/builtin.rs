@@ -1,4 +1,4 @@
-//! Built-in skills for Manta
+//! Built-in skills for Syscity
 //!
 //! These skills are always available and cannot be uninstalled.
 //! They provide core functionality for skill management and scheduling.
@@ -57,11 +57,11 @@ pub fn get_builtin_skills() -> HashMap<String, Skill> {
 fn create_skill_creator() -> Skill {
     let mut skill = Skill::new(
         "skill-creator",
-        "Create and package new skills for Manta",
+        "Create and package new skills for Syscity",
         SKILL_CREATOR_PROMPT,
     )
     .with_emoji("🛠️")
-    .by("manta");
+    .by("syscity");
 
     // Add triggers
     skill.triggers = vec![
@@ -111,7 +111,7 @@ fn create_find_skills() -> Skill {
         FIND_SKILLS_PROMPT,
     )
     .with_emoji("🔍")
-    .by("manta");
+    .by("syscity");
 
     // Add triggers
     skill.triggers = vec![
@@ -164,7 +164,7 @@ fn create_find_skills() -> Skill {
 fn create_cron_skill() -> Skill {
     let mut skill = Skill::new("cron", "Schedule recurring tasks and automated jobs", CRON_PROMPT)
         .with_emoji("⏰")
-        .by("manta");
+        .by("syscity");
 
     // Add triggers
     skill.triggers = vec![
@@ -228,7 +228,7 @@ fn create_clawhub_skill() -> Skill {
         CLAWHUB_PROMPT,
     )
     .with_emoji("🦞")
-    .by("manta");
+    .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -272,7 +272,7 @@ fn create_clawhub_skill() -> Skill {
 fn create_summarize_skill() -> Skill {
     let mut skill = Skill::new("summarize", "Summarize URLs, files, and content", SUMMARIZE_PROMPT)
         .with_emoji("📝")
-        .by("manta");
+        .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -316,7 +316,7 @@ fn create_summarize_skill() -> Skill {
 fn create_weather_skill() -> Skill {
     let mut skill = Skill::new("weather", "Get weather information for locations", WEATHER_PROMPT)
         .with_emoji("🌤️")
-        .by("manta");
+        .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -360,7 +360,7 @@ fn create_weather_skill() -> Skill {
 fn create_tmux_skill() -> Skill {
     let mut skill = Skill::new("tmux", "Control tmux sessions remotely", TMUX_PROMPT)
         .with_emoji("🖥️")
-        .by("manta");
+        .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -398,7 +398,7 @@ fn create_github_skill() -> Skill {
     let mut skill =
         Skill::new("github", "GitHub CLI integration for repos, PRs, and issues", GITHUB_PROMPT)
             .with_emoji("🐙")
-            .by("manta");
+            .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -448,7 +448,7 @@ fn create_github_skill() -> Skill {
 /// Skill creator prompt
 const SKILL_CREATOR_PROMPT: &str = r#"# Skill Creator
 
-Create new skills for Manta using the SKILL.md format.
+Create new skills for Syscity using the SKILL.md format.
 
 ## Quick Start
 
@@ -486,9 +486,9 @@ Detailed instructions for the AI on how to use this skill...
 ## Storage Locations
 
 Skills can be stored at different levels:
-- **User**: `~/.manta/skills/` - Available everywhere
-- **Project**: `./.manta/skills/` - Project-specific
-- **Workspace**: Workspace root `.manta/skills/`
+- **User**: `~/.syscity/skills/` - Available everywhere
+- **Project**: `./.syscity/skills/` - Project-specific
+- **Workspace**: Workspace root `.syscity/skills/`
 
 ## Best Practices
 
@@ -532,8 +532,8 @@ Run `git log --oneline --since="1 day ago"` and summarize the commits.
 
 ## Creation Steps
 
-1. Create directory: `mkdir -p ~/.manta/skills/{name}`
-2. Create SKILL.md: `touch ~/.manta/skills/{name}/SKILL.md`
+1. Create directory: `mkdir -p ~/.syscity/skills/{name}`
+2. Create SKILL.md: `touch ~/.syscity/skills/{name}/SKILL.md`
 3. Write the skill content
 4. Test by triggering one of the patterns
 
@@ -543,7 +543,7 @@ Use `/find-skills` to verify the skill was loaded correctly.
 /// Find skills prompt
 const FIND_SKILLS_PROMPT: &str = r#"# Find Skills
 
-Search for and discover skills across all storage levels in Manta.
+Search for and discover skills across all storage levels in Syscity.
 
 ## Usage
 
@@ -556,10 +556,10 @@ You can search for skills using:
 
 Skills exist at multiple levels (highest priority first):
 
-1. **Project** (`./.manta/skills/`) - Project-specific skills
+1. **Project** (`./.syscity/skills/`) - Project-specific skills
 2. **Workspace** - Workspace-level skills
-3. **User** (`~/.manta/skills/`) - Your personal skills
-4. **Bundled** - Built-in skills that come with Manta
+3. **User** (`~/.syscity/skills/`) - Your personal skills
+4. **Bundled** - Built-in skills that come with Syscity
 
 ## Search Commands
 
@@ -578,7 +578,7 @@ Present results clearly:
 Found X skills:
 
 🛠️ skill-creator (built-in)
-   Create and package new skills for Manta
+   Create and package new skills for Syscity
    Trigger: /skill-create
 
 🌤️ weather (user)
@@ -602,7 +602,7 @@ Found X skills:
 /// Cron skill prompt
 const CRON_PROMPT: &str = r#"# Cron - Scheduled Tasks
 
-Schedule recurring tasks and automated jobs in Manta.
+Schedule recurring tasks and automated jobs in Syscity.
 
 ## Features
 
@@ -735,21 +735,21 @@ Examples:
 ### Install a Skill
 
 ```bash
-npx --yes clawhub@latest install <skill-slug> --workdir ~/.manta
+npx --yes clawhub@latest install <skill-slug> --workdir ~/.syscity
 ```
 
-Important: Always include `--workdir ~/.manta` so skills install to the correct location.
+Important: Always include `--workdir ~/.syscity` so skills install to the correct location.
 
 ### Update Installed Skills
 
 ```bash
-npx --yes clawhub@latest update --all --workdir ~/.manta
+npx --yes clawhub@latest update --all --workdir ~/.syscity
 ```
 
 ### List Installed Skills
 
 ```bash
-npx --yes clawhub@latest list --workdir ~/.manta
+npx --yes clawhub@latest list --workdir ~/.syscity
 ```
 
 ## Requirements
@@ -1169,7 +1169,7 @@ fn create_agent_browser_skill() -> Skill {
         AGENT_BROWSER_PROMPT,
     )
     .with_emoji("🌐")
-    .by("manta");
+    .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1332,7 +1332,7 @@ fn create_api_gateway_skill() -> Skill {
         API_GATEWAY_PROMPT,
     )
     .with_emoji("🚪")
-    .by("manta");
+    .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1549,7 +1549,7 @@ fn create_nano_pdf_skill() -> Skill {
     let mut skill =
         Skill::new("nano-pdf", "Read, create, and manipulate PDF documents", NANO_PDF_PROMPT)
             .with_emoji("📄")
-            .by("manta");
+            .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1763,11 +1763,11 @@ enscript -p - -Ejavascript code.js | ps2pdf - code.pdf
 fn create_self_improving_agent_skill() -> Skill {
     let mut skill = Skill::new(
         "self-improving-agent",
-        "Analyze and improve Manta's own performance and configuration",
+        "Analyze and improve Syscity's own performance and configuration",
         SELF_IMPROVING_AGENT_PROMPT,
     )
     .with_emoji("🔄")
-    .by("manta");
+    .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -1800,7 +1800,7 @@ fn create_self_improving_agent_skill() -> Skill {
         },
         SkillTrigger {
             trigger_type: TriggerType::Keyword,
-            pattern: "optimize manta".to_string(),
+            pattern: "optimize syscity".to_string(),
             priority: 90,
             user_invocable: true,
             model_invocable: true,
@@ -1838,14 +1838,14 @@ fn create_self_improving_agent_skill() -> Skill {
 /// Self-Improving Agent skill prompt
 const SELF_IMPROVING_AGENT_PROMPT: &str = r#"# Self-Improving Agent - System Analysis & Optimization
 
-Analyze Manta's performance, configuration, and behavior to suggest and implement improvements.
+Analyze Syscity's performance, configuration, and behavior to suggest and implement improvements.
 
 ## When to Use
 
 Use this skill when the user asks:
 - "improve yourself"
 - "analyze your performance"
-- "optimize manta"
+- "optimize syscity"
 - "fix your config"
 - "debug yourself"
 - "system check"
@@ -1855,17 +1855,17 @@ Use this skill when the user asks:
 
 ### 1. Configuration Analysis
 
-Check Manta's configuration files for issues:
-- `~/.manta/config.yaml` - Main config
-- `~/.manta/skills/` - User skills
-- `./.manta/skills/` - Project skills
+Check Syscity's configuration files for issues:
+- `~/.syscity/config.yaml` - Main config
+- `~/.syscity/skills/` - User skills
+- `./.syscity/skills/` - Project skills
 
 ### 2. Log Analysis
 
 Analyze recent logs to identify issues:
 ```bash
 # View recent logs (if available)
-tail -n 100 ~/.local/share/manta/logs/manta.log
+tail -n 100 ~/.local/share/syscity/logs/syscity.log
 ```
 
 ### 3. Performance Metrics
@@ -1873,13 +1873,13 @@ tail -n 100 ~/.local/share/manta/logs/manta.log
 Check system resources:
 ```bash
 # Memory usage
-ps aux | grep manta
+ps aux | grep syscity
 
 # Disk space
-df -h ~/.manta
+df -h ~/.syscity
 
-# Large files in manta directories
-find ~/.manta -type f -size +10M
+# Large files in syscity directories
+find ~/.syscity -type f -size +10M
 ```
 
 ### 4. Skill Health Check
@@ -1944,13 +1944,13 @@ Ask user before making changes:
 
 ```bash
 # Clean old logs (>30 days)
-find ~/.local/share/manta/logs -name "*.log" -mtime +30 -delete
+find ~/.local/share/syscity/logs -name "*.log" -mtime +30 -delete
 
 # Remove empty skill directories
-find ~/.manta/skills -type d -empty -delete
+find ~/.syscity/skills -type d -empty -delete
 
 # Clear temporary files
-rm -rf /tmp/manta-*
+rm -rf /tmp/syscity-*
 ```
 
 ### Config Optimization
@@ -2000,7 +2000,7 @@ Present findings clearly:
 
 📝 Config Suggestions:
 ```yaml
-# Add to ~/.manta/config.yaml
+# Add to ~/.syscity/config.yaml
 setting: value
 ```
 
@@ -2012,20 +2012,20 @@ Would you like me to apply any of these fixes?
 Useful commands for self-analysis:
 
 ```bash
-# Check if manta is running
-pgrep -f manta
+# Check if syscity is running
+pgrep -f syscity
 
 # Memory usage
-ps -o pid,rss,vsz,comm -p $(pgrep -f manta)
+ps -o pid,rss,vsz,comm -p $(pgrep -f syscity)
 
 # Open files
-lsof -p $(pgrep -f manta) 2>/dev/null | head -20
+lsof -p $(pgrep -f syscity) 2>/dev/null | head -20
 
 # Config syntax check
-cat ~/.manta/config.yaml | head -20
+cat ~/.syscity/config.yaml | head -20
 
-# Disk usage of manta directories
-du -sh ~/.manta ~/.local/share/manta ~/.cache/manta 2>/dev/null
+# Disk usage of syscity directories
+du -sh ~/.syscity ~/.local/share/syscity ~/.cache/syscity 2>/dev/null
 ```
 
 ## Limitations
@@ -2039,7 +2039,7 @@ du -sh ~/.manta ~/.local/share/manta ~/.cache/manta 2>/dev/null
 
 **User**: "improve yourself"
 
-**Manta**:
+**Syscity**:
 ```
 🔄 Self-Improvement Analysis
 
@@ -2073,7 +2073,7 @@ fn create_agent_creator_skill() -> Skill {
         AGENT_CREATOR_PROMPT,
     )
     .with_emoji("🎭")
-    .by("manta");
+    .by("syscity");
 
     skill.triggers = vec![
         SkillTrigger {
@@ -2140,7 +2140,7 @@ You extract information from the user's request and use the `file_write` tool to
 
 ## File Locations
 
-Agents are stored in: `~/.manta/agents/<agent-name>/`
+Agents are stored in: `~/.syscity/agents/<agent-name>/`
 
 ## Required Files
 
@@ -2216,7 +2216,7 @@ From the user's request, extract:
 
 Use `shell` tool to create the agent directory:
 ```bash
-mkdir -p ~/.manta/agents/<agent-name>
+mkdir -p ~/.syscity/agents/<agent-name>
 ```
 
 ### Step 3: Write Memory Files
@@ -2234,7 +2234,7 @@ Report what was created and how to use it.
 **User**: "Create an agent named 'codereview' that acts as a strict senior code reviewer"
 
 **Your Actions**:
-1. Create directory: `mkdir -p ~/.manta/agents/codereview`
+1. Create directory: `mkdir -p ~/.syscity/agents/codereview`
 2. Write IDENTITY.md with name "Code Reviewer", role "Senior Code Reviewer"
 3. Write SOUL.md with values: thoroughness, security, performance
 4. Write BOOTSTRAP.md with strict code review prompt
@@ -2244,7 +2244,7 @@ Report what was created and how to use it.
 **User**: "Make an agent for creative writing with a friendly, encouraging style"
 
 **Your Actions**:
-1. Create directory: `mkdir -p ~/.manta/agents/creative`
+1. Create directory: `mkdir -p ~/.syscity/agents/creative`
 2. Write IDENTITY.md with name "Creative Muse", style "friendly"
 3. Write SOUL.md emphasizing creativity, encouragement, brainstorming
 4. Write BOOTSTRAP.md with creative writing focus
@@ -2278,13 +2278,13 @@ After creating the agent, report:
    Style: <style>
 
 📁 Files Created:
-   ~/.manta/agents/<name>/
+   ~/.syscity/agents/<name>/
    ├── SOUL.md
    ├── IDENTITY.md
    └── BOOTSTRAP.md
 
 🚀 To Use:
-   manta agent set <name>
+   syscity agent set <name>
 
    Or via web terminal:
    "switch to <name> agent"
@@ -2299,8 +2299,8 @@ After creating the agent, report:
 ## Important Notes
 
 - Agent names should be lowercase with hyphens (not spaces)
-- Default location is ~/.manta/agents/
-- Agent won't be active until user runs `manta agent set <name>`
+- Default location is ~/.syscity/agents/
+- Agent won't be active until user runs `syscity agent set <name>`
 - Files follow OpenClaw specification
 "#;
 

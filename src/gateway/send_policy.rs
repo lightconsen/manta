@@ -1,4 +1,4 @@
-//! Send Policy Engine for Manta
+//! Send Policy Engine for Syscity
 //!
 //! Evaluates allow/deny rules before the agent responds on any channel.
 //! Rules are matched in priority order (highest first); the first matching
@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust
-//! use manta::gateway::send_policy::{SendPolicy, PolicyRule, PolicyDecision, RuleCondition};
+//! use syscity::gateway::send_policy::{SendPolicy, PolicyRule, PolicyDecision, RuleCondition};
 //!
 //! let mut policy = SendPolicy::default();
 //!

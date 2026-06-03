@@ -16,8 +16,8 @@ async fn command_help_returns_markdown() {
         .unwrap_or("")
         .to_lowercase();
     assert!(
-        text.contains("manta") || text.contains("command"),
-        "Expected Manta commands in help, got: {}",
+        text.contains("syscity") || text.contains("command"),
+        "Expected Syscity commands in help, got: {}",
         text
     );
 }

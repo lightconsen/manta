@@ -345,7 +345,7 @@ impl SecretResolver {
             std::fs::read_to_string(&path).map_err(|e| ConfigError::FileRead { path, source: e })
         })
         .await
-        .map_err(|e| crate::error::MantaError::Internal(format!("Task join error: {}", e)))??;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Task join error: {}", e)))??;
 
         // Trim whitespace (including newlines) from file content
         Ok(content.trim().to_string())

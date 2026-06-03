@@ -1,9 +1,9 @@
-//! Memory management commands for Manta
+//! Memory management commands for Syscity
 //!
 //! Provides CLI access to vector memory: search and add documents.
 
 use crate::cli::OutputFormat;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -126,7 +126,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -155,7 +155,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -179,7 +179,7 @@ pub async fn run_memory_command(command: &MemoryCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())

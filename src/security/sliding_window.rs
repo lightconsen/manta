@@ -1,4 +1,4 @@
-//! Sliding Window Rate Limiter for Manta
+//! Sliding Window Rate Limiter for Syscity
 //!
 //! Provides per-user, per-endpoint rate limiting using a sliding window algorithm.
 //! Unlike token bucket (which allows bursts), sliding window tracks actual

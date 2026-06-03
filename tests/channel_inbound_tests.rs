@@ -6,11 +6,11 @@
 //! These tests verify that inbound message handling correctly applies
 //! security policies without requiring live network connections.
 
-use manta::channels::lark::{LarkChannel, LarkConfig};
-use manta::channels::qq::{QqChannel, QqConfig};
-use manta::channels::slack::{SlackChannel, SlackConfig};
-use manta::channels::whatsapp::{WhatsappChannel, WhatsappConfig};
-use manta::security::pairing::{DmPolicy, PairingStore};
+use syscity::channels::lark::{LarkChannel, LarkConfig};
+use syscity::channels::qq::{QqChannel, QqConfig};
+use syscity::channels::slack::{SlackChannel, SlackConfig};
+use syscity::channels::whatsapp::{WhatsappChannel, WhatsappConfig};
+use syscity::security::pairing::{DmPolicy, PairingStore};
 use std::sync::Arc;
 
 // ── Slack Channel Access Control ─────────────────────────────────────────────
@@ -91,7 +91,7 @@ async fn slack_pairing_authorized_user_allowed() {
     // Request access first
     let result = store.request_access("slack", "U123", Some("Alice")).await;
     let code = match result.unwrap() {
-        manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
+        syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("Expected NewRequest, got {:?}", other),
     };
 
@@ -189,7 +189,7 @@ async fn whatsapp_pairing_authorized_user_allowed() {
         .request_access("whatsapp", "14155552671", Some("Bob"))
         .await;
     let code = match result.unwrap() {
-        manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
+        syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("Expected NewRequest, got {:?}", other),
     };
 
@@ -260,7 +260,7 @@ async fn qq_pairing_authorized_user_allowed() {
 
     let result = store.request_access("qq", "12345", Some("User")).await;
     let code = match result.unwrap() {
-        manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
+        syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("Expected NewRequest, got {:?}", other),
     };
 
@@ -343,7 +343,7 @@ async fn lark_pairing_authorized_user_allowed() {
 
     let result = store.request_access("lark", "user_1", Some("User")).await;
     let code = match result.unwrap() {
-        manta::security::pairing::RequestAccessResult::NewRequest { code } => code,
+        syscity::security::pairing::RequestAccessResult::NewRequest { code } => code,
         other => panic!("Expected NewRequest, got {:?}", other),
     };
 

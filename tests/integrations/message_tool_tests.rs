@@ -7,10 +7,10 @@
 
 use super::*;
 use async_trait::async_trait;
-use manta::channels::{Channel, ChannelCapabilities, ChatType, ConversationId, OutgoingMessage};
-use manta::core::models::Id;
-use manta::gateway::{GatewayConfig, GatewayState};
-use manta::tools::message::MessageTool;
+use syscity::channels::{Channel, ChannelCapabilities, ChatType, ConversationId, OutgoingMessage};
+use syscity::core::models::Id;
+use syscity::gateway::{GatewayConfig, GatewayState};
+use syscity::tools::message::MessageTool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -20,15 +20,15 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 struct DummyInboundPipeline;
 
 #[async_trait]
-impl manta::inbound::InboundPipeline for DummyInboundPipeline {
+impl syscity::inbound::InboundPipeline for DummyInboundPipeline {
     async fn process(
         &self,
-        _message: manta::channels::IncomingMessage,
-    ) -> Option<manta::inbound::RoutedMessage> {
+        _message: syscity::channels::IncomingMessage,
+    ) -> Option<syscity::inbound::RoutedMessage> {
         None
     }
 
-    async fn flush(&self, _key: &str) -> Vec<manta::inbound::RoutedMessage> {
+    async fn flush(&self, _key: &str) -> Vec<syscity::inbound::RoutedMessage> {
         vec![]
     }
 }
@@ -36,12 +36,12 @@ impl manta::inbound::InboundPipeline for DummyInboundPipeline {
 struct DummyOutboundPipeline;
 
 #[async_trait]
-impl manta::outbound::OutboundPipeline for DummyOutboundPipeline {
+impl syscity::outbound::OutboundPipeline for DummyOutboundPipeline {
     async fn process(
         &self,
-        _ctx: manta::outbound::OutboundContext,
-    ) -> manta::outbound::OutboundResult {
-        manta::outbound::OutboundResult {
+        _ctx: syscity::outbound::OutboundContext,
+    ) -> syscity::outbound::OutboundResult {
+        syscity::outbound::OutboundResult {
             text: String::new(),
             canvas_update: None,
             sse_events: vec![],
@@ -66,25 +66,25 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
     let budget_dir = tmp.path().join("budget");
     let session_files_dir = tmp.path().join("session_files");
 
-    let reply_dispatcher = Arc::new(manta::outbound::ReplyDispatcher::new(
-        manta::outbound::ReplyDispatchConfig::default(),
+    let reply_dispatcher = Arc::new(syscity::outbound::ReplyDispatcher::new(
+        syscity::outbound::ReplyDispatchConfig::default(),
     ));
-    let side_effect_registry = Arc::new(manta::outbound::SideEffectRegistry::new());
+    let side_effect_registry = Arc::new(syscity::outbound::SideEffectRegistry::new());
     let side_effect_executor =
-        Arc::new(manta::outbound::SideEffectExecutor::new(side_effect_registry));
-    let sse_streamer = Arc::new(manta::outbound::SseStreamer::new());
+        Arc::new(syscity::outbound::SideEffectExecutor::new(side_effect_registry));
+    let sse_streamer = Arc::new(syscity::outbound::SseStreamer::new());
 
-    let inbound_pipeline: Arc<dyn manta::inbound::InboundPipeline> = Arc::new(DummyInboundPipeline);
-    let outbound_pipeline: Arc<dyn manta::outbound::OutboundPipeline> =
+    let inbound_pipeline: Arc<dyn syscity::inbound::InboundPipeline> = Arc::new(DummyInboundPipeline);
+    let outbound_pipeline: Arc<dyn syscity::outbound::OutboundPipeline> =
         Arc::new(DummyOutboundPipeline);
 
-    let transcript_store = manta::agent::TranscriptStore::new(transcript_dir);
+    let transcript_store = syscity::agent::TranscriptStore::new(transcript_dir);
     let _ = transcript_store.init().await;
-    let artifact_store = manta::agent::ArtifactStore::new(artifact_dir);
+    let artifact_store = syscity::agent::ArtifactStore::new(artifact_dir);
     let _ = artifact_store.init().await;
-    let disk_budget = manta::agent::DiskBudgetManager::new(budget_dir);
+    let disk_budget = syscity::agent::DiskBudgetManager::new(budget_dir);
     let _ = disk_budget.init();
-    let session_file_manager = manta::agent::SessionFileManager::new(session_files_dir);
+    let session_file_manager = syscity::agent::SessionFileManager::new(session_files_dir);
     let _ = session_file_manager.init().await;
 
     GatewayState {
@@ -92,73 +92,73 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         channels: Arc::new(RwLock::new(HashMap::new())),
         agents: Arc::new(RwLock::new(HashMap::new())),
         session_routing: Arc::new(RwLock::new(HashMap::new())),
-        agent_router: Arc::new(manta::inbound::AgentRouter::new(
-            manta::inbound::AgentRouterConfig::default(),
+        agent_router: Arc::new(syscity::inbound::AgentRouter::new(
+            syscity::inbound::AgentRouterConfig::default(),
         )),
         session_channels: Arc::new(RwLock::new(HashMap::new())),
         webhook_sessions: Arc::new(RwLock::new(HashMap::new())),
-        model_router: Arc::new(manta::model_router::ModelRouter::new(
-            manta::model_router::ModelRouterConfig::default(),
+        model_router: Arc::new(syscity::model_router::ModelRouter::new(
+            syscity::model_router::ModelRouterConfig::default(),
         )),
-        tool_registry: Arc::new(manta::tools::ToolRegistry::new()),
+        tool_registry: Arc::new(syscity::tools::ToolRegistry::new()),
         event_tx,
-        hook_registry: Arc::new(manta::gateway::hooks::EventHookRegistry::new()),
+        hook_registry: Arc::new(syscity::gateway::hooks::EventHookRegistry::new()),
         message_queue: message_queue_tx,
-        canvas_manager: Arc::new(manta::canvas::CanvasManager::new()),
+        canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
         plugin_manager: Arc::new(
-            manta::plugins::PluginManager::new(plugins_dir)
+            syscity::plugins::PluginManager::new(plugins_dir)
                 .await
                 .expect("plugin manager"),
         ),
-        acp: Arc::new(manta::acp::AcpControlPlane::new()),
+        acp: Arc::new(syscity::acp::AcpControlPlane::new()),
         vector_memory: RwLock::new(None),
         session_search: RwLock::new(None),
         memory_manager: RwLock::new(None),
         hot_reload: RwLock::new(None),
         cron_scheduler: RwLock::new(None),
-        auth_manager: Arc::new(manta::security::AuthManager::new()),
-        pairing_store: Arc::new(manta::security::pairing::PairingStore::new()),
-        device_pairing_store: Arc::new(manta::security::device_pairing::DevicePairingStore::new()),
-        command_gate: Arc::new(manta::tools::command_gate::CommandGate::new()),
-        mention_gate: Arc::new(manta::security::mention_gate::MentionGate::new(
-            manta::security::mention_gate::MentionPolicy::Allow,
+        auth_manager: Arc::new(syscity::security::AuthManager::new()),
+        pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),
+        device_pairing_store: Arc::new(syscity::security::device_pairing::DevicePairingStore::new()),
+        command_gate: Arc::new(syscity::tools::command_gate::CommandGate::new()),
+        mention_gate: Arc::new(syscity::security::mention_gate::MentionGate::new(
+            syscity::security::mention_gate::MentionPolicy::Allow,
         )),
-        audit_log: Arc::new(manta::security::persistent_audit::PersistentAuditLog::new()),
-        rate_limiter: Arc::new(manta::security::RateLimiter::new(100, 10.0)),
-        multi_tier_rate_limiter: Arc::new(manta::gateway::rate_limit::MultiTierRateLimiter::new(
-            manta::gateway::rate_limit::MultiTierRateLimitConfig::default(),
+        audit_log: Arc::new(syscity::security::persistent_audit::PersistentAuditLog::new()),
+        rate_limiter: Arc::new(syscity::security::RateLimiter::new(100, 10.0)),
+        multi_tier_rate_limiter: Arc::new(syscity::gateway::rate_limit::MultiTierRateLimiter::new(
+            syscity::gateway::rate_limit::MultiTierRateLimitConfig::default(),
         )),
-        storage: Arc::new(RwLock::new(manta::adapters::InMemoryStorage::new())),
+        storage: Arc::new(RwLock::new(syscity::adapters::InMemoryStorage::new())),
         skills_manager: Arc::new(RwLock::new(
-            manta::skills::SkillManager::new()
+            syscity::skills::SkillManager::new()
                 .await
                 .expect("skill manager"),
         )),
-        agent_registry: Arc::new(RwLock::new(manta::agent::AgentRegistry::new())),
-        session_manager: Arc::new(RwLock::new(manta::agent::SessionManager::new())),
+        agent_registry: Arc::new(RwLock::new(syscity::agent::AgentRegistry::new())),
+        session_manager: Arc::new(RwLock::new(syscity::agent::SessionManager::new())),
         session_store: None,
-        mcp_manager: Arc::new(manta::tools::mcp::McpManager::new()),
+        mcp_manager: Arc::new(syscity::tools::mcp::McpManager::new()),
         config_path: None,
         runtime_settings: Arc::new(RwLock::new(HashMap::new())),
-        approval_queue: Arc::new(manta::tools::approval::ApprovalQueue::new()),
-        repair_state: Arc::new(manta::gateway::RepairState::new()),
-        cost_guard: manta::agent::CostGuard::new(0, 0),
+        approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
+        repair_state: Arc::new(syscity::gateway::RepairState::new()),
+        cost_guard: syscity::agent::CostGuard::new(0, 0),
         reply_dispatcher,
         routed_tx,
         inbound_pipeline,
         outbound_pipeline,
         side_effect_executor,
         sse_streamer,
-        channel_extensions: Arc::new(RwLock::new(manta::channels::ChannelExtensionRegistry::new())),
-        provider_sdk: Arc::new(RwLock::new(manta::providers::ProviderSdk::new())),
-        tool_sdk: Arc::new(RwLock::new(manta::tools::ToolSdk::new())),
+        channel_extensions: Arc::new(RwLock::new(syscity::channels::ChannelExtensionRegistry::new())),
+        provider_sdk: Arc::new(RwLock::new(syscity::providers::ProviderSdk::new())),
+        tool_sdk: Arc::new(RwLock::new(syscity::tools::ToolSdk::new())),
         session_message_buffer: Arc::new(RwLock::new(HashMap::new())),
-        route_resolver: Arc::new(manta::agent::RouteResolver::new("default")),
+        route_resolver: Arc::new(syscity::agent::RouteResolver::new("default")),
         transcript_store: Arc::new(transcript_store),
         artifact_store: Arc::new(artifact_store),
         disk_budget: Arc::new(disk_budget),
         session_file_manager: Arc::new(session_file_manager),
-        group_session_manager: Arc::new(RwLock::new(manta::agent::GroupSessionManager::new())),
+        group_session_manager: Arc::new(RwLock::new(syscity::agent::GroupSessionManager::new())),
         #[cfg(feature = "browser")]
         browser_bridge: tokio::sync::RwLock::new(None),
     }
@@ -200,17 +200,17 @@ impl Channel for MockChannel {
         self.caps.clone()
     }
 
-    async fn start(&self) -> manta::Result<()> {
+    async fn start(&self) -> syscity::Result<()> {
         self.calls.write().await.push("start".to_string());
         Ok(())
     }
 
-    async fn stop(&self) -> manta::Result<()> {
+    async fn stop(&self) -> syscity::Result<()> {
         self.calls.write().await.push("stop".to_string());
         Ok(())
     }
 
-    async fn send(&self, msg: OutgoingMessage) -> manta::Result<Id> {
+    async fn send(&self, msg: OutgoingMessage) -> syscity::Result<Id> {
         let reply = msg
             .reply_to
             .map(|r| format!(":reply_to={}", r))
@@ -222,7 +222,7 @@ impl Channel for MockChannel {
         Ok(Id::new())
     }
 
-    async fn send_typing(&self, conversation_id: &ConversationId) -> manta::Result<()> {
+    async fn send_typing(&self, conversation_id: &ConversationId) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -230,7 +230,7 @@ impl Channel for MockChannel {
         Ok(())
     }
 
-    async fn edit_message(&self, message_id: Id, new_content: String) -> manta::Result<()> {
+    async fn edit_message(&self, message_id: Id, new_content: String) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -238,7 +238,7 @@ impl Channel for MockChannel {
         Ok(())
     }
 
-    async fn delete_message(&self, message_id: Id) -> manta::Result<()> {
+    async fn delete_message(&self, message_id: Id) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -246,11 +246,11 @@ impl Channel for MockChannel {
         Ok(())
     }
 
-    async fn health_check(&self) -> manta::Result<bool> {
+    async fn health_check(&self) -> syscity::Result<bool> {
         Ok(true)
     }
 
-    async fn add_reaction(&self, message_id: Id, emoji: String) -> manta::Result<()> {
+    async fn add_reaction(&self, message_id: Id, emoji: String) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -258,7 +258,7 @@ impl Channel for MockChannel {
         Ok(())
     }
 
-    async fn remove_reaction(&self, message_id: Id, emoji: String) -> manta::Result<()> {
+    async fn remove_reaction(&self, message_id: Id, emoji: String) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -266,12 +266,12 @@ impl Channel for MockChannel {
         Ok(())
     }
 
-    async fn pin_message(&self, message_id: Id) -> manta::Result<()> {
+    async fn pin_message(&self, message_id: Id) -> syscity::Result<()> {
         self.calls.write().await.push(format!("pin:{}", message_id));
         Ok(())
     }
 
-    async fn unpin_message(&self, message_id: Id) -> manta::Result<()> {
+    async fn unpin_message(&self, message_id: Id) -> syscity::Result<()> {
         self.calls
             .write()
             .await
@@ -283,7 +283,7 @@ impl Channel for MockChannel {
         &self,
         message_id: Id,
         title: Option<String>,
-    ) -> manta::Result<ConversationId> {
+    ) -> syscity::Result<ConversationId> {
         self.calls
             .write()
             .await
@@ -296,7 +296,7 @@ impl Channel for MockChannel {
         conversation_id: ConversationId,
         question: String,
         options: Vec<String>,
-    ) -> manta::Result<Id> {
+    ) -> syscity::Result<Id> {
         self.calls
             .write()
             .await

@@ -176,7 +176,7 @@ impl PluginManifest {
             id: id.to_string(),
             name: name.to_string(),
             version: "0.1.0".to_string(),
-            description: "A Manta plugin".to_string(),
+            description: "A Syscity plugin".to_string(),
             author: None,
             main: None,
             capabilities: None,

@@ -1,4 +1,4 @@
-# CLAUDE.md - Manta Project
+# CLAUDE.md - Syscity Project
 
 ## Rust Best Practices
 
@@ -42,7 +42,7 @@
 
 ### Project Structure
 ```
-manta/
+syscity/
 ├── Cargo.toml
 ├── CLAUDE.md
 ├── src/

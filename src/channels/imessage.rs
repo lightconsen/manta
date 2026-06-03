@@ -284,7 +284,7 @@ impl ImessageChannel {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("BlueBubbles send request failed: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -293,7 +293,7 @@ impl ImessageChannel {
         let body: serde_json::Value = response.json().await.unwrap_or_default();
 
         if !status.is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!(
                     "BlueBubbles API error ({}): {}",
                     status,
@@ -431,7 +431,7 @@ impl Channel for ImessageChannel {
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
         // BlueBubbles API supports editing on newer macOS versions
         // Implementation would require PATCH /api/v1/message/:guid
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "iMessage editing not yet implemented".to_string(),
         ))
     }
@@ -442,7 +442,7 @@ impl Channel for ImessageChannel {
             let map = self.message_map.read().await;
             map.get(&msg_key)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("iMessage {} not found", msg_key),
                 })?
         };
@@ -451,13 +451,13 @@ impl Channel for ImessageChannel {
             .build_request(reqwest::Method::DELETE, &format!("/api/v1/message/{}", guid))
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("BlueBubbles delete request failed: {}", e),
                 cause: Some(Box::new(e)),
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("BlueBubbles delete failed: {}", response.status()),
                 cause: None,
             });

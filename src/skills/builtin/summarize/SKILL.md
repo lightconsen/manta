@@ -2,7 +2,7 @@
 name: summarize
 description: "Summarize documents, conversations, URLs, and text content"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "summarize"

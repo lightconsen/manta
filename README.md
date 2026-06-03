@@ -1,10 +1,10 @@
-# Manta
+# Syscity
 
 A lightweight, fast, and secure application written in Rust with clean architecture.
 
 ## Overview
 
-Manta demonstrates modern Rust development practices with a layered architecture:
+Syscity demonstrates modern Rust development practices with a layered architecture:
 
 - **Clean Architecture**: Core domain logic independent of external frameworks
 - **Layered Design**: Clear separation between core, adapters, and interfaces
@@ -21,25 +21,25 @@ Manta demonstrates modern Rust development practices with a layered architecture
 cargo build --release
 
 # Configure (optional)
-# Manta works out of the box with defaults
+# Syscity works out of the box with defaults
 
 # Run CLI
-./target/release/manta --help
+./target/release/syscity --help
 
 # Start server
-./target/release/manta server
+./target/release/syscity server
 
 # Create and manage entities
-./target/release/manta entity create "My Entity"
-./target/release/manta entity list
+./target/release/syscity entity create "My Entity"
+./target/release/syscity entity list
 ```
 
 ## Architecture
 
-Manta follows clean architecture principles:
+Syscity follows clean architecture principles:
 
 ```
-manta/
+syscity/
 ├── src/
 │   ├── core/           # Domain logic (independent)
 │   │   ├── models.rs   # Domain models (Entity, Status, etc.)
@@ -81,10 +81,10 @@ See [plan.md](plan.md) for detailed architecture and roadmap.
 
 ## Configuration
 
-Manta can be configured via:
+Syscity can be configured via:
 
-1. **Configuration file**: `manta.toml` or `~/.manta/manta.toml`
-2. **Environment variables**: `MANTA_SERVER_HOST`, `MANTA_LOG_LEVEL`, etc.
+1. **Configuration file**: `syscity.toml` or `~/.syscity/syscity.toml`
+2. **Environment variables**: `SYSCITY_SERVER_HOST`, `SYSCITY_LOG_LEVEL`, etc.
 3. **Command-line flags**: `--config`, `--log-level`
 
 ### Example Configuration

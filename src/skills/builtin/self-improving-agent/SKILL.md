@@ -2,7 +2,7 @@
 name: self-improving-agent
 description: "Analyze performance, learn from interactions, and improve agent behavior over time"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "improve"

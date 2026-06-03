@@ -2,7 +2,7 @@
 name: tmux
 description: "Manage tmux sessions, windows, and panes for terminal multiplexing"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "tmux"

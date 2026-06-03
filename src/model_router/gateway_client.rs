@@ -7,7 +7,7 @@
 //!
 //! # Credential priority chain (OpenClaw-aligned)
 //!
-//! 1. Environment variable (`MANTA_PROVIDER_{NAME}_KEY`)
+//! 1. Environment variable (`SYSCITY_PROVIDER_{NAME}_KEY`)
 //! 2. Bearer / OAuth2 token from auth profile
 //! 3. API key list from config
 //! 4. Single API key from config
@@ -93,7 +93,7 @@ impl HttpGatewayClient {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to build HTTP client: {}", e),
                 cause: None,
             })?;
@@ -158,7 +158,7 @@ impl HttpGatewayClient {
             match limiter.check(&user_id).await {
                 crate::security::RateLimitResult::Allowed { .. } => {}
                 crate::security::RateLimitResult::Denied { retry_after_secs } => {
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("Rate limited: retry after {} seconds", retry_after_secs),
                         cause: None,
                     });
@@ -188,8 +188,8 @@ impl HttpGatewayClient {
                 Err(e) => {
                     let is_retryable = matches!(
                         &e,
-                        crate::error::MantaError::Http(_)
-                            | crate::error::MantaError::ExternalService { .. }
+                        crate::error::SyscityError::Http(_)
+                            | crate::error::SyscityError::ExternalService { .. }
                     );
                     if !is_retryable || attempt == self.max_retries {
                         return Err(e);
@@ -208,7 +208,7 @@ impl HttpGatewayClient {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| crate::error::MantaError::ExternalService {
+        Err(last_error.unwrap_or_else(|| crate::error::SyscityError::ExternalService {
             source: "All retry attempts exhausted".to_string(),
             cause: None,
         }))
@@ -237,7 +237,7 @@ impl GatewayClient for HttpGatewayClient {
                         .json(body)
                         .send()
                         .await
-                        .map_err(crate::error::MantaError::Http)
+                        .map_err(crate::error::SyscityError::Http)
                 }
             })
             .await?;
@@ -245,7 +245,7 @@ impl GatewayClient for HttpGatewayClient {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("HTTP {}: {}", status, body_text),
                 cause: None,
             });
@@ -253,7 +253,7 @@ impl GatewayClient for HttpGatewayClient {
 
         resp.json::<R>()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to deserialize response: {}", e),
                 cause: None,
             })
@@ -279,7 +279,7 @@ impl GatewayClient for HttpGatewayClient {
                         .json(body)
                         .send()
                         .await
-                        .map_err(crate::error::MantaError::Http)
+                        .map_err(crate::error::SyscityError::Http)
                 }
             })
             .await?;
@@ -287,7 +287,7 @@ impl GatewayClient for HttpGatewayClient {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("HTTP {}: {}", status, body_text),
                 cause: None,
             });
@@ -295,7 +295,7 @@ impl GatewayClient for HttpGatewayClient {
 
         resp.text()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to read response body: {}", e),
                 cause: None,
             })

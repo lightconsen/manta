@@ -1,11 +1,11 @@
-//! Manta Plugin SDK
+//! Syscity Plugin SDK
 //!
-//! A high-level Rust SDK for building WASM plugins for the Manta AI assistant platform.
+//! A high-level Rust SDK for building WASM plugins for the Syscity AI assistant platform.
 //!
 //! # Quick Start
 //!
 //! ```ignore
-//! use manta_plugin_sdk::*;
+//! use syscity_plugin_sdk::*;
 //!
 //! #[no_mangle]
 //! pub extern "C" fn call_tool(name_ptr: i32, name_len: i32, params_ptr: i32, params_len: i32,
@@ -30,9 +30,9 @@
 //! ```ignore
 //! // In your plugin's Cargo.toml:
 //! // [dependencies]
-//! // manta-plugin-sdk = { version = "0.1", features = ["wit"] }
+//! // syscity-plugin-sdk = { version = "0.1", features = ["wit"] }
 //!
-//! use manta_plugin_sdk::wit_bindings::host_functions;
+//! use syscity_plugin_sdk::wit_bindings::host_functions;
 //!
 //! pub fn main() {
 //!     let id = host_functions::get_plugin_id();
@@ -42,7 +42,7 @@
 //!
 //! # Host Functions
 //!
-//! The SDK wraps 15+ host functions provided by Manta's WASM runtime:
+//! The SDK wraps 15+ host functions provided by Syscity's WASM runtime:
 //!
 //! - **Config**: `config::get`, `config::get_all`
 //! - **Memory**: `memory::store`, `memory::load`, `memory::search`

@@ -98,7 +98,7 @@ async fn tts_tool_falls_back_without_key() {
 
 #[tokio::test]
 async fn canvas_tool_presents() {
-    let canvas_mgr = Arc::new(manta::canvas::CanvasManager::new());
+    let canvas_mgr = Arc::new(syscity::canvas::CanvasManager::new());
     let tool = CanvasTool::new(canvas_mgr);
     let ctx = test_context();
 
@@ -186,7 +186,7 @@ async fn image_file_not_found_fails() {
     let tool = ImageTool::new();
     let ctx = test_context();
     let result = tool
-        .execute(json!({"path": "/tmp/manta-nonexistent-image.png"}), &ctx)
+        .execute(json!({"path": "/tmp/syscity-nonexistent-image.png"}), &ctx)
         .await;
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -223,7 +223,7 @@ async fn tts_empty_text_fails() {
 
 #[tokio::test]
 async fn canvas_invalid_action_fails() {
-    let canvas_mgr = Arc::new(manta::canvas::CanvasManager::new());
+    let canvas_mgr = Arc::new(syscity::canvas::CanvasManager::new());
     let tool = CanvasTool::new(canvas_mgr);
     let ctx = test_context();
     let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
@@ -234,7 +234,7 @@ async fn canvas_invalid_action_fails() {
 
 #[tokio::test]
 async fn canvas_update_nonexistent_fails() {
-    let canvas_mgr = Arc::new(manta::canvas::CanvasManager::new());
+    let canvas_mgr = Arc::new(syscity::canvas::CanvasManager::new());
     let tool = CanvasTool::new(canvas_mgr);
     let ctx = test_context();
     let result = tool

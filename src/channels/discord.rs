@@ -79,7 +79,7 @@ pub struct DiscordChannel {
     #[cfg(feature = "discord")]
     http: Option<Arc<serenity::http::Http>>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Manta message ID -> (Discord message ID, Discord channel ID) mapping
+    /// Syscity message ID -> (Discord message ID, Discord channel ID) mapping
     #[cfg(feature = "discord")]
     message_map: Arc<tokio::sync::RwLock<std::collections::HashMap<Id, (u64, u64)>>>,
     /// Session mapping: channel_id -> session_uuid (for /new command support)
@@ -172,16 +172,16 @@ impl DiscordChannel {
 
     /// Track a message ID to channel ID mapping
     #[cfg(feature = "discord")]
-    async fn track_message(&self, manta_id: Id, discord_msg_id: u64, channel_id: u64) {
+    async fn track_message(&self, syscity_id: Id, discord_msg_id: u64, channel_id: u64) {
         let mut map = self.message_map.write().await;
-        map.insert(manta_id, (discord_msg_id, channel_id));
+        map.insert(syscity_id, (discord_msg_id, channel_id));
     }
 
-    /// Get (Discord message ID, channel ID) for a Manta message ID
+    /// Get (Discord message ID, channel ID) for a Syscity message ID
     #[cfg(feature = "discord")]
-    async fn get_message_info(&self, manta_id: Id) -> Option<(u64, u64)> {
+    async fn get_message_info(&self, syscity_id: Id) -> Option<(u64, u64)> {
         let map = self.message_map.read().await;
-        map.get(&manta_id).copied()
+        map.get(&syscity_id).copied()
     }
 
     /// Check if user is allowed
@@ -287,7 +287,7 @@ impl Channel for DiscordChannel {
                 })
                 .await
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("Discord client error: {}", e))
+                    crate::error::SyscityError::Internal(format!("Discord client error: {}", e))
                 })?;
 
             self.running
@@ -305,7 +305,7 @@ impl Channel for DiscordChannel {
 
         #[cfg(not(feature = "discord"))]
         {
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -320,11 +320,11 @@ impl Channel for DiscordChannel {
         #[cfg(feature = "discord")]
         {
             let channel_id: u64 = message.conversation_id.0.parse().map_err(|_| {
-                crate::error::MantaError::Validation("Invalid channel ID".to_string())
+                crate::error::SyscityError::Validation("Invalid channel ID".to_string())
             })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id);
@@ -337,15 +337,15 @@ impl Channel for DiscordChannel {
                     let embed = Self::create_serenity_embed(embed);
                     let builder = CreateMessage::new().add_embed(embed);
                     let sent = channel_id.send_message(http, builder).await.map_err(|e| {
-                        crate::error::MantaError::ExternalService {
+                        crate::error::SyscityError::ExternalService {
                             source: format!("Discord send failed: {}", e),
                             cause: None,
                         }
                     })?;
-                    let manta_id = Id::new();
-                    self.track_message(manta_id, sent.id.get(), channel_id.get())
+                    let syscity_id = Id::new();
+                    self.track_message(syscity_id, sent.id.get(), channel_id.get())
                         .await;
-                    return Ok(manta_id);
+                    return Ok(syscity_id);
                 }
                 _ => message.content,
             };
@@ -353,24 +353,24 @@ impl Channel for DiscordChannel {
             // Send text message
             let builder = CreateMessage::new().content(content);
             let sent = channel_id.send_message(http, builder).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: format!("Discord send failed: {}", e),
                     cause: None,
                 }
             })?;
 
             // Track the message for edit/delete operations
-            let manta_id = Id::new();
-            self.track_message(manta_id, sent.id.get(), channel_id.get())
+            let syscity_id = Id::new();
+            self.track_message(syscity_id, sent.id.get(), channel_id.get())
                 .await;
 
-            Ok(manta_id)
+            Ok(syscity_id)
         }
 
         #[cfg(not(feature = "discord"))]
         {
             let _ = message;
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -378,18 +378,18 @@ impl Channel for DiscordChannel {
         #[cfg(feature = "discord")]
         {
             let channel_id: u64 = conversation_id.0.parse().map_err(|_| {
-                crate::error::MantaError::Validation("Invalid channel ID".to_string())
+                crate::error::SyscityError::Validation("Invalid channel ID".to_string())
             })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id);
 
             // Trigger typing indicator
             channel_id.broadcast_typing(http).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: format!("Discord typing indicator failed: {}", e),
                     cause: None,
                 }
@@ -401,7 +401,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = conversation_id;
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -411,7 +411,7 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
                         message_id
@@ -419,7 +419,7 @@ impl Channel for DiscordChannel {
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
@@ -433,7 +433,7 @@ impl Channel for DiscordChannel {
                     serenity::builder::EditMessage::new().content(new_content),
                 )
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Discord edit failed: {}", e),
                     cause: None,
                 })?;
@@ -444,7 +444,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = (message_id, new_content);
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -454,7 +454,7 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!(
                         "Message {} not found in tracking (may have been sent before bot started)",
                         message_id
@@ -462,7 +462,7 @@ impl Channel for DiscordChannel {
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
@@ -472,7 +472,7 @@ impl Channel for DiscordChannel {
             channel_id
                 .delete_message(http, serenity_msg_id)
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Discord delete failed: {}", e),
                     cause: None,
                 })?;
@@ -487,7 +487,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -526,12 +526,12 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found in tracking", message_id),
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
@@ -541,7 +541,7 @@ impl Channel for DiscordChannel {
             channel_id
                 .create_reaction(http, serenity_msg_id, reaction)
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Discord add reaction failed: {}", e),
                     cause: None,
                 })?;
@@ -552,7 +552,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = (message_id, emoji);
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -562,12 +562,12 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found in tracking", message_id),
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
@@ -577,7 +577,7 @@ impl Channel for DiscordChannel {
             channel_id
                 .delete_reaction(http, serenity_msg_id, None, reaction)
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Discord remove reaction failed: {}", e),
                     cause: None,
                 })?;
@@ -588,7 +588,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = (message_id, emoji);
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -598,19 +598,19 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found in tracking", message_id),
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
             let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
 
             channel_id.pin(http, serenity_msg_id).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: format!("Discord pin failed: {}", e),
                     cause: None,
                 }
@@ -622,7 +622,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -632,19 +632,19 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found in tracking", message_id),
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
             let serenity_msg_id = serenity::model::id::MessageId::new(discord_msg_id);
 
             channel_id.unpin(http, serenity_msg_id).await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: format!("Discord unpin failed: {}", e),
                     cause: None,
                 }
@@ -656,7 +656,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = message_id;
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 
@@ -670,12 +670,12 @@ impl Channel for DiscordChannel {
             let (discord_msg_id, channel_id_num) = self
                 .get_message_info(message_id)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found in tracking", message_id),
                 })?;
 
             let http = self.http.as_ref().ok_or_else(|| {
-                crate::error::MantaError::Internal("HTTP client not initialized".to_string())
+                crate::error::SyscityError::Internal("HTTP client not initialized".to_string())
             })?;
 
             let channel_id = ChannelId::new(channel_id_num);
@@ -689,7 +689,7 @@ impl Channel for DiscordChannel {
                     serenity::builder::CreateThread::new(thread_name),
                 )
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Discord create thread failed: {}", e),
                     cause: None,
                 })?;
@@ -700,7 +700,7 @@ impl Channel for DiscordChannel {
         #[cfg(not(feature = "discord"))]
         {
             let _ = (message_id, title);
-            Err(crate::error::MantaError::Internal("Discord feature not enabled".to_string()))
+            Err(crate::error::SyscityError::Internal("Discord feature not enabled".to_string()))
         }
     }
 }
@@ -807,7 +807,7 @@ impl EventHandler for DiscordHandler {
                                             Your pairing code: **{}**\n\n\
                                             Please share this code with an admin to get access.\n\
                                             Or ask an admin to run:\n\
-                                            `manta pairing approve discord {}`",
+                                            `syscity pairing approve discord {}`",
                                                 code, code
                                             ),
                                         )

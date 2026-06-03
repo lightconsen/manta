@@ -1,9 +1,9 @@
-//! Session management CLI commands for Manta
+//! Session management CLI commands for Syscity
 //!
 //! Provides introspection and control over the Session → Thread → Turn
 //! hierarchy stored in the running daemon.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -67,8 +67,8 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -87,7 +87,7 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -107,7 +107,7 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -130,7 +130,7 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -153,7 +153,7 @@ pub async fn run_session_command(command: &SessionCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }

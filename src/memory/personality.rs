@@ -1,4 +1,4 @@
-//! OpenClaw-Style Memory Architecture for Manta
+//! OpenClaw-Style Memory Architecture for Syscity
 //!
 //! This module implements an OpenClaw-compatible memory system:
 //! - SOUL.md: Core personality, values, behavioral guidelines
@@ -15,7 +15,7 @@
 //!
 //! An mtime+size file cache avoids re-reading unchanged files on every turn.
 
-use crate::error::MantaError;
+use crate::error::SyscityError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -151,8 +151,8 @@ impl PersonalityMemory {
     /// Create a new personality memory manager
     ///
     /// Uses tiered lookup like OpenClaw:
-    /// 1. Workspace level: <workspace>/.manta/memory/ (if in a workspace)
-    /// 2. User level: ~/.manta/memory-files/ (fallback)
+    /// 1. Workspace level: <workspace>/.syscity/memory/ (if in a workspace)
+    /// 2. User level: ~/.syscity/memory-files/ (fallback)
     pub async fn new() -> crate::Result<Self> {
         // Try workspace level first
         if let Some(workspace_dir) = Self::find_workspace_memory_dir() {
@@ -176,10 +176,10 @@ impl PersonalityMemory {
 
         loop {
             // Check for workspace markers
-            let markers = [".manta-workspace", ".git", "manta.workspace.toml"];
+            let markers = [".syscity-workspace", ".git", "syscity.workspace.toml"];
             for marker in &markers {
                 if current.join(marker).exists() {
-                    let memory_dir = current.join(".manta").join("memory");
+                    let memory_dir = current.join(".syscity").join("memory");
                     return Some(memory_dir);
                 }
             }
@@ -199,7 +199,7 @@ impl PersonalityMemory {
         // Ensure directory exists
         fs::create_dir_all(&base_dir)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create directory: {:?}", base_dir),
                 details: e.to_string(),
             })?;
@@ -252,7 +252,7 @@ impl PersonalityMemory {
         // Cache miss or stale — read from disk.
         let content = fs::read_to_string(path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to read file: {:?}", path),
                 details: e.to_string(),
             })?;
@@ -316,7 +316,7 @@ impl PersonalityMemory {
         // Security scan for injection patterns
         if let Some(threat) = self.scan_for_threats(content) {
             warn!("Security threat detected in memory: {}", threat);
-            return Err(MantaError::Validation(format!(
+            return Err(SyscityError::Validation(format!(
                 "Security threat detected in memory: {}",
                 threat
             )));
@@ -331,7 +331,7 @@ impl PersonalityMemory {
 
         fs::write(&path, content)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to write memory file: {:?}", path),
                 details: e.to_string(),
             })?;
@@ -699,7 +699,7 @@ This is a starting point. Add your own conventions, style, and rules as you figu
         // SOUL.md - Core personality (OpenClaw-style with structured frontmatter)
         if !self.exists(MemoryType::Soul).await {
             let default_soul = r#"---
-name: Manta
+name: Syscity
 persona: Helpful AI assistant running locally on your machine
 voice: concise, direct, no filler words
 emoji: "🦑"
@@ -1033,18 +1033,18 @@ These files are loaded into the system prompt at startup."#
         ) -> crate::Result<ToolExecutionResult> {
             let action = args["action"]
                 .as_str()
-                .ok_or_else(|| MantaError::Validation("action is required".to_string()))?;
+                .ok_or_else(|| SyscityError::Validation("action is required".to_string()))?;
 
             let mem_type_str = args["memory_type"]
                 .as_str()
-                .ok_or_else(|| MantaError::Validation("memory_type is required".to_string()))?;
+                .ok_or_else(|| SyscityError::Validation("memory_type is required".to_string()))?;
 
             let mem_type = match mem_type_str {
                 "identity" => MemoryType::Identity,
                 "soul" => MemoryType::Soul,
                 "bootstrap" => MemoryType::Bootstrap,
                 _ => {
-                    return Err(MantaError::Validation(format!(
+                    return Err(SyscityError::Validation(format!(
                         "Invalid memory_type: {}",
                         mem_type_str
                     )))
@@ -1064,7 +1064,7 @@ These files are loaded into the system prompt at startup."#
 
                 "write" => {
                     let content = args["content"].as_str().ok_or_else(|| {
-                        MantaError::Validation("content is required for write action".to_string())
+                        SyscityError::Validation("content is required for write action".to_string())
                     })?;
 
                     self.memory.write(mem_type, content).await?;
@@ -1081,7 +1081,7 @@ These files are loaded into the system prompt at startup."#
 
                 "append" => {
                     let content = args["content"].as_str().ok_or_else(|| {
-                        MantaError::Validation("content is required for append action".to_string())
+                        SyscityError::Validation("content is required for append action".to_string())
                     })?;
 
                     self.memory.append(mem_type, content).await?;
@@ -1095,7 +1095,7 @@ These files are loaded into the system prompt at startup."#
                         .with_data(json!({"memory_type": mem_type_str})))
                 }
 
-                _ => Err(MantaError::Validation(format!("Unknown action: {}", action))),
+                _ => Err(SyscityError::Validation(format!("Unknown action: {}", action))),
             }
         }
     }
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_personality_memory_read_write() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1124,7 +1124,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_personality_memory_size_limit_head_tail() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         // Use max_size=20 so the 100-char string triggers head/tail truncation.
         let memory = PersonalityMemory::with_dir(temp_dir.clone())
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_personality_memory_exists() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1176,7 +1176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_fragments_loaded_and_sorted() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1199,7 +1199,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_fragments_appear_in_prompt() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1217,7 +1217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_cache_returns_same_content() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_cache_invalidated_on_write() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_total_budget_enforced() {
-        let temp_dir = std::env::temp_dir().join(format!("manta_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         // Very small total budget so only the first section (Agents) fits.
         // Budget: "## Agents\n" (10) + content (20) + "\n" (1) = 31 chars fits.

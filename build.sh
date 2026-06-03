@@ -1,5 +1,5 @@
 #!/bin/bash
-# Manta Build Script
+# Syscity Build Script
 # Builds web terminal, cleans Rust artifacts, and builds release binary
 #
 # Usage:
@@ -13,7 +13,7 @@ if [ "$1" = "--front" ]; then
   FRONT_ONLY=true
 fi
 
-echo "🚀 Starting Manta build..."
+echo "🚀 Starting Syscity build..."
 
 # Build web frontend
 echo "📦 Building web frontend..."
@@ -36,10 +36,10 @@ echo "🔨 Building release binary..."
 cargo build --release
 
 echo "✅ Build complete!"
-echo "📍 Binary location: ./target/release/manta"
+echo "📍 Binary location: ./target/release/syscity"
 echo ""
 echo "Run with:"
-echo "  MANTA_BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" \\"
-echo "  MANTA_API_KEY=\"your-api-key\" \\"
-echo "  MANTA_MODEL=\"qwen3.5-plus\" \\"
-echo "  ./target/release/manta start --foreground"
+echo "  SYSCITY_BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" \\"
+echo "  SYSCITY_API_KEY=\"your-api-key\" \\"
+echo "  SYSCITY_MODEL=\"qwen3.5-plus\" \\"
+echo "  ./target/release/syscity start --foreground"

@@ -5,7 +5,7 @@
 //! of Message, ToolCall, CompletionResponse, etc. signals a breaking change for
 //! LLM integrations.
 
-use manta::providers::*;
+use syscity::providers::*;
 use serde_json::json;
 
 // ── Message Serialization Contract ───────────────────────────────────────────

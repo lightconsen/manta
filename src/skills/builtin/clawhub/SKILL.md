@@ -2,7 +2,7 @@
 name: clawhub
 description: "Browse, install, and share skills from the ClaW Hub community registry"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "clawhub"

@@ -246,10 +246,10 @@ macro_rules! execute_hooks {
         match $registry.execute($hook_type, $payload).await {
             HookExecutionResult::Continue(payload) => Ok(payload),
             HookExecutionResult::Cancelled { reason } => {
-                Err($crate::error::MantaError::Validation(reason))
+                Err($crate::error::SyscityError::Validation(reason))
             }
             HookExecutionResult::Error { message } => {
-                Err($crate::error::MantaError::Internal(message))
+                Err($crate::error::SyscityError::Internal(message))
             }
         }
     }};

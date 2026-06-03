@@ -1,4 +1,4 @@
-//! Cron Scheduler for Manta
+//! Cron Scheduler for Syscity
 //!
 //! Provides production-grade scheduled task execution with timer-based
 //! scheduling, retry logic, crash recovery, and run history logging.

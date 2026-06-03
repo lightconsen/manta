@@ -93,7 +93,7 @@ impl TaskFlowEngine {
         if checkpoint.state == TaskFlowState::Failed
             && checkpoint.max_retries_exceeded(self.config.max_retries)
         {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Flow {} failed and max retries exceeded",
                 flow_id
             )));
@@ -152,7 +152,7 @@ impl TaskFlowEngine {
                     );
 
                     if checkpoint.max_retries_exceeded(self.config.max_retries) {
-                        return Err(crate::error::MantaError::Validation(format!(
+                        return Err(crate::error::SyscityError::Validation(format!(
                             "Flow {} failed after {} retries: {}",
                             flow_id, self.config.max_retries, err
                         )));
@@ -170,7 +170,7 @@ impl TaskFlowEngine {
                     checkpoint.record_failure("Unknown error");
                     let save_cp = checkpoint.successor();
                     self.store.save(&save_cp).await?;
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Flow {} failed with unknown error",
                         flow_id
                     )));

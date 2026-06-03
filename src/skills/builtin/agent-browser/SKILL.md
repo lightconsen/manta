@@ -2,7 +2,7 @@
 name: agent-browser
 description: "Browse the web, fetch URLs, and extract content from web pages"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "browse"

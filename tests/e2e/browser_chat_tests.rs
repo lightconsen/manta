@@ -2,7 +2,7 @@
 //!
 //! Requires:
 //! - `browser` feature enabled
-//! - LLM provider configured (MANTA_TEST_PROVIDER_KEY)
+//! - LLM provider configured (SYSCITY_TEST_PROVIDER_KEY)
 //! - Chrome/Chromium installed on the system
 
 use super::*;
@@ -45,7 +45,7 @@ fn skip_if_no_chrome() {
 async fn tool_browser_navigate_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -67,7 +67,7 @@ async fn tool_browser_navigate_invoked_via_chat() {
 async fn tool_browser_snapshot_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -89,7 +89,7 @@ async fn tool_browser_snapshot_invoked_via_chat() {
 async fn tool_browser_screenshot_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -111,7 +111,7 @@ async fn tool_browser_screenshot_invoked_via_chat() {
 async fn tool_browser_pdf_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -133,7 +133,7 @@ async fn tool_browser_pdf_invoked_via_chat() {
 async fn tool_browser_click_and_type_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }

@@ -903,7 +903,7 @@ impl AcpControlPlane {
             })
             .await;
         rx.await
-            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
     /// Execute a message in one-shot run mode
@@ -934,7 +934,7 @@ impl AcpControlPlane {
             })
             .await;
         rx.await
-            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
     /// Execute with progress callbacks in session mode
@@ -968,7 +968,7 @@ impl AcpControlPlane {
             })
             .await;
         rx.await
-            .map_err(|_| crate::error::MantaError::Internal("ACP channel closed".to_string()))?
+            .map_err(|_| crate::error::SyscityError::Internal("ACP channel closed".to_string()))?
     }
 
     /// Pause a running session
@@ -1100,7 +1100,7 @@ impl AcpControlPlane {
             let result = if let Some(ref builder) = *builder_guard {
                 builder()
             } else {
-                Err(crate::error::MantaError::Internal("No agent builder configured".to_string()))
+                Err(crate::error::SyscityError::Internal("No agent builder configured".to_string()))
             };
             drop(builder_guard); // explicitly release before continuing
             result?
@@ -1198,7 +1198,7 @@ impl AcpControlPlane {
                         };
 
                         let _ =
-                            response_tx.send(response.map_err(crate::error::MantaError::Internal));
+                            response_tx.send(response.map_err(crate::error::SyscityError::Internal));
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -1408,7 +1408,7 @@ impl AcpControlPlane {
         let subagent =
             subagents
                 .get(subagent_id)
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Subagent '{}'", subagent_id),
                 })?;
 
@@ -1419,11 +1419,11 @@ impl AcpControlPlane {
             .send(SubagentCommand::ProcessMessage { message, response_tx })
             .await
             .map_err(|_| {
-                crate::error::MantaError::Internal("Subagent command channel closed".to_string())
+                crate::error::SyscityError::Internal("Subagent command channel closed".to_string())
             })?;
 
         let result = response_rx.await.map_err(|_| {
-            crate::error::MantaError::Internal("Subagent response channel closed".to_string())
+            crate::error::SyscityError::Internal("Subagent response channel closed".to_string())
         })??;
 
         Ok(result)
@@ -1478,7 +1478,7 @@ impl AcpControlPlane {
         let subagent =
             subagents
                 .get(subagent_id)
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Subagent '{}'", subagent_id),
                 })?;
 
@@ -1502,7 +1502,7 @@ impl AcpControlPlane {
             })
             .await
             .map_err(|_| {
-                crate::error::MantaError::Internal("Subagent command channel closed".to_string())
+                crate::error::SyscityError::Internal("Subagent command channel closed".to_string())
             })?;
 
         drop(subagents);
@@ -1515,7 +1515,7 @@ impl AcpControlPlane {
         match response_rx.await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(crate::error::MantaError::Internal("Steer response dropped".to_string())),
+            Err(_) => Err(crate::error::SyscityError::Internal("Steer response dropped".to_string())),
         }
     }
 
@@ -1525,7 +1525,7 @@ impl AcpControlPlane {
         let session =
             sessions
                 .get(session_id)
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Session '{}'", session_id),
                 })?;
 

@@ -176,12 +176,12 @@ impl AssistantMesh {
             let routes = self.routes.read().await;
             if let Some(sender) = routes.get(&recipient_id) {
                 sender.send(message).map_err(|_| {
-                    crate::error::MantaError::Internal("Failed to send message".to_string())
+                    crate::error::SyscityError::Internal("Failed to send message".to_string())
                 })?;
                 debug!("Routed message to {}", recipient_id);
             } else {
                 warn!("Recipient {} not found in mesh", recipient_id);
-                return Err(crate::error::MantaError::NotFound {
+                return Err(crate::error::SyscityError::NotFound {
                     resource: format!("Assistant {}", recipient_id),
                 });
             }

@@ -2,7 +2,7 @@
 name: api-gateway
 description: "Make HTTP API calls to external services and process responses"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "api"

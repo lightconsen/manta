@@ -5,7 +5,7 @@
 //! snapshot diff, making breaking changes immediately visible.
 
 use insta::assert_json_snapshot;
-use manta::providers::{Message, Role, ToolCall, ToolResult, Usage};
+use syscity::providers::{Message, Role, ToolCall, ToolResult, Usage};
 
 // ── Message Snapshots ────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ fn snapshot_assistant_message_with_tool_calls() {
     let msg = Message::assistant("I'll run that for you.").with_tool_calls(vec![ToolCall {
         id: "call_abc".to_string(),
         call_type: "function".to_string(),
-        function: manta::providers::FunctionCall {
+        function: syscity::providers::FunctionCall {
             name: "shell".to_string(),
             arguments: "{\"command\":\"ls\"}".to_string(),
         },

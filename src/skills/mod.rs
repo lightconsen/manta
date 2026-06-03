@@ -1,4 +1,4 @@
-//! OpenClaw-Compatible Skill System for Manta
+//! OpenClaw-Compatible Skill System for Syscity
 //!
 //! A comprehensive skill system supporting:
 //! - Hot reloading with file watcher
@@ -216,7 +216,7 @@ impl Skill {
             name: name.into(),
             description: description.into(),
             version: "1.0.0".to_string(),
-            author: "manta".to_string(),
+            author: "syscity".to_string(),
             created_at: now,
             updated_at: now,
             triggers: Vec::new(),
@@ -645,7 +645,7 @@ impl SkillManager {
         // Check file size
         let file_size = content.len();
         if file_size > skill.metadata.max_size {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Skill file too large: {} bytes (max: {})",
                 file_size, skill.metadata.max_size
             )));
@@ -726,7 +726,7 @@ impl SkillManager {
         let skill =
             self.get_skill(name)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Skill: {}", name),
                 })?;
 
@@ -735,7 +735,7 @@ impl SkillManager {
             Ok(()) => Ok(skill),
             Err(errors) => {
                 warn!("Skill '{}' activation blocked: requirements not met: {:?}", name, errors);
-                Err(crate::error::MantaError::Validation(format!(
+                Err(crate::error::SyscityError::Validation(format!(
                     "Skill '{}' requirements not met: {}",
                     name,
                     errors.join(", ")
@@ -830,7 +830,7 @@ impl SkillManager {
         // Check security
         let report = guard::scan_skill(skill);
         if !report.passed {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Security check failed: {:?}",
                 report.issues
             )));
@@ -838,7 +838,7 @@ impl SkillManager {
 
         // Validate
         if let Err(errors) = guard::validate_skill(skill) {
-            return Err(crate::error::MantaError::Validation(errors.join(", ")));
+            return Err(crate::error::SyscityError::Validation(errors.join(", ")));
         }
 
         // Write to user skills directory
@@ -880,7 +880,7 @@ impl SkillManager {
         let skill =
             self.get_skill(name)
                 .await
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Skill: {}", name),
                 })?;
 
@@ -976,7 +976,7 @@ impl SkillManager {
             }
             Err(e) => {
                 error!("Dependency resolution failed for '{}': {}", name, e);
-                Err(crate::error::MantaError::Validation(format!(
+                Err(crate::error::SyscityError::Validation(format!(
                     "Dependency resolution failed: {}",
                     e
                 )))
@@ -991,7 +991,7 @@ impl SkillManager {
         match graph.check_versions() {
             Ok(()) => {}
             Err(e) => {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Version check failed: {}",
                     e
                 )));
@@ -1005,7 +1005,7 @@ impl SkillManager {
             }
             Err(e) => {
                 error!("Dependency resolution failed: {}", e);
-                Err(crate::error::MantaError::Validation(format!(
+                Err(crate::error::SyscityError::Validation(format!(
                     "Dependency resolution failed: {}",
                     e
                 )))
@@ -1054,7 +1054,7 @@ impl SkillManager {
             skills
                 .get(name)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Skill: {}", name),
                 })?;
 
@@ -1391,7 +1391,7 @@ mod tests {
     fn test_skill_new_defaults() {
         let skill = Skill::new("name", "desc", "prompt");
         assert_eq!(skill.version, "1.0.0");
-        assert_eq!(skill.author, "manta");
+        assert_eq!(skill.author, "syscity");
         assert!(skill.triggers.is_empty());
         assert!(skill.is_eligible);
         assert!(skill.enabled);

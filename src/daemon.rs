@@ -1,6 +1,6 @@
-//! Daemon management for Manta
+//! Daemon management for Syscity
 //!
-//! Provides start/stop/status functionality for running Manta as a background service.
+//! Provides start/stop/status functionality for running Syscity as a background service.
 
 use std::path::PathBuf;
 use tokio::process::Command;
@@ -33,7 +33,7 @@ impl DaemonManager {
         // Check if already running
         if let Some(pid) = self.read_pid().await {
             if self.is_process_running(pid).await {
-                println!("✅ Manta daemon is already running (PID: {})", pid);
+                println!("✅ Syscity daemon is already running (PID: {})", pid);
                 return Ok(());
             }
             // Stale PID file, remove it
@@ -41,7 +41,7 @@ impl DaemonManager {
         }
 
         // Get the current executable path
-        let exe_path = std::env::current_exe().map_err(crate::error::MantaError::Io)?;
+        let exe_path = std::env::current_exe().map_err(crate::error::SyscityError::Io)?;
 
         // Get log file path
         let log_path = crate::logs::log_file_path();
@@ -56,7 +56,7 @@ impl DaemonManager {
             .create(true)
             .append(true)
             .open(&log_path)
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         // Spawn the daemon process with output redirected to log file
         let child = Command::new(&exe_path)
@@ -70,18 +70,18 @@ impl DaemonManager {
             .stdout(
                 log_file_std
                     .try_clone()
-                    .map_err(crate::error::MantaError::Io)?,
+                    .map_err(crate::error::SyscityError::Io)?,
             )
             .stderr(log_file_std)
             .spawn()
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         let pid = child.id().expect("Failed to get child PID");
 
         // Write PID file
         self.write_pid(pid).await?;
 
-        println!("✅ Manta daemon started (PID: {})", pid);
+        println!("✅ Syscity daemon started (PID: {})", pid);
         println!("   Host: {}", self.config.host);
         println!("   Port: {}", self.config.port);
         println!("   URL: http://{}:{}", self.config.host, self.config.port);
@@ -92,24 +92,24 @@ impl DaemonManager {
 
     /// Run the daemon in the foreground with Gateway (new architecture)
     pub async fn run_foreground(&self) -> crate::Result<()> {
-        println!("🚀 Manta daemon running with Gateway...");
+        println!("🚀 Syscity daemon running with Gateway...");
 
         use crate::gateway::{Gateway, GatewayConfig};
 
-        // ── Auto-initialize ~/.manta directory and manta.toml ──────────────
-        let manta_dir = crate::dirs::manta_dir();
-        let config_path = manta_dir.join("manta.toml");
+        // ── Auto-initialize ~/.syscity directory and syscity.toml ──────────────
+        let syscity_dir = crate::dirs::syscity_dir();
+        let config_path = syscity_dir.join("syscity.toml");
 
-        if !manta_dir.exists() {
-            println!("📁 Creating Manta directory at {:?}...", manta_dir);
-            tokio::fs::create_dir_all(&manta_dir)
+        if !syscity_dir.exists() {
+            println!("📁 Creating Syscity directory at {:?}...", syscity_dir);
+            tokio::fs::create_dir_all(&syscity_dir)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
         }
 
         if !config_path.exists() {
-            println!("📄 Creating default manta.toml at {:?}...", config_path);
-            let default_config = r#"# Manta Configuration
+            println!("📄 Creating default syscity.toml at {:?}...", config_path);
+            let default_config = r#"# Syscity Configuration
 # Auto-generated on first start
 
 [server]
@@ -162,17 +162,17 @@ daily_limit_cents = 0
 hourly_action_limit = 0
 
 # Workspace settings (restrict file operations to this directory)
-# When workspace_dir is not set, it defaults to ~/.manta/workspace
+# When workspace_dir is not set, it defaults to ~/.syscity/workspace
 # workspace_dir = "~/projects"
 workspace_only = true
 "#;
             tokio::fs::write(&config_path, default_config)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
             println!("✅ Default config created. Edit {:?} to customize.", config_path);
         }
 
-        // Try to load existing Gateway config from manta.toml
+        // Try to load existing Gateway config from syscity.toml
         let mut gateway_config = if config_path.exists() {
             match tokio::fs::read_to_string(&config_path).await {
                 Ok(content) => {
@@ -189,18 +189,18 @@ workspace_only = true
                             config
                         }
                         Err(e) => {
-                            warn!("Failed to parse manta.toml: {}, using defaults", e);
+                            warn!("Failed to parse syscity.toml: {}, using defaults", e);
                             GatewayConfig::default()
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to read manta.toml: {}, using defaults", e);
+                    warn!("Failed to read syscity.toml: {}, using defaults", e);
                     GatewayConfig::default()
                 }
             }
         } else {
-            println!("📄 No manta.toml found, using default config");
+            println!("📄 No syscity.toml found, using default config");
             GatewayConfig::default()
         };
 
@@ -208,27 +208,27 @@ workspace_only = true
         gateway_config.host = self.config.host.clone();
         gateway_config.port = self.config.port;
         gateway_config.model =
-            std::env::var("MANTA_MODEL").unwrap_or_else(|_| gateway_config.model.clone());
-        gateway_config.model_provider = std::env::var("MANTA_MODEL_PROVIDER")
+            std::env::var("SYSCITY_MODEL").unwrap_or_else(|_| gateway_config.model.clone());
+        gateway_config.model_provider = std::env::var("SYSCITY_MODEL_PROVIDER")
             .unwrap_or_else(|_| gateway_config.model_provider.clone());
 
         // Enable features based on environment variables
         // Vector Memory - enabled by default with local GGUF embeddings
-        if std::env::var("MANTA_VECTOR_MEMORY_ENABLED")
+        if std::env::var("SYSCITY_VECTOR_MEMORY_ENABLED")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false)
         {
             gateway_config.vector_memory.enabled = true;
             gateway_config.vector_memory.embedding_api_key =
-                std::env::var("MANTA_EMBEDDING_API_KEY").ok();
-            if let Ok(model) = std::env::var("MANTA_EMBEDDING_MODEL") {
+                std::env::var("SYSCITY_EMBEDDING_API_KEY").ok();
+            if let Ok(model) = std::env::var("SYSCITY_EMBEDDING_MODEL") {
                 gateway_config.vector_memory.embedding_model = model;
             }
             println!("📊 Vector memory enabled");
         }
 
         // Plugins - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_PLUGINS_ENABLED")
+        if std::env::var("SYSCITY_PLUGINS_ENABLED")
             .map(|v| v == "false" || v == "0")
             .unwrap_or(false)
         {
@@ -239,7 +239,7 @@ workspace_only = true
         }
 
         // Hot Reload - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_HOT_RELOAD_ENABLED")
+        if std::env::var("SYSCITY_HOT_RELOAD_ENABLED")
             .map(|v| v == "false" || v == "0")
             .unwrap_or(false)
         {
@@ -250,7 +250,7 @@ workspace_only = true
         }
 
         // ACP - enabled by default, disable if explicitly set to false
-        if std::env::var("MANTA_ACP_ENABLED")
+        if std::env::var("SYSCITY_ACP_ENABLED")
             .map(|v| v == "false" || v == "0")
             .unwrap_or(false)
         {
@@ -262,9 +262,9 @@ workspace_only = true
 
         // Configure LLM Provider from environment variables (legacy support)
         if let (Ok(base_url), Ok(api_key)) =
-            (std::env::var("MANTA_BASE_URL"), std::env::var("MANTA_API_KEY"))
+            (std::env::var("SYSCITY_BASE_URL"), std::env::var("SYSCITY_API_KEY"))
         {
-            let is_anthropic = std::env::var("MANTA_IS_ANTHROPIC")
+            let is_anthropic = std::env::var("SYSCITY_IS_ANTHROPIC")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false);
 
@@ -286,7 +286,7 @@ workspace_only = true
                 retry_delay_ms: 1000,
             };
 
-            let provider_name = std::env::var("MANTA_MODEL_PROVIDER").unwrap_or_else(|_| {
+            let provider_name = std::env::var("SYSCITY_MODEL_PROVIDER").unwrap_or_else(|_| {
                 if is_anthropic {
                     "anthropic".to_string()
                 } else {
@@ -366,7 +366,7 @@ workspace_only = true
                         use nix::unistd::Pid;
 
                         kill(Pid::from_raw(pid as i32), Signal::SIGTERM).map_err(|e| {
-                            crate::error::MantaError::Internal(format!(
+                            crate::error::SyscityError::Internal(format!(
                                 "Failed to send signal: {}",
                                 e
                             ))
@@ -380,7 +380,7 @@ workspace_only = true
                             .args(["/PID", &pid.to_string(), "/F"])
                             .output()
                             .await
-                            .map_err(|e| crate::error::MantaError::Io(e))?;
+                            .map_err(|e| crate::error::SyscityError::Io(e))?;
                     }
 
                     // Wait for process to exit
@@ -393,7 +393,7 @@ workspace_only = true
 
                     // Remove PID file
                     let _ = tokio::fs::remove_file(&self.config.pid_file).await;
-                    println!("✅ Manta daemon stopped");
+                    println!("✅ Syscity daemon stopped");
                 } else {
                     println!("⚠️ Daemon was not running (removing stale PID file)");
                     let _ = tokio::fs::remove_file(&self.config.pid_file).await;
@@ -401,7 +401,7 @@ workspace_only = true
                 Ok(())
             }
             None => {
-                println!("⚠️ Manta daemon is not running");
+                println!("⚠️ Syscity daemon is not running");
                 Ok(())
             }
         }
@@ -419,7 +419,7 @@ workspace_only = true
                         use nix::unistd::Pid;
 
                         kill(Pid::from_raw(pid as i32), Signal::SIGKILL).map_err(|e| {
-                            crate::error::MantaError::Internal(format!(
+                            crate::error::SyscityError::Internal(format!(
                                 "Failed to send signal: {}",
                                 e
                             ))
@@ -432,10 +432,10 @@ workspace_only = true
                             .args(["/PID", &pid.to_string(), "/F"])
                             .output()
                             .await
-                            .map_err(|e| crate::error::MantaError::Io(e))?;
+                            .map_err(|e| crate::error::SyscityError::Io(e))?;
                     }
 
-                    println!("✅ Manta daemon force stopped");
+                    println!("✅ Syscity daemon force stopped");
                 } else {
                     println!("⚠️ Daemon was not running");
                 }
@@ -445,7 +445,7 @@ workspace_only = true
                 Ok(())
             }
             None => {
-                println!("⚠️ Manta daemon is not running");
+                println!("⚠️ Syscity daemon is not running");
                 Ok(())
             }
         }
@@ -456,7 +456,7 @@ workspace_only = true
         match self.read_pid().await {
             Some(pid) => {
                 if self.is_process_running(pid).await {
-                    println!("✅ Manta daemon is running");
+                    println!("✅ Syscity daemon is running");
                     println!("   PID: {}", pid);
                     println!("   Host: {}", self.config.host);
                     println!("   Port: {}", self.config.port);
@@ -469,7 +469,7 @@ workspace_only = true
                 Ok(())
             }
             None => {
-                println!("⚠️ Manta daemon is not running");
+                println!("⚠️ Syscity daemon is not running");
                 Ok(())
             }
         }
@@ -489,12 +489,12 @@ workspace_only = true
         if let Some(parent) = self.config.pid_file.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
         }
 
         tokio::fs::write(&self.config.pid_file, pid.to_string())
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         Ok(())
     }
@@ -529,7 +529,7 @@ workspace_only = true
     #[allow(dead_code)]
     /// Initialize the SQLite memory store
     async fn init_memory_store() -> crate::Result<crate::memory::SqliteMemoryStore> {
-        // Use centralized ~/.manta/memory directory
+        // Use centralized ~/.syscity/memory directory
         let db_path = crate::dirs::default_memory_db();
 
         // Create the database file if it doesn't exist
@@ -558,11 +558,11 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            pid_file: PathBuf::from("/tmp/manta.pid"),
+            pid_file: PathBuf::from("/tmp/syscity.pid"),
         };
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
-        assert_eq!(config.pid_file, PathBuf::from("/tmp/manta.pid"));
+        assert_eq!(config.pid_file, PathBuf::from("/tmp/syscity.pid"));
     }
 
     #[test]
@@ -570,7 +570,7 @@ mod tests {
         let config = DaemonConfig {
             host: "0.0.0.0".to_string(),
             port: 3000,
-            pid_file: PathBuf::from("/tmp/manta-test.pid"),
+            pid_file: PathBuf::from("/tmp/syscity-test.pid"),
         };
         let manager = DaemonManager::new(config.clone());
         assert!(manager.is_ok());
@@ -658,7 +658,7 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            pid_file: PathBuf::from("/tmp/manta.pid"),
+            pid_file: PathBuf::from("/tmp/syscity.pid"),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -671,7 +671,7 @@ mod tests {
         let config = DaemonConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
-            pid_file: PathBuf::from("/tmp/manta.pid"),
+            pid_file: PathBuf::from("/tmp/syscity.pid"),
         };
         let manager = DaemonManager::new(config).unwrap();
 

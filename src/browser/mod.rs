@@ -1,4 +1,4 @@
-//! Browser automation module for Manta
+//! Browser automation module for Syscity
 //!
 //! Provides:
 //! - **BrowserPool**: Persistent browser instance caching with idle eviction

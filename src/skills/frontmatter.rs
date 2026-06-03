@@ -288,7 +288,7 @@ impl SkillFile {
     pub async fn load(path: &std::path::Path) -> crate::Result<Self> {
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         Self::parse(&content, path.to_path_buf())
     }
@@ -313,7 +313,7 @@ impl SkillFile {
             // Parse YAML frontmatter
             let frontmatter: SkillFrontmatter =
                 serde_yaml::from_str(yaml_content).map_err(|e| {
-                    crate::error::MantaError::Config(crate::error::ConfigError::Parse(format!(
+                    crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
                         "Failed to parse SKILL.md frontmatter: {}",
                         e
                     )))

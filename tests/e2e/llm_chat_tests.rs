@@ -5,7 +5,7 @@ use super::*;
 async fn llm_chat_streaming_journey() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -63,7 +63,7 @@ async fn llm_chat_streaming_journey() {
 async fn llm_tool_invocation_journey() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -138,7 +138,7 @@ async fn llm_tool_invocation_journey() {
 async fn session_created_event_on_first_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }

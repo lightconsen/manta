@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use manta::providers::{Message, Role, ToolCall};
+use syscity::providers::{Message, Role, ToolCall};
 use serde_json;
 
 fn bench_message_serialization(c: &mut Criterion) {
@@ -8,7 +8,7 @@ fn bench_message_serialization(c: &mut Criterion) {
             ToolCall {
                 id: "call_abc123".to_string(),
                 call_type: "function".to_string(),
-                function: manta::providers::FunctionCall {
+                function: syscity::providers::FunctionCall {
                     name: "shell".to_string(),
                     arguments: "{\"command\":\"ls -la\"}".to_string(),
                 },

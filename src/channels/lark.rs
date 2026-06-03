@@ -275,7 +275,7 @@ impl LarkChannel {
             .json(&params)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to get Lark tenant token: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -284,7 +284,7 @@ impl LarkChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse Lark token response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -324,7 +324,7 @@ impl LarkChannel {
             request
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Lark API request failed: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -333,7 +333,7 @@ impl LarkChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse Lark response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -349,7 +349,7 @@ impl LarkChannel {
         content: impl Serialize,
     ) -> crate::Result<String> {
         let content_str = serde_json::to_string(&content).map_err(|e| {
-            crate::error::MantaError::Validation(format!(
+            crate::error::SyscityError::Validation(format!(
                 "Failed to serialize message content: {}",
                 e
             ))
@@ -371,7 +371,7 @@ impl LarkChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Lark API error {}: {}", response.code, response.msg),
                 cause: None,
             });
@@ -487,7 +487,7 @@ impl Channel for LarkChannel {
 
         // Check if user is allowed
         if !self.is_user_allowed(recipient) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "User {} is not in allow list",
                 recipient
             )));
@@ -525,14 +525,14 @@ impl Channel for LarkChannel {
             let map = self.message_map.read().await;
             map.get(&msg_id_str)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found", msg_id_str),
                 })?
         };
 
         let content_json = Self::build_content(&Self::format_for_lark(&new_content), false);
         let content_str = serde_json::to_string(&content_json).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Failed to serialize: {}", e))
+            crate::error::SyscityError::Validation(format!("Failed to serialize: {}", e))
         })?;
 
         // Lark API: PATCH /im/v1/messages/{message_id}
@@ -546,7 +546,7 @@ impl Channel for LarkChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Lark edit failed: {}", response.msg),
                 cause: None,
             });
@@ -562,7 +562,7 @@ impl Channel for LarkChannel {
         {
             let map = self.message_map.read().await;
             if !map.contains_key(&msg_id_str) {
-                return Err(crate::error::MantaError::NotFound {
+                return Err(crate::error::SyscityError::NotFound {
                     resource: format!("Message {} not found", msg_id_str),
                 });
             }
@@ -576,7 +576,7 @@ impl Channel for LarkChannel {
             .await?;
 
         if response.code != 0 {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Lark delete failed: {}", response.msg),
                 cause: None,
             });

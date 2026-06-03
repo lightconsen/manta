@@ -1,9 +1,9 @@
-//! Workspace State Tracking for Manta
+//! Workspace State Tracking for Syscity
 //!
 //! Tracks initialization progress and setup state for OpenClaw-style workspaces.
 //! Similar to OpenClaw's .openclaw/workspace-state.json
 //!
-//! State file location: ~/.manta/workspace/.manta/workspace-state.json
+//! State file location: ~/.syscity/workspace/.syscity/workspace-state.json
 //!
 //! ## State Fields
 //!
@@ -34,7 +34,7 @@ use tracing::{debug, info, warn};
 /// Current state file format version
 pub const WORKSPACE_STATE_VERSION: u32 = 1;
 
-/// Workspace state tracked in .manta/workspace/.manta/workspace-state.json
+/// Workspace state tracked in .syscity/workspace/.syscity/workspace-state.json
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceState {
     /// State file format version
@@ -118,7 +118,7 @@ impl WorkspaceState {
                     debug!("No workspace state file found, using defaults");
                     Ok(Self::default())
                 } else {
-                    Err(crate::error::MantaError::Storage {
+                    Err(crate::error::SyscityError::Storage {
                         context: format!("Failed to read workspace state: {:?}", state_path),
                         details: e.to_string(),
                     })
@@ -136,20 +136,20 @@ impl WorkspaceState {
     pub async fn save(&self, state_path: &Path) -> crate::Result<()> {
         let parent = state_path
             .parent()
-            .ok_or_else(|| crate::error::MantaError::Storage {
+            .ok_or_else(|| crate::error::SyscityError::Storage {
                 context: "Invalid state file path".to_string(),
                 details: "Path has no parent directory".to_string(),
             })?;
 
         fs::create_dir_all(parent)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create state directory: {:?}", parent),
                 details: e.to_string(),
             })?;
 
         let payload =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Storage {
+            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to serialize workspace state".to_string(),
                 details: e.to_string(),
             })?;
@@ -167,7 +167,7 @@ impl WorkspaceState {
         match fs::write(&tmp_path, format!("{}\n", payload)).await {
             Ok(()) => {
                 fs::rename(&tmp_path, state_path).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
+                    crate::error::SyscityError::Storage {
                         context: format!("Failed to rename state file: {:?}", tmp_path),
                         details: e.to_string(),
                     }
@@ -176,7 +176,7 @@ impl WorkspaceState {
             }
             Err(e) => {
                 let _ = fs::remove_file(&tmp_path).await;
-                Err(crate::error::MantaError::Storage {
+                Err(crate::error::SyscityError::Storage {
                     context: format!("Failed to write state file: {:?}", tmp_path),
                     details: e.to_string(),
                 })
@@ -216,7 +216,7 @@ pub struct WorkspaceManager {
 impl WorkspaceManager {
     /// Create a new workspace manager for the given directory
     pub fn new(workspace_dir: PathBuf) -> Self {
-        let state_path = workspace_dir.join(".manta").join("workspace-state.json");
+        let state_path = workspace_dir.join(".syscity").join("workspace-state.json");
         Self { workspace_dir, state_path }
     }
 

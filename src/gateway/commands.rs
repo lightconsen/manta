@@ -1,4 +1,4 @@
-//! Slash Command System for Manta Gateway
+//! Slash Command System for Syscity Gateway
 //!
 //! Provides OpenClaw-style `/` commands via WebSocket RPC.
 //! Commands are exposed via `commands.list` and executed via `commands.execute`.
@@ -398,7 +398,7 @@ pub async fn handle_commands_execute(
 
 fn handle_help(req: &WsRequest) -> WsResponse {
     let commands = built_in_commands();
-    let mut lines = vec!["📋 **Manta Commands**".to_string(), "".to_string()];
+    let mut lines = vec!["📋 **Syscity Commands**".to_string(), "".to_string()];
 
     let categories = [
         (CommandCategory::Session, "🗂️ Session"),

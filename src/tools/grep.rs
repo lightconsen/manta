@@ -38,7 +38,7 @@ impl GrepTool {
     ) -> crate::Result<Vec<SearchMatch>> {
         let content = fs::read_to_string(path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         let mut matches = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
@@ -88,12 +88,12 @@ impl GrepTool {
             let mut all_matches = Vec::new();
             let mut entries = fs::read_dir(dir)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
 
             while let Some(entry) = entries
                 .next_entry()
                 .await
-                .map_err(crate::error::MantaError::Io)?
+                .map_err(crate::error::SyscityError::Io)?
             {
                 if all_matches.len() >= MAX_RESULTS {
                     break;
@@ -286,12 +286,12 @@ Supports regex patterns and can search recursively through directories."#
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let pattern_str = args["pattern"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'pattern' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'pattern' argument".to_string())
         })?;
 
         // Compile regex
         let pattern = regex::Regex::new(pattern_str).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Invalid regex pattern: {}", e))
+            crate::error::SyscityError::Validation(format!("Invalid regex pattern: {}", e))
         })?;
 
         let path = args["path"]
@@ -369,7 +369,7 @@ mod tests {
 
         // Create a temp file
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_grep_test_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_grep_test_{}.txt", uuid::Uuid::new_v4()));
 
         let content = r#"Line 1: Hello world
 Line 2: This is a test
@@ -415,7 +415,7 @@ Line 5: Hello world final"#;
     async fn test_search_file_with_context() {
         let tool = GrepTool::new();
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_grep_ctx_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_grep_ctx_{}.txt", uuid::Uuid::new_v4()));
 
         let content = "line1\nline2\nline3\nTARGET\nline5\nline6\nline7";
         tokio::fs::write(&test_file, content).await.unwrap();
@@ -435,7 +435,7 @@ Line 5: Hello world final"#;
     async fn test_search_file_no_matches() {
         let tool = GrepTool::new();
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_grep_none_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_grep_none_{}.txt", uuid::Uuid::new_v4()));
 
         tokio::fs::write(&test_file, "nothing here").await.unwrap();
 
@@ -606,7 +606,7 @@ Line 5: Hello world final"#;
     async fn test_search_file_regex_special_chars() {
         let tool = GrepTool::new();
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("manta_grep_re_{}.txt", uuid::Uuid::new_v4()));
+        let test_file = temp_dir.join(format!("syscity_grep_re_{}.txt", uuid::Uuid::new_v4()));
 
         tokio::fs::write(&test_file, "foo[bar] baz\nhello.world\n")
             .await

@@ -954,7 +954,7 @@ impl ModelRouter {
             info!("Rebuilt provider '{}' with rotated API key", provider_name);
             Ok(())
         } else {
-            Err(crate::error::MantaError::ExternalService {
+            Err(crate::error::SyscityError::ExternalService {
                 source: format!(
                     "No available API keys for provider '{}' after rotation",
                     provider_name
@@ -1099,7 +1099,7 @@ impl ModelRouter {
                                 );
                             }
                             self.record_failure(&entry.provider, Some(class)).await;
-                            last_error = Some(crate::error::MantaError::ExternalService {
+                            last_error = Some(crate::error::SyscityError::ExternalService {
                                 source: format!("Provider {} auth disabled: {}", entry.provider, e),
                                 cause: None,
                             });
@@ -1161,7 +1161,7 @@ impl ModelRouter {
                             }
                         } else {
                             self.record_failure(&entry.provider, Some(class)).await;
-                            last_error = Some(crate::error::MantaError::ExternalService {
+                            last_error = Some(crate::error::SyscityError::ExternalService {
                                 source: format!("Provider {} failed: {}", entry.provider, e),
                                 cause: None,
                             });
@@ -1171,7 +1171,7 @@ impl ModelRouter {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| crate::error::MantaError::ExternalService {
+        Err(last_error.unwrap_or_else(|| crate::error::SyscityError::ExternalService {
             source: "All providers failed".to_string(),
             cause: None,
         }))
@@ -1286,7 +1286,7 @@ impl ModelRouter {
                                 );
                             }
                             self.record_failure(&entry.provider, Some(class)).await;
-                            last_error = Some(crate::error::MantaError::ExternalService {
+                            last_error = Some(crate::error::SyscityError::ExternalService {
                                 source: format!("Provider {} auth disabled: {}", entry.provider, e),
                                 cause: None,
                             });
@@ -1338,7 +1338,7 @@ impl ModelRouter {
                             }
                         } else {
                             self.record_failure(&entry.provider, Some(class)).await;
-                            last_error = Some(crate::error::MantaError::ExternalService {
+                            last_error = Some(crate::error::SyscityError::ExternalService {
                                 source: format!("Provider {} failed: {}", entry.provider, e),
                                 cause: None,
                             });
@@ -1348,7 +1348,7 @@ impl ModelRouter {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| crate::error::MantaError::ExternalService {
+        Err(last_error.unwrap_or_else(|| crate::error::SyscityError::ExternalService {
             source: "All providers failed".to_string(),
             cause: None,
         }))
@@ -2105,7 +2105,7 @@ impl ModelRouter {
 
         // Check circuit breaker
         if self.is_circuit_open(provider_name).await {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Provider {} circuit is open", provider_name),
                 cause: None,
             });
@@ -2147,7 +2147,7 @@ impl ModelRouter {
                         .rebuild_provider_with_rotated_key(provider_name, Some(cooldown))
                         .await;
                     self.record_failure(provider_name, Some(class)).await;
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("Provider {} auth disabled: {}", provider_name, e),
                         cause: None,
                     });
@@ -2206,7 +2206,7 @@ impl ModelRouter {
                     }
                 } else {
                     self.record_failure(provider_name, Some(class)).await;
-                    Err(crate::error::MantaError::ExternalService {
+                    Err(crate::error::SyscityError::ExternalService {
                         source: format!("Provider {} failed: {}", provider_name, e),
                         cause: None,
                     })
@@ -2301,7 +2301,7 @@ impl ModelRouter {
                 info!("Manually rotated auth key for provider '{}'", provider_name);
                 Ok(new_key)
             }
-            None => Err(crate::error::MantaError::ExternalService {
+            None => Err(crate::error::SyscityError::ExternalService {
                 source: format!(
                     "No available API keys for provider '{}' after rotation",
                     provider_name

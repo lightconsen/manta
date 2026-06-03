@@ -1,4 +1,4 @@
-//! WebSocket Protocol for Manta Gateway
+//! WebSocket Protocol for Syscity Gateway
 //!
 //! Implements the WebSocket-native RPC protocol (docs/protocol.md).
 //!
@@ -711,7 +711,7 @@ async fn handle_device_auth(
             });
             error_invalid_request(
                 &req.id,
-                format!("Device pairing required. Use 'manta device approve {}' to approve.", code),
+                format!("Device pairing required. Use 'syscity device approve {}' to approve.", code),
             )
         }
         DeviceAccessResult::AlreadyPending { code } => error_invalid_request(
@@ -2368,7 +2368,7 @@ async fn handle_models_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResp
     .with_alias(payload.name.clone());
     state.model_router.model_catalog.register(entry).await;
 
-    // Persist GatewayConfig to manta.toml
+    // Persist GatewayConfig to syscity.toml
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;
         match toml::to_string_pretty(&*config_guard) {
@@ -2933,7 +2933,7 @@ async fn handle_logs_unsubscribe(
     WsResponse::ok(&req.id, serde_json::json!({ "status": "unsubscribed" }))
 }
 
-/// Persist GatewayConfig to manta.toml.
+/// Persist GatewayConfig to syscity.toml.
 async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
     if let Some(config_path) = state.config_path.clone() {
         let config_guard = state.config.read().await;

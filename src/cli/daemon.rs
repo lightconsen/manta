@@ -1,4 +1,4 @@
-//! Daemon management commands for Manta
+//! Daemon management commands for Syscity
 
 use crate::daemon::{DaemonConfig, DaemonManager};
 use crate::error::Result;
@@ -16,7 +16,7 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        pid_file: crate::dirs::manta_dir().join("manta.pid"),
+        pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
     };
     let daemon = DaemonManager::new(daemon_config)?;
     daemon.status().await?;
@@ -68,8 +68,8 @@ pub async fn run_assistant_process(_config_path: &PathBuf) -> Result<()> {
             }
             Err(e) => {
                 eprintln!("Daemon error: {}", e);
-                eprintln!("Is the daemon running? Try: manta start");
-                return Err(crate::error::MantaError::Internal(e.to_string()));
+                eprintln!("Is the daemon running? Try: syscity start");
+                return Err(crate::error::SyscityError::Internal(e.to_string()));
             }
         }
     }
@@ -87,7 +87,7 @@ pub async fn run_start_daemon(
     let daemon_config = DaemonConfig {
         host: host.to_string(),
         port,
-        pid_file: crate::dirs::manta_dir().join("manta.pid"),
+        pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
     };
 
     let daemon = DaemonManager::new(daemon_config)?;
@@ -106,7 +106,7 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        pid_file: crate::dirs::manta_dir().join("manta.pid"),
+        pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
     };
 
     let daemon = DaemonManager::new(daemon_config)?;
@@ -123,7 +123,7 @@ pub async fn run_daemon_status() -> Result<()> {
     let daemon_config = DaemonConfig {
         host: "127.0.0.1".to_string(),
         port: 18080,
-        pid_file: crate::dirs::manta_dir().join("manta.pid"),
+        pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
     };
 
     let daemon = DaemonManager::new(daemon_config)?;

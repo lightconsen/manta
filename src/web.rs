@@ -1,4 +1,4 @@
-//! Web Terminal for Manta
+//! Web Terminal for Syscity
 //!
 //! Provides a browser-based terminal interface for interacting with the AI assistant.
 //! Uses WebSockets for real-time bidirectional communication.
@@ -194,9 +194,9 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
 
     // Send welcome message with conversation ID
     let welcome_msg = if let Some(ref conv_id) = conversation_id {
-        format!("Connected to Manta AI Assistant (via daemon).\nSession: {}\nType /new to start a fresh conversation.", conv_id)
+        format!("Connected to Syscity AI Assistant (via daemon).\nSession: {}\nType /new to start a fresh conversation.", conv_id)
     } else {
-        "Connected to Manta AI Assistant (via daemon).\nType /new to start a fresh conversation."
+        "Connected to Syscity AI Assistant (via daemon).\nType /new to start a fresh conversation."
             .to_string()
     };
     let welcome = serde_json::json!({
@@ -373,7 +373,7 @@ async fn handle_socket(mut socket: WebSocket, state: WebTerminalState, query: Ws
     // Send welcome message with conversation ID
     let welcome = serde_json::json!({
         "type": "system",
-        "content": format!("Connected to Manta AI Assistant.\nSession: {}\nType /new to start a fresh conversation.", conversation_id),
+        "content": format!("Connected to Syscity AI Assistant.\nSession: {}\nType /new to start a fresh conversation.", conversation_id),
         "conversation_id": &conversation_id
     });
     if let Err(e) = socket.send(Message::Text(welcome.to_string())).await {
@@ -626,7 +626,7 @@ static TERMINAL_HTML: LazyLock<String> = LazyLock::new(|| {
     let html = match crate::embed::WebAssets::get("index.html") {
         Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
         None => std::fs::read_to_string("web/dist/index.html").unwrap_or_else(|_| {
-            "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
+            "<h1>Syscity Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
                 .to_string()
         }),
     };
@@ -648,12 +648,12 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_html_contains_manta_reference() {
+    fn test_terminal_html_contains_syscity_reference() {
         let html = terminal_html();
-        // Either built SPA or fallback message should reference Manta
+        // Either built SPA or fallback message should reference Syscity
         assert!(
-            html.contains("Manta") || html.contains("manta"),
-            "HTML should contain Manta reference"
+            html.contains("Syscity") || html.contains("syscity"),
+            "HTML should contain Syscity reference"
         );
     }
 

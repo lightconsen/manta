@@ -1,8 +1,8 @@
-//! Security commands for Manta
+//! Security commands for Syscity
 //!
 //! Provides security audit, DM pairing, and access control management.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 use serde_json::json;
 
@@ -152,7 +152,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -183,7 +183,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -205,7 +205,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -228,7 +228,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -414,7 +414,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
 
             // Return error if critical issues found (for CI/CD use)
             if !report.critical_issues.is_empty() {
-                return Err(MantaError::Validation(format!(
+                return Err(SyscityError::Validation(format!(
                     "Security audit found {} critical issues",
                     report.critical_issues.len()
                 )));
@@ -432,8 +432,8 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -451,7 +451,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -475,7 +475,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -499,7 +499,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -526,7 +526,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())
@@ -544,7 +544,7 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
                 Ok(())

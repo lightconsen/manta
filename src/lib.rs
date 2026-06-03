@@ -1,6 +1,6 @@
-//! Manta - Personal AI Assistant
+//! Syscity - Personal AI Assistant
 //!
-//! Manta is a lightweight, fast, and secure Personal AI Assistant written in Rust.
+//! Syscity is a lightweight, fast, and secure Personal AI Assistant written in Rust.
 //! It combines the simplicity philosophy of NanoClaw with the performance
 //! characteristics of ZeroClaw.
 //!
@@ -18,10 +18,10 @@
 //! # Example Usage
 //!
 //! ```rust
-//! use manta::config::Config;
-//! use manta::providers::{Message, Role, CompletionRequest};
+//! use syscity::config::Config;
+//! use syscity::providers::{Message, Role, CompletionRequest};
 //!
-//! # async fn example() -> manta::error::Result<()> {
+//! # async fn example() -> syscity::error::Result<()> {
 //! let config = Config::load()?;
 //! // ... use providers, channels, tools
 //! # Ok(())
@@ -75,7 +75,7 @@ pub mod tailscale;
 // Re-export commonly used types
 pub use crate::core::Engine;
 pub use config::{Config, ConfigWatcher, ReloadableConfig};
-pub use error::{MantaError, Result};
+pub use error::{SyscityError, Result};
 
 // Re-export hot reload types
 pub use config::hot_reload::{
@@ -97,14 +97,14 @@ pub const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 
 /// Check if the application is running in a production environment
 pub fn is_production() -> bool {
-    std::env::var("MANTA_ENV")
+    std::env::var("SYSCITY_ENV")
         .map(|v| v == "production")
         .unwrap_or(false)
 }
 
 /// Get the current environment name
 pub fn environment() -> String {
-    std::env::var("MANTA_ENV").unwrap_or_else(|_| "development".to_string())
+    std::env::var("SYSCITY_ENV").unwrap_or_else(|_| "development".to_string())
 }
 
 /// Initialize the application
@@ -130,6 +130,6 @@ mod tests {
     fn test_environment() {
         // Should return development by default
         let env = environment();
-        assert!(env == "development" || !std::env::var("MANTA_ENV").unwrap_or_default().is_empty());
+        assert!(env == "development" || !std::env::var("SYSCITY_ENV").unwrap_or_default().is_empty());
     }
 }

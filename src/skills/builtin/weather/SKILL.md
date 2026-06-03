@@ -2,7 +2,7 @@
 name: weather
 description: "Get weather information for locations"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "weather"

@@ -178,18 +178,18 @@ impl QmdExecutor {
         let output =
             tokio::time::timeout(std::time::Duration::from_secs(self.timeout_secs), cmd.output())
                 .await
-                .map_err(|_| crate::error::MantaError::ExternalService {
+                .map_err(|_| crate::error::SyscityError::ExternalService {
                     source: "qmd query timed out".to_string(),
                     cause: None,
                 })?
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to run qmd: {}", e),
                     cause: None,
                 })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("qmd query failed: {}", stderr),
                 cause: None,
             });
@@ -197,7 +197,7 @@ impl QmdExecutor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let results: Vec<QmdQueryResult> = serde_json::from_str(&stdout).map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: format!("Failed to parse qmd output: {}", e),
                 cause: Some(stdout.to_string().into()),
             }

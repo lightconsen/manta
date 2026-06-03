@@ -2,7 +2,7 @@
 name: agent-creator
 description: "Create, configure, and deploy new AI agents with custom personalities and tools"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "create agent"

@@ -1,10 +1,10 @@
 //! Skill Registry for Remote Skill Discovery and Installation
 //!
 //! Provides a client for discovering, installing, and managing skills
-//! from a remote registry (e.g., skills.manta.dev or ClawHub).
+//! from a remote registry (e.g., skills.syscity.dev or ClawHub).
 
 use crate::dirs;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use crate::skills::frontmatter::SkillFile;
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -72,9 +72,9 @@ impl SkillRegistry {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .user_agent(format!("manta/{} (SkillRegistry)", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("syscity/{} (SkillRegistry)", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| MantaError::Internal(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to create HTTP client: {}", e)))?;
 
         Ok(Self {
             url: url.into(),
@@ -85,7 +85,7 @@ impl SkillRegistry {
 
     /// Create registry with default URL
     pub fn default_registry() -> Result<Self> {
-        Self::new("https://skills.manta.dev")
+        Self::new("https://skills.syscity.dev")
     }
 
     /// Get the ClawHub registry
@@ -105,16 +105,16 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Registry search failed: {}", response.status()),
                 cause: None,
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(SyscityError::Http)?;
 
         info!("Found {} skills matching '{}'", listings.len(), query);
         Ok(listings)
@@ -132,16 +132,16 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to fetch popular skills: {}", response.status()),
                 cause: None,
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(SyscityError::Http)?;
 
         Ok(listings)
     }
@@ -158,22 +158,22 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(MantaError::NotFound {
+            return Err(SyscityError::NotFound {
                 resource: format!("Skill '{}' not found in registry", name),
             });
         }
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to fetch skill info: {}", response.status()),
                 cause: None,
             });
         }
 
-        let listing: SkillListing = response.json().await.map_err(MantaError::Http)?;
+        let listing: SkillListing = response.json().await.map_err(SyscityError::Http)?;
 
         Ok(listing)
     }
@@ -188,7 +188,7 @@ impl SkillRegistry {
 
         if skill_dir.exists() {
             warn!("Skill '{}' already installed at {:?}", name, skill_dir);
-            return Err(MantaError::Validation(format!(
+            return Err(SyscityError::Validation(format!(
                 "Skill '{}' is already installed. Use 'update' to update it.",
                 name
             )));
@@ -204,33 +204,33 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(MantaError::NotFound {
+            return Err(SyscityError::NotFound {
                 resource: format!("Skill '{}' not found in registry", name),
             });
         }
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to download skill: {}", response.status()),
                 cause: None,
             });
         }
 
-        let content = response.bytes().await.map_err(MantaError::Http)?;
+        let content = response.bytes().await.map_err(SyscityError::Http)?;
 
         // Create skill directory
         fs::create_dir_all(&skill_dir)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         // Write SKILL.md
         let skill_file = skill_dir.join("SKILL.md");
         fs::write(&skill_file, content)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         info!("Skill '{}' installed to {:?}", name, skill_dir);
         Ok(skill_dir)
@@ -248,27 +248,27 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to download skill version: {}", response.status()),
                 cause: None,
             });
         }
 
-        let content = response.bytes().await.map_err(MantaError::Http)?;
+        let content = response.bytes().await.map_err(SyscityError::Http)?;
 
         let skill_dir = dirs::skills_dir().join(name);
 
         fs::create_dir_all(&skill_dir)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         let skill_file = skill_dir.join("SKILL.md");
         fs::write(&skill_file, content)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         info!("Skill '{}' v{} installed", name, version);
         Ok(skill_dir)
@@ -283,7 +283,7 @@ impl SkillRegistry {
         let skill_dir = dirs::skills_dir().join(name);
 
         if !skill_dir.exists() {
-            return Err(MantaError::NotFound {
+            return Err(SyscityError::NotFound {
                 resource: format!("Skill '{}' is not installed", name),
             });
         }
@@ -291,11 +291,11 @@ impl SkillRegistry {
         let skill_file = skill_dir.join("SKILL.md");
         let current_content = fs::read_to_string(&skill_file)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         // Parse current skill to get version
         let current_skill = SkillFile::parse(&current_content, skill_file.clone())
-            .map_err(|e| MantaError::Validation(format!("Failed to parse skill: {}", e)))?;
+            .map_err(|e| SyscityError::Validation(format!("Failed to parse skill: {}", e)))?;
 
         let current_version = current_skill.frontmatter.version;
 
@@ -335,9 +335,9 @@ impl SkillRegistry {
         let mut updates = Vec::new();
 
         // List installed skills
-        let mut entries = fs::read_dir(&skill_dir).await.map_err(MantaError::Io)?;
+        let mut entries = fs::read_dir(&skill_dir).await.map_err(SyscityError::Io)?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(MantaError::Io)? {
+        while let Some(entry) = entries.next_entry().await.map_err(SyscityError::Io)? {
             let path = entry.path();
             if path.is_dir() {
                 let skill_file = path.join("SKILL.md");
@@ -377,16 +377,16 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to list skills by category: {}", response.status()),
                 cause: None,
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(SyscityError::Http)?;
 
         Ok(listings)
     }
@@ -401,16 +401,16 @@ impl SkillRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(MantaError::Http)?;
+            .map_err(SyscityError::Http)?;
 
         if !response.status().is_success() {
-            return Err(MantaError::ExternalService {
+            return Err(SyscityError::ExternalService {
                 source: format!("Failed to list skills by tag: {}", response.status()),
                 cause: None,
             });
         }
 
-        let listings: Vec<SkillListing> = response.json().await.map_err(MantaError::Http)?;
+        let listings: Vec<SkillListing> = response.json().await.map_err(SyscityError::Http)?;
 
         Ok(listings)
     }
@@ -423,14 +423,14 @@ impl SkillRegistry {
         let skill_dir = dirs::skills_dir().join(name);
 
         if !skill_dir.exists() {
-            return Err(MantaError::NotFound {
+            return Err(SyscityError::NotFound {
                 resource: format!("Skill '{}' is not installed", name),
             });
         }
 
         fs::remove_dir_all(&skill_dir)
             .await
-            .map_err(MantaError::Io)?;
+            .map_err(SyscityError::Io)?;
 
         info!("Skill '{}' uninstalled", name);
         Ok(())
@@ -455,7 +455,7 @@ mod tests {
         let registry = SkillRegistry::default_registry();
         assert!(registry.is_ok());
         let reg = registry.unwrap();
-        assert_eq!(reg.url, "https://skills.manta.dev");
+        assert_eq!(reg.url, "https://skills.syscity.dev");
     }
 
     #[test]

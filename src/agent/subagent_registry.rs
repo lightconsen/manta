@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::error::MantaError;
+use crate::error::SyscityError;
 
 /// Current lifecycle state of a subagent run.
 #[derive(Debug, Clone)]
@@ -112,9 +112,9 @@ pub struct RunRecord {
 ///
 /// ```rust,no_run
 /// # use std::sync::Arc;
-/// # use manta::agent::subagent_registry::SubagentRegistry;
+/// # use syscity::agent::subagent_registry::SubagentRegistry;
 /// # use std::time::Duration;
-/// # async fn example() -> manta::error::Result<()> {
+/// # async fn example() -> syscity::error::Result<()> {
 /// let registry = Arc::new(SubagentRegistry::new(3, 10));
 ///
 /// // Spawn returns a run_id; the actual execution is your responsibility
@@ -185,13 +185,13 @@ impl SubagentRegistry {
         // ── depth check ──────────────────────────────────────────────────
         let current_depth = self.get_depth(parent_session).await;
         if current_depth >= self.max_depth {
-            return Err(MantaError::MaxSpawnDepth(self.max_depth));
+            return Err(SyscityError::MaxSpawnDepth(self.max_depth));
         }
 
         // ── concurrency check ────────────────────────────────────────────
         let active = self.active_count().await;
         if active >= self.max_concurrent {
-            return Err(MantaError::MaxConcurrentSubagents(self.max_concurrent));
+            return Err(SyscityError::MaxConcurrentSubagents(self.max_concurrent));
         }
 
         // ── register run ─────────────────────────────────────────────────
@@ -274,19 +274,19 @@ impl SubagentRegistry {
 
         loop {
             if Instant::now() >= deadline {
-                return Err(MantaError::SubagentTimeout);
+                return Err(SyscityError::SubagentTimeout);
             }
 
             {
                 let runs = self.runs.read().await;
                 match runs.get(run_id) {
-                    None => return Err(MantaError::SubagentNotFound),
+                    None => return Err(SyscityError::SubagentNotFound),
                     Some(run) => match &run.status {
                         SubagentStatus::Completed(out) => return Ok(out.clone()),
                         SubagentStatus::Failed(err) => {
-                            return Err(MantaError::SubagentFailed(err.clone()))
+                            return Err(SyscityError::SubagentFailed(err.clone()))
                         }
-                        SubagentStatus::Killed => return Err(MantaError::SubagentKilled),
+                        SubagentStatus::Killed => return Err(SyscityError::SubagentKilled),
                         SubagentStatus::Running => {}
                     },
                 }
@@ -310,7 +310,7 @@ impl SubagentRegistry {
         let mut metrics = self.metrics.write().await;
 
         match runs.get_mut(run_id) {
-            None => Err(MantaError::SubagentNotFound),
+            None => Err(SyscityError::SubagentNotFound),
             Some(run) => {
                 run.status = SubagentStatus::Killed;
                 run.completed_at = Some(Instant::now());
@@ -513,7 +513,7 @@ mod tests {
             .spawn(&child_session, "agent", "nested", |_, _| async {})
             .await;
 
-        assert!(matches!(result, Err(MantaError::MaxSpawnDepth(1))));
+        assert!(matches!(result, Err(SyscityError::MaxSpawnDepth(1))));
     }
 
     #[tokio::test]
@@ -538,7 +538,7 @@ mod tests {
             .spawn("session-overflow", "agent", "task", |_, _| async {})
             .await;
 
-        assert!(matches!(result, Err(MantaError::MaxConcurrentSubagents(2))));
+        assert!(matches!(result, Err(SyscityError::MaxConcurrentSubagents(2))));
     }
 
     #[tokio::test]
@@ -557,7 +557,7 @@ mod tests {
             .wait_for_completion(&run_id, Duration::from_millis(100))
             .await;
 
-        assert!(matches!(result, Err(MantaError::SubagentKilled)));
+        assert!(matches!(result, Err(SyscityError::SubagentKilled)));
     }
 
     #[tokio::test]
@@ -591,6 +591,6 @@ mod tests {
         let result = registry
             .wait_for_completion("no-such-id", Duration::from_millis(10))
             .await;
-        assert!(matches!(result, Err(MantaError::SubagentNotFound)));
+        assert!(matches!(result, Err(SyscityError::SubagentNotFound)));
     }
 }

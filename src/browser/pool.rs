@@ -75,13 +75,13 @@ impl BrowserInstance {
 
         let config = builder
             .build()
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Browser configuration failed: {}", e),
                 cause: None,
             })?;
 
         let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to launch Chrome/Chromium. Is it installed?".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -114,7 +114,7 @@ impl BrowserInstance {
         use chromiumoxide::browser::Browser;
 
         let (browser, mut handler) = Browser::connect(cdp_url).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: format!("Failed to connect to Chrome at {}", cdp_url),
                 cause: Some(Box::new(e)),
             }
@@ -148,7 +148,7 @@ impl BrowserInstance {
     #[cfg(feature = "browser")]
     pub async fn new_page(&self, url: &str) -> crate::Result<PageHandle> {
         let page = self.browser.new_page(url).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to create browser page".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -245,7 +245,7 @@ impl BrowserInstance {
 
         if let Some(handle) = page {
             handle.page.activate().await.map_err(|e| {
-                crate::error::MantaError::ExternalService {
+                crate::error::SyscityError::ExternalService {
                     source: "Failed to activate page".to_string(),
                     cause: Some(Box::new(e)),
                 }

@@ -97,14 +97,14 @@ impl BrowserSandbox {
                 debug!("Docker is available");
             }
             _ => {
-                return Err(crate::error::MantaError::ExternalService {
+                return Err(crate::error::SyscityError::ExternalService {
                     source: "Docker is not available".to_string(),
                     cause: None,
                 });
             }
         }
 
-        let container_name = format!("manta-browser-sandbox-{}", uuid::Uuid::new_v4());
+        let container_name = format!("syscity-browser-sandbox-{}", uuid::Uuid::new_v4());
         let cdp_port = self.config.cdp_port;
         let vnc_port = self.config.vnc_port;
         let novnc_port = self.config.novnc_port;
@@ -141,7 +141,7 @@ impl BrowserSandbox {
             .args(&args)
             .output()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to start Docker container".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -149,7 +149,7 @@ impl BrowserSandbox {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("Docker container start failed: {}", stderr);
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Docker container start failed: {}", stderr),
                 cause: None,
             });
@@ -178,7 +178,7 @@ impl BrowserSandbox {
             .args(["stop", "-t", "10", container_id])
             .output()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to stop Docker container".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -199,7 +199,7 @@ impl BrowserSandbox {
             .args(["inspect", "-f", "{{.State.Running}}", container_id])
             .output()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to inspect Docker container".to_string(),
                 cause: Some(Box::new(e)),
             })?;

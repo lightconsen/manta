@@ -1,4 +1,4 @@
-//! Plugin System for Manta
+//! Plugin System for Syscity
 //!
 //! Provides runtime extensibility similar to OpenClaw's plugin SDK:
 //! - WASM-based sandboxed plugins
@@ -560,7 +560,7 @@ mod tests {
     }
 }
 
-/// Plugin tool wrapper - adapts plugin tools to Manta's Tool trait
+/// Plugin tool wrapper - adapts plugin tools to Syscity's Tool trait
 use crate::tools::{Tool, ToolContext, ToolExecutionResult};
 
 pub struct PluginToolWrapper {

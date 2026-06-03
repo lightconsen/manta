@@ -1,4 +1,4 @@
-//! Time utilities tool for Manta
+//! Time utilities tool for Syscity
 //!
 //! This tool provides time-related utilities like getting current time,
 //! formatting dates, calculating time differences, and scheduling reminders.
@@ -28,7 +28,7 @@ impl TimeTool {
             Some("UTC") | Some("utc") => "UTC",
             Some("local") | Some("LOCAL") | None => "Local",
             Some(tz) => {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Unsupported timezone: {}. Use 'UTC' or 'local'",
                     tz
                 )));
@@ -50,7 +50,7 @@ impl TimeTool {
     fn format_time(&self, format: &str, timestamp: Option<i64>) -> crate::Result<String> {
         let datetime: DateTime<Utc> = match timestamp {
             Some(ts) => DateTime::from_timestamp(ts, 0).ok_or_else(|| {
-                crate::error::MantaError::Validation("Invalid timestamp".to_string())
+                crate::error::SyscityError::Validation("Invalid timestamp".to_string())
             })?,
             None => Utc::now(),
         };
@@ -284,7 +284,7 @@ Use this for:
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'action' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'action' argument".to_string())
         })?;
 
         match action {
@@ -303,7 +303,7 @@ Use this for:
 
             "format" => {
                 let format = args["format"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'format' argument".to_string())
+                    crate::error::SyscityError::Validation("Missing 'format' argument".to_string())
                 })?;
                 let timestamp = args["timestamp"].as_i64();
 
@@ -325,7 +325,7 @@ Use this for:
 
             "parse" => {
                 let expression = args["expression"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "Missing 'expression' argument".to_string(),
                     )
                 })?;
@@ -355,7 +355,7 @@ Use this for:
 
             "diff" => {
                 let from = args["from"].as_i64().ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'from' timestamp".to_string())
+                    crate::error::SyscityError::Validation("Missing 'from' timestamp".to_string())
                 })?;
                 let to = args["to"]
                     .as_i64()
@@ -370,7 +370,7 @@ Use this for:
                 .with_data(serde_json::json!(diff)))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unknown action: {}. Valid actions: now, format, parse, diff",
                 action
             ))),

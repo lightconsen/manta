@@ -1,6 +1,6 @@
 //! Plugin logging
 //!
-//! Write log messages to Manta's logger.
+//! Write log messages to Syscity's logger.
 
 /// Log an informational message
 pub fn info(message: &str) {

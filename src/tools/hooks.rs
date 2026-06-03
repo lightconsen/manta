@@ -9,7 +9,7 @@
 //! **allow or deny** a tool call before it executes:
 //!
 //! ```rust,no_run
-//! use manta::tools::hooks::{ToolHooks, ToolPolicyDecision};
+//! use syscity::tools::hooks::{ToolHooks, ToolPolicyDecision};
 //!
 //! let hooks = ToolHooks::new()
 //!     .policy(|name, args| {
@@ -111,7 +111,7 @@ pub type PolicyHookFn = Arc<
 /// # Example
 ///
 /// ```rust,no_run
-/// use manta::tools::hooks::ToolHooks;
+/// use syscity::tools::hooks::ToolHooks;
 ///
 /// let hooks = ToolHooks::new()
 ///     .before(|name, args| {

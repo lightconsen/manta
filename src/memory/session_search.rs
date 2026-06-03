@@ -120,7 +120,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create conversations table".to_string(),
             details: e.to_string(),
         })?;
@@ -141,7 +141,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create messages table".to_string(),
             details: e.to_string(),
         })?;
@@ -160,7 +160,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create FTS5 table".to_string(),
             details: e.to_string(),
         })?;
@@ -178,7 +178,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create insert trigger".to_string(),
             details: e.to_string(),
         })?;
@@ -194,7 +194,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create delete trigger".to_string(),
             details: e.to_string(),
         })?;
@@ -212,7 +212,7 @@ impl SessionSearch {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create update trigger".to_string(),
             details: e.to_string(),
         })?;
@@ -248,7 +248,7 @@ impl SessionSearch {
         .bind(&content[..content.len().min(50)]) // Use first 50 chars as title
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to insert conversation".to_string(),
             details: e.to_string(),
         })?;
@@ -266,7 +266,7 @@ impl SessionSearch {
         .bind(&role)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to index message".to_string(),
             details: e.to_string(),
         })?;
@@ -386,7 +386,7 @@ impl SessionSearch {
                 .await
             }
         }
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Search query failed".to_string(),
             details: e.to_string(),
         })?;
@@ -443,7 +443,7 @@ impl SessionSearch {
                 .bind(conversation_id)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to get message rowid".to_string(),
                     details: e.to_string(),
                 })?;
@@ -464,7 +464,7 @@ impl SessionSearch {
         .bind(lines as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get context before".to_string(),
             details: e.to_string(),
         })?;
@@ -483,7 +483,7 @@ impl SessionSearch {
         .bind(lines as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get context after".to_string(),
             details: e.to_string(),
         })?;
@@ -529,7 +529,7 @@ impl SessionSearch {
             .bind(before)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to cleanup old messages".to_string(),
                 details: e.to_string(),
             })?;
@@ -615,7 +615,7 @@ from all indexed conversations."#
             _context: &ToolContext,
         ) -> crate::Result<ToolExecutionResult> {
             let query = args["query"].as_str().ok_or_else(|| {
-                crate::error::MantaError::Validation("query is required".to_string())
+                crate::error::SyscityError::Validation("query is required".to_string())
             })?;
 
             let limit = args["limit"].as_u64().unwrap_or(5) as usize;

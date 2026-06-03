@@ -91,14 +91,14 @@ impl OAuthFlow {
             .form(&params)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("OAuth token exchange request failed: {}", e),
                 cause: Some(Box::new(e)),
             })?;
 
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("OAuth token exchange failed: {}", body),
                 cause: None,
             });
@@ -107,7 +107,7 @@ impl OAuthFlow {
         let data: TokenResponse =
             resp.json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("OAuth token exchange response invalid: {}", e),
                     cause: Some(Box::new(e)),
                 })?;

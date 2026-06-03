@@ -308,7 +308,7 @@ impl HeartbeatRunner {
             }
         }
 
-        // Try per-agent directory: ~/.manta/agents/{id}/HEARTBEAT.md
+        // Try per-agent directory: ~/.syscity/agents/{id}/HEARTBEAT.md
         let agent_path = crate::dirs::agents_dir()
             .join(&handle.id)
             .join(HEARTBEAT_FILENAME);

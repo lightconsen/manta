@@ -1,4 +1,4 @@
-//! Mention Gating for Manta
+//! Mention Gating for Syscity
 //!
 //! Controls which mentions trigger agent responses.
 //! Inspired by OpenClaw's `mention-gating.ts`.
@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use manta::security::mention_gate::{MentionGate, MentionPolicy};
+//! use syscity::security::mention_gate::{MentionGate, MentionPolicy};
 //!
 //! # async fn example() {
 //! let gate = MentionGate::new(MentionPolicy::Allowlist);

@@ -40,7 +40,7 @@ impl TieredStore {
 
         tokio::fs::create_dir_all(base)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create tiered store directory: {:?}", base),
                 details: e.to_string(),
             })?;
@@ -70,7 +70,7 @@ impl TieredStore {
             working: InMemoryStore::new(),
             short_term: DatabaseStore::new_in_memory().await?,
             long_term: DatabaseStore::new_in_memory().await?,
-            archival: CompressedJsonlStore::new(std::env::temp_dir().join("manta_archival_test")),
+            archival: CompressedJsonlStore::new(std::env::temp_dir().join("syscity_archival_test")),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
         })
@@ -220,7 +220,7 @@ impl MemoryStore for TieredStore {
             }
         }
 
-        Err(crate::error::MantaError::NotFound {
+        Err(crate::error::SyscityError::NotFound {
             resource: format!("Memory {}", id),
         })
     }

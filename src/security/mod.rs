@@ -1,4 +1,4 @@
-//! Security module for Manta
+//! Security module for Syscity
 //!
 //! Provides authentication, authorization, rate limiting, and sandboxing.
 
@@ -108,7 +108,7 @@ impl AuthManager {
     pub async fn register_user(&self, user: User) -> crate::Result<()> {
         let mut users = self.users.write().await;
         if users.contains_key(&user.id) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "User {} already exists",
                 user.id
             )));
@@ -139,7 +139,7 @@ impl AuthManager {
     ) -> crate::Result<Session> {
         // Verify user exists
         if !self.user_exists(&user_id).await {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "User {} not found",
                 user_id
             )));

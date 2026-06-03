@@ -1,10 +1,10 @@
-//! Doctor diagnostic system for Manta
+//! Doctor diagnostic system for Syscity
 //!
-//! Provides `manta doctor run` and `manta doctor report` commands for
+//! Provides `syscity doctor run` and `syscity doctor report` commands for
 //! diagnosing provider health, auth status, circuit state, and generating
 //! actionable recommendations.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -16,7 +16,7 @@ const DAEMON_URL: &str = "http://127.0.0.1:18080";
 fn report_cache_path() -> std::path::PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("manta")
+        .join("syscity")
         .join("last_doctor_report.json")
 }
 
@@ -180,12 +180,12 @@ pub async fn run_doctor_command(command: &DoctorCommands) -> Result<()> {
             let contents = match tokio::fs::read_to_string(&path).await {
                 Ok(c) => c,
                 Err(_) => {
-                    println!("No diagnostic report found. Run `manta doctor run` first.");
+                    println!("No diagnostic report found. Run `syscity doctor run` first.");
                     return Ok(());
                 }
             };
             let report: DoctorReport = serde_json::from_str(&contents)
-                .map_err(|e| MantaError::Internal(format!("Failed to parse report: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to parse report: {}", e)))?;
             print_report(&report, false);
             Ok(())
         }
@@ -227,7 +227,7 @@ async fn run_diagnostics(
                 migration_hints: Vec::new(),
                 plugin_hints: Vec::new(),
                 recommendations: vec![format!(
-                    "Cannot reach daemon at {}: {}. Is manta running?",
+                    "Cannot reach daemon at {}: {}. Is syscity running?",
                     DAEMON_URL, e
                 )],
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -312,7 +312,7 @@ async fn run_diagnostics(
         if !enabled {
             health = HealthGrade::Degraded;
             recommendation = Some(format!(
-                "Provider '{}' is disabled — run `manta provider enable {}`",
+                "Provider '{}' is disabled — run `syscity provider enable {}`",
                 name, id
             ));
         } else if !healthy {
@@ -498,7 +498,7 @@ async fn run_diagnostics(
 
     if provider_diagnostics.is_empty() && filter_provider.is_none() {
         recommendations
-            .push("No providers configured. Run `manta setup` to configure providers.".to_string());
+            .push("No providers configured. Run `syscity setup` to configure providers.".to_string());
     }
 
     // Add deprecation warnings to recommendations
@@ -519,7 +519,7 @@ async fn run_diagnostics(
 }
 
 fn print_report(report: &DoctorReport, verbose: bool) {
-    println!("\nManta Diagnostic Report");
+    println!("\nSyscity Diagnostic Report");
     println!("{}", "=".repeat(50));
     println!("Timestamp: {}", report.timestamp);
     println!(

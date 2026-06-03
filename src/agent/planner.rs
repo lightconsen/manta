@@ -1,4 +1,4 @@
-//! Natural Language Task Planning for Manta
+//! Natural Language Task Planning for Syscity
 //!
 //! Automatically decomposes complex user requests into structured task plans
 //! using LLM-based analysis. Integrates with the Todo system for execution.
@@ -265,7 +265,7 @@ Ensure tasks are in logical execution order. Tasks with no dependencies should c
 
         // Parse the plan
         let plan_data: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Failed to parse task plan: {}", e))
+            crate::error::SyscityError::Validation(format!("Failed to parse task plan: {}", e))
         })?;
 
         let goal = plan_data["goal"]
@@ -553,20 +553,20 @@ impl PersistedPlan {
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to create plans directory: {:?}", parent),
                     details: e.to_string(),
                 }
             })?;
         }
         let json =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::MantaError::Storage {
+            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to serialize plan".to_string(),
                 details: e.to_string(),
             })?;
         tokio::fs::write(path, json)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to write plan file: {:?}", path),
                 details: e.to_string(),
             })?;
@@ -581,13 +581,13 @@ impl PersistedPlan {
             return Ok(None);
         }
         let json = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: format!("Failed to read plan file: {:?}", path),
                 details: e.to_string(),
             }
         })?;
         let plan: Self =
-            serde_json::from_str(&json).map_err(|e| crate::error::MantaError::Storage {
+            serde_json::from_str(&json).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to deserialize plan".to_string(),
                 details: e.to_string(),
             })?;
@@ -608,7 +608,7 @@ pub async fn load_all_plans(dir: impl AsRef<std::path::Path>) -> crate::Result<V
     let mut entries =
         tokio::fs::read_dir(dir)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to read plans directory: {:?}", dir),
                 details: e.to_string(),
             })?;
@@ -616,7 +616,7 @@ pub async fn load_all_plans(dir: impl AsRef<std::path::Path>) -> crate::Result<V
         entries
             .next_entry()
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to read plans directory entry".to_string(),
                 details: e.to_string(),
             })?

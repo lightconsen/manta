@@ -247,7 +247,7 @@ impl SignalChannel {
             .json(&request)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Signal RPC request failed: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -256,13 +256,13 @@ impl SignalChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse Signal RPC response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
 
         if let Some(error) = rpc_response.error {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Signal RPC error {}: {}", error.code, error.message),
                 cause: None,
             });
@@ -447,7 +447,7 @@ impl Channel for SignalChannel {
 
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
         // Signal does not support editing messages
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Signal does not support message editing".to_string(),
         ))
     }
@@ -458,7 +458,7 @@ impl Channel for SignalChannel {
             let map = self.message_map.read().await;
             map.get(&msg_key)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Signal message {} not found", msg_key),
                 })?
         };

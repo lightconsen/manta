@@ -1,4 +1,4 @@
-//! OpenAI provider implementation for Manta
+//! OpenAI provider implementation for Syscity
 //!
 //! Supports GPT-4, GPT-3.5, and other OpenAI models.
 
@@ -60,7 +60,7 @@ impl OpenAiProvider {
             .default_headers(headers)
             .build()
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to build HTTP client: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
 
         Ok(Self {
@@ -79,8 +79,8 @@ impl OpenAiProvider {
 
     /// Build the request URL
     fn url(&self, path: &str) -> String {
-        // Support custom paths via MANTA_API_PATH env var
-        let custom_path = std::env::var("MANTA_API_PATH").ok();
+        // Support custom paths via SYSCITY_API_PATH env var
+        let custom_path = std::env::var("SYSCITY_API_PATH").ok();
         if let Some(api_path) = custom_path {
             format!("{}/{}", self.base_url.trim_end_matches('/'), api_path.trim_start_matches('/'))
         } else {
@@ -152,7 +152,7 @@ impl OpenAiProvider {
     #[allow(clippy::wrong_self_convention)]
     fn from_openai_response(&self, resp: OpenAiResponse) -> crate::Result<CompletionResponse> {
         let choice = resp.choices.into_iter().next().ok_or_else(|| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "No completion choices returned".to_string(),
                 cause: None,
             }
@@ -303,14 +303,14 @@ impl Provider for OpenAiProvider {
                         let status = response.status();
                         let text = response.text().await.unwrap_or_default();
                         error!("OpenAI API error: {} - {}", status, text);
-                        return Err(crate::error::MantaError::ExternalService {
+                        return Err(crate::error::SyscityError::ExternalService {
                             source: format!("OpenAI API error {}: {}", status, text),
                             cause: None,
                         });
                     }
 
                     let openai_resp: OpenAiResponse = response.json().await.map_err(|e| {
-                        crate::error::MantaError::ExternalService {
+                        crate::error::SyscityError::ExternalService {
                             source: format!("Failed to parse OpenAI response: {}", e),
                             cause: Some(Box::new(e)),
                         }
@@ -343,7 +343,7 @@ impl Provider for OpenAiProvider {
                         continue;
                     }
 
-                    return Err(crate::error::MantaError::Http(e));
+                    return Err(crate::error::SyscityError::Http(e));
                 }
             }
         }
@@ -412,7 +412,7 @@ impl Provider for OpenAiProvider {
                         let status = response.status();
                         let text = response.text().await.unwrap_or_default();
                         error!("OpenAI API error: {} - {}", status, text);
-                        return Err(crate::error::MantaError::ExternalService {
+                        return Err(crate::error::SyscityError::ExternalService {
                             source: format!("OpenAI API error {}: {}", status, text),
                             cause: None,
                         });
@@ -444,7 +444,7 @@ impl Provider for OpenAiProvider {
                         continue;
                     }
 
-                    return Err(crate::error::MantaError::Http(e));
+                    return Err(crate::error::SyscityError::Http(e));
                 }
             }
         }
@@ -458,7 +458,7 @@ impl Provider for OpenAiProvider {
             .headers(self.headers().await)
             .send()
             .await
-            .map_err(crate::error::MantaError::Http)?;
+            .map_err(crate::error::SyscityError::Http)?;
 
         Ok(response.status().is_success())
     }
@@ -823,7 +823,7 @@ mod tests {
         // test context is safe. The unsafe block is only to satisfy the deny lint.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("MANTA_API_PATH", "custom/path")
+            std::env::set_var("SYSCITY_API_PATH", "custom/path")
         };
         let provider = OpenAiProvider::new("test-key").unwrap();
         let url = provider.url("/chat/completions");
@@ -831,7 +831,7 @@ mod tests {
         // SAFETY: See comment above.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::remove_var("MANTA_API_PATH")
+            std::env::remove_var("SYSCITY_API_PATH")
         };
     }
 

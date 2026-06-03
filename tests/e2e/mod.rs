@@ -3,9 +3,9 @@
 //! Simulates a complete frontend client connecting via WebSocket.
 
 pub use futures_util::{SinkExt, StreamExt};
-pub use manta::gateway::protocol::AuthMode;
-pub use manta::gateway::{Gateway, GatewayConfig};
-pub use manta::model_router::{ProviderConfig, ProviderType};
+pub use syscity::gateway::protocol::AuthMode;
+pub use syscity::gateway::{Gateway, GatewayConfig};
+pub use syscity::model_router::{ProviderConfig, ProviderType};
 pub use serde_json::json;
 pub use serial_test::serial;
 pub use std::collections::VecDeque;
@@ -50,25 +50,25 @@ pub fn discover_local_providers() -> Vec<LocalProviderConfig> {
 
             for line in content.lines() {
                 let line = line.trim();
-                if line.starts_with("export MANTA_API_KEY=") {
+                if line.starts_with("export SYSCITY_API_KEY=") {
                     api_key = line
                         .split('=')
                         .nth(1)
                         .map(|s| s.trim().trim_matches('"').to_string());
                 }
-                if line.starts_with("export MANTA_BASE_URL=") {
+                if line.starts_with("export SYSCITY_BASE_URL=") {
                     base_url = line
                         .split('=')
                         .nth(1)
                         .map(|s| s.trim().trim_matches('"').to_string());
                 }
-                if line.starts_with("export MANTA_MODEL=") {
+                if line.starts_with("export SYSCITY_MODEL=") {
                     model = line
                         .split('=')
                         .nth(1)
                         .map(|s| s.trim().trim_matches('"').to_string());
                 }
-                if line.starts_with("export MANTA_IS_ANTHROPIC=") {
+                if line.starts_with("export SYSCITY_IS_ANTHROPIC=") {
                     is_anthropic = line.contains("true");
                 }
             }
@@ -100,10 +100,10 @@ pub fn discover_local_providers() -> Vec<LocalProviderConfig> {
 
 pub fn pick_test_provider() -> Option<LocalProviderConfig> {
     if let (Ok(key), Ok(name)) =
-        (std::env::var("MANTA_TEST_PROVIDER_KEY"), std::env::var("MANTA_TEST_PROVIDER"))
+        (std::env::var("SYSCITY_TEST_PROVIDER_KEY"), std::env::var("SYSCITY_TEST_PROVIDER"))
     {
-        let base_url = std::env::var("MANTA_TEST_BASE_URL").unwrap_or_default();
-        let model = std::env::var("MANTA_TEST_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let base_url = std::env::var("SYSCITY_TEST_BASE_URL").unwrap_or_default();
+        let model = std::env::var("SYSCITY_TEST_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
         let is_anthropic = name == "anthropic" || name == "kimi";
         return Some(LocalProviderConfig {
             name,
@@ -122,7 +122,7 @@ pub fn skip_if_no_provider() -> Option<LocalProviderConfig> {
     if provider.is_none() {
         eprintln!(
             "Skipping LLM test: no provider configured. \
-             Set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+             Set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or create start-local-*.sh scripts in the project root."
         );
     }
@@ -136,7 +136,7 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
     config.host = "127.0.0.1".to_string();
     config.port = port;
     config.storage.storage_type = "sqlite".to_string();
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_ws_test_{}.db", port));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_ws_test_{}.db", port));
     let _ = std::fs::remove_file(&db_path);
     config.storage.database_url = Some(format!("sqlite:{}", db_path.display()));
     config.security.auth_mode = AuthMode::None;

@@ -192,7 +192,7 @@ impl ExportMeta {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
             exported_at: chrono::Utc::now().to_rfc3339(),
-            source: "manta".to_string(),
+            source: "syscity".to_string(),
             format_version: 1,
         }
     }
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn test_export_meta() {
         let meta = ExportMeta::new();
-        assert_eq!(meta.source, "manta");
+        assert_eq!(meta.source, "syscity");
         assert_eq!(meta.format_version, 1);
         assert!(!meta.exported_at.is_empty());
         assert!(!meta.version.is_empty());
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn test_export_meta_default() {
         let meta: ExportMeta = Default::default();
-        assert_eq!(meta.source, "manta");
+        assert_eq!(meta.source, "syscity");
         assert_eq!(meta.format_version, 1);
     }
 
@@ -266,9 +266,9 @@ mod tests {
     fn test_export_meta_serde() {
         let meta = ExportMeta::new();
         let json = serde_json::to_string(&meta).unwrap();
-        assert!(json.contains("manta"));
+        assert!(json.contains("syscity"));
         let restored: ExportMeta = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.source, "manta");
+        assert_eq!(restored.source, "syscity");
         assert_eq!(restored.format_version, 1);
     }
 
@@ -345,7 +345,7 @@ mod tests {
             messages: vec![],
         };
         let json = serde_json::to_string(&export).unwrap();
-        assert!(json.contains("manta"));
+        assert!(json.contains("syscity"));
         let restored: ConversationExport = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.messages.len(), 0);
     }
@@ -357,7 +357,7 @@ mod tests {
             memories: vec![],
         };
         let json = serde_json::to_string(&export).unwrap();
-        assert!(json.contains("manta"));
+        assert!(json.contains("syscity"));
     }
 
     #[test]
@@ -368,7 +368,7 @@ mod tests {
             memories: vec![],
         };
         let json = serde_json::to_string(&export).unwrap();
-        assert!(json.contains("manta"));
+        assert!(json.contains("syscity"));
         let restored: FullExport = serde_json::from_str(&json).unwrap();
         assert!(restored.conversations.is_empty());
     }

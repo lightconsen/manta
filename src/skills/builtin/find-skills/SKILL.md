@@ -2,7 +2,7 @@
 name: find-skills
 description: "Search for and discover skills across all storage levels"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "find-skills"
@@ -30,15 +30,15 @@ openclaw:
 
 # Find Skills
 
-Search for and discover skills across all storage levels in Manta.
+Search for and discover skills across all storage levels in Syscity.
 
 ## Storage Levels
 
 Skills can exist at different levels (checked in priority order):
 
-1. **Project** (./.manta/skills/) - Project-specific skills
-2. **Workspace** (.manta/skills/) - Workspace-wide skills
-3. **User** (~/.manta/skills/) - User-global skills
+1. **Project** (./.syscity/skills/) - Project-specific skills
+2. **Workspace** (.syscity/skills/) - Workspace-wide skills
+3. **User** (~/.syscity/skills/) - User-global skills
 4. **Bundled** (built-in) - Default system skills
 
 ## Search Capabilities

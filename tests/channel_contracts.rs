@@ -5,7 +5,7 @@
 //! fail these tests, signaling a potential breaking change for external
 //! integrations (webhooks, channel APIs, etc.).
 
-use manta::channels::*;
+use syscity::channels::*;
 
 // ── IncomingMessage Serialization Contract ───────────────────────────────────
 

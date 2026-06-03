@@ -1,4 +1,4 @@
-//! Canvas/A2UI - Dynamic UI Generation System for Manta
+//! Canvas/A2UI - Dynamic UI Generation System for Syscity
 //!
 //! Provides OpenClaw-compatible A2UI (Agent-to-UI) capabilities for generating
 //! dynamic user interfaces through WebSocket updates. Supports forms, buttons,

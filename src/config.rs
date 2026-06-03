@@ -1,4 +1,4 @@
-//! Configuration management for Manta
+//! Configuration management for Syscity
 //!
 //! This module handles loading and validating configuration from
 //! multiple sources: defaults, config files, and environment variables.
@@ -11,10 +11,10 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Default configuration file name
-pub const DEFAULT_CONFIG_FILE: &str = "manta.toml";
+pub const DEFAULT_CONFIG_FILE: &str = "syscity.toml";
 
 /// Environment variable prefix
-pub const ENV_PREFIX: &str = "MANTA";
+pub const ENV_PREFIX: &str = "SYSCITY";
 
 /// Current configuration schema version.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -538,8 +538,8 @@ impl Config {
     ///
     /// The configuration is loaded in the following order (later sources override earlier ones):
     /// 1. Default values
-    /// 2. Config file (manta.toml or specified path)
-    /// 3. Environment variables (MANTA_*)
+    /// 2. Config file (syscity.toml or specified path)
+    /// 3. Environment variables (SYSCITY_*)
     pub fn load() -> Result<Self> {
         Self::load_with_file(None::<&std::path::Path>)
     }
@@ -605,11 +605,11 @@ impl Config {
         let candidates = [
             PathBuf::from(DEFAULT_CONFIG_FILE),
             PathBuf::from(format!(".config/{}", DEFAULT_CONFIG_FILE)),
-            // Centralized ~/.manta/manta.toml
+            // Centralized ~/.syscity/syscity.toml
             crate::dirs::default_config_file(),
             // Legacy location for backwards compatibility
             dirs::config_dir()
-                .map(|d| d.join("manta").join(DEFAULT_CONFIG_FILE))
+                .map(|d| d.join("syscity").join(DEFAULT_CONFIG_FILE))
                 .unwrap_or_default(),
         ];
 
@@ -893,7 +893,7 @@ impl ConfigWatcher {
                 }
             })
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!(
+                crate::error::SyscityError::Internal(format!(
                     "Failed to create config watcher: {}",
                     e
                 ))
@@ -901,7 +901,7 @@ impl ConfigWatcher {
 
         notify::Watcher::watch(&mut watcher, &path, notify::RecursiveMode::NonRecursive).map_err(
             |e| {
-                crate::error::MantaError::Internal(format!(
+                crate::error::SyscityError::Internal(format!(
                     "Failed to watch config file {}: {}",
                     path.display(),
                     e
@@ -982,7 +982,7 @@ impl ReloadableConfig {
             PathBuf::from(DEFAULT_CONFIG_FILE),
             PathBuf::from(format!(".config/{}=", DEFAULT_CONFIG_FILE)),
             dirs::config_dir()
-                .map(|d| d.join("manta").join(DEFAULT_CONFIG_FILE))
+                .map(|d| d.join("syscity").join(DEFAULT_CONFIG_FILE))
                 .unwrap_or_default(),
         ];
 

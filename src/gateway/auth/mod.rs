@@ -39,7 +39,7 @@ pub struct SessionCookieConfig {
 impl Default for SessionCookieConfig {
     fn default() -> Self {
         Self {
-            name: "manta_session".to_string(),
+            name: "syscity_session".to_string(),
             domain: None,
             path: "/".to_string(),
             secure: true,
@@ -257,7 +257,7 @@ mod tests {
     fn test_build_set_cookie() {
         let config = SessionCookieConfig::default();
         let cookie = build_set_cookie(&config, "test_token");
-        assert!(cookie.contains("manta_session=test_token"));
+        assert!(cookie.contains("syscity_session=test_token"));
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("Secure"));
         assert!(cookie.contains("SameSite=lax"));
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_session_cookie_config_default() {
         let config = SessionCookieConfig::default();
-        assert_eq!(config.name, "manta_session");
+        assert_eq!(config.name, "syscity_session");
         assert_eq!(config.path, "/");
         assert!(config.secure);
         assert!(config.http_only);
@@ -333,20 +333,20 @@ mod tests {
     #[test]
     fn test_extract_session_cookie_single() {
         let req = Request::builder()
-            .header(header::COOKIE, "manta_session=abc123")
+            .header(header::COOKIE, "syscity_session=abc123")
             .body(Body::empty())
             .unwrap();
-        let token = extract_session_cookie(&req, "manta_session");
+        let token = extract_session_cookie(&req, "syscity_session");
         assert_eq!(token, Some("abc123".to_string()));
     }
 
     #[test]
     fn test_extract_session_cookie_multiple() {
         let req = Request::builder()
-            .header(header::COOKIE, "other=value; manta_session=xyz; foo=bar")
+            .header(header::COOKIE, "other=value; syscity_session=xyz; foo=bar")
             .body(Body::empty())
             .unwrap();
-        let token = extract_session_cookie(&req, "manta_session");
+        let token = extract_session_cookie(&req, "syscity_session");
         assert_eq!(token, Some("xyz".to_string()));
     }
 
@@ -356,14 +356,14 @@ mod tests {
             .header(header::COOKIE, "other=value")
             .body(Body::empty())
             .unwrap();
-        let token = extract_session_cookie(&req, "manta_session");
+        let token = extract_session_cookie(&req, "syscity_session");
         assert_eq!(token, None);
     }
 
     #[test]
     fn test_extract_session_cookie_no_header() {
         let req = Request::builder().body(Body::empty()).unwrap();
-        let token = extract_session_cookie(&req, "manta_session");
+        let token = extract_session_cookie(&req, "syscity_session");
         assert_eq!(token, None);
     }
 

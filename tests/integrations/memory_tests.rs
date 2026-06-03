@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn memory_tool_creates_and_reads() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memory_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memory_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -45,10 +45,10 @@ async fn memory_tool_creates_and_reads() {
 
 #[tokio::test]
 async fn memory_search_tool_searches() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_search_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_search_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -86,10 +86,10 @@ async fn memory_search_tool_searches() {
 
 #[tokio::test]
 async fn memory_get_tool_crud() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_get_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_get_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -151,7 +151,7 @@ async fn memory_get_tool_crud() {
 #[tokio::test]
 async fn memory_retrieve_nonexistent_fails() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memory_neg_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memory_neg_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -171,7 +171,7 @@ async fn memory_retrieve_nonexistent_fails() {
 #[tokio::test]
 async fn memory_delete_removes_entry() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memory_del_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memory_del_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -209,7 +209,7 @@ async fn memory_delete_removes_entry() {
 #[tokio::test]
 async fn memory_update_modifies_content() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memory_upd_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memory_upd_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -247,7 +247,7 @@ async fn memory_update_modifies_content() {
 #[tokio::test]
 async fn memory_invalid_action_fails() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memory_inv_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memory_inv_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -268,10 +268,10 @@ async fn memory_invalid_action_fails() {
 #[tokio::test]
 async fn memory_search_no_results_returns_empty() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memsearch_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memsearch_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -292,10 +292,10 @@ async fn memory_search_no_results_returns_empty() {
 #[tokio::test]
 async fn memory_search_store_then_search() {
     let db_path =
-        std::env::temp_dir().join(format!("manta_e2e_memsearch2_{}.db", std::process::id()));
+        std::env::temp_dir().join(format!("syscity_e2e_memsearch2_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -304,7 +304,7 @@ async fn memory_search_store_then_search() {
 
     let _ = tool
         .execute(
-            json!({"action": "store", "content": "Manta is a great project", "category": "test"}),
+            json!({"action": "store", "content": "Syscity is a great project", "category": "test"}),
             &ctx,
         )
         .await;
@@ -327,10 +327,10 @@ async fn memory_search_store_then_search() {
 
 #[tokio::test]
 async fn memory_get_delete_nonexistent_fails() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memget_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -349,10 +349,10 @@ async fn memory_get_delete_nonexistent_fails() {
 
 #[tokio::test]
 async fn memory_get_list_returns_all() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memget2_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget2_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );
@@ -389,10 +389,10 @@ async fn memory_get_list_returns_all() {
 
 #[tokio::test]
 async fn memory_get_update_nonexistent_fails() {
-    let db_path = std::env::temp_dir().join(format!("manta_e2e_memget3_{}.db", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget3_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
-        manta::memory::SqliteMemoryStore::new(&db_url)
+        syscity::memory::SqliteMemoryStore::new(&db_url)
             .await
             .expect("Failed to create store"),
     );

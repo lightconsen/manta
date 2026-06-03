@@ -1,6 +1,6 @@
-# Manta Deployment
+# Syscity Deployment
 
-This directory contains deployment configurations for Manta AI Assistant.
+This directory contains deployment configurations for Syscity AI Assistant.
 
 ## Quick Start
 
@@ -12,40 +12,40 @@ cd systemd
 sudo ./install.sh
 
 # Configure API keys
-sudo nano /etc/manta/manta.env
+sudo nano /etc/syscity/syscity.env
 
 # Start service
-sudo systemctl start manta
-sudo systemctl enable manta
+sudo systemctl start syscity
+sudo systemctl enable syscity
 
 # View logs
-sudo journalctl -u manta -f
+sudo journalctl -u syscity -f
 ```
 
 ## Systemd Configuration
 
 ### Files
 
-- `/etc/systemd/system/manta.service` - Service definition
-- `/etc/manta/manta.env` - Environment variables
-- `/etc/manta/config.yaml` - Main configuration
-- `/var/lib/manta/` - Data directory
+- `/etc/systemd/system/syscity.service` - Service definition
+- `/etc/syscity/syscity.env` - Environment variables
+- `/etc/syscity/config.yaml` - Main configuration
+- `/var/lib/syscity/` - Data directory
 
 ### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MANTA_BASE_URL` | Yes | - | LLM API endpoint |
-| `MANTA_API_KEY` | Yes | - | API key for LLM |
-| `MANTA_MODEL` | No | gpt-4o-mini | Model name |
-| `MANTA_IS_ANTHROPIC` | No | false | Use Anthropic format |
-| `MANTA_AGENT_NAME` | No | Manta | Assistant name |
-| `MANTA_ALLOW_SHELL` | No | true | Allow shell commands |
-| `MANTA_SANDBOXED` | No | true | Enable sandboxing |
+| `SYSCITY_BASE_URL` | Yes | - | LLM API endpoint |
+| `SYSCITY_API_KEY` | Yes | - | API key for LLM |
+| `SYSCITY_MODEL` | No | gpt-4o-mini | Model name |
+| `SYSCITY_IS_ANTHROPIC` | No | false | Use Anthropic format |
+| `SYSCITY_AGENT_NAME` | No | Syscity | Assistant name |
+| `SYSCITY_ALLOW_SHELL` | No | true | Allow shell commands |
+| `SYSCITY_SANDBOXED` | No | true | Enable sandboxing |
 
 ### Security Features
 
-- Runs as unprivileged `manta` user
+- Runs as unprivileged `syscity` user
 - Filesystem sandboxing (`ProtectSystem=strict`)
 - No new privileges
 - Resource limits
@@ -58,7 +58,7 @@ sudo journalctl -u manta -f
 ```nginx
 server {
     listen 80;
-    server_name manta.example.com;
+    server_name syscity.net;
 
     location / {
         proxy_pass http://localhost:8080;
@@ -77,7 +77,7 @@ server {
 ### Caddy
 
 ```
-manta.example.com {
+syscity.net {
     reverse_proxy localhost:8080
 }
 ```
@@ -92,20 +92,20 @@ manta.example.com {
 ### Check service status
 
 ```bash
-sudo systemctl status manta
-sudo journalctl -u manta -n 100
+sudo systemctl status syscity
+sudo journalctl -u syscity -n 100
 ```
 
 ### Verify configuration
 
 ```bash
-sudo -u manta manta config validate
+sudo -u syscity syscity config validate
 ```
 
 ### Reset data
 
 ```bash
-sudo systemctl stop manta
-sudo rm -rf /var/lib/manta/*
-sudo systemctl start manta
+sudo systemctl stop syscity
+sudo rm -rf /var/lib/syscity/*
+sudo systemctl start syscity
 ```

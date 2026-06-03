@@ -1,6 +1,6 @@
 # Echo Channel - WASM Plugin Example
 
-This is a simple example WASM plugin for Manta that demonstrates the channel extension interface. It echoes back any messages it receives.
+This is a simple example WASM plugin for Syscity that demonstrates the channel extension interface. It echoes back any messages it receives.
 
 ## Building
 
@@ -12,22 +12,22 @@ cargo build --release --target wasm32-wasi
 ## Installation
 
 ```bash
-# Copy the built WASM file to Manta's extensions directory
-cp target/wasm32-wasi/release/echo-channel.wasm ~/.manta/extensions/channels/
+# Copy the built WASM file to Syscity's extensions directory
+cp target/wasm32-wasi/release/echo-channel.wasm ~/.syscity/extensions/channels/
 
 # Copy the manifest
-cp echo-channel.yaml ~/.manta/extensions/channels/
+cp echo-channel.yaml ~/.syscity/extensions/channels/
 ```
 
 ## Usage
 
 ```bash
 # Load and start the plugin
-manta plugin load echo
-manta plugin start echo
+syscity plugin load echo
+syscity plugin start echo
 
 # Or use the extended registry which auto-discovers
-manta server
+syscity server
 ```
 
 ## Configuration
@@ -58,5 +58,5 @@ Once loaded, you can test by sending a message through the channel:
 
 ```bash
 # The echo channel will receive the message and echo it back
-manta channel send echo "Hello World"
+syscity channel send echo "Hello World"
 ```

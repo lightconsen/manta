@@ -1,4 +1,4 @@
-//! Multimodal File Storage for Manta Memory
+//! Multimodal File Storage for Syscity Memory
 //!
 //! Stores image and audio files in workspace subdirectories:
 //! - `memory/images/` — image files
@@ -190,7 +190,7 @@ impl MultimodalStore {
         content_type: impl AsRef<str>,
     ) -> crate::Result<MultimodalFileEntry> {
         if !self.config.enabled {
-            return Err(crate::error::MantaError::Config(
+            return Err(crate::error::SyscityError::Config(
                 crate::error::ConfigError::InvalidValue {
                     key: "memory.multimodal.enabled".to_string(),
                     message: "Multimodal storage is disabled".to_string(),
@@ -200,7 +200,7 @@ impl MultimodalStore {
 
         let filename = filename.as_ref();
         let classification = classify_multimodal_file(filename, &self.config).ok_or_else(|| {
-            crate::error::MantaError::Config(crate::error::ConfigError::InvalidValue {
+            crate::error::SyscityError::Config(crate::error::ConfigError::InvalidValue {
                 key: "memory.multimodal.file".to_string(),
                 message: format!("Unsupported file type: {}", filename),
             })
@@ -208,7 +208,7 @@ impl MultimodalStore {
 
         let size = data.len() as u64;
         if size > self.config.max_file_bytes {
-            return Err(crate::error::MantaError::Config(
+            return Err(crate::error::SyscityError::Config(
                 crate::error::ConfigError::InvalidValue {
                     key: "memory.multimodal.max_file_bytes".to_string(),
                     message: format!(
@@ -222,7 +222,7 @@ impl MultimodalStore {
         let dir = self.modality_dir(classification.modality);
         fs::create_dir_all(&dir)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create multimodal directory: {:?}", dir),
                 details: e.to_string(),
             })?;
@@ -233,7 +233,7 @@ impl MultimodalStore {
 
         fs::write(&stored_path, data)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to write multimodal file: {:?}", stored_path),
                 details: e.to_string(),
             })?;
@@ -347,7 +347,7 @@ impl MultimodalStore {
         let path = self.workspace_dir.join(relative_path.as_ref());
         fs::read(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to read multimodal file: {:?}", path),
                 details: e.to_string(),
             })
@@ -358,7 +358,7 @@ impl MultimodalStore {
         let path = self.workspace_dir.join(relative_path.as_ref());
         fs::remove_file(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to delete multimodal file: {:?}", path),
                 details: e.to_string(),
             })

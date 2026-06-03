@@ -1,6 +1,6 @@
 name: echo
 version: 0.1.0
-author: manta-team
+author: syscity-team
 description: Echo channel - echoes back messages for testing
 capabilities:
   - formatting

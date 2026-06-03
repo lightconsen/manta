@@ -1,8 +1,8 @@
 [package]
-name = "manta-plugin-sdk"
+name = "syscity-plugin-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "High-level Rust SDK for building Manta WASM plugins"
+description = "High-level Rust SDK for building Syscity WASM plugins"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

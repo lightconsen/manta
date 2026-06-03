@@ -149,7 +149,7 @@ impl LocalGgufEmbeddingProvider {
 
     /// Always returns error
     pub async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
-        Err(crate::error::MantaError::Validation(
+        Err(crate::error::SyscityError::Validation(
             "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
         ))
     }
@@ -240,13 +240,13 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Embedding API request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?
             .json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Invalid embedding response".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -275,7 +275,7 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
 ///
 /// ```rust,no_run
 /// # use std::sync::Arc;
-/// # use manta::memory::vector::{ApiEmbeddingProvider, CachedEmbeddingProvider};
+/// # use syscity::memory::vector::{ApiEmbeddingProvider, CachedEmbeddingProvider};
 /// let inner = ApiEmbeddingProvider::new("key".into(), "text-embedding-3-small".into(), 1536);
 /// let cached = CachedEmbeddingProvider::new(inner, 10_000);
 /// ```
@@ -525,7 +525,7 @@ impl SqliteVectorStore {
             .max_connections(5)
             .connect(path)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to connect to SQLite at {}", path),
                 details: e.to_string(),
             })?;
@@ -544,7 +544,7 @@ impl SqliteVectorStore {
         )
         .execute(&pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create vector_chunks table".to_string(),
             details: e.to_string(),
         })?;
@@ -553,7 +553,7 @@ impl SqliteVectorStore {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_source_id ON vector_chunks(source_id)")
             .execute(&pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to create index on vector_chunks".to_string(),
                 details: e.to_string(),
             })?;
@@ -580,7 +580,7 @@ impl SqliteVectorStore {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to query vector_chunks".to_string(),
             details: e.to_string(),
         })?;
@@ -631,7 +631,7 @@ impl SqliteVectorStore {
 impl VectorStore for SqliteVectorStore {
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()> {
         let embedding_json = serde_json::to_string(&chunk.embedding).map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: "Failed to serialize embedding".to_string(),
                 details: e.to_string(),
             }
@@ -641,7 +641,7 @@ impl VectorStore for SqliteVectorStore {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to serialize metadata".to_string(),
                 details: e.to_string(),
             })?;
@@ -659,7 +659,7 @@ impl VectorStore for SqliteVectorStore {
         .bind(metadata_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to store vector chunk".to_string(),
             details: e.to_string(),
         })?;
@@ -681,7 +681,7 @@ impl VectorStore for SqliteVectorStore {
             .bind(source_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to delete by source".to_string(),
                 details: e.to_string(),
             })?;
@@ -693,7 +693,7 @@ impl VectorStore for SqliteVectorStore {
         let total_vectors: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vector_chunks")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to count vectors".to_string(),
                 details: e.to_string(),
             })?;
@@ -702,7 +702,7 @@ impl VectorStore for SqliteVectorStore {
             sqlx::query_as("SELECT COUNT(DISTINCT source_id) FROM vector_chunks")
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to count sources".to_string(),
                     details: e.to_string(),
                 })?;
@@ -718,7 +718,7 @@ impl VectorStore for SqliteVectorStore {
         sqlx::query("DELETE FROM vector_chunks")
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to clear vector_chunks".to_string(),
                 details: e.to_string(),
             })?;

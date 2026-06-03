@@ -1,4 +1,4 @@
-//! Connection pooling utilities for Manta
+//! Connection pooling utilities for Syscity
 //!
 //! Provides connection pool management for HTTP clients and database connections
 //! to optimize resource usage and improve performance.
@@ -136,7 +136,7 @@ impl HttpClientPool {
             .timeout(self.config.timeout)
             .build()
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to create HTTP client: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to create HTTP client: {}", e))
             })
     }
 

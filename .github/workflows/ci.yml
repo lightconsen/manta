@@ -82,8 +82,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: manta-${{ matrix.os }}-${{ matrix.features }}
-          path: target/release/manta
+          name: syscity-${{ matrix.os }}-${{ matrix.features }}
+          path: target/release/syscity
 
   frontend:
     name: Frontend Build

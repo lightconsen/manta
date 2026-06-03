@@ -4,7 +4,7 @@
 //! Server-Sent Events (SSE) streams. Tests run serially to avoid mock conflicts.
 
 use futures::StreamExt;
-use manta::providers::{AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider};
+use syscity::providers::{AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider};
 use serial_test::serial;
 use wiremock::{
     matchers::{header, method, path},

@@ -1,4 +1,4 @@
-//! Domain models for Manta
+//! Domain models for Syscity
 //!
 //! This module defines the core data structures used throughout
 //! the application. These models are framework-agnostic and
@@ -22,7 +22,7 @@ impl Id {
     /// Parse an ID from a string
     pub fn parse(s: &str) -> crate::Result<Self> {
         Ok(Self(Uuid::parse_str(s).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Invalid UUID: {}", e))
+            crate::error::SyscityError::Validation(format!("Invalid UUID: {}", e))
         })?))
     }
 }
@@ -226,10 +226,10 @@ impl CreateEntityRequest {
     /// Validate the request
     pub fn validate(&self) -> crate::Result<()> {
         if self.name.is_empty() {
-            return Err(crate::error::MantaError::Validation("Name cannot be empty".to_string()));
+            return Err(crate::error::SyscityError::Validation("Name cannot be empty".to_string()));
         }
         if self.name.len() > 256 {
-            return Err(crate::error::MantaError::Validation(
+            return Err(crate::error::SyscityError::Validation(
                 "Name cannot exceed 256 characters".to_string(),
             ));
         }
@@ -263,7 +263,7 @@ impl UpdateEntityRequest {
     pub fn apply(&self, entity: &mut Entity) -> crate::Result<()> {
         if let Some(name) = &self.name {
             if name.is_empty() {
-                return Err(crate::error::MantaError::Validation(
+                return Err(crate::error::SyscityError::Validation(
                     "Name cannot be empty".to_string(),
                 ));
             }

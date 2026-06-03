@@ -51,11 +51,11 @@ pub trait Provider: Send + Sync {
 
 - **Done**: Auth profile store with SQLite persistence (`AuthProfileStore`) — key state metadata only (failure counts, cooldown, status); raw keys remain in config.
 - **Done**: API key rotation with `AuthProfile` / `AuthProfileManager` — automatic failover between multiple keys per provider.
-- **Done**: OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `manta provider auth` command.
+- **Done**: OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `syscity provider auth` command.
 - **Done**: Differentiated cooldown — `FailureClass::default_backoff_secs()` used per failure type (RateLimit=60s, AuthTemporary=5s, etc.), never below config minimum.
 - **Done**: Usage tracking (`ProviderUsageTracker`) — per-provider token consumption, cost estimation, time windows (today/this_hour/this_month), budget enforcement.
 - **Done**: Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list, `/v1/models` and `/api/v1/models` endpoints.
-- **Done**: Doctor diagnostic system (`manta doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point.
+- **Done**: Doctor diagnostic system (`syscity doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point.
 - **Done**: Stream family wrappers (`ProviderStreamFamily`) — OpenAI Responses, Anthropic Thinking, Google Thinking, Moonshot Thinking, Minimax Fast Mode.
 
 ## Missing / TODO

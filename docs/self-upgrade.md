@@ -1,18 +1,18 @@
-# Manta Self-Upgrade Architecture
+# Syscity Self-Upgrade Architecture
 
 ## Overview
 
-Manta can modify its own source code, compile, replace its binary, and restart — all triggered through chat conversation, without relying on external process managers (systemd/launchd/tmux).
+Syscity can modify its own source code, compile, replace its binary, and restart — all triggered through chat conversation, without relying on external process managers (systemd/launchd/tmux).
 
 ## Architecture: Shim + Core
 
 ```
-User: "manta start"
+User: "syscity start"
   |
   v
-Shim (~/.manta/bin/mantad)          # user-facing command (supervisor)
-  |-- Check ~/.manta/bin/manta exists
-  |-- Record binary mtime, spawn manta and wait
+Shim (~/.syscity/bin/syscityd)          # user-facing command (supervisor)
+  |-- Check ~/.syscity/bin/syscity exists
+  |-- Record binary mtime, spawn syscity and wait
   |
   |-- Exit code 42 + marker + mtime changed -> restart (upgrade)
   |-- Exit code 99  -> propagate and exit (full shutdown)
@@ -20,17 +20,17 @@ Shim (~/.manta/bin/mantad)          # user-facing command (supervisor)
   |                    (with crash protection: rapid exit delays longer)
   |
   v
-Core (~/.manta/bin/manta)           # replaceable core
-  |-- Source at ~/.manta/src/ (git-managed, or symlinked to dev tree)
+Core (~/.syscity/bin/syscity)           # replaceable core
+  |-- Source at ~/.syscity/src/ (git-managed, or symlinked to dev tree)
   |-- Runs Gateway + all existing features
   |-- Can modify its own source -> cargo build --release
-  |-- Replaces ~/.manta/bin/manta
+  |-- Replaces ~/.syscity/bin/syscity
   |-- Graceful exit with code 42 -> Shim restarts new version
 ```
 
 ## Components
 
-### 1. Shim (`src/bin/shim.rs`, binary `mantad`)
+### 1. Shim (`src/bin/shim.rs`, binary `syscityd`)
 
 Minimal supervisor binary with **strategy B+C** hybrid behavior:
 - Always restart the core unless explicitly told to shut down
@@ -39,7 +39,7 @@ Minimal supervisor binary with **strategy B+C** hybrid behavior:
 | Exit Code | Behavior |
 |-----------|----------|
 | 42 | Upgrade mode — check marker + mtime, then restart |
-| 99 | Full shutdown — propagate and exit mantad |
+| 99 | Full shutdown — propagate and exit syscityd |
 | Other | Auto-restart — if binary mtime changed, restart immediately; if not, apply crash backoff |
 
 ```rust
@@ -49,8 +49,8 @@ const UPGRADE_MARKER: &str = ".upgrade-pending";
 const MIN_RESTART_INTERVAL_MS: u64 = 5000;
 
 fn main() {
-    let manta_dir = dirs::manta_dir();
-    let core_path = manta_dir.join("bin/manta");
+    let syscity_dir = dirs::syscity_dir();
+    let core_path = syscity_dir.join("bin/syscity");
     let mut last_mtime = get_mtime(&core_path);
     let mut last_restart = std::time::Instant::now();
 
@@ -59,18 +59,18 @@ fn main() {
         let status = Command::new(&core_path)
             .args(std::env::args().skip(1))
             .status()
-            .expect("Failed to start manta");
+            .expect("Failed to start syscity");
 
         match status.code() {
             Some(UPGRADE_EXIT_CODE) => {
                 // Scheme C: dual detection — marker file + binary mtime
-                let marker_path = manta_dir.join(UPGRADE_MARKER);
+                let marker_path = syscity_dir.join(UPGRADE_MARKER);
                 let new_mtime = get_mtime(&core_path);
                 let marker_exists = marker_path.exists();
                 let mtime_changed = new_mtime != last_mtime;
 
                 if marker_exists && mtime_changed {
-                    eprintln!("Manta upgraded, restarting...");
+                    eprintln!("Syscity upgraded, restarting...");
                     let _ = std::fs::remove_file(&marker_path);
                     last_mtime = new_mtime;
                     std::thread::sleep(Duration::from_secs(1));
@@ -82,7 +82,7 @@ fn main() {
                 std::process::exit(1);
             }
             Some(SHUTDOWN_EXIT_CODE) => {
-                eprintln!("Manta shutting down.");
+                eprintln!("Syscity shutting down.");
                 std::process::exit(0);
             }
             Some(code) | None => {
@@ -103,7 +103,7 @@ fn main() {
                 } else {
                     1
                 };
-                eprintln!("Manta exited ({}), restarting in {}s...", code.unwrap_or(-1), delay);
+                eprintln!("Syscity exited ({}), restarting in {}s...", code.unwrap_or(-1), delay);
                 std::thread::sleep(Duration::from_secs(delay));
                 last_restart = std::time::Instant::now();
                 continue;
@@ -117,9 +117,9 @@ fn get_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
 }
 ```
 
-### 2. Core (`src/main.rs`, binary `manta`)
+### 2. Core (`src/main.rs`, binary `syscity`)
 
-The existing Manta application, built as `manta` binary. Includes:
+The existing Syscity application, built as `syscity` binary. Includes:
 - All existing Gateway/WebSocket/Agent functionality
 - New `SelfUpgradeTool` for self-modification
 - Modified `daemon.rs` to support exit code 42 on upgrade
@@ -156,11 +156,11 @@ Agent-facing tool for self-modification:
 ### 4. Directory Layout
 
 ```
-~/.manta/
+~/.syscity/
 ├── bin/
-│   ├── mantad             # Shim (user-facing command, never replaced)
-│   └── manta              # Core (replaceable)
-├── src/                   # Manta source code (git repo)
+│   ├── syscityd             # Shim (user-facing command, never replaced)
+│   └── syscity              # Core (replaceable)
+├── src/                   # Syscity source code (git repo)
 │   ├── .git/
 │   ├── Cargo.toml
 │   ├── src/
@@ -168,38 +168,38 @@ Agent-facing tool for self-modification:
 ├── agents/
 ├── cron/
 ├── logs/
-└── manta.toml
+└── syscity.toml
 ```
 
 ## Upgrade Flows
 
-### Flow A: Self-Upgrade via Chat (Manta modifies itself)
+### Flow A: Self-Upgrade via Chat (Syscity modifies itself)
 
 ```
-User: "Manta, fix the heartbeat routing bug"
+User: "Syscity, fix the heartbeat routing bug"
 
 Agent:
 1. file_read -> src/heartbeat/runner.rs
 2. file_edit -> apply fix
 3. shell -> cargo test --lib          (must pass)
 4. shell -> cargo build --release      (compile)
-5. shell -> cp target/release/manta ~/.manta/bin/manta
+5. shell -> cp target/release/syscity ~/.syscity/bin/syscity
 6. SelfUpgradeTool upgrade:
       - git commit -am "auto: fix heartbeat routing"
-      - write ~/.manta/.upgrade-pending marker
+      - write ~/.syscity/.upgrade-pending marker
       - Gateway graceful shutdown
       - exit(42)
 
 Shim:
 1. Detect exit code 42
-2. Check ~/.manta/.upgrade-pending exists
-3. Verify ~/.manta/bin/manta mtime changed since last spawn
+2. Check ~/.syscity/.upgrade-pending exists
+3. Verify ~/.syscity/bin/syscity mtime changed since last spawn
 4. Remove marker file
 5. Wait 1 second
-6. Re-spawn ~/.manta/bin/manta
+6. Re-spawn ~/.syscity/bin/syscity
 7. New version starts, Gateway boots
 
-User: sees "Manta upgraded, restarting..."
+User: sees "Syscity upgraded, restarting..."
 ```
 
 ### Flow B: External Development via Claude Code
@@ -211,12 +211,12 @@ Claude Code:
 1. Edit src/heartbeat/runner.rs in dev tree
 2. cargo test --lib                    (must pass)
 3. cargo build --release
-4. cp target/release/manta ~/.manta/bin/manta
+4. cp target/release/syscity ~/.syscity/bin/syscity
 
 Shim (strategy B+C):
 1. Core exits (or next check loop detects mtime change)
 2. Binary mtime changed -> restart immediately (500ms delay)
-3. Re-spawn ~/.manta/bin/manta
+3. Re-spawn ~/.syscity/bin/syscity
 4. New version starts, Gateway boots
 
 Developer: Web UI reconnects automatically
@@ -225,7 +225,7 @@ Developer: Web UI reconnects automatically
 ### Flow C: Full Shutdown
 
 ```
-User: "mantad stop"  (or sends SIGUSR1 to mantad)
+User: "syscityd stop"  (or sends SIGUSR1 to syscityd)
 
 Core:
 - Receives shutdown signal
@@ -261,27 +261,27 @@ Shim:
 | 4 | Not found |
 | 5 | External service error |
 | **42** | **Upgrade complete, restart required** |
-| **99** | **Full shutdown — mantad exits too** |
+| **99** | **Full shutdown — syscityd exits too** |
 
 ## Development Mode (Mode 1)
 
-When using external tools like Claude Code for development, you work in the original source tree (`/Users/lando/work/manta/`) and deploy to `~/.manta/bin/manta`. The Shim's strategy B+C makes this seamless:
+When using external tools like Claude Code for development, you work in the original source tree (`/Users/lando/work/syscity/`) and deploy to `~/.syscity/bin/syscity`. The Shim's strategy B+C makes this seamless:
 
 ```bash
 # In your dev directory
 cargo build --release
-cp target/release/manta ~/.manta/bin/manta
-# mantad detects mtime change and auto-restarts manta core
+cp target/release/syscity ~/.syscity/bin/syscity
+# syscityd detects mtime change and auto-restarts syscity core
 ```
 
 ### Graceful vs Forceful Restart
 
 | Command | What happens | Use case |
 |---------|-------------|----------|
-| `cp target/release/manta ~/.manta/bin/manta` | Binary mtime changes → mantad restarts core with 500ms delay | Normal dev iteration |
-| `kill -TERM <manta_pid>` | Core exits with code 0 → mantad restarts with 1s delay | Trigger graceful restart |
-| `kill -KILL <manta_pid>` | Core dies → mantad restarts with crash backoff | Force restart |
-| `mantad stop` (or `kill -USR1`) | Core receives signal → exits 99 → mantad exits | Full shutdown |
+| `cp target/release/syscity ~/.syscity/bin/syscity` | Binary mtime changes → syscityd restarts core with 500ms delay | Normal dev iteration |
+| `kill -TERM <syscity_pid>` | Core exits with code 0 → syscityd restarts with 1s delay | Trigger graceful restart |
+| `kill -KILL <syscity_pid>` | Core dies → syscityd restarts with crash backoff | Force restart |
+| `syscityd stop` (or `kill -USR1`) | Core receives signal → exits 99 → syscityd exits | Full shutdown |
 
 ### dev-restart.sh
 
@@ -291,28 +291,28 @@ cp target/release/manta ~/.manta/bin/manta
 set -e
 
 cargo build --release
-cp target/release/manta "$HOME/.manta/bin/manta"
-echo "Binary deployed. mantad will auto-restart manta core."
+cp target/release/syscity "$HOME/.syscity/bin/syscity"
+echo "Binary deployed. syscityd will auto-restart syscity core."
 ```
 
 ### Source Sync Strategies
 
-When using Mode 1 (external development), `~/.manta/src/` can be managed in three ways:
+When using Mode 1 (external development), `~/.syscity/src/` can be managed in three ways:
 
 | Strategy | How | Pros | Cons |
 |----------|-----|------|------|
-| **A: Independent copy** | `cp -r /Users/lando/work/manta ~/.manta/src` | Dev and runtime fully isolated | Manual sync needed |
-| **B: Symlink** | `ln -s /Users/lando/work/manta ~/.manta/src` | Single source of truth | `target/` pollutes dev tree |
-| **C: Git worktree** | `git worktree add ~/.manta/src self-upgrade` | Shared git history, clean separation | Requires git setup |
+| **A: Independent copy** | `cp -r /Users/lando/work/syscity ~/.syscity/src` | Dev and runtime fully isolated | Manual sync needed |
+| **B: Symlink** | `ln -s /Users/lando/work/syscity ~/.syscity/src` | Single source of truth | `target/` pollutes dev tree |
+| **C: Git worktree** | `git worktree add ~/.syscity/src self-upgrade` | Shared git history, clean separation | Requires git setup |
 
-**Recommendation**: Use **Strategy A** for safety (Manta self-upgrade only touches its own copy), or **Strategy C** if you want to track auto-commits in your main git history.
+**Recommendation**: Use **Strategy A** for safety (Syscity self-upgrade only touches its own copy), or **Strategy C** if you want to track auto-commits in your main git history.
 
 ## Scheme C: Dual Detection
 
 Why dual detection? A core process could exit with code 42 for reasons other than a real upgrade (bug, manual test, unexpected panic during shutdown). Scheme C requires **all three** signals to be present:
 
 1. **Exit code 42** — core claims upgrade intent
-2. **Marker file `~/.manta/.upgrade-pending`** — core explicitly wrote upgrade intent to disk
+2. **Marker file `~/.syscity/.upgrade-pending`** — core explicitly wrote upgrade intent to disk
 3. **Binary mtime changed** — a new binary was actually copied into place
 
 If any signal is missing, the Shim treats it as a normal error and exits. This prevents infinite restart loops from spurious exit 42.
@@ -324,7 +324,7 @@ After Gateway shutdown:
 if should_upgrade {
     let _ = tokio::fs::remove_file(&pid_file).await;
     // Write upgrade marker so Shim knows this is a real upgrade
-    let marker = crate::dirs::manta_dir().join(".upgrade-pending");
+    let marker = crate::dirs::syscity_dir().join(".upgrade-pending");
     let _ = tokio::fs::write(&marker, "").await;
     eprintln!("Upgrade complete, restarting...");
     std::process::exit(42);
@@ -336,17 +336,17 @@ if should_upgrade {
 Add second binary target:
 ```toml
 [[bin]]
-name = "mantad"
+name = "syscityd"
 path = "src/bin/shim.rs"
 
 [[bin]]
-name = "manta"
+name = "syscity"
 path = "src/main.rs"
 ```
 
 ## Open Questions
 
-1. **Source provisioning**: How does `~/.manta/src/` get populated initially?
+1. **Source provisioning**: How does `~/.syscity/src/` get populated initially?
    - Option A: First run copies current source tree
    - Option B: Clone from GitHub
    - Option C: User manually places source
@@ -366,14 +366,14 @@ path = "src/main.rs"
 |------|-------|---------|
 | `src/bin/shim.rs` | ~70 | Minimal supervisor with dual detection |
 | `src/tools/self_upgrade_tool.rs` | ~300 | Patch/build/upgrade/rollback |
-| `scripts/install-shim.sh` | ~30 | Install shim as `~/.manta/bin/mantad` |
+| `scripts/install-shim.sh` | ~30 | Install shim as `~/.syscity/bin/syscityd` |
 | `scripts/dev-restart.sh` | ~10 | One-command dev build + deploy + restart |
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `Cargo.toml` | Add `[[bin]]` targets (`mantad`, `manta`) |
+| `Cargo.toml` | Add `[[bin]]` targets (`syscityd`, `syscity`) |
 | `src/main.rs` | Adjust entry point |
 | `src/daemon.rs` | Support exit codes 42 (upgrade) and 99 (shutdown) + write upgrade marker |
 | `src/gateway/mod.rs` | Graceful shutdown signal |

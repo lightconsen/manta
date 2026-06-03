@@ -71,7 +71,7 @@ impl TeamMeshManager {
         {
             let sessions = self.team_sessions.read().await;
             if sessions.contains_key(&team_id) {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Team '{}' is already active",
                     team_id
                 )));
@@ -182,14 +182,14 @@ impl TeamMeshManager {
             sessions
                 .get(team_id)
                 .cloned()
-                .ok_or_else(|| crate::error::MantaError::NotFound {
+                .ok_or_else(|| crate::error::SyscityError::NotFound {
                     resource: format!("Active team '{}'", team_id),
                 })?
         };
 
         // Validate sender is in team
         if !session.agents.contains(&from_agent.to_string()) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Agent '{}' is not a member of team '{}'",
                 from_agent, team_id
             )));
@@ -231,7 +231,7 @@ impl TeamMeshManager {
         if let Some(to_agent) = to {
             // Direct message
             if !session.agents.contains(&to_agent.to_string()) {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Recipient '{}' is not in team '{}'",
                     to_agent, session.team_id
                 )));
@@ -296,7 +296,7 @@ impl TeamMeshManager {
             // Lead can send to anyone
             if let Some(to_agent) = to {
                 if !session.agents.contains(&to_agent.to_string()) {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Recipient '{}' is not in team '{}'",
                         to_agent, session.team_id
                     )));
@@ -317,7 +317,7 @@ impl TeamMeshManager {
             // Non-lead can only send to leads
             if let Some(to_agent) = to {
                 if !session.leads.contains(&to_agent.to_string()) {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "In star pattern, non-lead agents can only message leads. '{}' is not a lead.",
                         to_agent
                     )));
@@ -363,7 +363,7 @@ impl TeamMeshManager {
             .iter()
             .position(|a| a == from)
             .ok_or_else(|| {
-                crate::error::MantaError::Validation(format!(
+                crate::error::SyscityError::Validation(format!(
                     "Agent '{}' not found in team '{}'",
                     from, session.team_id
                 ))
@@ -371,7 +371,7 @@ impl TeamMeshManager {
 
         // Can only send to next in chain
         if sender_pos + 1 >= session.chain_order.len() {
-            return Err(crate::error::MantaError::Validation(
+            return Err(crate::error::SyscityError::Validation(
                 "You are at the end of the chain - no one to send to".to_string(),
             ));
         }

@@ -4,8 +4,8 @@
 //! These tests do not require a running server — they focus on config
 //! serialization, defaults, and pure logic functions.
 
-use manta::channels::{ChannelType, MentionState};
-use manta::gateway::*;
+use syscity::channels::{ChannelType, MentionState};
+use syscity::gateway::*;
 
 // ── GatewayConfig Defaults & Serialization ───────────────────────────────────
 
@@ -74,9 +74,9 @@ fn channel_config_new_with_type() {
 #[test]
 fn channel_config_with_dm_policy() {
     let config = ChannelConfig::new(ChannelType::Telegram)
-        .with_dm_policy(manta::security::pairing::DmPolicy::Pairing);
+        .with_dm_policy(syscity::security::pairing::DmPolicy::Pairing);
 
-    assert_eq!(config.dm_policy, manta::security::pairing::DmPolicy::Pairing);
+    assert_eq!(config.dm_policy, syscity::security::pairing::DmPolicy::Pairing);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn channel_config_blocklist() {
 #[test]
 fn channel_config_serializes_to_json() {
     let config = ChannelConfig::new(ChannelType::Slack)
-        .with_dm_policy(manta::security::pairing::DmPolicy::Allowlist)
+        .with_dm_policy(syscity::security::pairing::DmPolicy::Allowlist)
         .with_allow_from(vec!["U123".to_string()]);
 
     let json = serde_json::to_value(&config).unwrap();

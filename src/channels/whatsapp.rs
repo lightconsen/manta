@@ -319,7 +319,7 @@ impl WhatsappChannel {
             request
                 .send()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("WhatsApp API request failed: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -328,7 +328,7 @@ impl WhatsappChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse WhatsApp response: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -339,7 +339,7 @@ impl WhatsappChannel {
     /// Get business phone numbers
     async fn get_phone_numbers(&self) -> crate::Result<Vec<String>> {
         let business_id = self.config.business_account_id.as_ref().ok_or_else(|| {
-            crate::error::MantaError::Config(crate::error::ConfigError::Missing(
+            crate::error::SyscityError::Config(crate::error::ConfigError::Missing(
                 "Business account ID required for listing phone numbers".to_string(),
             ))
         })?;
@@ -352,7 +352,7 @@ impl WhatsappChannel {
             .header("Authorization", format!("Bearer {}", self.config.access_token))
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to get phone numbers: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -361,7 +361,7 @@ impl WhatsappChannel {
             response
                 .json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to parse phone numbers: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -554,7 +554,7 @@ impl Channel for WhatsappChannel {
 
         // Check if number is allowed
         if !self.is_number_allowed(phone_number) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Phone number {} is not in allow list",
                 phone_number
             )));
@@ -577,7 +577,7 @@ impl Channel for WhatsappChannel {
         // Build payload
         let payload = self.build_message_payload(&formatted_number, &content, message_type);
         let json_payload = serde_json::to_value(&payload).map_err(|e| {
-            crate::error::MantaError::Validation(format!("Failed to serialize message: {}", e))
+            crate::error::SyscityError::Validation(format!("Failed to serialize message: {}", e))
         })?;
 
         // Send message
@@ -585,7 +585,7 @@ impl Channel for WhatsappChannel {
 
         // Check for errors
         if let Some(error) = response.error {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("WhatsApp API error: {} (code: {})", error.message, error.code),
                 cause: None,
             });
@@ -610,14 +610,14 @@ impl Channel for WhatsappChannel {
 
     async fn edit_message(&self, _message_id: Id, _new_content: String) -> crate::Result<()> {
         // WhatsApp doesn't support editing messages
-        Err(crate::error::MantaError::Validation(
+        Err(crate::error::SyscityError::Validation(
             "WhatsApp does not support message editing".to_string(),
         ))
     }
 
     async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
         // WhatsApp doesn't support deleting messages via API
-        Err(crate::error::MantaError::Validation(
+        Err(crate::error::SyscityError::Validation(
             "WhatsApp does not support message deletion via API".to_string(),
         ))
     }

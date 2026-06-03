@@ -1,9 +1,9 @@
-//! Centralized directory management for Manta
+//! Centralized directory management for Syscity
 //!
-//! All Manta data is stored in ~/.manta/ with the following structure:
-//! ~/.manta/
-//! ├── manta.toml       # Configuration file
-//! ├── data/            # SQLite database (manta.db) - unified storage
+//! All Syscity data is stored in ~/.syscity/ with the following structure:
+//! ~/.syscity/
+//! ├── syscity.toml       # Configuration file
+//! ├── data/            # SQLite database (syscity.db) - unified storage
 //! ├── logs/            # Log files (daemon.log)
 //! ├── skills/          # User-installed skills
 //! ├── agents/          # Agent configurations
@@ -21,31 +21,31 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 /// Base directory name
-const MANTA_DIR: &str = ".manta";
+const SYSCITY_DIR: &str = ".syscity";
 
 /// Get the home directory
 fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-/// Get the base Manta directory (~/.manta)
-pub fn manta_dir() -> PathBuf {
+/// Get the base Syscity directory (~/.syscity)
+pub fn syscity_dir() -> PathBuf {
     home_dir()
-        .map(|h| h.join(MANTA_DIR))
-        .unwrap_or_else(|| PathBuf::from(MANTA_DIR))
+        .map(|h| h.join(SYSCITY_DIR))
+        .unwrap_or_else(|| PathBuf::from(SYSCITY_DIR))
 }
 
-/// Get the config directory (~/.manta)
+/// Get the config directory (~/.syscity)
 pub fn config_dir() -> PathBuf {
-    manta_dir()
+    syscity_dir()
 }
 
-/// Get the memory/database directory (~/.manta/memory)
+/// Get the memory/database directory (~/.syscity/memory)
 pub fn memory_dir() -> PathBuf {
-    manta_dir().join("memory")
+    syscity_dir().join("memory")
 }
 
-/// Get the workspace data directory for OpenClaw-style files (~/.manta/workspace)
+/// Get the workspace data directory for OpenClaw-style files (~/.syscity/workspace)
 ///
 /// This is where SOUL.md, IDENTITY.md, BOOTSTRAP.md, and USER.md are stored.
 pub fn workspace_memory_dir() -> PathBuf {
@@ -58,32 +58,32 @@ pub fn memory_files_dir() -> PathBuf {
     workspace_data_dir()
 }
 
-/// Get the logs directory (~/.manta/logs)
+/// Get the logs directory (~/.syscity/logs)
 pub fn logs_dir() -> PathBuf {
-    manta_dir().join("logs")
+    syscity_dir().join("logs")
 }
 
-/// Get the skills directory (~/.manta/skills)
+/// Get the skills directory (~/.syscity/skills)
 pub fn skills_dir() -> PathBuf {
-    manta_dir().join("skills")
+    syscity_dir().join("skills")
 }
 
-/// Get the agents directory (~/.manta/agents)
+/// Get the agents directory (~/.syscity/agents)
 pub fn agents_dir() -> PathBuf {
-    manta_dir().join("agents")
+    syscity_dir().join("agents")
 }
 
-/// Get a specific agent's base directory (~/.manta/agents/{id})
+/// Get a specific agent's base directory (~/.syscity/agents/{id})
 pub fn agent_dir(agent_id: &str) -> PathBuf {
     agents_dir().join(agent_id)
 }
 
-/// Get a specific agent's workspace directory (~/.manta/agents/{id}/workspace)
+/// Get a specific agent's workspace directory (~/.syscity/agents/{id}/workspace)
 pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
     agent_dir(agent_id).join("workspace")
 }
 
-/// Get a specific agent's data directory (~/.manta/agents/{id}/data)
+/// Get a specific agent's data directory (~/.syscity/agents/{id}/data)
 pub fn agent_data_dir(agent_id: &str) -> PathBuf {
     agent_dir(agent_id).join("data")
 }
@@ -108,95 +108,95 @@ pub fn resolve_tilde(path: impl AsRef<Path>) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Get the cron directory (~/.manta/cron)
+/// Get the cron directory (~/.syscity/cron)
 pub fn cron_dir() -> PathBuf {
-    manta_dir().join("cron")
+    syscity_dir().join("cron")
 }
 
-/// Get the workspace data directory (~/.manta/workspace)
+/// Get the workspace data directory (~/.syscity/workspace)
 pub fn workspace_data_dir() -> PathBuf {
-    manta_dir().join("workspace")
+    syscity_dir().join("workspace")
 }
 
-/// Get the data directory (~/.manta/data)
+/// Get the data directory (~/.syscity/data)
 pub fn data_dir() -> PathBuf {
-    manta_dir().join("data")
+    syscity_dir().join("data")
 }
 
-/// Get the todos directory (~/.manta/todos)
+/// Get the todos directory (~/.syscity/todos)
 pub fn todos_dir() -> PathBuf {
-    manta_dir().join("todos")
+    syscity_dir().join("todos")
 }
 pub fn teams_dir() -> PathBuf {
-    manta_dir().join("teams")
+    syscity_dir().join("teams")
 }
 
-/// Get the extensions directory (~/.manta/extensions)
+/// Get the extensions directory (~/.syscity/extensions)
 pub fn extensions_dir() -> PathBuf {
-    manta_dir().join("extensions")
+    syscity_dir().join("extensions")
 }
 
-/// Get the transcripts directory (~/.manta/transcripts)
+/// Get the transcripts directory (~/.syscity/transcripts)
 pub fn transcripts_dir() -> PathBuf {
-    manta_dir().join("transcripts")
+    syscity_dir().join("transcripts")
 }
 
-/// Get the artifacts directory (~/.manta/artifacts)
+/// Get the artifacts directory (~/.syscity/artifacts)
 pub fn artifacts_dir() -> PathBuf {
-    manta_dir().join("artifacts")
+    syscity_dir().join("artifacts")
 }
 
-/// Get the disk budget tracking directory (~/.manta/budget)
+/// Get the disk budget tracking directory (~/.syscity/budget)
 pub fn budget_dir() -> PathBuf {
-    manta_dir().join("budget")
+    syscity_dir().join("budget")
 }
 
-/// Get the session files directory (~/.manta/session_files)
+/// Get the session files directory (~/.syscity/session_files)
 pub fn session_files_dir() -> PathBuf {
-    manta_dir().join("session_files")
+    syscity_dir().join("session_files")
 }
 
-/// Get the group sessions directory (~/.manta/groups)
+/// Get the group sessions directory (~/.syscity/groups)
 pub fn groups_dir() -> PathBuf {
-    manta_dir().join("groups")
+    syscity_dir().join("groups")
 }
 
-/// Get the PID file path (~/.manta/daemon.pid)
+/// Get the PID file path (~/.syscity/daemon.pid)
 pub fn pid_file() -> PathBuf {
-    manta_dir().join("daemon.pid")
+    syscity_dir().join("daemon.pid")
 }
 
-/// Get the default config file path (~/.manta/manta.toml)
+/// Get the default config file path (~/.syscity/syscity.toml)
 pub fn default_config_file() -> PathBuf {
-    config_dir().join("manta.toml")
+    config_dir().join("syscity.toml")
 }
 
-/// Get the default memory DB path (~/.manta/data/manta.db)
+/// Get the default memory DB path (~/.syscity/data/syscity.db)
 ///
-/// Note: Previously returned ~/.manta/memory/memory.db, now consolidated
+/// Note: Previously returned ~/.syscity/memory/memory.db, now consolidated
 /// to use the main gateway database for unified storage.
 pub fn default_memory_db() -> PathBuf {
-    data_dir().join("manta.db")
+    data_dir().join("syscity.db")
 }
 
-/// Get the default log file path (~/.manta/logs/daemon.log)
+/// Get the default log file path (~/.syscity/logs/daemon.log)
 pub fn default_log_file() -> PathBuf {
     logs_dir().join("daemon.log")
 }
 
-/// Get the workspace state file path (~/.manta/workspace/.manta/workspace-state.json)
+/// Get the workspace state file path (~/.syscity/workspace/.syscity/workspace-state.json)
 pub fn workspace_state_file() -> PathBuf {
     workspace_data_dir()
-        .join(".manta")
+        .join(".syscity")
         .join("workspace-state.json")
 }
 
-/// Initialize all Manta directories
+/// Initialize all Syscity directories
 ///
-/// Creates the ~/.manta directory structure if it doesn't exist.
+/// Creates the ~/.syscity directory structure if it doesn't exist.
 /// Returns the base directory path.
 pub async fn init() -> crate::Result<PathBuf> {
-    let base = manta_dir();
+    let base = syscity_dir();
 
     // Create all subdirectories
     let dirs = [
@@ -220,7 +220,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         if !dir.exists() {
             debug!("Creating directory: {:?}", dir);
             tokio::fs::create_dir_all(dir).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to create directory: {:?}", dir),
                     details: e.to_string(),
                 }
@@ -228,13 +228,13 @@ pub async fn init() -> crate::Result<PathBuf> {
         }
     }
 
-    info!("Manta directories initialized at: {:?}", base);
+    info!("Syscity directories initialized at: {:?}", base);
     Ok(base)
 }
 
 /// Initialize directories synchronously (for non-async contexts)
 pub fn init_sync() -> crate::Result<PathBuf> {
-    let base = manta_dir();
+    let base = syscity_dir();
 
     // Create all subdirectories
     let dirs = [
@@ -257,20 +257,20 @@ pub fn init_sync() -> crate::Result<PathBuf> {
     for dir in &dirs {
         if !dir.exists() {
             debug!("Creating directory: {:?}", dir);
-            std::fs::create_dir_all(dir).map_err(|e| crate::error::MantaError::Storage {
+            std::fs::create_dir_all(dir).map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create directory: {:?}", dir),
                 details: e.to_string(),
             })?;
         }
     }
 
-    info!("Manta directories initialized at: {:?}", base);
+    info!("Syscity directories initialized at: {:?}", base);
     Ok(base)
 }
 
-/// Check if Manta directories are initialized
+/// Check if Syscity directories are initialized
 pub fn is_initialized() -> bool {
-    manta_dir().exists()
+    syscity_dir().exists()
 }
 
 /// Get the path for a specific file type
@@ -325,12 +325,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_manta_dir_structure() {
+    fn test_syscity_dir_structure() {
         // Just verify the paths are constructed correctly
-        let base = manta_dir();
-        assert!(base.to_string_lossy().contains(".manta"));
+        let base = syscity_dir();
+        assert!(base.to_string_lossy().contains(".syscity"));
 
-        assert!(config_dir().to_string_lossy().contains(".manta"));
+        assert!(config_dir().to_string_lossy().contains(".syscity"));
         assert!(memory_dir().to_string_lossy().contains("memory"));
         assert!(logs_dir().to_string_lossy().contains("logs"));
         assert!(skills_dir().to_string_lossy().contains("skills"));
@@ -340,10 +340,10 @@ mod tests {
     fn test_path_for() {
         assert!(path_for(FileType::Config)
             .to_string_lossy()
-            .contains("manta.toml"));
+            .contains("syscity.toml"));
         assert!(path_for(FileType::MemoryDb)
             .to_string_lossy()
-            .contains("data/manta.db"));
+            .contains("data/syscity.db"));
         assert!(path_for(FileType::Log)
             .to_string_lossy()
             .contains("daemon.log"));
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn test_default_memory_db() {
         let db = default_memory_db();
-        assert!(db.to_string_lossy().contains("data/manta.db"));
+        assert!(db.to_string_lossy().contains("data/syscity.db"));
     }
 
     #[test]

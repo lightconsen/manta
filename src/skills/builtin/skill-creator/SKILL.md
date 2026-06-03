@@ -1,8 +1,8 @@
 ---
 name: skill-creator
-description: "Create and package new skills for Manta"
+description: "Create and package new skills for Syscity"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "skill-create"
@@ -27,7 +27,7 @@ openclaw:
 
 # Skill Creator
 
-Create new skills for Manta using the SKILL.md format.
+Create new skills for Syscity using the SKILL.md format.
 
 ## Quick Start
 
@@ -65,9 +65,9 @@ Detailed instructions for the AI on how to use this skill...
 ## Storage Locations
 
 Skills can be stored at different levels:
-- **User**: `~/.manta/skills/` - Available everywhere
-- **Project**: `./.manta/skills/` - Project-specific
-- **Workspace**: Workspace root `.manta/skills/`
+- **User**: `~/.syscity/skills/` - Available everywhere
+- **Project**: `./.syscity/skills/` - Project-specific
+- **Workspace**: Workspace root `.syscity/skills/`
 
 ## Best Practices
 
@@ -111,8 +111,8 @@ Run `git log --oneline --since="1 day ago"` and summarize the commits.
 
 ## Creation Steps
 
-1. Create directory: `mkdir -p ~/.manta/skills/{name}`
-2. Create SKILL.md: `touch ~/.manta/skills/{name}/SKILL.md`
+1. Create directory: `mkdir -p ~/.syscity/skills/{name}`
+2. Create SKILL.md: `touch ~/.syscity/skills/{name}/SKILL.md`
 3. Write the skill content
 4. Test by triggering one of the patterns
 

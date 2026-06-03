@@ -7,10 +7,10 @@ import {
   useComposerRuntime,
 } from "@assistant-ui/react";
 import {
-  MantaWebSocketTransport,
+  SyscityWebSocketTransport,
   type NetworkStatus,
   type ChatMessage,
-} from "./MantaWebSocketTransport";
+} from "./SyscityWebSocketTransport";
 import {
   getCommandCompletions,
   type CommandDef,
@@ -29,7 +29,7 @@ function LogoIcon({ className }: { className?: string }) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      {/* Manta ray silhouette */}
+      {/* Syscity ray silhouette */}
       <path
         d="M50 8
            C50 8, 38 0, 28 8
@@ -183,7 +183,7 @@ function Sidebar({
           <LogoIcon className="w-6 h-6 text-emerald-500 shrink-0" />
           {!collapsed && (
             <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
-              Manta
+              Syscity
             </span>
           )}
         </div>
@@ -457,7 +457,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <Avatar role="assistant" />
         <div className="flex-1 min-w-0">
           <div className="text-[11px] font-medium text-gray-400 dark:text-neutral-500 mb-1 uppercase tracking-wide">
-            Manta
+            Syscity
           </div>
           {hasParts ? (
             <div className="space-y-1">
@@ -604,7 +604,7 @@ function CommandPalette({
 }
 
 /* ── Chat Content ── */
-function ChatContent({ messages, transport }: { messages: ChatMessage[]; transport: MantaWebSocketTransport }) {
+function ChatContent({ messages, transport }: { messages: ChatMessage[]; transport: SyscityWebSocketTransport }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composer = useComposerRuntime();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -672,7 +672,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
                 <LogoIcon className="w-6 h-6" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                Manta
+                Syscity
               </h2>
               <p className="text-gray-400 dark:text-neutral-500 text-sm">
                 Start a conversation
@@ -703,7 +703,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-neutral-500 focus:outline-none min-h-[60px] max-h-[200px]"
-              placeholder="Message Manta..."
+              placeholder="Message Syscity..."
               rows={1}
             />
 
@@ -784,7 +784,7 @@ interface ChannelConfig {
   has_credentials?: boolean;
 }
 
-interface MantaConfig {
+interface SyscityConfig {
   model?: string;
   model_provider?: string;
   default_agent?: {
@@ -809,10 +809,10 @@ function SettingsPanel({
   transport,
   onClose,
 }: {
-  transport: MantaWebSocketTransport;
+  transport: SyscityWebSocketTransport;
   onClose: () => void;
 }) {
-  const [config, setConfig] = useState<MantaConfig>({});
+  const [config, setConfig] = useState<SyscityConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
@@ -886,7 +886,7 @@ function SettingsPanel({
       transport.listMcpServers(),
     ])
       .then(([cfg, mdl, reg, sess, cronRes, skillRes, presetRes, mcpRes]) => {
-        setConfig(cfg as MantaConfig);
+        setConfig(cfg as SyscityConfig);
         setModels(mdl.models || []);
         const registry = reg.agents || [];
         setAgentRegistry(registry);
@@ -950,8 +950,8 @@ function SettingsPanel({
         const parts = path.split(".");
         if (parts.length === 1) {
           (next as Record<string, unknown>)[parts[0]] = value as never;
-        } else if (parts.length === 2 && next[parts[0] as keyof MantaConfig]) {
-          const section = { ...(next[parts[0] as keyof MantaConfig] as Record<string, unknown>) };
+        } else if (parts.length === 2 && next[parts[0] as keyof SyscityConfig]) {
+          const section = { ...(next[parts[0] as keyof SyscityConfig] as Record<string, unknown>) };
           section[parts[1]] = value;
           (next as Record<string, unknown>)[parts[0]] = section as never;
         }
@@ -967,7 +967,7 @@ function SettingsPanel({
   const refreshConfig = async () => {
     try {
       const cfg = await transport.getConfig();
-      setConfig(cfg as MantaConfig);
+      setConfig(cfg as SyscityConfig);
     } catch {
       /* ignore */
     }
@@ -1311,7 +1311,7 @@ function SettingsPanel({
                       <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Theme Mode</label>
                       <div className="flex gap-2">
                         {(["system", "light", "dark"] as const).map((m) => (
-                          <button key={m} onClick={() => { localStorage.setItem("manta-theme", m); document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)); }} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-600 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-neutral-800 transition capitalize">
+                          <button key={m} onClick={() => { localStorage.setItem("syscity-theme", m); document.documentElement.classList.toggle("dark", m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)); }} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-600 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-neutral-800 transition capitalize">
                             {m}
                           </button>
                         ))}
@@ -2194,7 +2194,7 @@ function SettingsPanel({
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = `manta-logs-${new Date().toISOString().slice(0, 19)}.txt`;
+                        a.download = `syscity-logs-${new Date().toISOString().slice(0, 19)}.txt`;
                         a.click();
                         URL.revokeObjectURL(url);
                       }}
@@ -2215,7 +2215,7 @@ function SettingsPanel({
 }
 
 /* ── App ── */
-function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
+function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
   const runtime = useLocalRuntime(transport);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -2259,14 +2259,14 @@ function ChatAppInner({ transport }: { transport: MantaWebSocketTransport }) {
 }
 
 function ChatApp() {
-  const transport = useMemo(() => new MantaWebSocketTransport(), []);
+  const transport = useMemo(() => new SyscityWebSocketTransport(), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return localStorage.getItem("manta_sidebar_collapsed") === "true";
+    return localStorage.getItem("syscity_sidebar_collapsed") === "true";
   });
   const [sessions, setSessions] = useState<Array<{ id: string; label?: string }>>([]);
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const stored = localStorage.getItem("manta_theme");
+    const stored = localStorage.getItem("syscity_theme");
     if (stored === "light" || stored === "dark") return stored;
     return window.matchMedia("(prefers-color-scheme: dark)").matches
       ? "dark"
@@ -2282,12 +2282,12 @@ function ChatApp() {
     } else {
       document.documentElement.classList.remove("dark");
     }
-    localStorage.setItem("manta_theme", theme);
+    localStorage.setItem("syscity_theme", theme);
   }, [theme]);
 
   // Sidebar state persistence
   useEffect(() => {
-    localStorage.setItem("manta_sidebar_collapsed", String(sidebarCollapsed));
+    localStorage.setItem("syscity_sidebar_collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
   // Load sessions
@@ -2347,7 +2347,7 @@ function ChatApp() {
         const runAt = p.run_at || "";
         const icon = status === "ok" ? "✅" : "❌";
         const text = `${icon} **${jobName}**\n\n${output}\n\n_Executed at ${runAt}_`;
-        const msg: import("./MantaWebSocketTransport").ChatMessage = {
+        const msg: import("./SyscityWebSocketTransport").ChatMessage = {
           id: `cron_${Date.now()}`,
           role: "assistant",
           content: text,

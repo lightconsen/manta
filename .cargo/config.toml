@@ -1,4 +1,4 @@
-# Cargo configuration for Manta
+# Cargo configuration for Syscity
 # Provides test-layer aliases matching OpenClaw's 6-layer architecture.
 
 [alias]

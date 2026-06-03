@@ -50,7 +50,7 @@ impl CompressedJsonlStore {
     async fn ensure_dir(&self) -> crate::Result<()> {
         fs::create_dir_all(&self.dir)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create archival dir: {:?}", self.dir),
                 details: e.to_string(),
             })
@@ -84,7 +84,7 @@ impl CompressedJsonlStore {
 
         let shard = self.today_shard();
         let line =
-            serde_json::to_string(memory).map_err(crate::error::MantaError::Serialization)?;
+            serde_json::to_string(memory).map_err(crate::error::SyscityError::Serialization)?;
 
         // Read existing content if file exists
         let mut existing = Vec::new();
@@ -112,7 +112,7 @@ impl CompressedJsonlStore {
         let compressed = Self::compress_lines(&all_lines)?;
         fs::write(&shard, compressed)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to write archival shard: {:?}", shard),
                 details: e.to_string(),
             })?;
@@ -126,7 +126,7 @@ impl CompressedJsonlStore {
         let reader = std::io::BufReader::new(decoder);
         let mut lines = Vec::new();
         for line in reader.lines() {
-            let line = line.map_err(|e| crate::error::MantaError::Storage {
+            let line = line.map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to read line from archival shard".to_string(),
                 details: e.to_string(),
             })?;
@@ -143,14 +143,14 @@ impl CompressedJsonlStore {
         use flate2::Compression;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         for line in lines {
-            writeln!(encoder, "{}", line).map_err(|e| crate::error::MantaError::Storage {
+            writeln!(encoder, "{}", line).map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to write line to archival shard".to_string(),
                 details: e.to_string(),
             })?;
         }
         encoder
             .finish()
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to finish gzip compression".to_string(),
                 details: e.to_string(),
             })
@@ -163,7 +163,7 @@ impl CompressedJsonlStore {
         for shard in shards {
             let data = fs::read(&shard)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to read archival shard: {:?}", shard),
                     details: e.to_string(),
                 })?;
@@ -207,7 +207,7 @@ impl CompressedJsonlStore {
             let compressed = Self::compress_lines(&lines)?;
             fs::write(&shard, compressed)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: format!("Failed to rewrite archival shard: {:?}", shard),
                     details: e.to_string(),
                 })?;
@@ -242,7 +242,7 @@ impl MemoryStore for CompressedJsonlStore {
             }
         }
         if !found {
-            return Err(crate::error::MantaError::NotFound {
+            return Err(crate::error::SyscityError::NotFound {
                 resource: format!("Memory {}", memory.id),
             });
         }

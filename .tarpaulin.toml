@@ -1,4 +1,4 @@
-# Tarpaulin code coverage configuration for Manta
+# Tarpaulin code coverage configuration for Syscity
 # Run with: cargo tarpaulin --config .tarpaulin.toml
 
 [default]

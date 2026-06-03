@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial release of Manta AI Assistant
+- Initial release of Syscity AI Assistant
 - Core agent architecture with tool system
 - SQLite persistence for sessions and memory
 - Provider abstraction supporting OpenAI and Anthropic APIs

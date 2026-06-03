@@ -1,4 +1,4 @@
-//! Dynamic Prompt Builder for Manta
+//! Dynamic Prompt Builder for Syscity
 //!
 //! Builds adaptive system prompts based on context, tools, task type, and conversation state.
 //! Provides runtime prompt customization for better agent performance.
@@ -221,7 +221,7 @@ When working with system commands:
 - Use shell tool with appropriate timeout
 - Verify results after execution
 - For scheduling or recurring tasks, ALWAYS use the 'cron' tool — do NOT attempt to use shell commands for scheduling
-- NEVER modify Manta's core configuration files (manta.toml, GatewayConfig, or system-level ~/.manta/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user."#
+- NEVER modify Syscity's core configuration files (syscity.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user."#
             }
             TaskType::Planning => {
                 r#"## Planning Guidelines

@@ -1,7 +1,7 @@
 //! Tailscale Integration for Remote Access
 //!
 //! Provides built-in Tailscale Serve/Funnel support for secure remote access
-//! to the Manta Gateway without complex network configuration.
+//! to the Syscity Gateway without complex network configuration.
 
 use std::process::Stdio;
 use tokio::process::Command;
@@ -28,7 +28,7 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
         Err(e) => {
             warn!("Tailscale CLI not found: {}", e);
             warn!("Install Tailscale: https://tailscale.com/download");
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: "Tailscale not installed".to_string(),
                 cause: Some(Box::new(e)),
             });
@@ -54,7 +54,7 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to start Tailscale funnel".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -62,7 +62,7 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("Tailscale funnel failed: {}", stderr);
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Tailscale funnel error: {}", stderr),
                 cause: None,
             });
@@ -84,7 +84,7 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to start Tailscale serve".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -92,7 +92,7 @@ pub async fn start(port: u16, domain: Option<String>) -> crate::Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("Tailscale serve failed: {}", stderr);
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Tailscale serve error: {}", stderr),
                 cause: None,
             });
@@ -112,7 +112,7 @@ pub async fn stop() -> crate::Result<()> {
         .args(["serve", "off"])
         .output()
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to stop Tailscale".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -126,7 +126,7 @@ pub async fn stop() -> crate::Result<()> {
         .args(["funnel", "off"])
         .output()
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to stop Tailscale funnel".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -146,7 +146,7 @@ pub async fn status() -> crate::Result<String> {
         .args(["status"])
         .output()
         .await
-        .map_err(|e| crate::error::MantaError::ExternalService {
+        .map_err(|e| crate::error::SyscityError::ExternalService {
             source: "Failed to get Tailscale status".to_string(),
             cause: Some(Box::new(e)),
         })?;
@@ -154,7 +154,7 @@ pub async fn status() -> crate::Result<String> {
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(crate::error::MantaError::ExternalService {
+        Err(crate::error::SyscityError::ExternalService {
             source: "Tailscale status failed".to_string(),
             cause: None,
         })

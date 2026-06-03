@@ -148,10 +148,10 @@ impl Context {
     }
 
     /// Calculate dynamic tool limit based on task complexity
-    /// Can be overridden by MANTA_MAX_TOOL_ITERATIONS env var
+    /// Can be overridden by SYSCITY_MAX_TOOL_ITERATIONS env var
     pub fn calculate_dynamic_limit(message_content: &str) -> usize {
         // Check for env var override first
-        if let Ok(limit) = std::env::var("MANTA_MAX_TOOL_ITERATIONS") {
+        if let Ok(limit) = std::env::var("SYSCITY_MAX_TOOL_ITERATIONS") {
             if let Ok(parsed) = limit.parse::<usize>() {
                 return parsed;
             }

@@ -1,8 +1,8 @@
-//! Device pairing management commands for Manta
+//! Device pairing management commands for Syscity
 //!
 //! Provides CLI access to device pairing state: list, approve, revoke.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -55,7 +55,7 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
 
@@ -97,7 +97,7 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -118,7 +118,7 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())

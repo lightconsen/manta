@@ -1,6 +1,6 @@
-//! Manta context access
+//! Syscity context access
 //!
-//! Read session ID and arbitrary context values set by Manta.
+//! Read session ID and arbitrary context values set by Syscity.
 
 use crate::ffi_call_to_string;
 use std::string::String;

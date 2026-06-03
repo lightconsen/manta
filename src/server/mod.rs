@@ -1,6 +1,6 @@
-//! HTTP Server for Manta
+//! HTTP Server for Syscity
 //!
-//! Provides REST API endpoints and WebSocket for interacting with the Manta AI assistant.
+//! Provides REST API endpoints and WebSocket for interacting with the Syscity AI assistant.
 
 use crate::core::Engine;
 use axum::{
@@ -101,18 +101,18 @@ pub async fn start_server_with_agent(
     let api_app = create_api_router(state);
     let api_addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
-        .map_err(|e| crate::error::MantaError::Validation(format!("Invalid address: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Validation(format!("Invalid address: {}", e)))?;
 
     info!("Starting API server on {}", api_addr);
     println!("🌐 Server available at http://localhost:{}", config.port);
 
     let api_listener = TcpListener::bind(&api_addr)
         .await
-        .map_err(|e| crate::error::MantaError::Internal(format!("Failed to bind API: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Failed to bind API: {}", e)))?;
 
     axum::serve(api_listener, api_app)
         .await
-        .map_err(|e| crate::error::MantaError::Internal(format!("Server error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Server error: {}", e)))?;
 
     Ok(())
 }
@@ -133,7 +133,7 @@ fn create_api_router(state: AppState) -> Router {
 
 /// Webhook root endpoint
 async fn webhook_root() -> &'static str {
-    "Manta Webhook Server\n\nAvailable endpoints:\n- /webhooks/whatsapp - WhatsApp Business API webhooks\n- /webhooks/lark - Lark/Feishu webhooks\n- /webhooks/qq - QQ Bot webhooks\n"
+    "Syscity Webhook Server\n\nAvailable endpoints:\n- /webhooks/whatsapp - WhatsApp Business API webhooks\n- /webhooks/lark - Lark/Feishu webhooks\n- /webhooks/qq - QQ Bot webhooks\n"
 }
 
 /// Root endpoint
@@ -145,7 +145,7 @@ async fn root(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     Json(serde_json::json!({
-        "name": "Manta",
+        "name": "Syscity",
         "version": env!("CARGO_PKG_VERSION"),
         "status": "running",
         "agent": agent_status

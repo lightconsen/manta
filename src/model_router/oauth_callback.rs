@@ -21,7 +21,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
     let listener =
         TcpListener::bind(&addr)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Failed to bind callback server to {}: {}", addr, e),
                 cause: Some(Box::new(e)),
             })?;
@@ -33,7 +33,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
             listener
                 .accept()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to accept callback connection: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -46,7 +46,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
             stream
                 .peek(&mut buf)
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("Failed to read callback request: {}", e),
                     cause: Some(Box::new(e)),
                 })?;
@@ -69,7 +69,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
             .await
             .unwrap_or_else(|e| warn!("Failed to shutdown OAuth stream: {}", e));
 
-        Ok::<_, crate::error::MantaError>((code, state))
+        Ok::<_, crate::error::SyscityError>((code, state))
     };
 
     match timeout(Duration::from_secs(timeout_secs), accept_future).await {
@@ -83,7 +83,7 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
         }
         Err(_) => {
             warn!("OAuth callback timed out after {}s", timeout_secs);
-            Err(crate::error::MantaError::ExternalService {
+            Err(crate::error::SyscityError::ExternalService {
                 source: format!(
                     "OAuth callback timed out after {} seconds — no redirect received",
                     timeout_secs
@@ -99,13 +99,13 @@ fn parse_callback_request(request: &str) -> crate::Result<(String, String)> {
     let line = request
         .lines()
         .next()
-        .ok_or_else(|| crate::error::MantaError::ExternalService {
+        .ok_or_else(|| crate::error::SyscityError::ExternalService {
             source: "OAuth callback request is empty".to_string(),
             cause: None,
         })?;
 
     let path_part = line.split_whitespace().nth(1).ok_or_else(|| {
-        crate::error::MantaError::ExternalService {
+        crate::error::SyscityError::ExternalService {
             source: "OAuth callback request has no path".to_string(),
             cause: None,
         }
@@ -127,7 +127,7 @@ fn parse_callback_request(request: &str) -> crate::Result<(String, String)> {
                 "code" => code = Some(decoded.to_string()),
                 "state" => state = Some(decoded.to_string()),
                 "error" => {
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("OAuth authorization error: {}", decoded),
                         cause: None,
                     })
@@ -137,12 +137,12 @@ fn parse_callback_request(request: &str) -> crate::Result<(String, String)> {
         }
     }
 
-    let code = code.ok_or_else(|| crate::error::MantaError::ExternalService {
+    let code = code.ok_or_else(|| crate::error::SyscityError::ExternalService {
         source: "OAuth callback missing 'code' parameter".to_string(),
         cause: None,
     })?;
 
-    let state = state.ok_or_else(|| crate::error::MantaError::ExternalService {
+    let state = state.ok_or_else(|| crate::error::SyscityError::ExternalService {
         source: "OAuth callback missing 'state' parameter".to_string(),
         cause: None,
     })?;

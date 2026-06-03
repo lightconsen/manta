@@ -112,7 +112,7 @@ impl Tool for ApplyPatchTool {
             }
         }
 
-        let patch_file = target_dir.join(format!("manta_patch_{}.diff", uuid::Uuid::new_v4()));
+        let patch_file = target_dir.join(format!("syscity_patch_{}.diff", uuid::Uuid::new_v4()));
         match tokio::fs::write(&patch_file, &args.patch).await {
             Ok(_) => {}
             Err(e) => {

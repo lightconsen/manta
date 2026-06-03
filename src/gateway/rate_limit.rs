@@ -1,4 +1,4 @@
-//! Multi-tier Rate Limiting for Manta Gateway
+//! Multi-tier Rate Limiting for Syscity Gateway
 //!
 //! Provides sophisticated rate limiting with multiple tiers:
 //! - Global: overall API rate limit

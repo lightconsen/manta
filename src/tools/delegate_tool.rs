@@ -251,7 +251,7 @@ impl DelegateTool {
     ) -> crate::Result<ChildAgent> {
         // Check if we can delegate
         if !self.tracker.can_delegate().await {
-            return Err(crate::error::MantaError::Validation(
+            return Err(crate::error::SyscityError::Validation(
                 "Maximum delegation depth reached or too many children".to_string(),
             ));
         }
@@ -515,7 +515,7 @@ impl DelegateTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("action is required".to_string())
+            crate::error::SyscityError::Validation("action is required".to_string())
         })?;
 
         match action {
@@ -531,7 +531,7 @@ impl DelegateTool {
 
                 let task_json = &args["task"];
                 let prompt = task_json["prompt"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation("task.prompt is required".to_string())
+                    crate::error::SyscityError::Validation("task.prompt is required".to_string())
                 })?;
 
                 // Parse requested tools, then enforce BLOCKED_TOOLS by removing them
@@ -587,7 +587,7 @@ impl DelegateTool {
 
             "status" => {
                 let child_id = args["child_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "child_id is required for status".to_string(),
                     )
                 })?;
@@ -628,7 +628,7 @@ impl DelegateTool {
 
             "cancel" => {
                 let child_id = args["child_id"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "child_id is required for cancel".to_string(),
                     )
                 })?;
@@ -658,7 +658,7 @@ impl DelegateTool {
                 })))
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!("Unknown action: {}", action))),
+            _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
 }

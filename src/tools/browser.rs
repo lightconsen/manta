@@ -1,4 +1,4 @@
-//! Browser automation tool for Manta
+//! Browser automation tool for Syscity
 //!
 //! Provides web browser automation capabilities using headless Chrome/Chromium.
 //! Supports navigation, clicking, form input, screenshots, and content extraction.
@@ -1089,13 +1089,13 @@ impl BrowserTool {
 
         let config = builder
             .build()
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("Browser configuration failed: {}", e),
                 cause: None,
             })?;
 
         let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to launch Chrome/Chromium. Is it installed?".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -1112,7 +1112,7 @@ impl BrowserTool {
         });
 
         let page = browser.new_page("about:blank").await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to create browser page".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -1447,7 +1447,7 @@ impl Tool for BrowserTool {
     ) -> crate::Result<ToolExecutionResult> {
         let actions: Vec<BrowserAction> =
             serde_json::from_value(args.get("actions").cloned().unwrap_or(json!([]))).map_err(
-                |e| crate::error::MantaError::Validation(format!("Invalid browser actions: {}", e)),
+                |e| crate::error::SyscityError::Validation(format!("Invalid browser actions: {}", e)),
             )?;
 
         if actions.is_empty() {

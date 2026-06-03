@@ -1,4 +1,4 @@
-package manta:plugin-sdk@0.2.0;
+package syscity:plugin-sdk@0.2.0;
 
 /// Core types used across all plugin interfaces
 interface types {
@@ -29,7 +29,7 @@ interface types {
     }
 }
 
-/// Logging interface — plugins write to Manta's log
+/// Logging interface — plugins write to Syscity's log
 interface logging {
     /// Log a message at the given level
     log: func(level: string, message: string);
@@ -81,7 +81,7 @@ interface http {
     post: func(url: string, body: string, content-type: string) -> string;
 }
 
-/// Event emission — plugins emit events that Manta consumers can subscribe to
+/// Event emission — plugins emit events that Syscity consumers can subscribe to
 interface events {
     use types.{plugin-event};
 
@@ -89,7 +89,7 @@ interface events {
     emit: func(event-type: string, payload: string) -> bool;
 }
 
-/// Context access — read session ID and arbitrary context values set by Manta
+/// Context access — read session ID and arbitrary context values set by Syscity
 interface context {
     /// Get the current session ID (empty if none)
     get-session-id: func() -> string;

@@ -17,13 +17,13 @@ use tracing::{debug, info, warn};
 pub struct PluginSharedState {
     /// Persistent per-plugin KV store
     pub kv_store: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
-    /// Global event channel (plugins emit, Manta consumers subscribe)
+    /// Global event channel (plugins emit, Syscity consumers subscribe)
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<PluginEvent>>,
     /// Shared HTTP client
     pub http_client: reqwest::Client,
-    /// Current session ID (set by Manta when invoking plugins)
+    /// Current session ID (set by Syscity when invoking plugins)
     pub session_id: Arc<RwLock<Option<String>>>,
-    /// Arbitrary context map (set by Manta)
+    /// Arbitrary context map (set by Syscity)
     pub context: Arc<RwLock<HashMap<String, String>>>,
 }
 
@@ -240,7 +240,7 @@ impl PluginRuntime {
                     Ok(())
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- Config ---
 
@@ -276,7 +276,7 @@ impl PluginRuntime {
                     }
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // config_get_all(out_ptr, out_len) -> bytes_written
         linker
@@ -304,7 +304,7 @@ impl PluginRuntime {
                     Ok(to_write as i32)
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- In-memory Store (per-plugin HashMap) ---
 
@@ -338,7 +338,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // memory_load(key_ptr, key_len, out_ptr, out_len) -> bytes_written | 0
         linker
@@ -376,7 +376,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // memory_search(prefix_ptr, prefix_len, out_ptr, out_len) -> bytes_written
         linker
@@ -419,7 +419,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- Persistent KV Store (global, scoped by plugin_id) ---
 
@@ -464,7 +464,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // store_set(key_ptr, key_len, val_ptr, val_len) -> 1 on success
         linker
@@ -499,7 +499,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- HTTP ---
 
@@ -533,7 +533,7 @@ impl PluginRuntime {
                     Ok(to_write as i32)
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // http_post(url_ptr, url_len, body_ptr, body_len, content_type_ptr, content_type_len, out_ptr, out_len) -> bytes_written
         linker
@@ -575,7 +575,7 @@ impl PluginRuntime {
                     Ok(to_write as i32)
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- Events ---
 
@@ -611,7 +611,7 @@ impl PluginRuntime {
                     }
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- Context ---
 
@@ -652,7 +652,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // get_session_id(out_ptr, out_len) -> bytes_written | 0
         linker
@@ -688,7 +688,7 @@ impl PluginRuntime {
                     }))
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // --- Plugin Info ---
 
@@ -717,7 +717,7 @@ impl PluginRuntime {
                     Ok(to_write as i32)
                 },
             )
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         Ok(())
     }
@@ -736,7 +736,7 @@ impl PluginRuntime {
 
         let manifest_content = tokio::fs::read_to_string(&manifest_path)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to read plugin manifest".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -809,14 +809,14 @@ impl PluginRuntime {
         use wasmtime::Module;
 
         let wasm_bytes = tokio::fs::read(wasm_path).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to read WASM file".to_string(),
                 cause: Some(Box::new(e)),
             }
         })?;
 
         let module = Module::new(&self.engine, &wasm_bytes).map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to compile WASM: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to compile WASM: {}", e))
         })?;
 
         let state = if let Some(memory) = preserved_memory {
@@ -832,13 +832,13 @@ impl PluginRuntime {
         let mut store = wasmtime::Store::new(&self.engine, state);
 
         let instance = self.linker.instantiate(&mut store, &module).map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to instantiate WASM: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to instantiate WASM: {}", e))
         })?;
 
         // Call init function if present
         if let Ok(init) = instance.get_typed_func::<(), ()>(&mut store, "init") {
             init.call(&mut store, ()).map_err(|e| {
-                crate::error::MantaError::Internal(format!("Plugin init failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Plugin init failed: {}", e))
             })?;
         }
 
@@ -851,9 +851,9 @@ impl PluginRuntime {
         _wasm_path: &std::path::Path,
         _config: serde_json::Value,
     ) -> crate::Result<(Option<()>, Option<()>)> {
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Plugin execution requires the `plugins` feature. \
-             Recompile Manta with `--features plugins` to enable WASM plugin support."
+             Recompile Syscity with `--features plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -906,7 +906,7 @@ impl PluginRuntime {
         let manifest_path = path.join("plugin.json");
         let manifest_content = tokio::fs::read_to_string(&manifest_path)
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to read plugin manifest".to_string(),
                 cause: Some(Box::new(e)),
             })?;
@@ -1027,7 +1027,7 @@ impl PluginRuntime {
                 })?;
 
         if !plugin.enabled {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Plugin '{}' is disabled",
                 plugin_id
             )));
@@ -1038,7 +1038,7 @@ impl PluginRuntime {
             let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
                 (Some(s), Some(i)) => (s, i),
                 _ => {
-                    return Err(crate::error::MantaError::Internal(format!(
+                    return Err(crate::error::SyscityError::Internal(format!(
                         "Plugin '{}' has no WASM module loaded",
                         plugin_id
                     )));
@@ -1049,9 +1049,9 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Plugin execution requires the `plugins` feature. \
-             Recompile Manta with `--features plugins` to enable WASM plugin support."
+             Recompile Syscity with `--features plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1071,7 +1071,7 @@ impl PluginRuntime {
         const OUT_MAX: i32 = 65_536; // 64 KiB output buffer
 
         let params_json = serde_json::to_string(&params)
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
         let tool_bytes = tool_name.as_bytes();
         let params_bytes = params_json.as_bytes();
 
@@ -1080,7 +1080,7 @@ impl PluginRuntime {
             .get_export(&mut *store, "memory")
             .and_then(|e| e.into_memory())
             .ok_or_else(|| {
-                crate::error::MantaError::Internal(
+                crate::error::SyscityError::Internal(
                     "Plugin WASM module has no 'memory' export".to_string(),
                 )
             })?;
@@ -1095,7 +1095,7 @@ impl PluginRuntime {
         let name_len = tool_bytes.len() as i32;
         let name_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, name_len)
-                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("alloc: {}", e)))?
         } else {
             0i32
         };
@@ -1109,7 +1109,7 @@ impl PluginRuntime {
         let params_len = params_bytes.len() as i32;
         let params_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, params_len)
-                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("alloc: {}", e)))?
         } else {
             0i32
         };
@@ -1122,7 +1122,7 @@ impl PluginRuntime {
         // Allocate the output buffer.
         let out_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, OUT_MAX)
-                .map_err(|e| crate::error::MantaError::Internal(format!("alloc output: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("alloc output: {}", e)))?
         } else {
             0i32
         };
@@ -1132,24 +1132,24 @@ impl PluginRuntime {
             instance.get_typed_func::<(i32, i32, i32, i32, i32, i32), i32>(&mut *store, "call_tool")
         {
             f.call(&mut *store, (name_ptr, name_len, params_ptr, params_len, out_ptr, OUT_MAX))
-                .map_err(|e| crate::error::MantaError::Internal(format!("call_tool: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("call_tool: {}", e)))?
         } else if let Ok(f) =
             instance.get_typed_func::<(i32, i32, i32, i32), i32>(&mut *store, tool_name)
         {
             // Fall back to a per-tool export.
             f.call(&mut *store, (params_ptr, params_len, out_ptr, OUT_MAX))
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("tool '{}': {}", tool_name, e))
+                    crate::error::SyscityError::Internal(format!("tool '{}': {}", tool_name, e))
                 })?
         } else {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Plugin does not export 'call_tool' or '{}' function",
                 tool_name
             )));
         };
 
         if written < 0 {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Plugin tool '{}' returned error code {}",
                 tool_name, written
             )));
@@ -1164,7 +1164,7 @@ impl PluginRuntime {
         };
 
         let result_str = std::str::from_utf8(&result_bytes).map_err(|e| {
-            crate::error::MantaError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
+            crate::error::SyscityError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
         })?;
 
         let result: serde_json::Value = serde_json::from_str(result_str)
@@ -1197,7 +1197,7 @@ impl PluginRuntime {
             })?;
 
             if !plugin.enabled {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Plugin '{}' is disabled",
                     plugin_id
                 )));
@@ -1206,7 +1206,7 @@ impl PluginRuntime {
             let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
                 (Some(s), Some(i)) => (s, i),
                 _ => {
-                    return Err(crate::error::MantaError::Internal(format!(
+                    return Err(crate::error::SyscityError::Internal(format!(
                         "Plugin '{}' has no WASM module loaded",
                         plugin_id
                     )));
@@ -1217,9 +1217,9 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Plugin execution requires the `plugins` feature. \
-             Recompile Manta with `--features plugins` to enable WASM plugin support."
+             Recompile Syscity with `--features plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1244,7 +1244,7 @@ impl PluginRuntime {
             })?;
 
             if !plugin.enabled {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Plugin '{}' is disabled",
                     plugin_id
                 )));
@@ -1253,7 +1253,7 @@ impl PluginRuntime {
             let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
                 (Some(s), Some(i)) => (s, i),
                 _ => {
-                    return Err(crate::error::MantaError::Internal(format!(
+                    return Err(crate::error::SyscityError::Internal(format!(
                         "Plugin '{}' has no WASM module loaded",
                         plugin_id
                     )));
@@ -1264,9 +1264,9 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Plugin execution requires the `plugins` feature. \
-             Recompile Manta with `--features plugins` to enable WASM plugin support."
+             Recompile Syscity with `--features plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1289,7 +1289,7 @@ impl PluginRuntime {
             })?;
 
             if !plugin.enabled {
-                return Err(crate::error::MantaError::Validation(format!(
+                return Err(crate::error::SyscityError::Validation(format!(
                     "Plugin '{}' is disabled",
                     plugin_id
                 )));
@@ -1298,7 +1298,7 @@ impl PluginRuntime {
             let (store, instance) = match (&mut plugin.wasm_store, &plugin.instance) {
                 (Some(s), Some(i)) => (s, i),
                 _ => {
-                    return Err(crate::error::MantaError::Internal(format!(
+                    return Err(crate::error::SyscityError::Internal(format!(
                         "Plugin '{}' has no WASM module loaded",
                         plugin_id
                     )));
@@ -1314,9 +1314,9 @@ impl PluginRuntime {
         }
 
         #[cfg(not(feature = "plugins"))]
-        Err(crate::error::MantaError::Internal(
+        Err(crate::error::SyscityError::Internal(
             "Plugin execution requires the `plugins` feature. \
-             Recompile Manta with `--features plugins` to enable WASM plugin support."
+             Recompile Syscity with `--features plugins` to enable WASM plugin support."
                 .to_string(),
         ))
     }
@@ -1332,14 +1332,14 @@ impl PluginRuntime {
         const OUT_MAX: i32 = 256_000; // 256 KiB output buffer
 
         let request_json = serde_json::to_string(request)
-            .map_err(|e| crate::error::MantaError::Internal(e.to_string()))?;
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
         let request_bytes = request_json.as_bytes();
 
         let memory = instance
             .get_export(&mut *store, "memory")
             .and_then(|e| e.into_memory())
             .ok_or_else(|| {
-                crate::error::MantaError::Internal(
+                crate::error::SyscityError::Internal(
                     "Plugin WASM module has no 'memory' export".to_string(),
                 )
             })?;
@@ -1351,7 +1351,7 @@ impl PluginRuntime {
         let req_len = request_bytes.len() as i32;
         let req_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, req_len)
-                .map_err(|e| crate::error::MantaError::Internal(format!("alloc: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("alloc: {}", e)))?
         } else {
             0i32
         };
@@ -1363,7 +1363,7 @@ impl PluginRuntime {
 
         let out_ptr = if let Some(ref f) = alloc_fn {
             f.call(&mut *store, OUT_MAX)
-                .map_err(|e| crate::error::MantaError::Internal(format!("alloc output: {}", e)))?
+                .map_err(|e| crate::error::SyscityError::Internal(format!("alloc output: {}", e)))?
         } else {
             0i32
         };
@@ -1373,17 +1373,17 @@ impl PluginRuntime {
         {
             f.call(&mut *store, (req_ptr, req_len, out_ptr, OUT_MAX))
                 .map_err(|e| {
-                    crate::error::MantaError::Internal(format!("{}: {}", export_name, e))
+                    crate::error::SyscityError::Internal(format!("{}: {}", export_name, e))
                 })?
         } else {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Plugin does not export '{}' function",
                 export_name
             )));
         };
 
         if written < 0 {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Plugin provider '{}' returned error code {}",
                 export_name, written
             )));
@@ -1397,7 +1397,7 @@ impl PluginRuntime {
         };
 
         let result_str = std::str::from_utf8(&result_bytes).map_err(|e| {
-            crate::error::MantaError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
+            crate::error::SyscityError::Internal(format!("Plugin returned invalid UTF-8: {}", e))
         })?;
 
         let result: serde_json::Value = serde_json::from_str(result_str)

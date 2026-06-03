@@ -1,6 +1,6 @@
 # Skill Template
 
-This directory contains a template for creating new Manta skills.
+This directory contains a template for creating new Syscity skills.
 
 ## Quick Start
 
@@ -11,7 +11,7 @@ This directory contains a template for creating new Manta skills.
 
 2. Edit `SKILL.md` and fill in all the `{{placeholders}}`
 
-3. Test your skill by loading it into Manta
+3. Test your skill by loading it into Syscity
 
 ## File Structure
 

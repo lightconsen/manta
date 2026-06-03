@@ -1,4 +1,4 @@
-//! Web tools for Manta
+//! Web tools for Syscity
 //!
 //! Tools for fetching web content and searching the web.
 
@@ -25,7 +25,7 @@ impl WebFetchTool {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(WEB_TIMEOUT)
-            .user_agent("Manta/0.1.0 (Personal AI Assistant)")
+            .user_agent("Syscity/0.1.0 (Personal AI Assistant)")
             .build()
             .unwrap_or_default();
 
@@ -237,14 +237,14 @@ impl Tool for WebFetchTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let url = args["url"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'url' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'url' argument".to_string())
         })?;
 
         info!("Fetching URL: {}", url);
 
         // Validate URL
         let parsed_url = reqwest::Url::parse(url)
-            .map_err(|e| crate::error::MantaError::Validation(format!("Invalid URL: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Validation(format!("Invalid URL: {}", e)))?;
 
         // Only allow HTTP and HTTPS
         if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
@@ -347,7 +347,7 @@ impl Default for WebSearchTool {
     fn default() -> Self {
         let client = reqwest::Client::builder()
             .timeout(WEB_TIMEOUT)
-            .user_agent("Manta/0.1.0 (Personal AI Assistant)")
+            .user_agent("Syscity/0.1.0 (Personal AI Assistant)")
             .build()
             .unwrap_or_default();
 
@@ -386,18 +386,18 @@ impl WebSearchTool {
             .send()
             .await
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Search request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Search request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Search failed: HTTP {}",
                 response.status()
             )));
         }
 
         let html = response.text().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to read response: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to read response: {}", e))
         })?;
 
         // Parse results from HTML
@@ -506,18 +506,18 @@ impl WebSearchTool {
             .send()
             .await
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Bing search request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Bing search request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Bing search failed: HTTP {}",
                 response.status()
             )));
         }
 
         let json: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to parse Bing response: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to parse Bing response: {}", e))
         })?;
 
         let mut results = Vec::new();
@@ -575,11 +575,11 @@ impl WebSearchTool {
             .send()
             .await
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Google search request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Google search request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Google search failed: HTTP {} - {}",
                 response.status(),
                 response.text().await.unwrap_or_default()
@@ -587,7 +587,7 @@ impl WebSearchTool {
         }
 
         let json: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to parse Google response: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to parse Google response: {}", e))
         })?;
 
         let mut results = Vec::new();
@@ -641,11 +641,11 @@ impl WebSearchTool {
             .send()
             .await
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Brave search request failed: {}", e))
+                crate::error::SyscityError::Internal(format!("Brave search request failed: {}", e))
             })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Brave search failed: HTTP {} - {}",
                 response.status(),
                 response.text().await.unwrap_or_default()
@@ -653,7 +653,7 @@ impl WebSearchTool {
         }
 
         let json: serde_json::Value = response.json().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to parse Brave response: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to parse Brave response: {}", e))
         })?;
 
         let mut results = Vec::new();
@@ -717,18 +717,18 @@ impl WebSearchTool {
         }
 
         let response = request.send().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Custom search request failed: {}", e))
+            crate::error::SyscityError::Internal(format!("Custom search request failed: {}", e))
         })?;
 
         if !response.status().is_success() {
-            return Err(crate::error::MantaError::Internal(format!(
+            return Err(crate::error::SyscityError::Internal(format!(
                 "Custom search failed: HTTP {}",
                 response.status()
             )));
         }
 
         let body = response.text().await.map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to read response: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to read response: {}", e))
         })?;
 
         // Use custom parser if provided, otherwise try to parse as JSON
@@ -858,7 +858,7 @@ impl Tool for WebSearchTool {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let query = args["query"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'query' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'query' argument".to_string())
         })?;
 
         let limit = args["limit"]

@@ -1,14 +1,14 @@
-//! Manta Channel SDK
+//! Syscity Channel SDK
 //!
 //! This SDK provides types for building channel plugins
-//! for Manta using Rust and WebAssembly.
+//! for Syscity using Rust and WebAssembly.
 //!
 //! # Usage
 //!
 //! Add this to your `Cargo.toml`:
 //! ```toml
 //! [dependencies]
-//! manta-channel-sdk = { path = "path/to/sdk" }
+//! syscity-channel-sdk = { path = "path/to/sdk" }
 //! wit-bindgen = "0.54"
 //! serde = { version = "1.0", features = ["derive"] }
 //! serde_json = "1.0"
@@ -19,7 +19,7 @@
 //!
 //! Then in your `src/lib.rs`:
 //! ```rust
-//! use manta_channel_sdk::{
+//! use syscity_channel_sdk::{
 //!     Capabilities, Guest, MessageOptions, OutgoingMessage,
 //!     StringResult, UnitResult, BoolResult,
 //!     ChatType, IncomingMessage, ChannelError,
@@ -29,19 +29,19 @@
 //! // Generate bindings from WIT
 //! mod bindings {
 //!     wit_bindgen::generate!({
-//!         path: "path/to/manta/wit/channel.wit",
+//!         path: "path/to/syscity/wit/channel.wit",
 //!         world: "channel-plugin",
 //!     });
 //! }
 //!
-//! use bindings::exports::manta::channel::channel::Guest;
+//! use bindings::exports::syscity::channel::channel::Guest;
 //!
 //! struct MyChannel;
 //!
 //! impl Guest for MyChannel {
-//!     fn init(config: String) -> bindings::exports::manta::channel::channel::StringResult {
+//!     fn init(config: String) -> bindings::exports::syscity::channel::channel::StringResult {
 //!         // Initialize
-//!         bindings::exports::manta::channel::channel::StringResult::Ok("ok".to_string())
+//!         bindings::exports::syscity::channel::channel::StringResult::Ok("ok".to_string())
 //!     }
 //!     // ... implement other methods
 //! }
@@ -62,7 +62,7 @@ pub const WIT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../wit/chann
 /// Generate bindings in your crate with:
 /// ```rust
 /// wit_bindgen::generate!({
-///     path: "path/to/manta/wit/channel.wit",
+///     path: "path/to/syscity/wit/channel.wit",
 ///     world: "channel-plugin",
 /// });
 /// ```

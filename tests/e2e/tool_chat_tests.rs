@@ -5,7 +5,7 @@ use super::*;
 async fn tool_shell_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -69,7 +69,7 @@ async fn tool_shell_invoked_via_chat() {
 async fn tool_file_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -83,7 +83,7 @@ async fn tool_file_invoked_via_chat() {
     client
         .send_chat(
             &sid,
-            "Use the file_write tool to create a file at /tmp/manta-e2e-test.txt with content 'manta-e2e-file-test'. \
+            "Use the file_write tool to create a file at /tmp/syscity-e2e-test.txt with content 'syscity-e2e-file-test'. \
              Then use file_read to read it back and confirm the content.",
         )
         .await;
@@ -136,7 +136,7 @@ async fn tool_file_invoked_via_chat() {
 async fn tool_todo_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -196,7 +196,7 @@ async fn tool_todo_invoked_via_chat() {
 async fn tool_code_exec_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -210,7 +210,7 @@ async fn tool_code_exec_invoked_via_chat() {
     client
         .send_chat(
             &sid,
-            "Use the execute_code tool to run Python code that prints 'manta-code-exec-ok' and report the output.",
+            "Use the execute_code tool to run Python code that prints 'syscity-code-exec-ok' and report the output.",
         )
         .await;
 
@@ -261,7 +261,7 @@ async fn tool_code_exec_invoked_via_chat() {
 async fn tool_web_fetch_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -326,7 +326,7 @@ async fn tool_web_fetch_invoked_via_chat() {
 async fn tool_memory_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -340,7 +340,7 @@ async fn tool_memory_invoked_via_chat() {
     client
         .send_chat(
             &sid,
-            "Call the memory tool with action=store, content='Manta is an AI agent framework' to save a memory.",
+            "Call the memory tool with action=store, content='Syscity is an AI agent framework' to save a memory.",
         )
         .await;
 
@@ -390,7 +390,7 @@ async fn tool_memory_invoked_via_chat() {
 async fn tool_glob_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -406,7 +406,7 @@ async fn tool_glob_invoked_via_chat() {
 async fn tool_grep_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -422,7 +422,7 @@ async fn tool_grep_invoked_via_chat() {
 async fn tool_process_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -436,7 +436,7 @@ async fn tool_process_invoked_via_chat() {
 async fn tool_nodes_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -449,7 +449,7 @@ async fn tool_nodes_invoked_via_chat() {
 async fn tool_web_search_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -466,7 +466,7 @@ async fn tool_web_search_invoked_via_chat() {
 async fn tool_update_plan_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -482,7 +482,7 @@ async fn tool_update_plan_invoked_via_chat() {
 async fn tool_canvas_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -498,7 +498,7 @@ async fn tool_canvas_invoked_via_chat() {
 async fn tool_pdf_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -515,13 +515,13 @@ async fn tool_pdf_invoked_via_chat() {
 async fn tool_image_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
     let _results = run_tool_chat_test(
         40093,
-        "Use the image tool to get info about the file /tmp/manta-test.png.",
+        "Use the image tool to get info about the file /tmp/syscity-test.png.",
         "image",
     )
     .await;
@@ -532,7 +532,7 @@ async fn tool_image_invoked_via_chat() {
 async fn tool_tts_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -546,13 +546,13 @@ async fn tool_tts_invoked_via_chat() {
 async fn tool_memory_search_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
     let _results = run_tool_chat_test(
         40095,
-        "Use the memory_search tool to search for 'Manta'.",
+        "Use the memory_search tool to search for 'Syscity'.",
         "memory_search",
     )
     .await;
@@ -563,7 +563,7 @@ async fn tool_memory_search_invoked_via_chat() {
 async fn tool_memory_get_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -580,7 +580,7 @@ async fn tool_memory_get_invoked_via_chat() {
 async fn tool_cron_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -593,13 +593,13 @@ async fn tool_cron_invoked_via_chat() {
 async fn tool_file_edit_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
     let _results = run_tool_chat_test(
         40098,
-        "Call ONLY the file_edit tool. Do NOT use file_read. Pass file_path='/tmp/manta-e2e-edit.txt', old_string='old text', new_string='new text'.",
+        "Call ONLY the file_edit tool. Do NOT use file_read. Pass file_path='/tmp/syscity-e2e-edit.txt', old_string='old text', new_string='new text'.",
         "file_edit",
     ).await;
 }
@@ -609,7 +609,7 @@ async fn tool_file_edit_invoked_via_chat() {
 async fn tool_acp_spawn_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -626,7 +626,7 @@ async fn tool_acp_spawn_invoked_via_chat() {
 async fn tool_acp_session_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -643,7 +643,7 @@ async fn tool_acp_session_invoked_via_chat() {
 async fn tool_acp_session_kill_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -659,7 +659,7 @@ async fn tool_acp_session_kill_invoked_via_chat() {
 async fn tool_sessions_list_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -676,7 +676,7 @@ async fn tool_sessions_list_invoked_via_chat() {
 async fn tool_sessions_history_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -693,7 +693,7 @@ async fn tool_sessions_history_invoked_via_chat() {
 async fn tool_sessions_send_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -709,7 +709,7 @@ async fn tool_sessions_send_invoked_via_chat() {
 async fn tool_sessions_yield_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -726,7 +726,7 @@ async fn tool_sessions_yield_invoked_via_chat() {
 async fn tool_session_status_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -742,7 +742,7 @@ async fn tool_session_status_invoked_via_chat() {
 async fn tool_apply_patch_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -758,7 +758,7 @@ async fn tool_apply_patch_invoked_via_chat() {
 async fn tool_delegate_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }
@@ -775,7 +775,7 @@ async fn tool_delegate_invoked_via_chat() {
 async fn tool_mcp_connection_invoked_via_chat() {
     if pick_test_provider().is_none() {
         panic!(
-            "LLM tests require an API key. Either set MANTA_TEST_PROVIDER_KEY + MANTA_TEST_PROVIDER env vars, \
+            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
              or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
         );
     }

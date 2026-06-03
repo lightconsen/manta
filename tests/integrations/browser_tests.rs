@@ -8,12 +8,12 @@
 
 #![cfg(feature = "browser")]
 
-use manta::browser::{
+use syscity::browser::{
     assert_navigation_allowed, ActKind, BrowserPool, BrowserPoolConfig, BrowserProfile,
     NavigationPolicy,
 };
-use manta::tools::browser::BrowserTool;
-use manta::tools::{Tool, ToolContext};
+use syscity::tools::browser::BrowserTool;
+use syscity::tools::{Tool, ToolContext};
 use serde_json::json;
 use serial_test::serial;
 

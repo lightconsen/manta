@@ -1,6 +1,6 @@
-//! Agent personality management commands for Manta
+//! Agent personality management commands for Syscity
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -92,8 +92,8 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: manta start");
-                    return Err(MantaError::Internal(e.to_string()));
+                    eprintln!("Is the daemon running? Try: syscity start");
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -107,7 +107,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -132,7 +132,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -157,7 +157,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -176,7 +176,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -195,7 +195,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
             } else {
@@ -207,7 +207,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Failed to reach daemon: {}", e);
-                        return Err(MantaError::Internal(e.to_string()));
+                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
             }
@@ -215,7 +215,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
         AgentCommands::Import { path, name } => {
             let content = tokio::fs::read_to_string(path)
                 .await
-                .map_err(|e| MantaError::Internal(format!("Failed to read file: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to read file: {}", e)))?;
             let mut body: serde_json::Value =
                 serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
             if let Some(n) = name {
@@ -235,7 +235,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -246,7 +246,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                     let body = resp.text().await.unwrap_or_default();
                     if let Some(path) = output {
                         tokio::fs::write(path, &body).await.map_err(|e| {
-                            MantaError::Internal(format!("Failed to write file: {}", e))
+                            SyscityError::Internal(format!("Failed to write file: {}", e))
                         })?;
                         println!("Agent '{}' exported to {:?}", name, path);
                     } else {
@@ -255,7 +255,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
         }
@@ -271,16 +271,16 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
         Ok(resp) => resp.text().await.unwrap_or_default(),
         Err(e) => {
             eprintln!("Failed to reach daemon: {}", e);
-            return Err(MantaError::Internal(e.to_string()));
+            return Err(SyscityError::Internal(e.to_string()));
         }
     };
 
     // 2. Write to a temp file
     let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("manta-agent-{}.json", name));
+    let tmp_path = tmp_dir.join(format!("syscity-agent-{}.json", name));
     tokio::fs::write(&tmp_path, &current_body)
         .await
-        .map_err(|e| MantaError::Internal(format!("Failed to write temp file: {}", e)))?;
+        .map_err(|e| SyscityError::Internal(format!("Failed to write temp file: {}", e)))?;
 
     // 3. Open editor
     let editor = std::env::var("EDITOR")
@@ -292,7 +292,7 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
         .status()
         .await
         .map_err(|e| {
-            MantaError::Internal(format!("Failed to launch editor '{}': {}", editor, e))
+            SyscityError::Internal(format!("Failed to launch editor '{}': {}", editor, e))
         })?;
 
     if !status.success() {
@@ -304,7 +304,7 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
     // 4. Read back the edited file
     let new_body = tokio::fs::read_to_string(&tmp_path)
         .await
-        .map_err(|e| MantaError::Internal(format!("Failed to read temp file: {}", e)))?;
+        .map_err(|e| SyscityError::Internal(format!("Failed to read temp file: {}", e)))?;
     let _ = tokio::fs::remove_file(&tmp_path).await;
 
     // 5. Skip if nothing changed
@@ -315,7 +315,7 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
 
     // 6. Validate it's still JSON
     let patch_value: serde_json::Value = serde_json::from_str(&new_body)
-        .map_err(|e| MantaError::Internal(format!("Edited content is not valid JSON: {}", e)))?;
+        .map_err(|e| SyscityError::Internal(format!("Edited content is not valid JSON: {}", e)))?;
 
     // 7. PATCH to daemon
     match client.patch(&url).json(&patch_value).send().await {
@@ -330,7 +330,7 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
         }
         Err(e) => {
             eprintln!("Failed to reach daemon: {}", e);
-            return Err(MantaError::Internal(e.to_string()));
+            return Err(SyscityError::Internal(e.to_string()));
         }
     }
 

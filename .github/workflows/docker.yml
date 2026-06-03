@@ -78,7 +78,7 @@ jobs:
 
       - name: Test health
         run: |
-          docker-compose exec -T manta manta --version || true
+          docker-compose exec -T syscity syscity --version || true
 
       - name: Cleanup
         run: docker-compose down -v

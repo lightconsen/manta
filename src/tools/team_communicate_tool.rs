@@ -83,7 +83,7 @@ Examples:
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let action = args["action"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("action is required".to_string())
+            crate::error::SyscityError::Validation("action is required".to_string())
         })?;
 
         // Get team name from args or context
@@ -91,7 +91,7 @@ Examples:
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                crate::error::MantaError::Validation(
+                crate::error::SyscityError::Validation(
                     "Team name is required. Use 'team' parameter.".to_string(),
                 )
             })?;
@@ -107,13 +107,13 @@ Examples:
         match action {
             "send" => {
                 let to = args["to"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "'to' is required for send action".to_string(),
                     )
                 })?;
 
                 let message = args["message"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "'message' is required for send action".to_string(),
                     )
                 })?;
@@ -144,7 +144,7 @@ Examples:
 
             "broadcast" => {
                 let message = args["message"].as_str().ok_or_else(|| {
-                    crate::error::MantaError::Validation(
+                    crate::error::SyscityError::Validation(
                         "'message' is required for broadcast action".to_string(),
                     )
                 })?;
@@ -240,7 +240,7 @@ Examples:
                     // Try to load from storage
                     match crate::team::Team::load(&team_name).await {
                         Ok(team) => Ok(ToolExecutionResult::success(format!(
-                            "Team '{}' found (not active). Activate with 'manta team activate {}'",
+                            "Team '{}' found (not active). Activate with 'syscity team activate {}'",
                             team.name, team.name
                         ))
                         .with_data(json!({
@@ -249,7 +249,7 @@ Examples:
                             "member_count": team.members.len(),
                             "members": team.members.keys().cloned().collect::<Vec<_>>()
                         }))),
-                        Err(_e) => Err(crate::error::MantaError::NotFound {
+                        Err(_e) => Err(crate::error::SyscityError::NotFound {
                             resource: format!("Team '{}'", team_name),
                         }),
                     }
@@ -315,7 +315,7 @@ Examples:
                 }
             }
 
-            _ => Err(crate::error::MantaError::Validation(format!(
+            _ => Err(crate::error::SyscityError::Validation(format!(
                 "Unknown action: '{}'. Use: send, broadcast, status, list, history, receive",
                 action
             ))),

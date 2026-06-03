@@ -1,26 +1,26 @@
-//! Setup wizard for Manta
+//! Setup wizard for Syscity
 //!
-//! Interactive CLI wizard to configure ~/.manta/manta.toml.
+//! Interactive CLI wizard to configure ~/.syscity/syscity.toml.
 
 use crate::error::Result;
 use dialoguer::{Input, Password, Select};
 
 /// Run the interactive setup wizard.
-/// Reads existing ~/.manta/manta.toml if present and allows editing.
+/// Reads existing ~/.syscity/syscity.toml if present and allows editing.
 pub async fn run_setup() -> Result<()> {
-    println!("🐙 Manta Setup Wizard");
+    println!("🐙 Syscity Setup Wizard");
     println!("=====================");
     println!("   Use ↑/↓ arrows to select, Enter to confirm.\n");
 
-    let manta_dir = crate::dirs::manta_dir();
-    let config_path = manta_dir.join("manta.toml");
+    let syscity_dir = crate::dirs::syscity_dir();
+    let config_path = syscity_dir.join("syscity.toml");
 
     // Ensure directory exists
-    if !manta_dir.exists() {
-        println!("📁 Creating Manta directory at {:?}...", manta_dir);
-        tokio::fs::create_dir_all(&manta_dir)
+    if !syscity_dir.exists() {
+        println!("📁 Creating Syscity directory at {:?}...", syscity_dir);
+        tokio::fs::create_dir_all(&syscity_dir)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
     }
 
     // Load existing config or use defaults
@@ -77,7 +77,7 @@ pub async fn run_setup() -> Result<()> {
         .items(&provider_items)
         .default(default_provider_idx)
         .interact()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
 
     let (provider_name, preset) = if provider_selection < preset_names.len() {
         let name = preset_names[provider_selection].clone();
@@ -88,7 +88,7 @@ pub async fn run_setup() -> Result<()> {
         let custom: String = Input::new()
             .with_prompt("   Enter provider name")
             .interact_text()
-            .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
         (custom.trim().to_string(), None)
     } else if provider_selection == preset_names.len() + 1 {
         // "Skip this step" — keep existing provider
@@ -130,7 +130,7 @@ pub async fn run_setup() -> Result<()> {
         .items(&model_items)
         .default(default_model_idx)
         .interact()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
 
     let model = if !suggested_models.is_empty() && model_selection < suggested_models.len() {
         suggested_models[model_selection].clone()
@@ -139,7 +139,7 @@ pub async fn run_setup() -> Result<()> {
         let custom: String = Input::new()
             .with_prompt("   Enter model name")
             .interact_text()
-            .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+            .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
         custom.trim().to_string()
     } else if model_selection == model_items.len() - 2 {
         // "Skip this step"
@@ -180,11 +180,11 @@ pub async fn run_setup() -> Result<()> {
         .with_prompt(prompt)
         .allow_empty_password(true)
         .interact()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
 
     let api_key = if api_key_input.trim().is_empty() {
         if existing_key.is_empty() {
-            println!("   ⚠️  No API key provided. You can set it later via MANTA_API_KEY env var.");
+            println!("   ⚠️  No API key provided. You can set it later via SYSCITY_API_KEY env var.");
             String::new()
         } else {
             existing_key
@@ -238,7 +238,7 @@ pub async fn run_setup() -> Result<()> {
         ))
         .allow_empty(true)
         .interact_text()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
 
     if !host_input.trim().is_empty() {
         config.host = host_input.trim().to_string();
@@ -251,7 +251,7 @@ pub async fn run_setup() -> Result<()> {
         ))
         .allow_empty(true)
         .interact_text()
-        .map_err(|e| crate::error::MantaError::Internal(format!("Input error: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
 
     if !port_input.trim().is_empty() {
         if let Ok(p) = port_input.trim().parse::<u16>() {
@@ -261,16 +261,16 @@ pub async fn run_setup() -> Result<()> {
 
     // ── Write config ──────────────────────────────────────────────────
     let toml_str = toml::to_string_pretty(&config).map_err(|e| {
-        crate::error::MantaError::Validation(format!("Failed to serialize config: {}", e))
+        crate::error::SyscityError::Validation(format!("Failed to serialize config: {}", e))
     })?;
 
     tokio::fs::write(&config_path, toml_str)
         .await
-        .map_err(crate::error::MantaError::Io)?;
+        .map_err(crate::error::SyscityError::Io)?;
 
     println!("\n✅ Configuration saved to {:?}", config_path);
     println!("\nNext steps:");
-    println!("  1. Start the daemon:  ./manta start");
+    println!("  1. Start the daemon:  ./syscity start");
     println!("  2. Open Web UI:       http://{}:{}", config.host, config.port);
     println!("  3. Edit config:       {:?}", config_path);
 

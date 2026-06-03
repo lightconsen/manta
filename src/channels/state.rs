@@ -2,7 +2,7 @@
 //!
 //! Persists channel state (offsets, session mappings) to SQLite for recovery.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
@@ -107,7 +107,7 @@ impl ChannelStateStore {
         )
         .execute(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create channel state schema".to_string(),
             details: e.to_string(),
         })?;
@@ -120,7 +120,7 @@ impl ChannelStateStore {
     pub async fn save_state(&self, state: &ChannelState) -> Result<()> {
         let session_mappings_json =
             serde_json::to_string(&state.session_mappings).map_err(|e| {
-                MantaError::Internal(format!("Failed to serialize session mappings: {}", e))
+                SyscityError::Internal(format!("Failed to serialize session mappings: {}", e))
             })?;
 
         sqlx::query(
@@ -144,7 +144,7 @@ impl ChannelStateStore {
         .bind(state.last_activity)
         .execute(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to save channel state".to_string(),
             details: e.to_string(),
         })?;
@@ -179,7 +179,7 @@ impl ChannelStateStore {
         .bind(account_id.unwrap_or(""))
         .fetch_optional(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to load channel state".to_string(),
             details: e.to_string(),
         })?;
@@ -188,7 +188,7 @@ impl ChannelStateStore {
             Some((name, account, offset, mappings, extra, activity)) => {
                 let session_mappings: HashMap<String, String> = serde_json::from_str(&mappings)
                     .map_err(|e| {
-                        MantaError::Internal(format!(
+                        SyscityError::Internal(format!(
                             "Failed to deserialize session mappings: {}",
                             e
                         ))
@@ -226,7 +226,7 @@ impl ChannelStateStore {
         .bind(account_id.unwrap_or(""))
         .execute(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to delete channel state".to_string(),
             details: e.to_string(),
         })?;
@@ -256,7 +256,7 @@ impl ChannelStateStore {
         .bind(channel_name)
         .fetch_all(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to list channel states".to_string(),
             details: e.to_string(),
         })?;
@@ -265,7 +265,7 @@ impl ChannelStateStore {
         for (name, account, offset, mappings, extra, activity) in rows {
             let session_mappings: HashMap<String, String> = serde_json::from_str(&mappings)
                 .map_err(|e| {
-                    MantaError::Internal(format!("Failed to deserialize session mappings: {}", e))
+                    SyscityError::Internal(format!("Failed to deserialize session mappings: {}", e))
                 })?;
             let account_id = if account.is_empty() {
                 None
@@ -304,7 +304,7 @@ impl ChannelStateStore {
         .bind(message)
         .execute(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to log health status".to_string(),
             details: e.to_string(),
         })?;
@@ -331,7 +331,7 @@ impl ChannelStateStore {
         .bind(limit)
         .fetch_all(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to get health log".to_string(),
             details: e.to_string(),
         })?;
@@ -350,7 +350,7 @@ impl ChannelStateStore {
         .bind(older_than_days)
         .execute(&self.db)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to cleanup health log".to_string(),
             details: e.to_string(),
         })?;

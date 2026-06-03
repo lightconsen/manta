@@ -5,8 +5,8 @@
 //! shape, or result structure without updating these tests signals a
 //! breaking change for LLM integrations.
 
-use manta::providers::FunctionDefinition;
-use manta::tools::*;
+use syscity::providers::FunctionDefinition;
+use syscity::tools::*;
 use serde_json::json;
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-//! LLM Provider abstractions for Manta
+//! LLM Provider abstractions for Syscity
 //!
 //! This module defines the `Provider` trait for interacting with various LLM
 //! services (OpenAI, Anthropic, Local models, etc.).

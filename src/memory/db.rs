@@ -1,4 +1,4 @@
-//! Unified SQLite memory store for Manta
+//! Unified SQLite memory store for Syscity
 //!
 //! Promotes `DatabaseStore` as the single canonical store, implementing both
 //! `MemoryStore` and `ChatHistoryStore`.  Features:
@@ -41,7 +41,7 @@ impl DatabaseStore {
             // Create parent directory if needed
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
+                    crate::error::SyscityError::Storage {
                         context: format!("Failed to create database directory: {:?}", parent),
                         details: e.to_string(),
                     }
@@ -51,7 +51,7 @@ impl DatabaseStore {
             // Create empty database file if it doesn't exist
             if !path.exists() {
                 tokio::fs::File::create(path).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
+                    crate::error::SyscityError::Storage {
                         context: format!("Failed to create database file: {:?}", path),
                         details: e.to_string(),
                     }
@@ -67,7 +67,7 @@ impl DatabaseStore {
             .max_lifetime(Duration::from_secs(3600))
             .connect(database_url)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to connect to database".to_string(),
                 details: e.to_string(),
             })?;
@@ -118,7 +118,7 @@ impl DatabaseStore {
             sqlx::query(&format!("PRAGMA {}", pragma))
                 .execute(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: context.to_string(),
                     details: e.to_string(),
                 })?;
@@ -154,7 +154,7 @@ impl DatabaseStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create memories table".to_string(),
             details: e.to_string(),
         })?;
@@ -175,7 +175,7 @@ impl DatabaseStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create chat_messages table".to_string(),
             details: e.to_string(),
         })?;
@@ -197,7 +197,7 @@ impl DatabaseStore {
 
         for (name, sql) in indexes {
             sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to create index {}", name),
                     details: e.to_string(),
                 }
@@ -217,7 +217,7 @@ impl DatabaseStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create FTS5 table".to_string(),
             details: e.to_string(),
         })?;
@@ -252,7 +252,7 @@ impl DatabaseStore {
 
         for (name, sql) in triggers {
             sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
-                crate::error::MantaError::Storage {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to create trigger {}", name),
                     details: e.to_string(),
                 }
@@ -373,7 +373,7 @@ impl DatabaseStore {
         sqlx::query("ANALYZE")
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to run ANALYZE".to_string(),
                 details: e.to_string(),
             })?;
@@ -387,7 +387,7 @@ impl DatabaseStore {
         sqlx::query("VACUUM")
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to run VACUUM".to_string(),
                 details: e.to_string(),
             })?;
@@ -399,7 +399,7 @@ impl DatabaseStore {
         let page_count: i64 = sqlx::query_scalar("PRAGMA page_count")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to get page count".to_string(),
                 details: e.to_string(),
             })?;
@@ -407,7 +407,7 @@ impl DatabaseStore {
         let freelist_count: i64 = sqlx::query_scalar("PRAGMA freelist_count")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to get freelist count".to_string(),
                 details: e.to_string(),
             })?;
@@ -415,7 +415,7 @@ impl DatabaseStore {
         let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to get page size".to_string(),
                 details: e.to_string(),
             })?;
@@ -423,7 +423,7 @@ impl DatabaseStore {
         let user_version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to get user version".to_string(),
                 details: e.to_string(),
             })?;
@@ -479,7 +479,7 @@ impl MemoryStore for DatabaseStore {
         .bind(&memory.source)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to store memory".to_string(),
             details: e.to_string(),
         })?;
@@ -499,7 +499,7 @@ impl MemoryStore for DatabaseStore {
         .bind(&id.0)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get memory".to_string(),
             details: e.to_string(),
         })?;
@@ -590,13 +590,13 @@ impl MemoryStore for DatabaseStore {
         .bind(&memory.id.0)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to update memory".to_string(),
             details: e.to_string(),
         })?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::error::MantaError::NotFound {
+            return Err(crate::error::SyscityError::NotFound {
                 resource: format!("Memory with id {}", memory.id),
             });
         }
@@ -612,7 +612,7 @@ impl MemoryStore for DatabaseStore {
             .bind(&id.0)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to delete memory".to_string(),
                 details: e.to_string(),
             })?;
@@ -678,7 +678,7 @@ impl MemoryStore for DatabaseStore {
         }
 
         let rows = db_query.fetch_all(&self.pool).await.map_err(|e| {
-            crate::error::MantaError::Storage {
+            crate::error::SyscityError::Storage {
                 context: "Failed to search memories".to_string(),
                 details: e.to_string(),
             }
@@ -737,7 +737,7 @@ impl MemoryStore for DatabaseStore {
                 .bind(now)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to cleanup expired memories".to_string(),
                     details: e.to_string(),
                 })?;
@@ -753,7 +753,7 @@ impl MemoryStore for DatabaseStore {
         let total_row = sqlx::query("SELECT COUNT(*) as count FROM memories")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to get total count".to_string(),
                 details: e.to_string(),
             })?;
@@ -765,7 +765,7 @@ impl MemoryStore for DatabaseStore {
             sqlx::query("SELECT memory_type, COUNT(*) as count FROM memories GROUP BY memory_type")
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to get type counts".to_string(),
                     details: e.to_string(),
                 })?;
@@ -786,7 +786,7 @@ impl MemoryStore for DatabaseStore {
         .bind(now)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get expired count".to_string(),
             details: e.to_string(),
         })?;
@@ -842,7 +842,7 @@ impl ChatHistoryStore for DatabaseStore {
         .bind(metadata_str)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to store chat message".to_string(),
             details: e.to_string(),
         })?;
@@ -870,7 +870,7 @@ impl ChatHistoryStore for DatabaseStore {
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get conversation history".to_string(),
             details: e.to_string(),
         })?;
@@ -926,7 +926,7 @@ impl ChatHistoryStore for DatabaseStore {
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get user conversations".to_string(),
             details: e.to_string(),
         })?;
@@ -947,7 +947,7 @@ impl ChatHistoryStore for DatabaseStore {
             .bind(conversation_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to delete conversation".to_string(),
                 details: e.to_string(),
             })?;
@@ -970,7 +970,7 @@ impl ChatHistoryStore for DatabaseStore {
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to get last conversation".to_string(),
             details: e.to_string(),
         })?;
@@ -1086,8 +1086,8 @@ impl QueryBuilder {
 // Internal helpers
 // =============================================================================
 
-fn col_err(column: &str, err: sqlx::Error) -> crate::error::MantaError {
-    crate::error::MantaError::Storage {
+fn col_err(column: &str, err: sqlx::Error) -> crate::error::SyscityError {
+    crate::error::SyscityError::Storage {
         context: format!("Failed to read column '{}'", column),
         details: err.to_string(),
     }

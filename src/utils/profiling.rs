@@ -1,4 +1,4 @@
-//! Performance profiling utilities for Manta
+//! Performance profiling utilities for Syscity
 //!
 //! This module provides tools for profiling CPU usage, memory allocations,
 //! and tracking performance metrics across the application.

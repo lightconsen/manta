@@ -404,7 +404,7 @@ impl Default for LifecycleManager {
 mod tests {
     use super::*;
     use crate::core::models::Id;
-    use crate::error::MantaError;
+    use crate::error::SyscityError;
     use async_trait::async_trait;
 
     struct MockChannel {
@@ -440,7 +440,7 @@ mod tests {
 
         async fn start(&self) -> Result<()> {
             if *self.should_fail_start.read().await {
-                return Err(MantaError::Internal("Start failed".to_string()));
+                return Err(SyscityError::Internal("Start failed".to_string()));
             }
             *self.running.write().await = true;
             Ok(())

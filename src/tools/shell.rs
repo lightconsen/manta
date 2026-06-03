@@ -96,7 +96,7 @@ impl Tool for ShellTool {
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let command_str = args["command"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'command' argument".to_string())
+            crate::error::SyscityError::Validation("Missing 'command' argument".to_string())
         })?;
 
         // Check if command is allowed

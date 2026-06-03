@@ -1,4 +1,4 @@
-//! Core Agent module for Manta
+//! Core Agent module for Syscity
 //!
 //! The Agent is the central orchestrator that handles conversations,
 //! manages context, calls tools, and interacts with LLM providers.
@@ -348,9 +348,9 @@ pub struct AgentConfig {
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        let system_prompt = r#"# Manta AI Assistant
+        let system_prompt = r#"# Syscity AI Assistant
 
-You are Manta, a helpful AI assistant running locally on the user's machine.
+You are Syscity, a helpful AI assistant running locally on the user's machine.
 
 ## Tool Usage Rules
 
@@ -358,7 +358,7 @@ You are Manta, a helpful AI assistant running locally on the user's machine.
 - NEVER invent or hallucinate tool names that are not in the provided tools list
 - For scheduling, recurring tasks, or cron queries: use the `cron` tool with action `list` — do NOT use shell commands or other tools for these operations
 - If a tool call fails, try a different approach or acknowledge the failure — do NOT repeat the same failed tool call
-- NEVER modify Manta's core configuration files (manta.toml, GatewayConfig, or system-level ~/.manta/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user.
+- NEVER modify Syscity's core configuration files (syscity.toml, GatewayConfig, or system-level ~/.syscity/ config). You MAY edit your own agent personality files (SOUL.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md, etc.) in your agent directory when explicitly asked by the user.
 
 ## Response Formatting Guidelines
 
@@ -423,7 +423,7 @@ impl AgentConfig {
     ///
     /// Resolution order:
     /// 1. `workspace_dir` config value (with `~` expanded)
-    /// 2. `~/.manta/workspace` (default)
+    /// 2. `~/.syscity/workspace` (default)
     pub fn resolve_workspace_dir(&self) -> std::path::PathBuf {
         match &self.workspace_dir {
             Some(dir) => crate::dirs::resolve_tilde(dir),
@@ -1900,7 +1900,7 @@ impl Agent {
         // Check live cost guard before calling provider
         if let Some(ref guard) = self.cost_guard {
             if guard.is_exceeded() {
-                return Err(crate::error::MantaError::Validation(
+                return Err(crate::error::SyscityError::Validation(
                     "Budget limit exceeded — refusing provider call. \
                      Adjust daily_limit_cents or hourly_action_limit in config."
                         .to_string(),
@@ -2115,7 +2115,7 @@ impl Agent {
         // Check live cost guard before calling provider
         if let Some(ref guard) = self.cost_guard {
             if guard.is_exceeded() {
-                return Err(crate::error::MantaError::Validation(
+                return Err(crate::error::SyscityError::Validation(
                     "Budget limit exceeded — refusing provider call. \
                      Adjust daily_limit_cents or hourly_action_limit in config."
                         .to_string(),
@@ -2673,11 +2673,11 @@ impl Agent {
         let store = self
             .session_store
             .as_ref()
-            .ok_or_else(|| crate::error::MantaError::Internal("no session store".into()))?;
+            .ok_or_else(|| crate::error::SyscityError::Internal("no session store".into()))?;
         let sid = self
             .session_id
             .as_deref()
-            .ok_or_else(|| crate::error::MantaError::Internal("no session id".into()))?;
+            .ok_or_else(|| crate::error::SyscityError::Internal("no session id".into()))?;
 
         let thread_rows = store.load_threads_for_session(sid).await?;
         let mut map = self.thread_map.lock().await;
@@ -2999,7 +2999,7 @@ impl AgentBuilder {
         let mut agent = Agent::new(
             self.config.unwrap_or_default(),
             self.provider.ok_or_else(|| {
-                crate::error::MantaError::Validation("Provider required".to_string())
+                crate::error::SyscityError::Validation("Provider required".to_string())
             })?,
             self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
         );
@@ -3480,7 +3480,7 @@ mod tests {
     fn test_resolve_workspace_dir_default_fallback() {
         let config = AgentConfig::default();
         let resolved = config.resolve_workspace_dir();
-        assert!(resolved.to_string_lossy().contains(".manta"));
+        assert!(resolved.to_string_lossy().contains(".syscity"));
         assert!(resolved.to_string_lossy().contains("workspace"));
     }
 

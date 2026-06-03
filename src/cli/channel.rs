@@ -1,7 +1,7 @@
-//! Channel management commands for Manta
+//! Channel management commands for Syscity
 //!
 //! This module provides CLI commands to add, stop, remove, list, and test
-//! channel configurations for the Manta Gateway.
+//! channel configurations for the Syscity Gateway.
 
 use crate::cli::ChannelType;
 use crate::error::Result;
@@ -77,7 +77,7 @@ fn parse_key_val(s: &str) -> std::result::Result<(String, String), String> {
 
 /// Get the config path for the Gateway
 fn get_config_path() -> std::path::PathBuf {
-    crate::dirs::manta_dir().join("manta.toml")
+    crate::dirs::syscity_dir().join("syscity.toml")
 }
 
 /// Load Gateway configuration
@@ -308,7 +308,7 @@ async fn add_telegram_channel(
 
     println!("✅ Telegram channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -371,7 +371,7 @@ async fn add_discord_channel(
 
     println!("✅ Discord channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -438,7 +438,7 @@ async fn add_slack_channel(
 
     println!("✅ Slack channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -515,7 +515,7 @@ async fn add_whatsapp_channel(
 
     println!("✅ WhatsApp channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -587,7 +587,7 @@ async fn add_qq_channel(
 
     println!("✅ QQ channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -675,7 +675,7 @@ async fn add_feishu_channel(
 
     println!("✅ Feishu/Lark channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -725,7 +725,7 @@ async fn add_websocket_channel(
 
     println!("✅ WebSocket channel configured in Gateway");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -765,7 +765,7 @@ async fn add_signal_channel(
     println!("   Make sure signal-cli daemon is running:");
     println!("   signal-cli daemon --http localhost:8080");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -803,7 +803,7 @@ async fn add_imessage_channel(
     println!("✅ iMessage channel configured in Gateway");
     println!("   Make sure BlueBubbles server is running on your Mac.");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
@@ -841,14 +841,14 @@ async fn add_webchat_channel(
     println!("✅ WebChat channel configured in Gateway");
     println!("   Access the chat interface at http://localhost:8081");
     println!("   Start the Gateway to activate the channel:");
-    println!("   manta start");
+    println!("   syscity start");
 
     Ok(())
 }
 
 /// List configured channels
 async fn run_channel_list(all: bool) -> Result<()> {
-    println!("📱 Manta Channels");
+    println!("📱 Syscity Channels");
     println!("=================");
     println!();
 
@@ -956,12 +956,12 @@ async fn run_channel_list(all: bool) -> Result<()> {
 
     println!();
     println!("Available commands:");
-    println!("  manta channel add <channel> --token <TOKEN> [--agent <AGENT>]");
-    println!("  manta channel stop <channel>");
-    println!("  manta channel remove <channel> [--agent <AGENT>]");
-    println!("  manta channel status <channel> [--agent <AGENT>]");
-    println!("  manta channel test <channel> [--agent <AGENT>]");
-    println!("  manta channel list [--all]");
+    println!("  syscity channel add <channel> --token <TOKEN> [--agent <AGENT>]");
+    println!("  syscity channel stop <channel>");
+    println!("  syscity channel remove <channel> [--agent <AGENT>]");
+    println!("  syscity channel status <channel> [--agent <AGENT>]");
+    println!("  syscity channel test <channel> [--agent <AGENT>]");
+    println!("  syscity channel list [--all]");
     println!();
     println!("Channels: telegram, discord, slack, whatsapp, qq, feishu, websocket");
     println!();
@@ -1092,19 +1092,19 @@ async fn run_channel_status(
                         }
                     );
                     if channel_config.enabled {
-                        println!("  manta channel stop {}", channel_name);
+                        println!("  syscity channel stop {}", channel_name);
                     } else {
-                        println!("  manta channel add {}", channel_name);
+                        println!("  syscity channel add {}", channel_name);
                     }
                 } else {
                     println!("Status: 🔴 Not configured");
                     println!("\nTo configure:");
-                    println!("  manta channel add {}", channel_name);
+                    println!("  syscity channel add {}", channel_name);
                 }
             } else {
                 println!("Status: 🔴 No Gateway configuration found");
                 println!("\nThe channel will be configured when you run:");
-                println!("  manta channel add {}", channel_name);
+                println!("  syscity channel add {}", channel_name);
             }
         }
         None => {
@@ -1145,7 +1145,7 @@ async fn run_channel_status(
             } else {
                 println!("No Gateway configuration found.");
                 println!("\nTo configure a channel, run:");
-                println!("  manta channel add <channel-name>");
+                println!("  syscity channel add <channel-name>");
             }
         }
     }
@@ -1323,11 +1323,11 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
 
     println!("\n  To configure and start:");
     if let Some(ref agent_name) = agent {
-        println!("    manta channel add {} --agent {}", config_key, agent_name);
+        println!("    syscity channel add {} --agent {}", config_key, agent_name);
     } else {
-        println!("    manta channel add {}", config_key);
+        println!("    syscity channel add {}", config_key);
     }
-    println!("    manta start");
+    println!("    syscity start");
 
     Ok(())
 }

@@ -2,7 +2,7 @@
 name: cron
 description: "Schedule and manage recurring tasks with cron-like expressions"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "cron"

@@ -172,13 +172,13 @@ pub async fn append_memory_event(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to create event log directory: {:?}", parent),
                 details: e.to_string(),
             })?;
     }
 
-    let line = serde_json::to_string(event).map_err(|e| crate::error::MantaError::Storage {
+    let line = serde_json::to_string(event).map_err(|e| crate::error::SyscityError::Storage {
         context: "Failed to serialize memory event".to_string(),
         details: e.to_string(),
     })?;
@@ -188,20 +188,20 @@ pub async fn append_memory_event(
         .append(true)
         .open(&path)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to open event log: {:?}", path),
             details: e.to_string(),
         })?;
 
     file.write_all(line.as_bytes())
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to write event log: {:?}", path),
             details: e.to_string(),
         })?;
     file.write_all(b"\n")
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: format!("Failed to write newline to event log: {:?}", path),
             details: e.to_string(),
         })?;
@@ -221,7 +221,7 @@ pub async fn read_memory_events(
     let content =
         fs::read_to_string(&path)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: format!("Failed to read event log: {:?}", path),
                 details: e.to_string(),
             })?;

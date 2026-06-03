@@ -4,13 +4,13 @@ Model Context Protocol integration for connecting to external MCP servers and us
 
 ## Design
 
-MCP is an open protocol for extending LLM capabilities through external servers. Manta implements an MCP client that discovers tools from servers and registers them dynamically in the `ToolRegistry`.
+MCP is an open protocol for extending LLM capabilities through external servers. Syscity implements an MCP client that discovers tools from servers and registers them dynamically in the `ToolRegistry`.
 
 - **`McpClient`** — Per-server JSON-RPC 2.0 client supporting multiple transports
 - **`McpManager`** — Manages multiple `McpClient` instances, handles connect/disconnect/reconnect
 - **`McpToolDefinition`** — Tool schema discovered from `tools/list`
-- **`McpToolWrapper`** — Wraps an MCP tool as a Manta `Tool` trait object for `ToolRegistry`
-- **`McpSettings`** / **`McpServerConfig`** — Configuration in `manta.toml` `[mcp.servers.*]`
+- **`McpToolWrapper`** — Wraps an MCP tool as a Syscity `Tool` trait object for `ToolRegistry`
+- **`McpSettings`** / **`McpServerConfig`** — Configuration in `syscity.toml` `[mcp.servers.*]`
 
 ### Supported Transports
 

@@ -596,10 +596,10 @@ impl Tool for GatewayTool {
 
             "update.run" => {
                 let note = args.note.as_deref().unwrap_or("Self-update requested");
-                warn!("gateway tool: update.run is not yet implemented in Manta");
+                warn!("gateway tool: update.run is not yet implemented in Syscity");
                 Ok(ToolExecutionResult {
                     success: true,
-                    output: format!("{}. Self-update is not yet implemented in Manta.", note),
+                    output: format!("{}. Self-update is not yet implemented in Syscity.", note),
                     error: None,
                     data: Some(serde_json::json!({
                         "ok": true,

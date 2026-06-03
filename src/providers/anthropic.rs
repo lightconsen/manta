@@ -1,4 +1,4 @@
-//! Anthropic provider implementation for Manta
+//! Anthropic provider implementation for Syscity
 //!
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
@@ -169,7 +169,7 @@ impl AnthropicProvider {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to build HTTP client: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
 
         Ok(Self {
@@ -469,7 +469,7 @@ impl Provider for AnthropicProvider {
                     if !status.is_success() {
                         let text = response.text().await.unwrap_or_default();
                         error!("Anthropic API error: {} - {}", status, text);
-                        return Err(crate::error::MantaError::ExternalService {
+                        return Err(crate::error::SyscityError::ExternalService {
                             source: format!("Anthropic API error {}: {}", status, text),
                             cause: None,
                         });
@@ -478,12 +478,12 @@ impl Provider for AnthropicProvider {
                     let body = response
                         .text()
                         .await
-                        .map_err(crate::error::MantaError::Http)?;
+                        .map_err(crate::error::SyscityError::Http)?;
 
                     debug!("Received response from Anthropic API");
 
                     let anthropic_response: AnthropicResponse = serde_json::from_str(&body)
-                        .map_err(|e| crate::error::MantaError::ExternalService {
+                        .map_err(|e| crate::error::SyscityError::ExternalService {
                             source: format!("Failed to parse Anthropic response: {}", e),
                             cause: Some(Box::new(e)),
                         })?;
@@ -514,7 +514,7 @@ impl Provider for AnthropicProvider {
                         continue;
                     }
 
-                    return Err(crate::error::MantaError::Http(e));
+                    return Err(crate::error::SyscityError::Http(e));
                 }
             }
         }
@@ -572,7 +572,7 @@ impl Provider for AnthropicProvider {
                     if !status.is_success() {
                         let body = response.text().await.unwrap_or_default();
                         error!("Anthropic API error: {} - {}", status, body);
-                        return Err(crate::error::MantaError::ExternalService {
+                        return Err(crate::error::SyscityError::ExternalService {
                             source: format!("Anthropic API error {}: {}", status, body),
                             cause: None,
                         });
@@ -620,7 +620,7 @@ impl Provider for AnthropicProvider {
                         continue;
                     }
 
-                    return Err(crate::error::MantaError::ExternalService {
+                    return Err(crate::error::SyscityError::ExternalService {
                         source: format!("Anthropic streaming request failed: {}", e),
                         cause: Some(Box::new(e)),
                     });

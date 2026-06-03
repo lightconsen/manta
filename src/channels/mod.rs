@@ -1,4 +1,4 @@
-//! Channel abstractions for Manta
+//! Channel abstractions for Syscity
 //!
 //! Channels are communication interfaces through which users interact
 //! with the AI assistant (CLI, Telegram, Discord, Slack, etc.).
@@ -16,7 +16,7 @@ pub mod lifecycle;
 pub mod metrics;
 pub mod state;
 
-/// Channel types supported by Manta
+/// Channel types supported by Syscity
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelType {
@@ -593,22 +593,22 @@ pub trait Channel: Send + Sync {
 
     /// Add a reaction (emoji) to a message.
     async fn add_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
-        Err(crate::MantaError::Unsupported("reactions not supported".into()))
+        Err(crate::SyscityError::Unsupported("reactions not supported".into()))
     }
 
     /// Remove a reaction (emoji) from a message.
     async fn remove_reaction(&self, _message_id: Id, _emoji: String) -> crate::Result<()> {
-        Err(crate::MantaError::Unsupported("reactions not supported".into()))
+        Err(crate::SyscityError::Unsupported("reactions not supported".into()))
     }
 
     /// Pin a message in the conversation.
     async fn pin_message(&self, _message_id: Id) -> crate::Result<()> {
-        Err(crate::MantaError::Unsupported("pin not supported".into()))
+        Err(crate::SyscityError::Unsupported("pin not supported".into()))
     }
 
     /// Unpin a message.
     async fn unpin_message(&self, _message_id: Id) -> crate::Result<()> {
-        Err(crate::MantaError::Unsupported("unpin not supported".into()))
+        Err(crate::SyscityError::Unsupported("unpin not supported".into()))
     }
 
     /// Create a thread from a message.
@@ -617,7 +617,7 @@ pub trait Channel: Send + Sync {
         _message_id: Id,
         _title: Option<String>,
     ) -> crate::Result<ConversationId> {
-        Err(crate::MantaError::Unsupported("threads not supported".into()))
+        Err(crate::SyscityError::Unsupported("threads not supported".into()))
     }
 
     /// Send a poll to a conversation.
@@ -627,7 +627,7 @@ pub trait Channel: Send + Sync {
         _question: String,
         _options: Vec<String>,
     ) -> crate::Result<Id> {
-        Err(crate::MantaError::Unsupported("polls not supported".into()))
+        Err(crate::SyscityError::Unsupported("polls not supported".into()))
     }
 }
 

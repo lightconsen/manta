@@ -1,8 +1,8 @@
 [package]
-name = "manta-channel-sdk"
+name = "syscity-channel-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "SDK for building Manta channel plugins in Rust"
+description = "SDK for building Syscity channel plugins in Rust"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

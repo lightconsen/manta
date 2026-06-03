@@ -1,11 +1,11 @@
-//! Advanced Cron Scheduler for Manta
+//! Advanced Cron Scheduler for Syscity
 //!
 //! Production-grade scheduler supporting AI agent execution, multi-channel delivery,
 //! and enterprise reliability features.
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
@@ -811,7 +811,7 @@ impl CronScheduler {
                 if let Some(ref agent_ref) = *agent_guard {
                     Self::execute_agent(agent_ref, &job, prompt, agent_id.as_deref()).await
                 } else {
-                    Err(MantaError::Internal("No agent configured for cron job".to_string()))
+                    Err(SyscityError::Internal("No agent configured for cron job".to_string()))
                 }
             }
         };
@@ -928,14 +928,14 @@ impl CronScheduler {
             .arg(command)
             .output()
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to execute shell: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to execute shell: {}", e)))?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             Ok(stdout.to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(MantaError::Internal(format!("Shell error: {}", stderr)))
+            Err(SyscityError::Internal(format!("Shell error: {}", stderr)))
         }
     }
 
@@ -982,7 +982,7 @@ impl CronScheduler {
                         message: output.to_string(),
                     })
                     .await
-                    .map_err(|_| MantaError::Internal("Announce channel closed".to_string()))?;
+                    .map_err(|_| SyscityError::Internal("Announce channel closed".to_string()))?;
                 } else {
                     debug!(
                         "No announce_tx configured; output: {}",
@@ -998,7 +998,7 @@ impl CronScheduler {
                     .timeout(Duration::from_secs(30))
                     .build()
                     .map_err(|e| {
-                        MantaError::Internal(format!("Failed to create HTTP client: {}", e))
+                        SyscityError::Internal(format!("Failed to create HTTP client: {}", e))
                     })?;
 
                 const MAX_ATTEMPTS: u32 = 3;
@@ -1044,7 +1044,7 @@ impl CronScheduler {
                     }
                 }
 
-                Err(MantaError::Internal(format!(
+                Err(SyscityError::Internal(format!(
                     "Webhook delivery failed after {} attempts: {}",
                     MAX_ATTEMPTS, last_error
                 )))
@@ -1090,20 +1090,20 @@ impl CronScheduler {
         if let Some(ref path) = store_path {
             let log_path = path.with_extension("runs.jsonl");
             let line = serde_json::to_string(&entry)
-                .map_err(|e| MantaError::Internal(format!("Failed to serialize run log: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to serialize run log: {}", e)))?;
             let mut file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&log_path)
                 .await
-                .map_err(|e| MantaError::Internal(format!("Failed to open run log: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to open run log: {}", e)))?;
             use tokio::io::AsyncWriteExt;
             file.write_all(line.as_bytes())
                 .await
-                .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to write run log: {}", e)))?;
             file.write_all(b"\n")
                 .await
-                .map_err(|e| MantaError::Internal(format!("Failed to write run log: {}", e)))?;
+                .map_err(|e| SyscityError::Internal(format!("Failed to write run log: {}", e)))?;
         }
 
         Ok(())
@@ -1117,10 +1117,10 @@ impl CronScheduler {
 
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to read jobs file: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to read jobs file: {}", e)))?;
 
         let jobs: Vec<CronJob> = serde_json::from_str(&content)
-            .map_err(|e| MantaError::Internal(format!("Failed to parse jobs: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to parse jobs: {}", e)))?;
 
         let mut jobs_lock = self.jobs.write().await;
         for job in jobs {
@@ -1144,7 +1144,7 @@ impl CronScheduler {
         let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
 
         let json = serde_json::to_string_pretty(&jobs_vec)
-            .map_err(|e| MantaError::Internal(format!("Failed to serialize jobs: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to serialize jobs: {}", e)))?;
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
@@ -1153,7 +1153,7 @@ impl CronScheduler {
 
         tokio::fs::write(path, json)
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to write jobs file: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to write jobs file: {}", e)))?;
 
         Ok(())
     }
@@ -1163,7 +1163,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Add(job))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to add job: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to add job: {}", e)))?;
         // Trigger rearm to pick up new job
         self.trigger_rearm();
         Ok(())
@@ -1174,7 +1174,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Remove(job_id.to_string()))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to remove job: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to remove job: {}", e)))?;
         self.trigger_rearm();
         Ok(())
     }
@@ -1184,7 +1184,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::SetEnabled(job_id.to_string(), enabled))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to set job state: {}", e)))?;
+            .map_err(|e| SyscityError::Internal(format!("Failed to set job state: {}", e)))?;
         if enabled {
             self.trigger_rearm();
         }
@@ -1196,7 +1196,7 @@ impl CronScheduler {
         self.command_tx
             .send(CronCommand::Trigger(job_id.to_string()))
             .await
-            .map_err(|e| MantaError::Internal(format!("Failed to trigger job: {}", e)))
+            .map_err(|e| SyscityError::Internal(format!("Failed to trigger job: {}", e)))
     }
 
     /// List all jobs

@@ -78,7 +78,7 @@ impl UsageFetcher for OpenAiUsageFetcher {
         let resp = req
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: format!("OpenAI usage fetch request failed: {}", e),
                 cause: Some(Box::new(e)),
             })?;
@@ -91,7 +91,7 @@ impl UsageFetcher for OpenAiUsageFetcher {
         let body: serde_json::Value =
             resp.json()
                 .await
-                .map_err(|e| crate::error::MantaError::ExternalService {
+                .map_err(|e| crate::error::SyscityError::ExternalService {
                     source: format!("OpenAI usage response invalid: {}", e),
                     cause: Some(Box::new(e)),
                 })?;

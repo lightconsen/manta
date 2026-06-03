@@ -1,4 +1,4 @@
-//! Inbound Pipeline for Manta
+//! Inbound Pipeline for Syscity
 //!
 //! The inbound pipeline is the entry point for all user messages.
 //! It replaces the direct "Channel -> Gateway -> Agent" path with a layered

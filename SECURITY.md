@@ -1,12 +1,12 @@
-# Manta Security Documentation
+# Syscity Security Documentation
 
-This document outlines the security model, known vulnerabilities, and security practices for Manta.
+This document outlines the security model, known vulnerabilities, and security practices for Syscity.
 
 ## Security Model
 
 ### Defense in Depth
 
-Manta implements multiple layers of security:
+Syscity implements multiple layers of security:
 
 1. **Input Validation**: All user inputs are validated through JSON schema
 2. **Sandboxing**: Shell commands run with restricted permissions
@@ -23,8 +23,8 @@ Manta implements multiple layers of security:
 - **Severity**: Medium (5.9)
 - **Issue**: Potential key recovery through timing sidechannels
 - **Status**: No fixed upgrade available (upstream dependency via sqlx-mysql)
-- **Impact**: Manta uses SQLite, not MySQL, so this vulnerability is **not exploitable** in Manta deployments
-- **Mitigation**: We don't use RSA for cryptographic operations in Manta
+- **Impact**: Syscity uses SQLite, not MySQL, so this vulnerability is **not exploitable** in Syscity deployments
+- **Mitigation**: We don't use RSA for cryptographic operations in Syscity
 
 #### 2. SQLx Binary Protocol Issue (RUSTSEC-2024-0363)
 - **Crate**: `sqlx` v0.7.4
@@ -53,7 +53,7 @@ These are transitive dependencies and will be updated when upstream crates relea
 
 #### Path Traversal Protection
 
-Manta's `SecurityValidator` detects and blocks path traversal attempts:
+Syscity's `SecurityValidator` detects and blocks path traversal attempts:
 
 ```rust
 // Blocked patterns:
@@ -125,7 +125,7 @@ tools:
 
 1. **Run as non-root user**
    ```bash
-   useradd -r -s /bin/false manta
+   useradd -r -s /bin/false syscity
    ```
 
 2. **Use read-only filesystem where possible**
@@ -161,7 +161,7 @@ Monitor for:
 
 ## Security Checklist
 
-Before deploying Manta:
+Before deploying Syscity:
 
 - [ ] Changed default API keys
 - [ ] Configured allowlists appropriately

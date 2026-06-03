@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn acp_spawn_tool_executes_without_agent_builder() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool
@@ -21,7 +21,7 @@ async fn acp_spawn_tool_executes_without_agent_builder() {
 
 #[tokio::test]
 async fn acp_session_tool_lists_sessions() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
@@ -39,7 +39,7 @@ async fn acp_session_tool_lists_sessions() {
 #[tokio::test]
 async fn sessions_list_tool_lists_sessions() {
     let store = Arc::new(
-        manta::agent::session_store::SessionStore::new(":memory:")
+        syscity::agent::session_store::SessionStore::new(":memory:")
             .await
             .unwrap(),
     );
@@ -60,12 +60,12 @@ async fn sessions_list_tool_lists_sessions() {
 #[tokio::test]
 async fn sessions_history_tool_returns_history() {
     let store = Arc::new(
-        manta::agent::session_store::SessionStore::new(":memory:")
+        syscity::agent::session_store::SessionStore::new(":memory:")
             .await
             .unwrap(),
     );
     let session_id = "test-session-history";
-    let meta = manta::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
+    let meta = syscity::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
     store.save_session(session_id, &meta, "{}").await.unwrap();
     store
         .append_message(session_id, "user", "Hello", None, None, None, None, None)
@@ -95,7 +95,7 @@ async fn sessions_history_tool_returns_history() {
 
 #[tokio::test]
 async fn sessions_send_tool_fails_for_missing_subagent() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -118,7 +118,7 @@ async fn sessions_send_tool_fails_for_missing_subagent() {
 
 #[tokio::test]
 async fn sessions_yield_tool_fails_for_missing_subagent() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = SessionsYieldTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -132,7 +132,7 @@ async fn sessions_yield_tool_fails_for_missing_subagent() {
 #[tokio::test]
 async fn session_status_tool_requires_id() {
     let store = Arc::new(
-        manta::agent::session_store::SessionStore::new(":memory:")
+        syscity::agent::session_store::SessionStore::new(":memory:")
             .await
             .unwrap(),
     );
@@ -171,7 +171,7 @@ async fn apply_patch_tool_validates_patch() {
 
 #[tokio::test]
 async fn acp_session_invalid_action_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
@@ -183,7 +183,7 @@ async fn acp_session_invalid_action_fails() {
 #[tokio::test]
 async fn sessions_history_empty_session_returns_zero_messages() {
     let store = Arc::new(
-        manta::agent::session_store::SessionStore::new(":memory:")
+        syscity::agent::session_store::SessionStore::new(":memory:")
             .await
             .unwrap(),
     );
@@ -206,7 +206,7 @@ async fn sessions_history_empty_session_returns_zero_messages() {
 
 #[tokio::test]
 async fn sessions_send_missing_args_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"session_id": "x"}), &ctx).await;
@@ -215,7 +215,7 @@ async fn sessions_send_missing_args_fails() {
 
 #[tokio::test]
 async fn sessions_yield_missing_subagent_id_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = SessionsYieldTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({}), &ctx).await;
@@ -228,7 +228,7 @@ async fn sessions_yield_missing_subagent_id_fails() {
 #[tokio::test]
 async fn session_status_not_found_fails() {
     let store = Arc::new(
-        manta::agent::session_store::SessionStore::new(":memory:")
+        syscity::agent::session_store::SessionStore::new(":memory:")
             .await
             .unwrap(),
     );
@@ -284,7 +284,7 @@ async fn apply_patch_missing_patch_fails() {
 
 #[tokio::test]
 async fn acp_spawn_missing_task_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool.execute(json!({"mode": "run"}), &ctx).await;
@@ -301,7 +301,7 @@ async fn acp_spawn_missing_task_fails() {
 
 #[tokio::test]
 async fn acp_spawn_with_timeout_accepted() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool
@@ -320,7 +320,7 @@ async fn acp_spawn_with_timeout_accepted() {
 
 #[tokio::test]
 async fn acp_session_get_nonexistent_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -334,7 +334,7 @@ async fn acp_session_get_nonexistent_fails() {
 
 #[tokio::test]
 async fn acp_session_terminate_nonexistent_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -347,7 +347,7 @@ async fn acp_session_terminate_nonexistent_fails() {
 
 #[tokio::test]
 async fn sessions_send_missing_session_id_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -361,7 +361,7 @@ async fn sessions_send_missing_session_id_fails() {
 
 #[tokio::test]
 async fn acp_session_kill_nonexistent_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -375,7 +375,7 @@ async fn acp_session_kill_nonexistent_fails() {
 
 #[tokio::test]
 async fn acp_session_steer_nonexistent_fails() {
-    let acp = Arc::new(manta::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool

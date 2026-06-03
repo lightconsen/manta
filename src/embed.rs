@@ -1,7 +1,7 @@
 //! Embedded web frontend assets
 //!
 //! Uses rust-embed to compile the built React app (`web/dist/`) into the binary.
-//! This allows distributing Manta as a single executable without requiring
+//! This allows distributing Syscity as a single executable without requiring
 //! the `web/dist/` directory at runtime.
 
 use rust_embed::Embed;

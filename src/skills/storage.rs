@@ -1,9 +1,9 @@
 //! Multi-level skill storage
 //!
 //! Manages skills at multiple levels:
-//! - Bundled: Built-in skills shipped with Manta
-//! - User: Skills in ~/.manta/skills/
-//! - Project: Skills in ./.manta/skills/ (current project)
+//! - Bundled: Built-in skills shipped with Syscity
+//! - User: Skills in ~/.syscity/skills/
+//! - Project: Skills in ./.syscity/skills/ (current project)
 //! - Workspace: Skills in workspace root
 
 use std::collections::HashMap;
@@ -15,12 +15,12 @@ use tracing::{debug, info, warn};
 pub enum StorageLevel {
     /// Built-in skills (highest priority for availability)
     Bundled,
-    /// User-level skills in ~/.manta/skills/
+    /// User-level skills in ~/.syscity/skills/
     #[default]
     User,
     /// Workspace-level skills
     Workspace,
-    /// Project-level skills in ./.manta/skills/ (highest override priority)
+    /// Project-level skills in ./.syscity/skills/ (highest override priority)
     Project,
 }
 
@@ -71,7 +71,7 @@ pub struct SkillStorage {
     bundled_dir: Option<PathBuf>,
     /// User skills directory
     user_dir: PathBuf,
-    /// Project skills directory (./.manta/skills/)
+    /// Project skills directory (./.syscity/skills/)
     project_dir: Option<PathBuf>,
     /// Workspace skills directory
     workspace_dir: Option<PathBuf>,
@@ -103,17 +103,17 @@ impl SkillStorage {
             .filter(|p| p.exists())
     }
 
-    /// Get the user skills directory (~/.manta/skills/)
+    /// Get the user skills directory (~/.syscity/skills/)
     fn user_skills_dir() -> crate::Result<PathBuf> {
-        // Use centralized ~/.manta/skills directory
+        // Use centralized ~/.syscity/skills directory
         Ok(crate::dirs::skills_dir())
     }
 
-    /// Get the project skills directory (./.manta/skills/)
+    /// Get the project skills directory (./.syscity/skills/)
     fn project_skills_dir() -> Option<PathBuf> {
         std::env::current_dir()
             .ok()
-            .map(|cwd| cwd.join(".manta").join("skills"))
+            .map(|cwd| cwd.join(".syscity").join("skills"))
             .filter(|p| p.exists())
     }
 
@@ -125,12 +125,12 @@ impl SkillStorage {
 
         loop {
             // Check for workspace markers
-            let markers = [".manta-workspace", ".git", "manta.workspace.toml"];
+            let markers = [".syscity-workspace", ".git", "syscity.workspace.toml"];
             for marker in &markers {
                 if current.join(marker).exists() {
-                    let workspace_skills = current.join(".manta").join("skills");
+                    let workspace_skills = current.join(".syscity").join("skills");
                     if workspace_skills.exists()
-                        && workspace_skills != cwd.join(".manta").join("skills")
+                        && workspace_skills != cwd.join(".syscity").join("skills")
                     {
                         return Some(workspace_skills);
                     }
@@ -151,20 +151,20 @@ impl SkillStorage {
     pub async fn ensure_user_dir(&self) -> crate::Result<()> {
         tokio::fs::create_dir_all(&self.user_dir)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
         Ok(())
     }
 
     /// Ensure project skills directory exists
     pub async fn ensure_project_dir(&self) -> crate::Result<PathBuf> {
         let dir = std::env::current_dir()
-            .map_err(crate::error::MantaError::Io)?
-            .join(".manta")
+            .map_err(crate::error::SyscityError::Io)?
+            .join(".syscity")
             .join("skills");
 
         tokio::fs::create_dir_all(&dir)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         Ok(dir)
     }
@@ -276,7 +276,7 @@ impl SkillStorage {
         if dest.exists() {
             tokio::fs::remove_dir_all(&dest)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
         }
 
         // Copy directory
@@ -291,14 +291,14 @@ impl SkillStorage {
         let path = self.user_dir.join(name);
 
         if !path.exists() {
-            return Err(crate::error::MantaError::NotFound {
+            return Err(crate::error::SyscityError::NotFound {
                 resource: format!("Skill '{}' not found at {:?}", name, path),
             });
         }
 
         tokio::fs::remove_dir_all(&path)
             .await
-            .map_err(crate::error::MantaError::Io)?;
+            .map_err(crate::error::SyscityError::Io)?;
 
         info!("Uninstalled skill '{}' from {:?}", name, path);
         Ok(())
@@ -401,11 +401,11 @@ impl Default for SkillStorage {
 async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
     tokio::fs::create_dir_all(dst)
         .await
-        .map_err(crate::error::MantaError::Io)?;
+        .map_err(crate::error::SyscityError::Io)?;
 
     let mut entries = tokio::fs::read_dir(src)
         .await
-        .map_err(crate::error::MantaError::Io)?;
+        .map_err(crate::error::SyscityError::Io)?;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let src_path = entry.path();
@@ -416,21 +416,21 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
         } else {
             tokio::fs::copy(&src_path, &dst_path)
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
         }
     }
 
     Ok(())
 }
 
-/// Find the project root (directory containing .manta/)
+/// Find the project root (directory containing .syscity/)
 #[allow(dead_code)]
 pub fn find_project_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let mut current = cwd.as_path();
 
     loop {
-        if current.join(".manta").is_dir() {
+        if current.join(".syscity").is_dir() {
             return Some(current.to_path_buf());
         }
 
@@ -451,7 +451,7 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 
     loop {
         // Check for workspace markers
-        let markers = [".manta-workspace", ".git", "manta.workspace.toml"];
+        let markers = [".syscity-workspace", ".git", "syscity.workspace.toml"];
         for marker in &markers {
             if current.join(marker).exists() {
                 return Some(current.to_path_buf());
@@ -527,7 +527,7 @@ mod tests {
         let dir = SkillStorage::user_skills_dir();
         assert!(dir.is_ok());
         let dir = dir.unwrap();
-        assert!(dir.to_string_lossy().contains("manta"));
+        assert!(dir.to_string_lossy().contains("syscity"));
         assert!(dir.to_string_lossy().contains("skills"));
     }
 
@@ -692,8 +692,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let temp_path = temp.path().canonicalize().unwrap();
 
-        let manta_skills = temp_path.join(".manta").join("skills");
-        std::fs::create_dir_all(&manta_skills).unwrap();
+        let syscity_skills = temp_path.join(".syscity").join("skills");
+        std::fs::create_dir_all(&syscity_skills).unwrap();
         std::env::set_current_dir(&temp_path).unwrap();
 
         let mut storage = SkillStorage {
@@ -704,7 +704,7 @@ mod tests {
         };
 
         storage.refresh();
-        assert_eq!(storage.project_dir, Some(manta_skills));
+        assert_eq!(storage.project_dir, Some(syscity_skills));
     }
 
     #[tokio::test]
@@ -738,8 +738,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let temp_path = temp.path().canonicalize().unwrap();
 
-        let manta_dir = temp_path.join(".manta");
-        std::fs::create_dir_all(&manta_dir).unwrap();
+        let syscity_dir = temp_path.join(".syscity");
+        std::fs::create_dir_all(&syscity_dir).unwrap();
         std::env::set_current_dir(&temp_path).unwrap();
 
         let root = find_project_root();
@@ -775,7 +775,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let temp_path = temp.path().canonicalize().unwrap();
 
-        std::fs::write(temp_path.join("manta.workspace.toml"), "").unwrap();
+        std::fs::write(temp_path.join("syscity.workspace.toml"), "").unwrap();
         std::env::set_current_dir(&temp_path).unwrap();
 
         let root = find_workspace_root();
@@ -827,7 +827,7 @@ mod tests {
 
         let dir = storage.ensure_project_dir().await.unwrap();
         assert!(dir.exists());
-        assert!(dir.to_string_lossy().contains(".manta"));
+        assert!(dir.to_string_lossy().contains(".syscity"));
         assert!(dir.to_string_lossy().contains("skills"));
     }
 

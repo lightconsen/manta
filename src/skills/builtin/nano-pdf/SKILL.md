@@ -2,7 +2,7 @@
 name: nano-pdf
 description: "Read, extract text, and analyze PDF documents"
 version: "1.0.0"
-author: "manta"
+author: "syscity"
 triggers:
   - type: command
     pattern: "pdf"

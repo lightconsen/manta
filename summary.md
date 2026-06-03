@@ -1,12 +1,12 @@
-# Manta vs OpenClaw — 差距分析报告
+# Syscity vs OpenClaw — 差距分析报告
 
-> 本文档对比 Manta（Rust 实现，约 83.6K LOC）与其参考原型 OpenClaw（TypeScript 实现，约 750K+ TypeScript LOC + 142K Swift/Kotlin）。
+> 本文档对比 Syscity（Rust 实现，约 83.6K LOC）与其参考原型 OpenClaw（TypeScript 实现，约 750K+ TypeScript LOC + 142K Swift/Kotlin）。
 
 ---
 
 ## 一、项目规模与工程成熟度
 
-| 维度 | OpenClaw | Manta | 差距 |
+| 维度 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
 | **总代码量** | ~750K TS + 111K Swift + 31K Kotlin ≈ **892K LOC** | ~83.6K Rust ≈ **84K LOC** | **10.6x** |
 | **模块/扩展数** | 126 个 extensions + 50+ src 子模块 | 35 个 pub mod（无 extensions） | OpenClaw 模块数 ≈ **4–5x** |
@@ -16,13 +16,13 @@
 | **原生客户端** | macOS menu-bar、iOS preview、Android preview | 无 | 仅有 CLI 入口 |
 | **Web UI** | Vite + Lit SPA，实时 WebSocket（~94K LOC） | SSE 占位符 + 未实装前端面板 | 差一个完整产品 |
 
-**关键结论**：Manta 在代码量上是 OpenClaw 的 **~1/10**，模块数为 **~1/4**，测试覆盖为 **~1/9**。这不是"Rust 更紧凑"能解释的——OpenClaw 的 channel 扩展（仅 Discord 就 72K LOC）单一个扩展就接近整个 Manta。
+**关键结论**：Syscity 在代码量上是 OpenClaw 的 **~1/10**，模块数为 **~1/4**，测试覆盖为 **~1/9**。这不是"Rust 更紧凑"能解释的——OpenClaw 的 channel 扩展（仅 Discord 就 72K LOC）单一个扩展就接近整个 Syscity。
 
 ---
 
 ## 二、Channel（消息通道）对比
 
-| Channel | OpenClaw | Manta | 差距 |
+| Channel | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
 | Telegram | ✅ 完整（70K LOC） | ✅ 完整 | 平齐 |
 | Discord | ✅ 完整（72K LOC） | ✅ 完整 | 平齐 |
@@ -45,13 +45,13 @@
 | 网页/WebChat | ✅ 内置 | ❌ 无 | 缺失 |
 | **Voice Call** | ✅ 独立扩展 | ❌ 无 | 缺失 |
 
-**差距量化**：OpenClaw 支持 **26+** 通道，全部双向；Manta 仅 **6** 个通道声明支持，其中仅 **2** 个双向，其余 4 个有 outbound 无 inbound。Manta 的 Slack/WhatsApp/QQ/Lark 入站缺失意味着用户在这些平台发消息给 bot，bot **不会收到**。
+**差距量化**：OpenClaw 支持 **26+** 通道，全部双向；Syscity 仅 **6** 个通道声明支持，其中仅 **2** 个双向，其余 4 个有 outbound 无 inbound。Syscity 的 Slack/WhatsApp/QQ/Lark 入站缺失意味着用户在这些平台发消息给 bot，bot **不会收到**。
 
 ---
 
 ## 三、LLM Provider 对比
 
-| Provider | OpenClaw | Manta | 差距 |
+| Provider | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
 | OpenAI | ✅ | ✅ | 平齐 |
 | Anthropic (Claude) | ✅ | ✅ | 平齐 |
@@ -76,46 +76,46 @@
 | **模型路由 + 熔断器** | 有 | 有 | 平齐 |
 | **Provider 插件化** | 126 个 extensions 动态加载 | 硬编码在 core | 差距巨大 |
 
-**差距量化**：OpenClaw 支持 **40+** provider；Manta 仅 **2** 个（OpenAI + Anthropic）。Manta 虽有 fallback 链和 model_router，但 router 中声明的 Azure/Ollama/Custom 变体在 `create_provider` 中直接返回 `InvalidValue` 错误（未实现）。
+**差距量化**：OpenClaw 支持 **40+** provider；Syscity 仅 **2** 个（OpenAI + Anthropic）。Syscity 虽有 fallback 链和 model_router，但 router 中声明的 Azure/Ollama/Custom 变体在 `create_provider` 中直接返回 `InvalidValue` 错误（未实现）。
 
 ---
 
 ## 四、Memory 系统对比
 
-| 能力 | OpenClaw | Manta | 差距 |
+| 能力 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
-| **SQLite + BM25 + Vector Hybrid** | ✅ memory-core（42K LOC） | ✅ `memory/db.rs` + `hybrid.rs` | 平齐（Manta 实现正确） |
+| **SQLite + BM25 + Vector Hybrid** | ✅ memory-core（42K LOC） | ✅ `memory/db.rs` + `hybrid.rs` | 平齐（Syscity 实现正确） |
 | **FTS5** | 通过 memory-core | ✅ `session_search.rs` | 平齐 |
 | **LanceDB 后端** | ✅ memory-lancedb | ❌ 无 | 缺失 |
 | **Wiki/Obsidian 同步** | ✅ memory-wiki（13K LOC） | ❌ 无 | 缺失 |
 | ** dreaming / 记忆巩固** | ✅ Light/Deep/REM 阶段 + Dream Diary | ❌ 无 | 缺失 |
 | **QMD sidecar（本地优先搜索）** | ✅ 可选升级路径 | ❌ 无 | 缺失 |
-| **Embedding 提供商** | OpenAI, Gemini, Voyage, Mistral, Ollama, local (node-llama-cpp) | OpenAI API + `llama-cpp-2` GGUF（feature-gated） | Manta embedding 选择少 |
+| **Embedding 提供商** | OpenAI, Gemini, Voyage, Mistral, Ollama, local (node-llama-cpp) | OpenAI API + `llama-cpp-2` GGUF（feature-gated） | Syscity embedding 选择少 |
 | **MEMORY.md / 人格记忆** | ✅ 完整加载 | ✅ `personality.rs` | 平齐 |
 | **Workspace state** | ✅ | ✅ `workspace_state.rs` | 平齐 |
 | **Memory flush / compaction** | ✅ | ✅ `flush.rs` + `compaction.rs` | 平齐 |
 | **Temporal decay + MMR** | ✅ | ✅ `hybrid.rs` | 平齐 |
-| **实际 hybrid 检索** | ✅ 真实融合 | ⚠️ `MemorySearchTool` 降级为 LIKE | **Manta 有实现缺陷** |
+| **实际 hybrid 检索** | ✅ 真实融合 | ⚠️ `MemorySearchTool` 降级为 LIKE | **Syscity 有实现缺陷** |
 
-**差距量化**：核心 SQLite hybrid 搜索两者都实现了，但 OpenClaw 有 **3 个可选后端** + **dreaming** + **Wiki 同步**，Manta 只有单一 SQLite 路径，且 `MemorySearchTool` 未真正调用 hybrid 路径。Manta 的 `local-embeddings` 仅支持 embedding（没有本地 GGUF 对话推理）。
+**差距量化**：核心 SQLite hybrid 搜索两者都实现了，但 OpenClaw 有 **3 个可选后端** + **dreaming** + **Wiki 同步**，Syscity 只有单一 SQLite 路径，且 `MemorySearchTool` 未真正调用 hybrid 路径。Syscity 的 `local-embeddings` 仅支持 embedding（没有本地 GGUF 对话推理）。
 
 ---
 
 ## 五、Agent / Tool / Skill 系统对比
 
-| 能力 | OpenClaw | Manta | 差距 |
+| 能力 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
 | **Agent runtime** | pi-agent-core 嵌入（384K LOC） | `agent/mod.rs` + 13 子模块 | OpenClaw 更成熟 |
-| **Multi-agent routing** | ✅ 多 agent + 隔离 workspace | ⚠️ `session.rs` 仅置 busy，不实际路由 | **Manta 未实现** |
-| **Tool harness + sandbox** | ✅ Docker-based 可选 | ⚠️ `libc::setrlimit` 已移除，cgroups 未替代 | **Manta sandbox 弱** |
+| **Multi-agent routing** | ✅ 多 agent + 隔离 workspace | ⚠️ `session.rs` 仅置 busy，不实际路由 | **Syscity 未实现** |
+| **Tool harness + sandbox** | ✅ Docker-based 可选 | ⚠️ `libc::setrlimit` 已移除，cgroups 未替代 | **Syscity sandbox 弱** |
 | **Approval gate / 审批队列** | ✅ 有 | ✅ `approval.rs` | 平齐 |
-| **Skill 生态 (ClawHub)** | ✅ 53 built-in + ClawHub 公共注册表 | ✅ 13 built-in skills + OpenClaw frontmatter 兼容 | Manta 数量少 |
-| **Skill 安装方式** | npm/git/ClawHub | brew/npm/uv/go/cargo/shell/download | 平齐（Manta 甚至更多安装器） |
+| **Skill 生态 (ClawHub)** | ✅ 53 built-in + ClawHub 公共注册表 | ✅ 13 built-in skills + OpenClaw frontmatter 兼容 | Syscity 数量少 |
+| **Skill 安装方式** | npm/git/ClawHub | brew/npm/uv/go/cargo/shell/download | 平齐（Syscity 甚至更多安装器） |
 | **Skill workshop** | ✅ 捕获可重复工作流 | ❌ 无 | 缺失 |
 | **Plugin SDK** | ✅ `plugin-sdk` + `memory-host-sdk` | ❌ 无正式 SDK | 缺失 |
-| **Plugin 扩展化** | ✅ 126 个 extensions 动态加载 | ⚠️ `plugins/mod.rs` + `extensions/plugin_host.rs` (WASM) | Manta 有 WASM 但无生态 |
+| **Plugin 扩展化** | ✅ 126 个 extensions 动态加载 | ⚠️ `plugins/mod.rs` + `extensions/plugin_host.rs` (WASM) | Syscity 有 WASM 但无生态 |
 | **Browser automation** | ✅ Playwright/CDP + profiles + tabs（~24K LOC） | ⚠️ `chromiumoxide` 可选，基础 action | OpenClaw 远更完整 |
-| **Code execution** | ✅ sandboxed Docker | ⚠️ Python-only，无内存限制 | **Manta 隔离不足** |
+| **Code execution** | ✅ sandboxed Docker | ⚠️ Python-only，无内存限制 | **Syscity 隔离不足** |
 | **Web search** | ✅ DuckDuckGo + SearXNG + Perplexity + Brave | ⚠️ DuckDuckGo HTML scrape（易碎） | OpenClaw 选择多 |
 | **Web fetch** | ✅ | ✅ | 平齐 |
 | **File read/write/edit** | ✅ | ✅ | 平齐 |
@@ -131,21 +131,21 @@
 | **Trajectory recording** | ✅ 诊断/审计轨迹导出 | ❌ 无 | 缺失 |
 | **Standing orders** | ✅ 永久自主程序 | ❌ 无 | 缺失 |
 
-**差距量化**：OpenClaw 的工具生态是 **插件化 + 多后端** 的；Manta 将许多功能硬编码在 core 中，没有插件注册表。Manta 的浏览器自动化、代码执行、web 搜索都处于 MVP 级别。Voice、媒体生成、Lobster flow runtime 完全缺失。
+**差距量化**：OpenClaw 的工具生态是 **插件化 + 多后端** 的；Syscity 将许多功能硬编码在 core 中，没有插件注册表。Syscity 的浏览器自动化、代码执行、web 搜索都处于 MVP 级别。Voice、媒体生成、Lobster flow runtime 完全缺失。
 
 ---
 
 ## 六、Security / Auth 对比
 
-| 能力 | OpenClaw | Manta | 差距 |
+| 能力 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
-| **Audit engine** | ✅ 50+ checkId，`security audit` CLI | ⚠️ `audit.rs` 硬编码报告 | **Manta 审计是桩** |
-| **Pentest** | ✅ 动态探测 | ⚠️ `pentest.rs` 两个测试恒过 | **Manta 渗透测试是桩** |
-| **Secret scanning** | ✅ 多模式，低误报 | ⚠️ `SecretScanner::contains_secrets` 返回反了 | **Manta 有 bug** |
-| **Rate limiting** | ✅ Token bucket + sliding window | ⚠️ SlidingWindow `Default` 无限递归 | **Manta 有 bug** |
-| **Webhook 签名验证** | ✅ HMAC-SHA256，常量时间比较 | ⚠️ 签名头缺失时 fail-open，`==` 比较 | **Manta 有安全漏洞** |
-| **WhatsApp 验签** | ✅ 正确 | ❌ 用 access_token 而非 app_secret，重序列化 body | **Manta 永远验签失败** |
-| **Pairing / DM policy** | ✅ 完整（challenge/response + allowlist） | ✅ `pairing.rs` + `Allowlist` | 平齐（Manta 功能对） |
+| **Audit engine** | ✅ 50+ checkId，`security audit` CLI | ⚠️ `audit.rs` 硬编码报告 | **Syscity 审计是桩** |
+| **Pentest** | ✅ 动态探测 | ⚠️ `pentest.rs` 两个测试恒过 | **Syscity 渗透测试是桩** |
+| **Secret scanning** | ✅ 多模式，低误报 | ⚠️ `SecretScanner::contains_secrets` 返回反了 | **Syscity 有 bug** |
+| **Rate limiting** | ✅ Token bucket + sliding window | ⚠️ SlidingWindow `Default` 无限递归 | **Syscity 有 bug** |
+| **Webhook 签名验证** | ✅ HMAC-SHA256，常量时间比较 | ⚠️ 签名头缺失时 fail-open，`==` 比较 | **Syscity 有安全漏洞** |
+| **WhatsApp 验签** | ✅ 正确 | ❌ 用 access_token 而非 app_secret，重序列化 body | **Syscity 永远验签失败** |
+| **Pairing / DM policy** | ✅ 完整（challenge/response + allowlist） | ✅ `pairing.rs` + `Allowlist` | 平齐（Syscity 功能对） |
 | **Device fingerprinting** | ✅ | ✅ `fingerprint.rs` | 平齐 |
 | **Security headers** | ✅ | ✅ `headers.rs` | 平齐 |
 | **Auth profiles** | ✅ per-agent `auth-profiles.json` | ❌ 全局单一 | 缺失 |
@@ -155,19 +155,19 @@
 | **MITRE ATLAS threat model** | ✅ 文档化 | ❌ 无 | 缺失 |
 | **Docker sandbox** | ✅ 可选 | ❌ 无 | 缺失 |
 
-**差距量化**：OpenClaw 的安全体系是 **可运行的生产级**；Manta 的安全模块有 **4 个高危 bug**（递归、逻辑反、fail-open、验签密钥错）+ **多个恒过桩**。Manta 的 pentest 和 audit 目前只能出"看起来有报告"的幻觉，没有实际探测能力。
+**差距量化**：OpenClaw 的安全体系是 **可运行的生产级**；Syscity 的安全模块有 **4 个高危 bug**（递归、逻辑反、fail-open、验签密钥错）+ **多个恒过桩**。Syscity 的 pentest 和 audit 目前只能出"看起来有报告"的幻觉，没有实际探测能力。
 
 ---
 
 ## 七、Gateway / Server 对比
 
-| 能力 | OpenClaw | Manta | 差距 |
+| 能力 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
-| **Gateway 结构** | 737 文件，~187K LOC，高度模块化 | 4 文件 + `mod.rs`（7268 行单文件） | **Manta 严重 overdue 拆分** |
+| **Gateway 结构** | 737 文件，~187K LOC，高度模块化 | 4 文件 + `mod.rs`（7268 行单文件） | **Syscity 严重 overdue 拆分** |
 | **WebSocket server** | ✅ 核心通信方式 | ✅ `server/mod.rs` + `gateway` | 平齐 |
 | **HTTP API / REST** | ✅ 完整 RPC 方法集 | ✅ 基本 CRUD | OpenClaw 更全 |
 | **OpenAI-compatible API** | ✅ `/v1/chat/completions` | ✅ `/v1/chat/completions` | 平齐 |
-| **SSE streaming** | ✅ | ⚠️ 占位符 | **Manta 未实装** |
+| **SSE streaming** | ✅ | ⚠️ 占位符 | **Syscity 未实装** |
 | **Control UI (Web)** | ✅ Vite + Lit SPA（~94K LOC） | ❌ 无前端面板 | 缺失 |
 | **TUI** | ✅ `crestodian/` + `tui/` | ❌ 无 | 缺失 |
 | **Native companion apps** | ✅ macOS/iOS/Android | ❌ 无 | 缺失 |
@@ -175,7 +175,7 @@
 | **Send policy engine** | ✅ 完整规则引擎 + glob | ✅ `send_policy.rs` | 平齐 |
 | **Middleware 栈** | ✅ auth + rate limit + tailscale + security headers | ✅ 同左 | 平齐 |
 | **Cron announce → SSE** | ✅ | ✅ | 平齐 |
-| **MCP server surface** | ✅ `openclaw mcp serve` + bridge | ⚠️ `mcp.rs` 仅 client | **Manta 缺 MCP server** |
+| **MCP server surface** | ✅ `openclaw mcp serve` + bridge | ⚠️ `mcp.rs` 仅 client | **Syscity 缺 MCP server** |
 | **ACP bridge (IDE)** | ✅ `openclaw acp` stdio bridge | ❌ 无 | 缺失 |
 | **ACPX** | ✅ 嵌入式 ACP runtime backend | ❌ 无 | 缺失 |
 | **Wizard / Onboard** | ✅ `openclaw onboard` 交互式引导 | ❌ 无 | 缺失 |
@@ -183,21 +183,21 @@
 | **Device pairing** | ✅ 首次连接配对 | ❌ 无 | 缺失 |
 | **Realtime voice relay** | ✅ voiceclaw-realtime | ❌ 无 | 缺失 |
 
-**差距量化**：Manta 的 gateway 是一个 **7K 行单文件**，而 OpenClaw 的 gateway 是 **737 文件、187K LOC** 的模块化控制平面。Manta 缺少 Web UI、TUI、原生应用、IDE 桥接、MCP server 表面、向导流程——这些都是"产品化"层面而非"工程化"层面的差距。
+**差距量化**：Syscity 的 gateway 是一个 **7K 行单文件**，而 OpenClaw 的 gateway 是 **737 文件、187K LOC** 的模块化控制平面。Syscity 缺少 Web UI、TUI、原生应用、IDE 桥接、MCP server 表面、向导流程——这些都是"产品化"层面而非"工程化"层面的差距。
 
 ---
 
 ## 八、CLI 对比
 
-| 能力 | OpenClaw | Manta | 差距 |
+| 能力 | OpenClaw | Syscity | 差距 |
 |---|---|---|---|
 | **命令数量** | ~30+ 子命令 | ~22 个子命令 | 接近 |
 | **Onboard / Wizard** | ✅ 交互式首次配置 | ❌ 无 | 缺失 |
 | **Doctor / 诊断** | ✅ `openclaw doctor` | ❌ 无 | 缺失 |
 | **Security audit CLI** | ✅ 50+ checks + `--fix` | ✅ 有但底层是桩 | 表面平齐 |
-| **MCP CLI** | ✅ `mcp serve` / `mcp bridge` | ✅ `mcp` list/connect/call | Manta 缺 serve |
+| **MCP CLI** | ✅ `mcp serve` / `mcp bridge` | ✅ `mcp` list/connect/call | Syscity 缺 serve |
 | **Chat REPL** | ✅ | ✅ | 平齐 |
-| **Web 终端** | ✅ 内置 WebSocket 聊天 | ⚠️ `run_web` 仅打印说明 | **Manta 是桩** |
+| **Web 终端** | ✅ 内置 WebSocket 聊天 | ⚠️ `run_web` 仅打印说明 | **Syscity 是桩** |
 | **Log tail** | ✅ | ✅ | 平齐 |
 | **Daemon 管理** | ✅ | ✅ | 平齐 |
 | **Export** | ✅ conversations/memories | ✅ conversations/memories/all | 平齐 |
@@ -206,9 +206,9 @@
 
 ## 九、缺失的核心产品特性
 
-以下特性在 OpenClaw 中存在，在 Manta 中 **完全缺失**（无任何代码或桩）：
+以下特性在 OpenClaw 中存在，在 Syscity 中 **完全缺失**（无任何代码或桩）：
 
-| 特性 | OpenClaw 中的形态 | Manta 状态 |
+| 特性 | OpenClaw 中的形态 | Syscity 状态 |
 |---|---|---|
 | **Native companion apps** | macOS menu-bar、iOS、Android | 无 |
 | **Web UI / Control UI** | Vite + Lit SPA (~94K LOC) | 无 |
@@ -238,13 +238,13 @@
 
 ---
 
-## 十、Manta 做得好的地方（相对优势）
+## 十、Syscity 做得好的地方（相对优势）
 
-尽管差距巨大，Manta 在以下方面做得不错：
+尽管差距巨大，Syscity 在以下方面做得不错：
 
 1. **Rust 工程规范**：`cargo fmt` / `cargo clippy` 干净，0 编译错误，23 条仅为 dead-code 警告。OpenClaw 的 TypeScript 代码量虽然大，但维护成本也高。
 2. **紧凑的核心实现**：83.6K LOC 覆盖了 OpenClaw 最核心的 20% 功能（Telegram/Discord、OpenAI/Anthropic、SQLite hybrid memory、基本工具集、Gateway、Cron）。
-3. **WASM 插件 host**：OpenClaw 的插件是 npm/TypeScript 扩展；Manta 尝试了 WASM (wasmtime) 插件，安全边界更硬。虽然无生态，但技术选型合理。
+3. **WASM 插件 host**：OpenClaw 的插件是 npm/TypeScript 扩展；Syscity 尝试了 WASM (wasmtime) 插件，安全边界更硬。虽然无生态，但技术选型合理。
 4. **Skill 安装器多样**：brew/npm/uv/go/cargo/shell/download 七种方式，甚至超过了 OpenClaw 的技能安装路径。
 5. **Memory hybrid search 实现正确**：`memory/hybrid.rs` 的 BM25+vector 融合、temporal decay、MMR reranking 与 OpenClaw memory-core 的算法对齐，且有 ~20 个测试覆盖。
 6. **Gateway 基本功能齐全**：虽然单文件 7K 行是债务，但 Axum 路由、中间件、WS handler、OpenAI-compatible API、webhook router、self-repair loop 都已存在。
@@ -255,7 +255,7 @@
 
 ## 十一、综合差距评估
 
-| 维度 | OpenClaw 成熟度 | Manta 成熟度 | 差距级别 |
+| 维度 | OpenClaw 成熟度 | Syscity 成熟度 | 差距级别 |
 |---|---|---|---|
 | **架构 / 模块化** | ⭐⭐⭐⭐⭐ 高度插件化 | ⭐⭐⭐ 单 crate + 硬编码 | **大** |
 | **Channel 覆盖** | ⭐⭐⭐⭐⭐ 26+ 双向 | ⭐⭐ 6 个，仅 2 双向 | **巨大** |
@@ -272,9 +272,9 @@
 
 ### 一句话总结
 
-> **Manta 是 OpenClaw 的约 10% 体积、20% 功能、50% 核心骨架的 Rust 复刻。**
+> **Syscity 是 OpenClaw 的约 10% 体积、20% 功能、50% 核心骨架的 Rust 复刻。**
 >
-> Manta 已经搭好了最核心的一条路径（Telegram/Discord → Agent → OpenAI/Anthropic → SQLite Memory → Tools），但缺少 OpenClaw 赖以成为"产品"的一切外围：20+ 通道、40+ provider、原生客户端、Web UI、Voice、媒体生成、安全审计、插件生态、IDE 桥接。如果要让 Manta 达到 OpenClaw 的生产可用水平，至少需要 **再补充 200–300K LOC**（主要是通道扩展、provider 扩展、前端、测试、文档），并修复现有的 4 个高危安全 bug 和多个 inbound 缺失问题。
+> Syscity 已经搭好了最核心的一条路径（Telegram/Discord → Agent → OpenAI/Anthropic → SQLite Memory → Tools），但缺少 OpenClaw 赖以成为"产品"的一切外围：20+ 通道、40+ provider、原生客户端、Web UI、Voice、媒体生成、安全审计、插件生态、IDE 桥接。如果要让 Syscity 达到 OpenClaw 的生产可用水平，至少需要 **再补充 200–300K LOC**（主要是通道扩展、provider 扩展、前端、测试、文档），并修复现有的 4 个高危安全 bug 和多个 inbound 缺失问题。
 
 ---
 
@@ -298,13 +298,13 @@
 | 0.6 | **补齐 4 个通道的 inbound** | 3–5 天 | Slack Socket Mode、WhatsApp Cloud webhook、QQ WebSocket Gateway、Lark webhook 事件订阅接入 `message_tx` |
 | 0.7 | **拆分 `gateway/mod.rs`** | 2–3 天 | 拆为 `handlers/`、`channels/`、`admin/`、`webhooks/`、`middleware/` 等子模块；单文件 < 1K 行 |
 
-**预期产出**：Manta 从"演示可用"升级到"诚实可用"；编译 0 警告；plan.md 反映真实进度。
+**预期产出**：Syscity 从"演示可用"升级到"诚实可用"；编译 0 警告；plan.md 反映真实进度。
 
 ---
 
 ### Phase 1：Core Expansion（3–8 周）— 补齐核心骨架
 
-**目标**：让 Manta 成为可用的多通道、多 provider、多 agent 产品基础，而非单一路径 demo。
+**目标**：让 Syscity 成为可用的多通道、多 provider、多 agent 产品基础，而非单一路径 demo。
 
 #### 1.1 Provider 扩展（~3 周）
 
@@ -335,7 +335,7 @@
 
 | 任务 | 说明 |
 |---|---|
-| **MCP Server** | 实现 `manta mcp serve`（stdio + SSE），暴露 tools/memory/chat 到 MCP client |
+| **MCP Server** | 实现 `syscity mcp serve`（stdio + SSE），暴露 tools/memory/chat 到 MCP client |
 | **ACP 桥接** | 参考 OpenClaw `openclaw acp`，实现 stdio ACP 桥，映射到 Gateway WebSocket |
 
 #### 1.4 安全审计做实（~1 周）
@@ -346,7 +346,7 @@
 | **Pentest 动态化** | `AuthenticationTest` / `DataExposureTest` 接入真实 HTTP 探测（参考 OpenClaw `ConfigurationTest`） |
 | **Docker sandbox 可选** | 为 `code_exec.rs` / `browser.rs` 提供 Docker 隔离路径（feature-gated） |
 
-**预期产出**：Manta 支持 **8–10 个 provider**、**8–10 个双向 channel**、MCP serve、ACP 桥接；安全审计可运行。
+**预期产出**：Syscity 支持 **8–10 个 provider**、**8–10 个双向 channel**、MCP serve、ACP 桥接；安全审计可运行。
 
 ---
 
@@ -393,7 +393,7 @@
 | 任务 | 说明 |
 |---|---|
 | **Plugin SDK 发布** | 定义插件 manifest schema、API 契约、发布 npm crate / Rust crate |
-| **Plugin registry (ClawHub-lite)** | 简单的 JSON registry，支持 `manta plugin search` / `install` |
+| **Plugin registry (ClawHub-lite)** | 简单的 JSON registry，支持 `syscity plugin search` / `install` |
 | **Bundle-style plugins** | 支持 skill + MCP server + config 打包安装 |
 
 #### 2.6 原生客户端（~6 周，可与前端并行）
@@ -403,7 +403,7 @@
 | **macOS menu-bar** | Swift / Tauri 最小化 wrapper，连接本地 Gateway |
 | **iOS / Android** | 共享 Swift/Kotlin 代码，作为 Gateway 的 "node" |
 
-**预期产出**：Manta 有 Web UI、Voice、Image Gen、Wiki 同步、插件市场；达到 OpenClaw **60–70%** 功能覆盖。
+**预期产出**：Syscity 有 Web UI、Voice、Image Gen、Wiki 同步、插件市场；达到 OpenClaw **60–70%** 功能覆盖。
 
 ---
 
@@ -415,7 +415,7 @@
 |---|---|---|
 | **Channel 补全** | Signal、Zalo、Twitch、Nostr、LINE 等长尾通道 | 每个 1–2 周 |
 | **Provider 补全** | 剩余 20+ niche provider | 每个 2–3 天 |
-| **TUI** | `manta tui` 终端界面（参考 OpenClaw `crestodian`） | ~2 周 |
+| **TUI** | `syscity tui` 终端界面（参考 OpenClaw `crestodian`） | ~2 周 |
 | **Trajectory / 诊断** | 会话轨迹导出、redaction、审计 | ~1 周 |
 | **Standing orders** | 永久自主程序配置 | ~2 周 |
 | **Lobster-like flow** | 可恢复审批工作流运行时 | ~3 周 |
@@ -423,7 +423,7 @@
 | **文档 / 生态** | 50+ docs、教程、示例项目 | 持续进行 |
 | **测试补全** | 端到端集成测试、契约测试、load test | 持续进行 |
 
-**预期产出**：Manta 功能覆盖达到 OpenClaw **85–90%**；剩余差距主要在社区生态规模（ClawHub 已有大量第三方插件）。
+**预期产出**：Syscity 功能覆盖达到 OpenClaw **85–90%**；剩余差距主要在社区生态规模（ClawHub 已有大量第三方插件）。
 
 ---
 
@@ -443,18 +443,18 @@
 2. **Channel 优先级**：企业用户先 Teams/Slack；个人用户先 Signal/WebChat；中文市场先 QQ/微信（若可行）。
 3. **Provider 优先级**：Ollama（本地）和 Google（企业）是 P0；DeepSeek 是中文社区 P1。
 4. **安全先行**：Phase 0 的 4 个高危 bug **必须在任何 public release 前修复**。
-5. **不要重写**：OpenClaw 的 892K LOC 是 2–3 年的积累；Manta 不应追求 1:1 复刻，而应追求**核心路径更优**（Rust 性能、内存安全、WASM 插件边界）。
-6. **插件化是核心差异**：OpenClaw 的核心竞争力是 126 个 extensions 的生态系统。Manta 的 Phase 2 必须尽早发布 Plugin SDK，让第三方填补长尾需求。
+5. **不要重写**：OpenClaw 的 892K LOC 是 2–3 年的积累；Syscity 不应追求 1:1 复刻，而应追求**核心路径更优**（Rust 性能、内存安全、WASM 插件边界）。
+6. **插件化是核心差异**：OpenClaw 的核心竞争力是 126 个 extensions 的生态系统。Syscity 的 Phase 2 必须尽早发布 Plugin SDK，让第三方填补长尾需求。
 
 ---
 
 ## 十三、从 Prompt 到 Response 的完整路径对比
 
-以下以 **Telegram 用户发送一条消息** 为例，逐层拆解 Manta 和 OpenClaw 中"用户输入 → 系统返回"的完整数据流。
+以下以 **Telegram 用户发送一条消息** 为例，逐层拆解 Syscity 和 OpenClaw 中"用户输入 → 系统返回"的完整数据流。
 
 ---
 
-### Manta 的完整路径（以 Telegram 为例）
+### Syscity 的完整路径（以 Telegram 为例）
 
 ```
 用户发送消息
@@ -599,16 +599,16 @@
 
 ### 路径差异逐层对比
 
-| 层级 | Manta | OpenClaw | 差异说明 |
+| 层级 | Syscity | OpenClaw | 差异说明 |
 |---|---|---|---|
 | **入站消息处理** | Channel handler → message_tx → Gateway queue | Channel extension → auto-reply dispatch → media-understanding → Gateway | OpenClaw 多了 auto-reply 调度和 media 预处理层 |
-| **Session 路由** | `resolve_agent_for_session()` 固定 "default" | Gateway session manager 多 agent 路由 | Manta 实际单 agent；OpenClaw 真多 agent |
+| **Session 路由** | `resolve_agent_for_session()` 固定 "default" | Gateway session manager 多 agent 路由 | Syscity 实际单 agent；OpenClaw 真多 agent |
 | **Context 构建** | `build_fresh_context()` 直接组装 | Context engine + auth profile + skill loading | OpenClaw context 构建更复杂，支持 per-agent auth |
 | **System Prompt** | `PromptBuilder::build_from_context()` | 同样的 markdown 文件体系，但通过 context-engine 管理 | 核心概念对齐，实现方式不同 |
 | **Memory 检索** | `MemoryManager::retrieve()` 单次检索 | memory-core 多后端 + dreaming + wiki | OpenClaw 记忆系统更丰富 |
-| **Provider 调用** | 直接调用 `provider.complete()` | 通过 provider extension plugin 调用 | OpenClaw provider 是插件；Manta 硬编码 |
+| **Provider 调用** | 直接调用 `provider.complete()` | 通过 provider extension plugin 调用 | OpenClaw provider 是插件；Syscity 硬编码 |
 | **工具系统** | `ToolRegistry::execute_call()` 硬编码工具 | Plugin SDK 动态注册工具 + approval gates + sandbox | OpenClaw 工具更灵活，审批更完善 |
-| **缓存** | LLM-based cache classifier + ResponseCache | 有缓存机制但文档未详述 | Manta 的缓存设计有特色但多一次 LLM 调用 |
+| **缓存** | LLM-based cache classifier + ResponseCache | 有缓存机制但文档未详述 | Syscity 的缓存设计有特色但多一次 LLM 调用 |
 | **Compaction** | `ContextCompressor` LLM 辅助或启发式 | 有更完善的 context engine 管理 | OpenClaw 的上下文管理更成熟 |
 | **并发** | 工具并发执行（最多 5 个） | 并发 + 异步调度 + queue | OpenClaw 调度更复杂 |
 | **结果返回** | event_tx broadcast → per-channel handler → channel.send() | Gateway → channel extension + canvas + SSE + trajectory | OpenClaw 副作用更多（canvas、SSE、trajectory） |
@@ -618,7 +618,7 @@
 
 ### 核心架构差异总结
 
-| 维度 | Manta | OpenClaw |
+| 维度 | Syscity | OpenClaw |
 |---|---|---|
 | **消息入口** | 直连（Channel → Gateway → Agent） | 调度层（Channel → Auto-reply → Media → Gateway → Agent） |
 | **Agent 数量** | 单 agent（"default"），多 agent stub | 真多 agent，每个有独立 workspace + auth profile |
@@ -633,7 +633,7 @@
 
 ### 一句话路径对比
 
-> **Manta 的路径是：Channel → Queue → Agent → Provider → Tool → Channel，一条直线。**
+> **Syscity 的路径是：Channel → Queue → Agent → Provider → Tool → Channel，一条直线。**
 >
 > **OpenClaw 的路径是：Channel → Auto-reply (调度) → Media (预处理) → Gateway (路由) → Agent (多 workspace) → Provider Plugin → Tool Plugin (审批+sandbox) → Gateway (副作用: Canvas+SSE+Trajectory+Memory) → Channel，一个带调度、预处理、副作用的完整 DAG。**
 
@@ -641,7 +641,7 @@
 
 ## 十四、入站前层与出站后副作用系统详解
 
-以下详细拆解 OpenClaw 在"用户消息进入 agent"之前和"agent 返回结果"之后分别做了哪些工作，以及 Manta 为何缺失了这些能力。
+以下详细拆解 OpenClaw 在"用户消息进入 agent"之前和"agent 返回结果"之后分别做了哪些工作，以及 Syscity 为何缺失了这些能力。
 
 ---
 
@@ -683,9 +683,9 @@ OpenClaw 的 auto-reply 不是简单的"收到消息就回复"，而是一个**�
   - `collect` — 批量收集消息，合并后一次性处理
 - 通过 `pi-agent-core` 嵌入式运行时解析队列状态
 
-**Manta 缺失了什么？**
-Manta 的 `process_message_queue` 是一个简单的 FIFO 队列，`process_message` 也是同步阻塞式的。没有 debounce、没有串行化发送、没有人性化延迟、没有队列模式（interrupt/steer/followup/collect）、没有 plugin-owned binding。这意味着：
-- 用户连发 3 条消息 → Manta 会并发触发 3 次 LLM 调用，可能互相干扰
+**Syscity 缺失了什么？**
+Syscity 的 `process_message_queue` 是一个简单的 FIFO 队列，`process_message` 也是同步阻塞式的。没有 debounce、没有串行化发送、没有人性化延迟、没有队列模式（interrupt/steer/followup/collect）、没有 plugin-owned binding。这意味着：
+- 用户连发 3 条消息 → Syscity 会并发触发 3 次 LLM 调用，可能互相干扰
 - 回复瞬间到达 → 没有"人类在打字"的拟真感
 - 不支持打断 → agent 正在执行长任务时用户无法中途干预
 
@@ -744,10 +744,10 @@ Manta 的 `process_message_queue` 是一个简单的 FIFO 队列，`process_mess
 - 最大输入像素：2500 万像素
 - 最大文件：图片 6MB、音频 16MB、视频 16MB、文档 100MB
 
-**Manta 缺失了什么？**
-Manta 的 `IncomingMessage` 只有 `{ user_id, conversation_id, content }` 三个字段，没有 `attachments` 字段。`channels/mod.rs` 虽然定义了 `Attachment` 类型，但 Telegram/Discord handler 中**从未解析媒体附件**。这意味着：
-- 用户发图片 → Manta 只收到空文本或图片链接，看不到内容
-- 用户发语音 → Manta 无法转录，完全忽略
+**Syscity 缺失了什么？**
+Syscity 的 `IncomingMessage` 只有 `{ user_id, conversation_id, content }` 三个字段，没有 `attachments` 字段。`channels/mod.rs` 虽然定义了 `Attachment` 类型，但 Telegram/Discord handler 中**从未解析媒体附件**。这意味着：
+- 用户发图片 → Syscity 只收到空文本或图片链接，看不到内容
+- 用户发语音 → Syscity 无法转录，完全忽略
 - 没有图像优化管道，即使未来支持图片也无法处理大文件
 - 没有 "模型原生 vision vs 预处理" 的智能判断逻辑
 
@@ -779,8 +779,8 @@ Trajectory 是 OpenClaw 的**诊断/审计系统**，默认开启，记录 agent
 - 输出到 `.openclaw/trajectory-exports/`
 - 可用于：bug 报告、安全审计、性能分析
 
-**Manta 缺失了什么？**
-Manta 完全没有轨迹记录系统。`tracing::info!`/`debug!` 日志只记录到控制台，没有结构化持久化。这意味着：
+**Syscity 缺失了什么？**
+Syscity 完全没有轨迹记录系统。`tracing::info!`/`debug!` 日志只记录到控制台，没有结构化持久化。这意味着：
 - 用户报告 bug 时，开发者无法复现 agent 的完整决策路径
 - 没有审计能力，无法回溯 agent 在某个时间点做了什么
 - 没有诊断包导出，技术支持成本高
@@ -809,8 +809,8 @@ Canvas 是 OpenClaw 的**动态可视化界面系统**，agent 可以在回复�
 - 用户问"展示我的 todo 列表" → agent 渲染一个可勾选的 todo UI
 - 用户问"给我做个 Pomodoro 计时器" → agent 渲染一个带倒计时的网页
 
-**Manta 缺失了什么？**
-Manta 有 `canvas/mod.rs` 定义了 `CanvasComponent`/`CanvasUpdate`/`CanvasEvent` 等类型，以及 WebSocket handler，但：
+**Syscity 缺失了什么？**
+Syscity 有 `canvas/mod.rs` 定义了 `CanvasComponent`/`CanvasUpdate`/`CanvasEvent` 等类型，以及 WebSocket handler，但：
 - 没有 `canvas-host/` HTTP 服务器来实际 serve 网页
 - 没有 live reload 机制
 - 没有移动端 action bridge
@@ -848,8 +848,8 @@ Agent 完成回复
   → 同时发送给 channel + Canvas + SSE
 ```
 
-**Manta 缺失了什么？**
-Manta 的 `gateway/mod.rs` 中有 `event_tx`（broadcast channel），也有 `ProgressCallback` 将事件广播到 SSE，但：
+**Syscity 缺失了什么？**
+Syscity 的 `gateway/mod.rs` 中有 `event_tx`（broadcast channel），也有 `ProgressCallback` 将事件广播到 SSE，但：
 - 没有 scope guard，所有客户端收到所有事件
 - 没有慢消费者保护，广播通道可能无限积压
 - `web.rs` 的 SSE handler 是**占位符**，注释写 "in production you'd want to integrate with the agent's event system"
@@ -880,8 +880,8 @@ OpenClaw 的 memory 更新不是显式调用，而是**内嵌在整个响应管�
 - 支持 reranking 和 query expansion
 - 不依赖云端 embedding API
 
-**Manta 缺失了什么？**
-Manta 有 `memory_manager` 和 `chat_history`，每次消息会存入 SQLite 和 FTS5，这基本对齐 OpenClaw 的自动索引。但：
+**Syscity 缺失了什么？**
+Syscity 有 `memory_manager` 和 `chat_history`，每次消息会存入 SQLite 和 FTS5，这基本对齐 OpenClaw 的自动索引。但：
 - 没有 dreaming 系统（light/deep/REM）
 - 没有 `DREAMS.md` 生成
 - 没有 QMD sidecar
@@ -911,8 +911,8 @@ OpenClaw 的 cron 不是独立的定时任务系统，而是**与 agent 深度�
 - Cron job 的执行结果通过 Gateway 的广播系统发送
 - Agent 可以在回复中触发 cron job（如"每天提醒我喝水"）
 
-**Manta 缺失了什么？**
-Manta 有 `cron/cron.rs` 和 `cron/mod.rs`，以及 `tools/cron_tool.rs`，但：
+**Syscity 缺失了什么？**
+Syscity 有 `cron/cron.rs` 和 `cron/mod.rs`，以及 `tools/cron_tool.rs`，但：
 - Cron 调度器是通过全局 `OnceCell` 接入的（`tokio::sync::OnceCell<CronScheduler>`），初始化顺序 load-bearing
 - Cron job 只能 delivery 到 gateway 的 SSE broadcast，不能指定 target agent
 - 没有 task run ledger（持久化执行记录）
@@ -921,9 +921,9 @@ Manta 有 `cron/cron.rs` 和 `cron/mod.rs`，以及 `tools/cron_tool.rs`，但�
 
 ---
 
-### 三、Manta 与 OpenClaw 的副作用系统对比总表
+### 三、Syscity 与 OpenClaw 的副作用系统对比总表
 
-| 副作用 | OpenClaw 实现 | Manta 状态 | 差距评估 |
+| 副作用 | OpenClaw 实现 | Syscity 状态 | 差距评估 |
 |---|---|---|---|
 | **入站 Debounce** | 2048 key 缓冲队列 + setTimeout 去抖 | 无 | 缺失 |
 | **入站去重** | `claimInboundDedupe` 防止重复处理 | 无 | 缺失 |
@@ -956,13 +956,13 @@ Manta 有 `cron/cron.rs` 和 `cron/mod.rs`，以及 `tools/cron_tool.rs`，但�
 - Memory dreaming → 让 agent 越用越"懂"用户
 - Cron → 让 agent 的回复可以触发后续自动化
 
-**Manta 目前是一条"直线"**：消息进来 → agent 处理 → 发回复。这条线在工作，但缺少所有让产品从"demo"变成"daily driver"的周边系统。
+**Syscity 目前是一条"直线"**：消息进来 → agent 处理 → 发回复。这条线在工作，但缺少所有让产品从"demo"变成"daily driver"的周边系统。
 
 ---
 
-## 十五、Manta 骨架对齐计划：从直线到分层 DAG
+## 十五、Syscity 骨架对齐计划：从直线到分层 DAG
 
-> 本计划聚焦于**架构骨架**层面的改造，让 Manta 的消息流转路径从"一条直线"变成和 OpenClaw 一致的"分层 DAG"。不追求功能追平（那是 Phase 0–3 的目标），而是追求**架构同构**——每个层都有对应的模块、接口和数据流。
+> 本计划聚焦于**架构骨架**层面的改造，让 Syscity 的消息流转路径从"一条直线"变成和 OpenClaw 一致的"分层 DAG"。不追求功能追平（那是 Phase 0–3 的目标），而是追求**架构同构**——每个层都有对应的模块、接口和数据流。
 
 ---
 
@@ -1005,7 +1005,7 @@ Manta 有 `cron/cron.rs` 和 `cron/mod.rs`，以及 `tools/cron_tool.rs`，但�
 
 ### 二、当前骨架 vs 目标骨架对比
 
-| 层级 | 当前 Manta（直线） | 目标 Manta（分层 DAG） | OpenClaw 参考 |
+| 层级 | 当前 Syscity（直线） | 目标 Syscity（分层 DAG） | OpenClaw 参考 |
 |---|---|---|---|
 | **Channel** | `channels/{name}.rs` 直接发 `message_tx` | `channels/` 作为 Extension API 实现 | `extensions/{channel}/` |
 | **Inbound** | 无 | `inbound/` debounce + media + dispatch | `src/auto-reply/` + `src/media-understanding/` |
@@ -1247,7 +1247,7 @@ src/outbound/
 
 **D.1.1 `outbound/trajectory.rs`**
 - 定义 `TrajectoryRecorder` struct
-- 以 JSONL 格式写入 `~/.manta/trajectory/`
+- 以 JSONL 格式写入 `~/.syscity/trajectory/`
 - 记录：
   - 运行元数据（version、OS、plugins、skills）
   - 会话分支（完整对话历史）
@@ -1259,7 +1259,7 @@ src/outbound/
 **D.1.2 `outbound/canvas.rs`**
 - 定义 `CanvasHost` struct
 - 启动 HTTP 服务器（可配置端口）
-- 默认根目录：`~/.manta/canvas/`
+- 默认根目录：`~/.syscity/canvas/`
 - WebSocket live reload
 - 支持 A2UI 路径
 - 交付标准：agent 可以通过 Canvas API 更新一个网页，用户能看到实时变化

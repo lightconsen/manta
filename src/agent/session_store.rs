@@ -3,7 +3,7 @@
 //! Provides persistent session storage using SQLite instead of in-memory HashMaps.
 //! This gives us ACID guarantees, automatic crash recovery, and simpler querying.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
@@ -108,7 +108,7 @@ impl SessionStore {
             .max_lifetime(Duration::from_secs(3600))
             .connect(database_url)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to connect to database".to_string(),
                 details: e.to_string(),
             })?;
@@ -140,7 +140,7 @@ impl SessionStore {
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to enable WAL mode".to_string(),
                 details: e.to_string(),
             })?;
@@ -149,7 +149,7 @@ impl SessionStore {
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to enable foreign keys".to_string(),
                 details: e.to_string(),
             })?;
@@ -158,7 +158,7 @@ impl SessionStore {
         sqlx::query("PRAGMA synchronous = NORMAL")
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to set synchronous mode".to_string(),
                 details: e.to_string(),
             })?;
@@ -191,7 +191,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create sessions table".to_string(),
             details: e.to_string(),
         })?;
@@ -231,7 +231,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create messages table".to_string(),
             details: e.to_string(),
         })?;
@@ -296,7 +296,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create threads table".to_string(),
             details: e.to_string(),
         })?;
@@ -323,21 +323,21 @@ impl SessionStore {
             sqlx::query("ALTER TABLE session_messages ADD COLUMN thread_id   TEXT")
                 .execute(&self.pool)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to add thread_id column".to_string(),
                     details: e.to_string(),
                 })?;
             sqlx::query("ALTER TABLE session_messages ADD COLUMN turn_index  INTEGER")
                 .execute(&self.pool)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to add turn_index column".to_string(),
                     details: e.to_string(),
                 })?;
             sqlx::query("ALTER TABLE session_messages ADD COLUMN turn_state  TEXT")
                 .execute(&self.pool)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to add turn_state column".to_string(),
                     details: e.to_string(),
                 })?;
@@ -357,14 +357,14 @@ impl SessionStore {
             sqlx::query("ALTER TABLE session_messages ADD COLUMN reasoning_content TEXT")
                 .execute(&self.pool)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to add reasoning_content column".to_string(),
                     details: e.to_string(),
                 })?;
             sqlx::query("ALTER TABLE session_messages ADD COLUMN tool_calls_json TEXT")
                 .execute(&self.pool)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to add tool_calls_json column".to_string(),
                     details: e.to_string(),
                 })?;
@@ -403,7 +403,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create subagent_runs table".to_string(),
             details: e.to_string(),
         })?;
@@ -436,7 +436,7 @@ impl SessionStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to create acp_sessions table".to_string(),
             details: e.to_string(),
         })?;
@@ -494,7 +494,7 @@ impl SessionStore {
         .bind(&metadata.transcript_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: "Failed to save session".to_string(), details: e.to_string() })?;
+        .map_err(|e| SyscityError::Storage { context: "Failed to save session".to_string(), details: e.to_string() })?;
 
         // Update cache
         let mut cache = self.cache.write().await;
@@ -517,7 +517,7 @@ impl SessionStore {
         .bind(session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage { context: "Failed to load session".to_string(), details: e.to_string() })?;
+        .map_err(|e| SyscityError::Storage { context: "Failed to load session".to_string(), details: e.to_string() })?;
 
         match row {
             Some(row) => {
@@ -618,7 +618,7 @@ impl SessionStore {
         let rows = sql_query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to find sessions".to_string(),
                 details: e.to_string(),
             })?;
@@ -709,7 +709,7 @@ impl SessionStore {
         .bind(run_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to append message".to_string(),
             details: e.to_string(),
         })?;
@@ -764,7 +764,7 @@ impl SessionStore {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to get messages".to_string(),
             details: e.to_string(),
         })?;
@@ -796,7 +796,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to update session status".to_string(),
                 details: e.to_string(),
             })?;
@@ -812,7 +812,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to update session name".to_string(),
                 details: e.to_string(),
             })?;
@@ -826,7 +826,7 @@ impl SessionStore {
             .bind(session_id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to get session name".to_string(),
                 details: e.to_string(),
             })?;
@@ -842,7 +842,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to delete session messages".to_string(),
                 details: e.to_string(),
             })?;
@@ -851,7 +851,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to delete session".to_string(),
                 details: e.to_string(),
             })?;
@@ -874,7 +874,7 @@ impl SessionStore {
             .bind(cutoff.timestamp_millis())
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to cleanup sessions".to_string(),
                 details: e.to_string(),
             })?;
@@ -907,7 +907,7 @@ impl SessionStore {
         .bind(created_at_ms)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to save thread".to_string(),
             details: e.to_string(),
         })?;
@@ -944,7 +944,7 @@ impl SessionStore {
         .bind(state)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to insert turn user message".to_string(),
             details: e.to_string(),
         })?;
@@ -964,7 +964,7 @@ impl SessionStore {
         .bind(state)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to insert turn assistant message".to_string(),
             details: e.to_string(),
         })?;
@@ -997,7 +997,7 @@ impl SessionStore {
         .bind(session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to load threads".to_string(),
             details: e.to_string(),
         })?;
@@ -1033,7 +1033,7 @@ impl SessionStore {
             .bind(&tid)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to load turns".to_string(),
                 details: e.to_string(),
             })?;
@@ -1071,7 +1071,7 @@ impl SessionStore {
         .bind(turn_index)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to delete turn".to_string(),
             details: e.to_string(),
         })?
@@ -1185,7 +1185,7 @@ impl SessionStore {
         .bind(steer_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to save subagent run".to_string(),
             details: e.to_string(),
         })?;
@@ -1202,7 +1202,7 @@ impl SessionStore {
             .bind(run_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to update subagent run status".to_string(),
                 details: e.to_string(),
             })?;
@@ -1230,7 +1230,7 @@ impl SessionStore {
         .bind(run_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to complete subagent run".to_string(),
             details: e.to_string(),
         })?;
@@ -1252,7 +1252,7 @@ impl SessionStore {
         .bind(run_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to kill subagent run".to_string(),
             details: e.to_string(),
         })?;
@@ -1268,7 +1268,7 @@ impl SessionStore {
             .bind(run_id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to fetch steer_history".to_string(),
                 details: e.to_string(),
             })?;
@@ -1289,7 +1289,7 @@ impl SessionStore {
             .bind(run_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to update steer_history".to_string(),
                 details: e.to_string(),
             })?;
@@ -1312,7 +1312,7 @@ impl SessionStore {
         .bind(run_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to get subagent run".to_string(),
             details: e.to_string(),
         })?;
@@ -1350,7 +1350,7 @@ impl SessionStore {
         let rows = sql
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to list subagent runs".to_string(),
                 details: e.to_string(),
             })?;
@@ -1412,7 +1412,7 @@ impl SessionStore {
         .bind(created_at.timestamp_millis())
         .execute(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to save ACP session".to_string(),
             details: e.to_string(),
         })?;
@@ -1432,7 +1432,7 @@ impl SessionStore {
         .bind(session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to load ACP session".to_string(),
             details: e.to_string(),
         })?;
@@ -1456,7 +1456,7 @@ impl SessionStore {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to list ACP sessions".to_string(),
             details: e.to_string(),
         })?;
@@ -1481,7 +1481,7 @@ impl SessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to delete ACP session".to_string(),
                 details: e.to_string(),
             })?;

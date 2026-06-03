@@ -48,11 +48,11 @@ impl NavigationPolicy {
 /// Validate that a URL is allowed by the navigation policy
 pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate::Result<()> {
     let parsed = url::Url::parse(url)
-        .map_err(|e| crate::error::MantaError::Validation(format!("Invalid URL: {}", e)))?;
+        .map_err(|e| crate::error::SyscityError::Validation(format!("Invalid URL: {}", e)))?;
 
     let scheme = parsed.scheme();
     if !matches!(scheme, "http" | "https" | "about") {
-        return Err(crate::error::MantaError::Validation(format!(
+        return Err(crate::error::SyscityError::Validation(format!(
             "URL scheme '{}' is not allowed",
             scheme
         )));
@@ -72,7 +72,7 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
         .iter()
         .any(|h| host.eq_ignore_ascii_case(h))
     {
-        return Err(crate::error::MantaError::Validation(format!(
+        return Err(crate::error::SyscityError::Validation(format!(
             "Hostname '{}' is blocked",
             host
         )));
@@ -81,7 +81,7 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
     // Check IP literal
     if let Ok(ip) = host.parse::<IpAddr>() {
         if !policy.allow_private && is_private_ip(ip) {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Navigation to private IP '{}' is not allowed",
                 ip
             )));
@@ -95,7 +95,7 @@ pub fn assert_navigation_allowed(url: &str, policy: &NavigationPolicy) -> crate:
             .iter()
             .any(|h| host.eq_ignore_ascii_case(h))
     {
-        return Err(crate::error::MantaError::Validation(format!(
+        return Err(crate::error::SyscityError::Validation(format!(
             "Hostname '{}' is not in the allowed list",
             host
         )));

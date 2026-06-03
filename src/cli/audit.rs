@@ -1,8 +1,8 @@
-//! Audit log commands for Manta
+//! Audit log commands for Syscity
 //!
 //! View system audit logs and security audit results.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -72,13 +72,13 @@ pub async fn run_audit_command(command: &AuditCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
         }
         AuditCommands::Security { format } => {
-            // Run local security audit (same as `manta security audit`)
+            // Run local security audit (same as `syscity security audit`)
             let _config = crate::config::Config::load()?;
             let auditor = crate::security::audit::SecurityAuditor::with_config(
                 crate::security::audit::AuditConfig::default(),

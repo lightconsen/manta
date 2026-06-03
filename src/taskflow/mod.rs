@@ -6,8 +6,8 @@
 //!
 //! # Example
 //! ```rust,ignore
-//! use manta::taskflow::{TaskFlowEngine, TaskFlowConfig};
-//! use manta::agent::planner::TaskPlan;
+//! use syscity::taskflow::{TaskFlowEngine, TaskFlowConfig};
+//! use syscity::agent::planner::TaskPlan;
 //!
 //! async fn example() {
 //!     let store = CheckpointStore::new("sqlite://taskflow.db").await.unwrap();

@@ -241,7 +241,7 @@ async fn fetch_github_profile(access_token: &str) -> Result<OAuthUserProfile, St
     let user_resp = client
         .get("https://api.github.com/user")
         .header("Authorization", format!("token {}", access_token))
-        .header("User-Agent", "manta-gateway")
+        .header("User-Agent", "syscity-gateway")
         .send()
         .await
         .map_err(|e| format!("GitHub API request failed: {}", e))?;

@@ -125,7 +125,7 @@ async fn file_read_not_found_fails() {
     let tool = FileReadTool::new();
     let ctx = test_context();
     let result = tool
-        .execute(json!({"path": "/tmp/manta-nonexistent-file-xyz.txt"}), &ctx)
+        .execute(json!({"path": "/tmp/syscity-nonexistent-file-xyz.txt"}), &ctx)
         .await;
     assert!(result.is_ok(), "Tool should return Ok");
     let output = result.unwrap();
@@ -250,7 +250,7 @@ async fn file_edit_file_not_found_fails() {
     let result = tool
         .execute(
             json!({
-                "path": "/tmp/manta-nonexistent-edit.txt",
+                "path": "/tmp/syscity-nonexistent-edit.txt",
                 "old_string": "x",
                 "new_string": "y"
             }),

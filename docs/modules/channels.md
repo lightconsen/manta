@@ -1,6 +1,6 @@
 # Channels Module
 
-Communication interfaces through which users interact with Manta.
+Communication interfaces through which users interact with Syscity.
 
 ## Design
 

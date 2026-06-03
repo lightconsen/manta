@@ -1,7 +1,7 @@
-//! Echo Channel - Example WASM Plugin for Manta
+//! Echo Channel - Example WASM Plugin for Syscity
 //!
 //! This is a simple example channel that echoes back any messages it receives.
-//! It demonstrates the WASM plugin interface for Manta channels.
+//! It demonstrates the WASM plugin interface for Syscity channels.
 
 mod bindings {
     wit_bindgen::generate!({
@@ -10,15 +10,15 @@ mod bindings {
     });
 }
 
-use bindings::exports::manta::channel::channel::{
+use bindings::exports::syscity::channel::channel::{
     Capabilities, Guest, MessageOptions, OutgoingMessage,
     StringResult, UnitResult, BoolResult,
 };
-use bindings::manta::channel::types::{
+use bindings::syscity::channel::types::{
     ChatType, IncomingMessage, ChannelError,
 };
-use bindings::manta::channel::logging::LogLevel;
-use bindings::manta::channel::host::{log, receive_message};
+use bindings::syscity::channel::logging::LogLevel;
+use bindings::syscity::channel::host::{log, receive_message};
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;

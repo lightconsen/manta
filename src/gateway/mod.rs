@@ -1,6 +1,6 @@
 //! Gateway Control Plane
 //!
-//! The Gateway is the control plane for Manta, managing:
+//! The Gateway is the control plane for Syscity, managing:
 //! - Multi-channel message routing (WhatsApp, Telegram, Feishu, etc.)
 //! - Session management and routing to agents
 //! - Agent spawning and lifecycle management
@@ -1143,7 +1143,7 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
     let mode_unset = config.security.auth_mode == crate::gateway::protocol::AuthMode::None;
 
     if has_token && has_oauth && mode_unset {
-        return Err(crate::error::MantaError::Validation(
+        return Err(crate::error::SyscityError::Validation(
             "Auth mode ambiguity: both shared_token and OAuth are configured but \
              auth_mode is not set. Please set auth_mode to 'token' or 'device' \
              in your security configuration."
@@ -1186,7 +1186,7 @@ impl Gateway {
                     .database_url
                     .as_ref()
                     .map(|s| std::path::PathBuf::from(s.strip_prefix("sqlite:").unwrap_or(s)))
-                    .unwrap_or_else(|| crate::dirs::manta_dir().join("data").join("manta.db"));
+                    .unwrap_or_else(|| crate::dirs::syscity_dir().join("data").join("syscity.db"));
                 if let Some(parent) = db_path.parent() {
                     tokio::fs::create_dir_all(parent).await.ok();
                 }
@@ -1196,7 +1196,7 @@ impl Gateway {
                 let db_url = format!("sqlite:///{}", db_path.display());
                 info!("Connecting to SQLite storage at: {}", db_url);
                 let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
+                    crate::error::SyscityError::Storage {
                         context: "Failed to connect to SQLite".into(),
                         details: e.to_string(),
                     }
@@ -1275,7 +1275,7 @@ impl Gateway {
         // Create model router config — start empty, no hard-coded aliases.
         let mut model_router_config = crate::model_router::ModelRouterConfig::default();
 
-        // If providers are configured (env vars or manta.toml), create a
+        // If providers are configured (env vars or syscity.toml), create a
         // default alias from the first provider so the gateway is usable
         // immediately without requiring a UI round-trip.
         if let Some(first_provider) = config.providers.keys().next() {
@@ -1404,7 +1404,7 @@ impl Gateway {
             let binding_store = Arc::new(
                 crate::inbound::SqliteBindingStore::new(pool)
                     .await
-                    .map_err(|e| crate::error::MantaError::Storage {
+                    .map_err(|e| crate::error::SyscityError::Storage {
                         context: "Failed to create binding store".to_string(),
                         details: e.to_string(),
                     })?,
@@ -1723,7 +1723,7 @@ impl Gateway {
                     let store = Arc::new(
                         crate::memory::UnifiedStore::new_with_pool(pool.clone())
                             .await
-                            .map_err(|e| crate::error::MantaError::Storage {
+                            .map_err(|e| crate::error::SyscityError::Storage {
                                 context: "Failed to create UnifiedStore".into(),
                                 details: e.to_string(),
                             })?,
@@ -1742,7 +1742,7 @@ impl Gateway {
                     let store = Arc::new(
                         crate::memory::UnifiedStore::new_with_pool(pool.clone())
                             .await
-                            .map_err(|e| crate::error::MantaError::Storage {
+                            .map_err(|e| crate::error::SyscityError::Storage {
                                 context: "Failed to create UnifiedStore".into(),
                                 details: e.to_string(),
                             })?,
@@ -1854,7 +1854,7 @@ impl Gateway {
 
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
-        info!("Starting Manta Gateway control plane...");
+        info!("Starting Syscity Gateway control plane...");
 
         // Initialize plugins if enabled
         if self.config.plugins.enabled {
@@ -2037,7 +2037,7 @@ impl Gateway {
             })?;
 
         let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Failed to bind gateway".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -2141,7 +2141,7 @@ impl Gateway {
 
         // Run the server
         axum::serve(listener, app).await.map_err(|e| {
-            crate::error::MantaError::ExternalService {
+            crate::error::SyscityError::ExternalService {
                 source: "Gateway server error".to_string(),
                 cause: Some(Box::new(e)),
             }
@@ -2186,8 +2186,8 @@ impl Gateway {
             .route("/api/v1/models", get(list_models_handler))
             // WebSocket canvas
             .route("/ws/canvas/:id", get(canvas_ws_handler))
-            // Manta as MCP server -- Streamable-HTTP endpoint
-            .route("/mcp", post(manta_as_mcp_server_handler))
+            // Syscity as MCP server -- Streamable-HTTP endpoint
+            .route("/mcp", post(syscity_as_mcp_server_handler))
             // Admin redirect -- management UI moved to CLI
             .route("/admin", get(admin_redirect_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
@@ -2686,7 +2686,7 @@ impl Gateway {
             match registry.get(agent_id) {
                 Some(p) => p.clone(),
                 None => {
-                    return Err(crate::error::MantaError::Validation(format!(
+                    return Err(crate::error::SyscityError::Validation(format!(
                         "Agent '{}' not found in registry",
                         agent_id
                     )));
@@ -3752,7 +3752,7 @@ impl Gateway {
         let state_plugin = state.clone();
         let state_gateway = state.clone();
 
-        // Handler for main config changes (includes manta.toml)
+        // Handler for main config changes (includes syscity.toml)
         hot_reload
             .register_handler(ConfigFileType::Main, move |_event| {
                 let state = state.clone();
@@ -3761,7 +3761,7 @@ impl Gateway {
                     info!("Main config file changed - reloading configuration");
 
                     // Reload config from disk
-                    let config_path = crate::dirs::manta_dir().join("manta.toml");
+                    let config_path = crate::dirs::syscity_dir().join("syscity.toml");
                     if !config_path.exists() {
                         return Ok(());
                     }
@@ -3769,7 +3769,7 @@ impl Gateway {
                     let content = match tokio::fs::read_to_string(&config_path).await {
                         Ok(c) => c,
                         Err(e) => {
-                            error!("Failed to read manta.toml: {}", e);
+                            error!("Failed to read syscity.toml: {}", e);
                             return Ok(());
                         }
                     };
@@ -3777,7 +3777,7 @@ impl Gateway {
                     let new_config: GatewayConfig = match toml::from_str(&content) {
                         Ok(cfg) => cfg,
                         Err(e) => {
-                            error!("Failed to parse manta.toml: {}", e);
+                            error!("Failed to parse syscity.toml: {}", e);
                             return Ok(());
                         }
                     };
@@ -4151,14 +4151,14 @@ async fn web_terminal_html_handler() -> Html<String> {
         None => tokio::fs::read_to_string("web/dist/index.html")
             .await
             .unwrap_or_else(|_| {
-                "<h1>Manta Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
+                "<h1>Syscity Chat UI</h1><p>Build not found. Run: cd web/chat-ui and pnpm build</p>"
                     .to_string()
             }),
     };
     Html(html.replace("{VERSION}", crate::VERSION))
 }
 
-/// Favicon handler — serves the manta ray SVG favicon
+/// Favicon handler — serves the syscity ray SVG favicon
 async fn favicon_handler() -> impl IntoResponse {
     let svg = match crate::embed::WebAssets::get("favicon.svg") {
         Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
@@ -4192,7 +4192,7 @@ async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
 
 /// Admin redirect handler — admin UI moved to CLI
 async fn admin_redirect_handler() -> Html<&'static str> {
-    Html("<h1>Admin UI Moved</h1><p>Administration is now available via CLI: <code>manta admin</code></p>")
+    Html("<h1>Admin UI Moved</h1><p>Administration is now available via CLI: <code>syscity admin</code></p>")
 }
 
 /// Create default tool registry with all built-in tools
@@ -4604,7 +4604,7 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     // Uptime
     let uptime_secs = state.start_time.elapsed().as_secs() as f64;
     gauge(
-        "manta_uptime_seconds",
+        "syscity_uptime_seconds",
         uptime_secs,
         "Number of seconds since the gateway started",
     );
@@ -4613,13 +4613,13 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     let agents = state.agents.read().await;
     let agent_count = agents.len() as f64;
     drop(agents);
-    gauge("manta_agents_active", agent_count, "Number of active agents");
+    gauge("syscity_agents_active", agent_count, "Number of active agents");
 
     // Channels
     let channels = state.channels.read().await;
     let channel_count = channels.len() as f64;
     drop(channels);
-    gauge("manta_channels_configured", channel_count, "Number of configured channels");
+    gauge("syscity_channels_configured", channel_count, "Number of configured channels");
 
     // Providers
     let router_health = state.model_router.get_health_status().await;
@@ -4628,9 +4628,9 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
         .count() as f64;
     let total_providers = router_health.len() as f64;
-    gauge("manta_providers_healthy", healthy_providers, "Number of healthy LLM providers");
+    gauge("syscity_providers_healthy", healthy_providers, "Number of healthy LLM providers");
     gauge(
-        "manta_providers_total",
+        "syscity_providers_total",
         total_providers,
         "Total number of configured LLM providers",
     );
@@ -4647,12 +4647,12 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         0.0
     };
     gauge(
-        "manta_vector_memory_ready",
+        "syscity_vector_memory_ready",
         vector_memory_ready,
         "Whether vector memory is initialized (1 = ready, 0 = not)",
     );
     gauge(
-        "manta_memory_manager_ready",
+        "syscity_memory_manager_ready",
         memory_manager_ready,
         "Whether memory manager is initialized (1 = ready, 0 = not)",
     );
@@ -4664,18 +4664,18 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         0.0
     };
     gauge(
-        "manta_cron_ready",
+        "syscity_cron_ready",
         cron_ready,
         "Whether cron scheduler is running (1 = ready, 0 = not)",
     );
 
     // Plugins
     let plugin_count = state.plugin_manager.list_plugins().await.len() as f64;
-    gauge("manta_plugins_loaded", plugin_count, "Number of loaded plugins");
+    gauge("syscity_plugins_loaded", plugin_count, "Number of loaded plugins");
 
     // MCP
     let mcp_count = state.mcp_manager.list_servers().await.len() as f64;
-    gauge("manta_mcp_servers_connected", mcp_count, "Number of connected MCP servers");
+    gauge("syscity_mcp_servers_connected", mcp_count, "Number of connected MCP servers");
 
     // Storage
     let storage_healthy = match state.storage.read().await.health_check().await {
@@ -4683,7 +4683,7 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         Err(_) => 0.0,
     };
     gauge(
-        "manta_storage_healthy",
+        "syscity_storage_healthy",
         storage_healthy,
         "Whether storage backend is healthy (1 = healthy, 0 = not)",
     );
@@ -4696,21 +4696,21 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     } else {
         0.0
     };
-    gauge("manta_cost_daily_spend_cents", daily_spend, "Daily LLM spend in cents");
+    gauge("syscity_cost_daily_spend_cents", daily_spend, "Daily LLM spend in cents");
     gauge(
-        "manta_cost_hourly_actions",
+        "syscity_cost_hourly_actions",
         hourly_actions,
         "Number of LLM actions in the current hour",
     );
     gauge(
-        "manta_cost_budget_exceeded",
+        "syscity_cost_budget_exceeded",
         budget_exceeded,
         "Whether cost budget is exceeded (1 = yes, 0 = no)",
     );
 
     // Audit log
     let audit_entries = state.audit_log.persisted_count().await as f64;
-    gauge("manta_audit_log_entries", audit_entries, "Total number of audit log entries");
+    gauge("syscity_audit_log_entries", audit_entries, "Total number of audit log entries");
 
     lines.push(String::new());
     lines.join("\n")
@@ -6503,13 +6503,13 @@ async fn run_skill_handler(
     // Activate skill with runtime requirement verification
     let skill = match skills_manager.activate_skill(&id).await {
         Ok(s) => s,
-        Err(crate::error::MantaError::NotFound { .. }) => {
+        Err(crate::error::SyscityError::NotFound { .. }) => {
             let error = serde_json::json!({
                 "error": format!("Skill '{}' not found", id),
             });
             return (StatusCode::NOT_FOUND, Json(error)).into_response();
         }
-        Err(crate::error::MantaError::Validation(msg)) => {
+        Err(crate::error::SyscityError::Validation(msg)) => {
             // Requirements not met at activation time
             let error = serde_json::json!({
                 "error": "Skill requirements not met",
@@ -7720,10 +7720,10 @@ async fn read_mcp_resource_handler(
 }
 
 // ─────────────────────────────────────────────
-// 9.9 – Manta as an MCP server
+// 9.9 – Syscity as an MCP server
 // ─────────────────────────────────────────────
 
-/// Expose Manta's tool registry as an MCP server via the Streamable-HTTP transport.
+/// Expose Syscity's tool registry as an MCP server via the Streamable-HTTP transport.
 ///
 /// Handles JSON-RPC 2.0 requests sent to `POST /mcp`.  Supported methods:
 /// - `initialize` – returns server capabilities
@@ -7732,7 +7732,7 @@ async fn read_mcp_resource_handler(
 ///
 /// The response content-type is `text/event-stream` (SSE) when the caller
 /// sends `Accept: text/event-stream`, or plain `application/json` otherwise.
-async fn manta_as_mcp_server_handler(
+async fn syscity_as_mcp_server_handler(
     State(state): State<Arc<GatewayState>>,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
@@ -7761,7 +7761,7 @@ async fn manta_as_mcp_server_handler(
             serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "serverInfo": {
-                    "name": "manta",
+                    "name": "syscity",
                     "version": crate::VERSION,
                 },
                 "capabilities": {
@@ -7940,7 +7940,7 @@ struct OpenAiUsage {
 /// `POST /v1/chat/completions`
 ///
 /// OpenAI-compatible chat completions endpoint. Routes the last user message
-/// through the default Manta agent and returns the result in OpenAI wire
+/// through the default Syscity agent and returns the result in OpenAI wire
 /// format. Supports both streaming (`stream: true` → SSE) and non-streaming.
 #[allow(unused_assignments)]
 async fn openai_chat_completions_handler(

@@ -1,7 +1,7 @@
-//! Chat and web interface commands for Manta
+//! Chat and web interface commands for Syscity
 
 use crate::config::Config;
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";
@@ -20,7 +20,7 @@ pub async fn run_chat(
         send_message(&client, &session_id, &msg).await?;
     } else {
         // Interactive REPL mode
-        println!("Manta chat (session: {})", session_id);
+        println!("Syscity chat (session: {})", session_id);
         println!("Type your message and press Enter. Type 'exit' or Ctrl-C to quit.");
         println!();
 
@@ -82,8 +82,8 @@ async fn send_message(client: &reqwest::Client, session_id: &str, message: &str)
         }
         Err(e) => {
             eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-            eprintln!("Is the daemon running? Try: manta start");
-            return Err(MantaError::Internal(e.to_string()));
+            eprintln!("Is the daemon running? Try: syscity start");
+            return Err(SyscityError::Internal(e.to_string()));
         }
     }
     Ok(())

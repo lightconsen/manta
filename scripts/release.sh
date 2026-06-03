@@ -1,5 +1,5 @@
 #!/bin/bash
-# Manta Release Script
+# Syscity Release Script
 # Usage: ./scripts/release.sh <version>
 # Example: ./scripts/release.sh v0.2.0
 

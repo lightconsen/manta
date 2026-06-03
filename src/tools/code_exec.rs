@@ -184,7 +184,7 @@ print(json.dumps(result))
         // and libc crate. Consider using cgroups or ulimit wrapper for production.
 
         let mut child = cmd.spawn().map_err(|e| {
-            crate::error::MantaError::Internal(format!("Failed to spawn Python: {}", e))
+            crate::error::SyscityError::Internal(format!("Failed to spawn Python: {}", e))
         })?;
 
         // Wait for execution with timeout
@@ -206,13 +206,13 @@ print(json.dumps(result))
             );
 
             if let Err(e) = stdout_res {
-                return Err(crate::error::MantaError::Internal(format!(
+                return Err(crate::error::SyscityError::Internal(format!(
                     "Failed to read stdout: {}",
                     e
                 )));
             }
             if let Err(e) = stderr_res {
-                return Err(crate::error::MantaError::Internal(format!(
+                return Err(crate::error::SyscityError::Internal(format!(
                     "Failed to read stderr: {}",
                     e
                 )));
@@ -220,7 +220,7 @@ print(json.dumps(result))
 
             // Wait for process to complete
             let status = child.wait().await.map_err(|e| {
-                crate::error::MantaError::Internal(format!("Failed to wait for process: {}", e))
+                crate::error::SyscityError::Internal(format!("Failed to wait for process: {}", e))
             })?;
 
             let stdout_str = String::from_utf8_lossy(&stdout_buf).to_string();
@@ -250,7 +250,7 @@ print(json.dumps(result))
             Err(_) => {
                 // Timeout - kill the process
                 let _ = child.kill().await;
-                Err(crate::error::MantaError::Internal(format!(
+                Err(crate::error::SyscityError::Internal(format!(
                     "Code execution timed out after {} seconds",
                     timeout_secs
                 )))
@@ -343,13 +343,13 @@ print(json.dumps({"average": result, "count": len(data)}))
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let code = args["code"].as_str().ok_or_else(|| {
-            crate::error::MantaError::Validation("code parameter is required".to_string())
+            crate::error::SyscityError::Validation("code parameter is required".to_string())
         })?;
 
         let language = args["language"].as_str().unwrap_or("python");
 
         if language != "python" {
-            return Err(crate::error::MantaError::Validation(format!(
+            return Err(crate::error::SyscityError::Validation(format!(
                 "Unsupported language: {}",
                 language
             )));

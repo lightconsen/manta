@@ -1,4 +1,4 @@
-package manta:channel@0.1.0;
+package syscity:channel@0.1.0;
 
 /// Types interface - shared types for channel communication
 interface types {

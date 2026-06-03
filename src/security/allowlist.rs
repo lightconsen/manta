@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust
-//! use manta::security::allowlist::{Allowlist, AllowlistEntry, MatchSource};
+//! use syscity::security::allowlist::{Allowlist, AllowlistEntry, MatchSource};
 //!
 //! # async fn example() {
 //! let mut allowlist = Allowlist::new();
@@ -445,7 +445,7 @@ impl Allowlist {
             })
             .await
             .map_err(|e| {
-                crate::error::MantaError::Internal(format!("spawn_blocking join error: {}", e))
+                crate::error::SyscityError::Internal(format!("spawn_blocking join error: {}", e))
             })??;
         }
 
@@ -695,7 +695,7 @@ mod tests {
             .add(AllowlistEntry::by_username("entry-2", "admin"))
             .await;
 
-        let path = std::env::temp_dir().join("manta_allowlist_test.json");
+        let path = std::env::temp_dir().join("syscity_allowlist_test.json");
         allowlist.save(&path).await.unwrap();
 
         let allowlist2 = Allowlist::new();

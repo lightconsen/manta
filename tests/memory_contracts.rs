@@ -4,7 +4,7 @@
 //! maintain stable serialization contracts and that in-memory store operations
 //! roundtrip correctly. Tests use isolated temporary directories.
 
-use manta::memory::*;
+use syscity::memory::*;
 use serde_json::json;
 
 // ── MemoryId Serialization Contract ──────────────────────────────────────────

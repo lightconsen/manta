@@ -324,7 +324,7 @@ async fn install_by_download(
         return InstallResultInternal::Failed(format!("Failed to create install directory: {}", e));
     }
 
-    let temp_file = std::env::temp_dir().join(format!("manta-download-{}", binary));
+    let temp_file = std::env::temp_dir().join(format!("syscity-download-{}", binary));
 
     // Download file using curl
     let download_result = tokio::process::Command::new("curl")
@@ -398,10 +398,10 @@ async fn extract_archive(
                 ])
                 .output()
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
 
             if !output.status.success() {
-                return Err(crate::error::MantaError::Internal(
+                return Err(crate::error::SyscityError::Internal(
                     "Failed to extract tar.gz".to_string(),
                 ));
             }
@@ -419,17 +419,17 @@ async fn extract_archive(
                 ])
                 .output()
                 .await
-                .map_err(crate::error::MantaError::Io)?;
+                .map_err(crate::error::SyscityError::Io)?;
 
             if !output.status.success() {
-                return Err(crate::error::MantaError::Internal(
+                return Err(crate::error::SyscityError::Internal(
                     "Failed to extract zip".to_string(),
                 ));
             }
 
             Ok(dest_dir.to_path_buf())
         }
-        _ => Err(crate::error::MantaError::Internal(format!(
+        _ => Err(crate::error::SyscityError::Internal(format!(
             "Unsupported archive type: {}",
             archive_type
         ))),
@@ -530,7 +530,7 @@ async fn add_to_path_if_needed(dir: &str) {
         }
 
         // Append to config
-        let _ = tokio::fs::write(&config, format!("\n# Added by Manta\n{}\n", path_line)).await;
+        let _ = tokio::fs::write(&config, format!("\n# Added by Syscity\n{}\n", path_line)).await;
 
         info!("Added {} to PATH in {:?}", dir, config);
     }
@@ -645,8 +645,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_archive_unsupported() {
-        let temp_file = std::env::temp_dir().join("manta_test_archive.xyz");
-        let temp_dir = std::env::temp_dir().join("manta_test_extract");
+        let temp_file = std::env::temp_dir().join("syscity_test_archive.xyz");
+        let temp_dir = std::env::temp_dir().join("syscity_test_extract");
         let result = extract_archive(&temp_file, &temp_dir, "rar").await;
         assert!(result.is_err());
     }

@@ -1,8 +1,8 @@
-//! Tool approval management commands for Manta
+//! Tool approval management commands for Syscity
 //!
 //! Human-in-the-loop approval for high-risk tool executions.
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use clap::Subcommand;
 
 /// Default daemon base URL.
@@ -62,7 +62,7 @@ pub async fn run_approval_command(command: &ApprovalCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -80,7 +80,7 @@ pub async fn run_approval_command(command: &ApprovalCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())
@@ -98,7 +98,7 @@ pub async fn run_approval_command(command: &ApprovalCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(MantaError::Internal(e.to_string()));
+                    return Err(SyscityError::Internal(e.to_string()));
                 }
             }
             Ok(())

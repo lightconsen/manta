@@ -491,7 +491,7 @@ impl AuthProfileManager {
     /// Check if an error indicates auth/key rotation should occur.
     ///
     /// Delegates to [`FailureClass`] for structured classification.
-    pub fn should_rotate(error: &crate::error::MantaError) -> bool {
+    pub fn should_rotate(error: &crate::error::SyscityError) -> bool {
         use crate::model_router::failure_class::FailureClass;
         FailureClass::from_error(error, None).should_rotate_key()
     }
@@ -682,26 +682,26 @@ mod tests {
 
     #[test]
     fn test_should_rotate_429() {
-        let err = crate::error::MantaError::Internal("429 rate limit".to_string());
+        let err = crate::error::SyscityError::Internal("429 rate limit".to_string());
         assert!(AuthProfileManager::should_rotate(&err));
     }
 
     #[test]
     fn test_should_rotate_401() {
-        let err = crate::error::MantaError::Internal("401 unauthorized".to_string());
+        let err = crate::error::SyscityError::Internal("401 unauthorized".to_string());
         assert!(AuthProfileManager::should_rotate(&err));
     }
 
     #[test]
     fn test_should_not_rotate_403() {
         // 403 is classified as AuthPermanent — should disable key, not rotate
-        let err = crate::error::MantaError::Internal("403 forbidden".to_string());
+        let err = crate::error::SyscityError::Internal("403 forbidden".to_string());
         assert!(!AuthProfileManager::should_rotate(&err));
     }
 
     #[test]
     fn test_should_not_rotate_other_error() {
-        let err = crate::error::MantaError::Internal("connection timeout".to_string());
+        let err = crate::error::SyscityError::Internal("connection timeout".to_string());
         assert!(!AuthProfileManager::should_rotate(&err));
     }
 

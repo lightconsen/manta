@@ -9,7 +9,7 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 
-use crate::error::{MantaError, Result};
+use crate::error::{SyscityError, Result};
 use crate::export::formats::{
     ConversationExport, ExportFormat, ExportMeta, JsonLineMemory, JsonLineMessage, MemoryExport,
 };
@@ -143,7 +143,7 @@ impl ExportService {
         if let Some(parent) = output_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: format!("Failed to create output directory: {}", parent.display()),
                     details: e.to_string(),
                 })?;
@@ -198,7 +198,7 @@ impl ExportService {
         if let Some(parent) = output_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: format!("Failed to create output directory: {}", parent.display()),
                     details: e.to_string(),
                 })?;
@@ -252,7 +252,7 @@ impl ExportService {
 
         tokio::fs::create_dir_all(output_dir)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output directory: {}", output_dir.display()),
                 details: e.to_string(),
             })?;
@@ -276,14 +276,14 @@ impl ExportService {
 
         let mut meta_file = File::create(&meta_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create metadata file: {}", meta_path.display()),
                 details: e.to_string(),
             })?;
         meta_file
             .write_all(meta_json.as_bytes())
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to write metadata file: {}", meta_path.display()),
                 details: e.to_string(),
             })?;
@@ -332,7 +332,7 @@ impl ExportService {
         )
         .fetch_all(self.store.pool())
         .await
-        .map_err(|e| MantaError::Storage {
+        .map_err(|e| SyscityError::Storage {
             context: "Failed to get all conversation IDs".to_string(),
             details: e.to_string(),
         })?;
@@ -378,7 +378,7 @@ impl ExportService {
     ) -> Result<()> {
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
@@ -390,7 +390,7 @@ impl ExportService {
         );
         file.write_all(header.as_bytes())
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to write header".to_string(),
                 details: e.to_string(),
             })?;
@@ -409,7 +409,7 @@ impl ExportService {
             let conv_header = format!("## Conversation: {}\n\n", conv_id);
             file.write_all(conv_header.as_bytes())
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: format!("Failed to write conversation header: {}", conv_id),
                     details: e.to_string(),
                 })?;
@@ -426,7 +426,7 @@ impl ExportService {
                 );
                 file.write_all(content.as_bytes())
                     .await
-                    .map_err(|e| MantaError::Storage {
+                    .map_err(|e| SyscityError::Storage {
                         context: format!("Failed to write message: {}", msg.id),
                         details: e.to_string(),
                     })?;
@@ -437,14 +437,14 @@ impl ExportService {
             let separator = "---\n\n";
             file.write_all(separator.as_bytes())
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to write separator".to_string(),
                     details: e.to_string(),
                 })?;
             stats.bytes_written += separator.len() as u64;
         }
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;
@@ -483,19 +483,19 @@ impl ExportService {
 
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
 
         file.write_all(json.as_bytes())
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to write JSON".to_string(),
                 details: e.to_string(),
             })?;
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;
@@ -514,7 +514,7 @@ impl ExportService {
     ) -> Result<()> {
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
@@ -529,13 +529,13 @@ impl ExportService {
 
                 file.write_all(line.as_bytes())
                     .await
-                    .map_err(|e| MantaError::Storage {
+                    .map_err(|e| SyscityError::Storage {
                         context: "Failed to write JSON line".to_string(),
                         details: e.to_string(),
                     })?;
                 file.write_all(b"\n")
                     .await
-                    .map_err(|e| MantaError::Storage {
+                    .map_err(|e| SyscityError::Storage {
                         context: "Failed to write newline".to_string(),
                         details: e.to_string(),
                     })?;
@@ -544,7 +544,7 @@ impl ExportService {
             }
         }
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;
@@ -578,19 +578,19 @@ impl ExportService {
 
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
 
         file.write_all(json.as_bytes())
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to write JSON".to_string(),
                 details: e.to_string(),
             })?;
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;
@@ -609,7 +609,7 @@ impl ExportService {
     ) -> Result<()> {
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
@@ -620,13 +620,13 @@ impl ExportService {
 
             file.write_all(line.as_bytes())
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to write JSON line".to_string(),
                     details: e.to_string(),
                 })?;
             file.write_all(b"\n")
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: "Failed to write newline".to_string(),
                     details: e.to_string(),
                 })?;
@@ -634,7 +634,7 @@ impl ExportService {
             stats.bytes_written += line.len() as u64 + 1;
         }
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;
@@ -651,7 +651,7 @@ impl ExportService {
     ) -> Result<()> {
         let mut file = File::create(output_path)
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: format!("Failed to create output file: {}", output_path.display()),
                 details: e.to_string(),
             })?;
@@ -663,7 +663,7 @@ impl ExportService {
         );
         file.write_all(header.as_bytes())
             .await
-            .map_err(|e| MantaError::Storage {
+            .map_err(|e| SyscityError::Storage {
                 context: "Failed to write header".to_string(),
                 details: e.to_string(),
             })?;
@@ -683,7 +683,7 @@ impl ExportService {
             let section = format!("## {} ({} memories)\n\n", mem_type, type_memories.len());
             file.write_all(section.as_bytes())
                 .await
-                .map_err(|e| MantaError::Storage {
+                .map_err(|e| SyscityError::Storage {
                     context: format!("Failed to write section header: {}", mem_type),
                     details: e.to_string(),
                 })?;
@@ -701,7 +701,7 @@ impl ExportService {
                 );
                 file.write_all(content.as_bytes())
                     .await
-                    .map_err(|e| MantaError::Storage {
+                    .map_err(|e| SyscityError::Storage {
                         context: format!("Failed to write memory: {}", memory.id),
                         details: e.to_string(),
                     })?;
@@ -709,7 +709,7 @@ impl ExportService {
             }
         }
 
-        file.flush().await.map_err(|e| MantaError::Storage {
+        file.flush().await.map_err(|e| SyscityError::Storage {
             context: "Failed to flush file".to_string(),
             details: e.to_string(),
         })?;

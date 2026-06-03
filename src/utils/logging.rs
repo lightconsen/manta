@@ -1,4 +1,4 @@
-//! Logging setup for Manta
+//! Logging setup for Syscity
 //!
 //! This module initializes the tracing subscriber with the
 //! configuration specified in the config file.
@@ -173,7 +173,7 @@ fn create_log_file<P: AsRef<Path>>(path: P) -> Result<std::fs::File> {
         .append(true)
         .open(path)
         .map_err(|e| {
-            crate::error::MantaError::Internal(format!(
+            crate::error::SyscityError::Internal(format!(
                 "Failed to open log file {}: {}",
                 path.display(),
                 e

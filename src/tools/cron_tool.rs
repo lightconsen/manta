@@ -1,4 +1,4 @@
-//! Cron Tool for Manta
+//! Cron Tool for Syscity
 //!
 //! This tool allows the AI to schedule recurring tasks using cron expressions.
 //! Jobs are delegated to the CronScheduler for execution.
@@ -125,19 +125,19 @@ impl Tool for CronTool {
         };
 
         let action = args.get("action").and_then(|v| v.as_str()).ok_or_else(|| {
-            crate::error::MantaError::Validation("Missing 'action' parameter".to_string())
+            crate::error::SyscityError::Validation("Missing 'action' parameter".to_string())
         })?;
 
         match action {
             "create" => {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                    crate::error::SyscityError::Validation("Missing 'name' parameter".to_string())
                 })?;
                 let schedule_str =
                     args.get("schedule")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| {
-                            crate::error::MantaError::Validation(
+                            crate::error::SyscityError::Validation(
                                 "Missing 'schedule' parameter".to_string(),
                             )
                         })?;
@@ -145,7 +145,7 @@ impl Tool for CronTool {
                     .get("command")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        crate::error::MantaError::Validation(
+                        crate::error::SyscityError::Validation(
                             "Missing 'command' parameter".to_string(),
                         )
                     })?;
@@ -297,7 +297,7 @@ impl Tool for CronTool {
             }
             "enable" => {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                    crate::error::SyscityError::Validation("Missing 'name' parameter".to_string())
                 })?;
 
                 let guard = scheduler.lock().await;
@@ -315,7 +315,7 @@ impl Tool for CronTool {
             }
             "disable" => {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                    crate::error::SyscityError::Validation("Missing 'name' parameter".to_string())
                 })?;
 
                 let guard = scheduler.lock().await;
@@ -333,7 +333,7 @@ impl Tool for CronTool {
             }
             "remove" | "delete" => {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                    crate::error::SyscityError::Validation("Missing 'name' parameter".to_string())
                 })?;
 
                 let guard = scheduler.lock().await;
@@ -351,7 +351,7 @@ impl Tool for CronTool {
             }
             "run" => {
                 let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::MantaError::Validation("Missing 'name' parameter".to_string())
+                    crate::error::SyscityError::Validation("Missing 'name' parameter".to_string())
                 })?;
 
                 let guard = scheduler.lock().await;

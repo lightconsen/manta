@@ -92,7 +92,7 @@ impl Provider for PluginProvider {
             .await?;
 
         let response: CompletionResponse = serde_json::from_value(result).map_err(|e| {
-            crate::error::MantaError::Internal(format!(
+            crate::error::SyscityError::Internal(format!(
                 "Plugin provider response parse error: {}",
                 e
             ))

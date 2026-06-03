@@ -25,7 +25,7 @@ impl CheckpointStore {
             let path = std::path::Path::new(path_str);
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    crate::error::MantaError::Storage {
+                    crate::error::SyscityError::Storage {
                         context: format!("Failed to create checkpoint directory: {:?}", parent),
                         details: e.to_string(),
                     }
@@ -38,7 +38,7 @@ impl CheckpointStore {
             .acquire_timeout(Duration::from_secs(30))
             .connect(database_url)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to connect to checkpoint database".to_string(),
                 details: e.to_string(),
             })?;
@@ -71,7 +71,7 @@ impl CheckpointStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create checkpoint table".to_string(),
             details: e.to_string(),
         })?;
@@ -84,7 +84,7 @@ impl CheckpointStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create checkpoint index".to_string(),
             details: e.to_string(),
         })?;
@@ -97,7 +97,7 @@ impl CheckpointStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to create sequence index".to_string(),
             details: e.to_string(),
         })?;
@@ -143,7 +143,7 @@ impl CheckpointStore {
         .bind(checkpoint.sequence as i64)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to save checkpoint".to_string(),
             details: e.to_string(),
         })?;
@@ -172,7 +172,7 @@ impl CheckpointStore {
         .bind(flow_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to load checkpoint".to_string(),
             details: e.to_string(),
         })?;
@@ -208,7 +208,7 @@ impl CheckpointStore {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to load checkpoint by ID".to_string(),
             details: e.to_string(),
         })?;
@@ -234,7 +234,7 @@ impl CheckpointStore {
         .bind(flow_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to list checkpoints".to_string(),
             details: e.to_string(),
         })?;
@@ -253,7 +253,7 @@ impl CheckpointStore {
             .bind(flow_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to delete checkpoints".to_string(),
                 details: e.to_string(),
             })?;
@@ -278,7 +278,7 @@ impl CheckpointStore {
         .bind(keep_per_flow as i64)
         .execute(&self.pool)
         .await
-        .map_err(|e| crate::error::MantaError::Storage {
+        .map_err(|e| crate::error::SyscityError::Storage {
             context: "Failed to prune checkpoints".to_string(),
             details: e.to_string(),
         })?;
@@ -296,7 +296,7 @@ impl CheckpointStore {
     ) -> crate::Result<TaskFlowCheckpoint> {
         let state_str: String =
             row.try_get("state")
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to read state column".to_string(),
                     details: e.to_string(),
                 })?;
@@ -313,13 +313,13 @@ impl CheckpointStore {
 
         let created_at_str: String =
             row.try_get("created_at")
-                .map_err(|e| crate::error::MantaError::Storage {
+                .map_err(|e| crate::error::SyscityError::Storage {
                     context: "Failed to read created_at column".to_string(),
                     details: e.to_string(),
                 })?;
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| crate::error::MantaError::Storage {
+            .map_err(|e| crate::error::SyscityError::Storage {
                 context: "Failed to parse created_at".to_string(),
                 details: e.to_string(),
             })?

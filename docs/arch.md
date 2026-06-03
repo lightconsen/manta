@@ -1,6 +1,6 @@
-# Manta Architecture
+# Syscity Architecture
 
-Manta is a personal AI assistant built in Rust. It routes messages from multiple channels through an agent core to LLM providers, with persistent memory, tool execution, and security controls.
+Syscity is a personal AI assistant built in Rust. It routes messages from multiple channels through an agent core to LLM providers, with persistent memory, tool execution, and security controls.
 
 ## System Overview
 

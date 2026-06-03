@@ -4,7 +4,7 @@ WASM-based sandboxed plugin system for runtime extensibility.
 
 ## Design
 
-Plugins extend Manta with custom tools, hooks, and channels without modifying core code. Each plugin is a directory with a `plugin.json` manifest.
+Plugins extend Syscity with custom tools, hooks, and channels without modifying core code. Each plugin is a directory with a `plugin.json` manifest.
 
 - **`PluginManager`** — High-level interface: load, unload, reload, list plugins; auto-load on startup
 - **`PluginRuntime`** — Low-level WASM runtime (wasmer-based sandbox)
@@ -45,7 +45,7 @@ Plugin Directory ──▶ PluginManifest ──▶ PluginRuntime::load()
 
 ### Tool Wrapper
 
-`PluginToolWrapper` bridges between the Manta `Tool` trait and the plugin's WASM-exported functions, with optional trace logging.
+`PluginToolWrapper` bridges between the Syscity `Tool` trait and the plugin's WASM-exported functions, with optional trace logging.
 
 ## Key Types
 
@@ -94,11 +94,11 @@ pub enum HookType {
 - **Missing**: File-system watcher hot reload — `reload_plugin()` exists but no `notify` watcher for `.wasm` or `plugin.json` changes.
 - **Missing**: Plugin registry with SQLite persistence for installed plugin metadata.
 - **Missing**: Activation planner — trigger-based plugin loading (command/provider/channel/route/capability), dependency-ordered activation, diagnostics.
-- **Missing**: Version management — semver compatibility checking (`manta = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
+- **Missing**: Version management — semver compatibility checking (`syscity = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
 - **Missing**: Config hot-reload integration — no `ConfigChangeEvent` handling in plugin code to auto diff/load/unload.
 - **Missing**: Plugin dependency management — auto-download external resources (binaries, models), `dirs`-based data directory.
 - **Missing**: Migration system — plugin data structure changes with SQLite `schema_version` tracking.
-- **Missing**: Modular SDK crates — workspace-based `manta-plugin-sdk-core`, `manta-plugin-sdk-channel`, `manta-plugin-sdk-memory`, `manta-plugin-sdk-provider`, `manta-plugin-sdk-security` to enforce boundary control.
+- **Missing**: Modular SDK crates — workspace-based `syscity-plugin-sdk-core`, `syscity-plugin-sdk-channel`, `syscity-plugin-sdk-memory`, `syscity-plugin-sdk-provider`, `syscity-plugin-sdk-security` to enforce boundary control.
 - **Missing**: SDK boundary lint — CI check that plugins only depend on SDK crates, not internal `src/` modules.
 - **Missing**: Plugin doctor — compatibility and runtime environment diagnostics at load time.
 - **Missing**: WIT interface versioning for WASM plugins.

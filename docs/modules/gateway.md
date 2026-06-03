@@ -1,6 +1,6 @@
 # Gateway Module
 
-The control plane for Manta, managing channels, agents, and the HTTP/WebSocket API.
+The control plane for Syscity, managing channels, agents, and the HTTP/WebSocket API.
 
 ## Design
 

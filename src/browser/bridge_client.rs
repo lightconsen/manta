@@ -150,13 +150,13 @@ impl BridgeClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge status request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge status returned {}", res.status()),
                 cause: None,
             });
@@ -164,7 +164,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge status".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -185,13 +185,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge navigate request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge navigate returned {}", res.status()),
                 cause: None,
             });
@@ -199,7 +199,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge navigate response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -226,13 +226,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge snapshot request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge snapshot returned {}", res.status()),
                 cause: None,
             });
@@ -240,7 +240,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge snapshot response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -269,13 +269,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge act request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge act returned {}", res.status()),
                 cause: None,
             });
@@ -283,7 +283,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge act response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -310,13 +310,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge screenshot request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge screenshot returned {}", res.status()),
                 cause: None,
             });
@@ -324,7 +324,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge screenshot response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -342,13 +342,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge start request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge start returned {}", res.status()),
                 cause: None,
             });
@@ -356,7 +356,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge start response".to_string(),
                 cause: Some(Box::new(e)),
             })
@@ -374,13 +374,13 @@ impl BridgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Bridge stop request failed".to_string(),
                 cause: Some(Box::new(e)),
             })?;
 
         if !res.status().is_success() {
-            return Err(crate::error::MantaError::ExternalService {
+            return Err(crate::error::SyscityError::ExternalService {
                 source: format!("Bridge stop returned {}", res.status()),
                 cause: None,
             });
@@ -388,7 +388,7 @@ impl BridgeClient {
 
         res.json()
             .await
-            .map_err(|e| crate::error::MantaError::ExternalService {
+            .map_err(|e| crate::error::SyscityError::ExternalService {
                 source: "Failed to parse bridge stop response".to_string(),
                 cause: Some(Box::new(e)),
             })

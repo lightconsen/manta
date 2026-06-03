@@ -1,4 +1,4 @@
-//! Security audit system for Manta
+//! Security audit system for Syscity
 //!
 //! Provides comprehensive security auditing capabilities including:
 //! - Permission review and validation
