@@ -1,144 +1,139 @@
 # Syscity
 
-A lightweight, fast, and secure application written in Rust with clean architecture.
-
-## Overview
-
-Syscity demonstrates modern Rust development practices with a layered architecture:
-
-- **Clean Architecture**: Core domain logic independent of external frameworks
-- **Layered Design**: Clear separation between core, adapters, and interfaces
-- **Async/Await**: Modern async Rust patterns
-- **Error Handling**: Structured error types with context
-- **Configuration**: Multi-source configuration (files, environment)
-- **Observability**: Structured logging with tracing
-- **CLI**: Comprehensive command-line interface
-
-## Quick Start
-
-```bash
-# Build
-cargo build --release
-
-# Configure (optional)
-# Syscity works out of the box with defaults
-
-# Run CLI
-./target/release/syscity --help
-
-# Start server
-./target/release/syscity server
-
-# Create and manage entities
-./target/release/syscity entity create "My Entity"
-./target/release/syscity entity list
-```
-
-## Architecture
-
-Syscity follows clean architecture principles:
-
-```
-syscity/
-├── src/
-│   ├── core/           # Domain logic (independent)
-│   │   ├── models.rs   # Domain models (Entity, Status, etc.)
-│   │   └── engine.rs   # Business logic
-│   ├── adapters/       # External integrations
-│   │   ├── storage.rs  # Storage implementations
-│   │   └── api.rs      # HTTP client with retry logic
-│   ├── config.rs       # Configuration management
-│   ├── cli.rs          # Command-line interface
-│   ├── error.rs        # Error types
-│   └── utils/          # Utilities
-│       └── logging.rs  # Logging setup
-├── tests/              # Integration tests
-└── CLAUDE.md           # Development guide
-```
+Syscity is an AI assistant that runs locally on your machine. Chat with it through a web interface, command line, or connect it to Telegram, Discord, Slack and more.
 
 ## Features
 
-### Implemented
+- **Web Chat UI** — Built-in responsive chat interface
+- **Multi-Channel** — Telegram, Discord, Slack, WhatsApp, Signal, iMessage, QQ, Lark/Feishu
+- **Skills System** — Extensible skills with WASM plugin support
+- **Agent Teams** — Create teams of agents with roles and hierarchies
+- **Memory & Context** — Vector memory, session management, and conversation history
+- **Tools** — File operations, web search, shell commands, browser automation, and more
+- **Multi-Provider** — OpenAI, DeepSeek, Anthropic, Azure, Ollama, and custom endpoints
+- **MCP Support** — Model Context Protocol servers
 
-- ✅ Clean architecture with separation of concerns
-- ✅ Entity management (create, read, update, delete)
-- ✅ Configuration system (file, env, CLI)
-- ✅ Structured logging with tracing
-- ✅ CLI with subcommands
-- ✅ In-memory and file-based storage
-- ✅ HTTP client with retry logic
-- ✅ Comprehensive error handling
-- ✅ Unit and integration tests
+## Quick Install
 
-### Planned
+### One-line install (Linux / macOS)
 
-- Multiple LLM Providers (OpenAI, Anthropic, Local)
-- Multi-Channel support (Telegram, Discord, CLI)
-- Tool system for autonomous operations
-- Memory management
+```bash
+curl -sSL https://syscity.net/install.sh | bash
+```
 
-See [plan.md](plan.md) for detailed architecture and roadmap.
+This downloads the latest release binary for your platform and installs it to `/usr/local/bin/syscity`.
+
+### Build from source
+
+```bash
+git clone https://github.com/syscity/syscity.git
+cd syscity
+./build.sh
+```
+
+Requires Rust 1.75+ and Node.js (for the web UI).
+
+## Getting Started
+
+### 1. Configure
+
+Run the interactive setup wizard to configure your LLM provider and API key:
+
+```bash
+syscity setup
+```
+
+You'll be prompted to:
+- Select an LLM provider (OpenAI, DeepSeek, Anthropic, etc.)
+- Choose a model
+- Enter your API key
+- Optionally adjust server host/port
+
+The configuration is saved to `~/.syscity/syscity.toml`.
+
+You can also reconfigure later:
+
+```bash
+# Edit specific values
+syscity config set model=deepseek-chat
+syscity config set providers.deepseek.api_key=sk-xxxxx
+
+# Or open the wizard again
+syscity config
+```
+
+### 2. Start the server
+
+```bash
+syscity start
+```
+
+This starts the Syscity daemon with the web UI, WebSocket, and API server.
+
+To run in the foreground (useful for debugging):
+
+```bash
+syscity start --foreground
+```
+
+### 3. Open the Web UI
+
+Open your browser to:
+
+```
+http://127.0.0.1:18080
+```
+
+The default port is `18080`. If you changed it during setup, use your configured port instead.
+
+### 4. Chat from the command line
+
+```bash
+# Interactive chat
+syscity chat
+
+# One-shot message
+syscity chat --message "What is the weather today?"
+```
 
 ## Configuration
 
-Syscity can be configured via:
-
-1. **Configuration file**: `syscity.toml` or `~/.syscity/syscity.toml`
-2. **Environment variables**: `SYSCITY_SERVER_HOST`, `SYSCITY_LOG_LEVEL`, etc.
-3. **Command-line flags**: `--config`, `--log-level`
-
-### Example Configuration
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8080
-
-[logging]
-level = "info"
-format = "compact"  # Options: compact, pretty, json
-
-[storage]
-type = "memory"  # Options: memory, file
-```
-
-## Development
-
-### Prerequisites
-
-- Rust 1.75 or later
-- Cargo
-
-### Building
+Configuration is stored in `~/.syscity/syscity.toml`. You can also use environment variables:
 
 ```bash
-# Debug build
-cargo build
-
-# Release build
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run with logging
-cargo run -- --log-level debug server
+export SYSCITY_API_KEY="your-api-key"
+export SYSCITY_BASE_URL="https://api.openai.com/v1"
+export SYSCITY_MODEL="gpt-4o"
 ```
 
-### Code Quality
+Or set values via CLI:
 
 ```bash
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy -- -D warnings
-
-# Generate documentation
-cargo doc --no-deps
+syscity config set model=gpt-4o
+syscity config set providers.openai.api_key=sk-xxxxx
+syscity config show
 ```
 
-See [CLAUDE.md](CLAUDE.md) for Rust best practices and development guidelines.
+## Running as a Service (Linux)
+
+```bash
+# Install systemd service
+sudo bash deploy/systemd/install.sh
+
+# Start the service
+sudo systemctl start syscity
+
+# Check status
+sudo systemctl status syscity
+```
+
+## Documentation
+
+- [Architecture](docs/arch.md)
+- [Commands](docs/command.md)
+- [Channels](docs/modules/channels.md)
+- [Skills](docs/modules/skills.md)
+- [Providers](docs/modules/providers.md)
 
 ## License
 
