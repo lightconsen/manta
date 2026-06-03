@@ -20,42 +20,15 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ReasoningPart } from "./components/ReasoningPart";
 import { ToolCallPart } from "./components/ToolCallPart";
 
-/* ── Icons ── */
-function LogoIcon({ className }: { className?: string }) {
+/* ── Logo ── */
+function Logo({ className }: { className?: string }) {
   return (
-    <svg
+    <img
+      src="/syscity.png"
+      alt="Syscity"
       className={className}
-      viewBox="0 0 100 80"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      {/* Syscity ray silhouette */}
-      <path
-        d="M50 8
-           C50 8, 38 0, 28 8
-           C18 16, 8 24, 2 36
-           C-2 44, 2 52, 10 48
-           C18 44, 22 40, 26 36
-           C30 32, 34 28, 38 30
-           C42 32, 44 38, 44 46
-           C44 54, 42 64, 40 72
-           C38 76, 42 78, 44 74
-           C46 66, 48 56, 50 50
-           C52 56, 54 66, 56 74
-           C58 78, 62 76, 60 72
-           C58 64, 56 54, 56 46
-           C56 38, 58 32, 62 30
-           C66 28, 70 32, 74 36
-           C78 40, 82 44, 90 48
-           C98 52, 102 44, 98 36
-           C92 24, 82 16, 72 8
-           C62 0, 50 8, 50 8Z"
-        fill="currentColor"
-      />
-      {/* Eyes */}
-      <circle cx="38" cy="18" r="2" fill="white" />
-      <circle cx="62" cy="18" r="2" fill="white" />
-    </svg>
+      draggable={false}
+    />
   );
 }
 
@@ -180,7 +153,7 @@ function Sidebar({
       {/* Top: Logo + Name + Collapse */}
       <div className="h-14 flex items-center justify-between px-3 border-b border-gray-200 dark:border-neutral-800 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
-          <LogoIcon className="w-6 h-6 text-emerald-500 shrink-0" />
+          <Logo className="w-6 h-6 shrink-0" />
           {!collapsed && (
             <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
               Syscity
@@ -288,8 +261,8 @@ function Avatar({ role }: { role: string }) {
     );
   }
   return (
-    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0">
-      <LogoIcon className="w-3.5 h-3.5" />
+    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white shrink-0">
+      <Logo className="w-3.5 h-3.5" />
     </div>
   );
 }
@@ -394,11 +367,11 @@ function LiveStatusBar({
   const statusText = getStatusText(liveStatus.status, liveStatus.toolName, elapsedSec);
 
   return (
-    <div className="mt-1.5 flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400/80">
+    <div className="mt-1.5 flex items-center gap-2 text-[11px] text-primary-600 dark:text-primary-400/80">
       {/* Animated dot */}
       <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500" />
       </span>
       {/* Status text */}
       <span className="font-medium">{statusText}</span>
@@ -559,7 +532,7 @@ function CommandPalette({
             onMouseEnter={() => {}}
             className={`w-full text-left px-3 py-2 flex items-center gap-3 transition ${
               i === selectedIndex
-                ? "bg-emerald-50 dark:bg-emerald-900/20"
+                ? "bg-primary-50 dark:bg-primary-900/20"
                 : "hover:bg-gray-50 dark:hover:bg-neutral-700/50"
             }`}
           >
@@ -668,8 +641,8 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-emerald-500/20">
-                <LogoIcon className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-primary-500/20">
+                <Logo className="w-6 h-6" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
                 Syscity
@@ -687,7 +660,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
 
       <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
         <ComposerPrimitive.Root className="max-w-3xl mx-auto w-full">
-          <div className="relative flex flex-col rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 focus-within:ring-2 focus-within:ring-emerald-500/30 focus-within:border-emerald-500/50 transition">
+          <div className="relative flex flex-col rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 focus-within:ring-2 focus-within:ring-primary-500/30 focus-within:border-primary-500/50 transition">
             {/* Command palette */}
             {paletteOpen && (
               <CommandPalette
@@ -713,7 +686,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
                 <button
                   type="button"
                   title="Voice input"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
                   onClick={() => alert('Voice input coming soon')}
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -726,7 +699,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
                 <button
                   type="button"
                   title="Upload image"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
                   onClick={() => alert('Image upload coming soon')}
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -738,7 +711,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
                 <button
                   type="button"
                   title="Upload file"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
+                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
                   onClick={() => alert('File upload coming soon')}
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -758,7 +731,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
                   </svg>
                 </button>
               ) : (
-                <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-40 text-white transition shadow-sm">
+                <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-40 text-white transition shadow-sm">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" />
@@ -1212,7 +1185,7 @@ function SettingsPanel({
   const tabCls = (id: string) =>
     `w-full text-left px-3 py-1.5 rounded-md text-sm transition ${
       activeTab === id
-        ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-medium"
+        ? "bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400 font-medium"
         : "text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800"
     }`;
 
@@ -1235,7 +1208,7 @@ function SettingsPanel({
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-neutral-500">
-          <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin mb-3 mr-3" />
+          <div className="w-6 h-6 border-2 border-gray-200 dark:border-neutral-600 border-t-primary-500 rounded-full animate-spin mb-3 mr-3" />
           Loading configuration...
         </div>
       ) : (
@@ -1294,7 +1267,7 @@ function SettingsPanel({
                   <div className="space-y-3">
                     <div>
                       <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Default Model</label>
-                      <select value={config.model || ""} onChange={(e) => update("model", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30">
+                      <select value={config.model || ""} onChange={(e) => update("model", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30">
                         {models.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>)}
                       </select>
                     </div>
@@ -1324,22 +1297,22 @@ function SettingsPanel({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm text-gray-700 dark:text-gray-300">Enable Heartbeat</label>
-                      <button onClick={() => update("heartbeat.enabled", !hb.enabled)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-neutral-600"}`}>
+                      <button onClick={() => update("heartbeat.enabled", !hb.enabled)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hb.enabled ? "bg-primary-500" : "bg-gray-300 dark:bg-neutral-600"}`}>
                         <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hb.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
                       </button>
                     </div>
                     <div>
                       <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
-                      <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                      <input type="number" value={hb.interval_seconds ?? 300} onChange={(e) => update("heartbeat.interval_seconds", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active From</label>
-                        <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                        <input type="text" value={hb.active_hours_start || ""} onChange={(e) => update("heartbeat.active_hours_start", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                       </div>
                       <div>
                         <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Active To</label>
-                        <input type="text" value={hb.active_hours_end || ""} onChange={(e) => update("heartbeat.active_hours_end", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                        <input type="text" value={hb.active_hours_end || ""} onChange={(e) => update("heartbeat.active_hours_end", e.target.value)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                       </div>
                     </div>
                   </div>
@@ -1358,7 +1331,7 @@ function SettingsPanel({
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Configured Channels</h3>
                     <button
                       onClick={() => { setShowAddChannel(!showAddChannel); setAddChannelError(""); }}
-                      className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition"
+                      className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
                     >
                       {showAddChannel ? "Cancel" : "+ Add"}
                     </button>
@@ -1374,7 +1347,7 @@ function SettingsPanel({
                             value={newChannel.name}
                             onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })}
                             placeholder="my-bot"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                         <div>
@@ -1382,7 +1355,7 @@ function SettingsPanel({
                           <select
                             value={newChannel.channel_type}
                             onChange={(e) => setNewChannel({ ...newChannel, channel_type: e.target.value, credentials: {} })}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           >
                             <option value="telegram">Telegram</option>
                             <option value="discord">Discord</option>
@@ -1406,7 +1379,7 @@ function SettingsPanel({
                             value={newChannel.agent_id}
                             onChange={(e) => setNewChannel({ ...newChannel, agent_id: e.target.value })}
                             placeholder="default"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                         <div className="flex items-center gap-2 pt-5">
@@ -1415,7 +1388,7 @@ function SettingsPanel({
                             type="checkbox"
                             checked={newChannel.enabled}
                             onChange={(e) => setNewChannel({ ...newChannel, enabled: e.target.checked })}
-                            className="rounded border-gray-300 text-emerald-500 focus:ring-emerald-500"
+                            className="rounded border-gray-300 text-primary-500 focus:ring-primary-500"
                           />
                           <label htmlFor="ch-enabled" className="text-sm text-gray-700 dark:text-gray-300">Enabled</label>
                         </div>
@@ -1431,7 +1404,7 @@ function SettingsPanel({
                               credentials: { ...newChannel.credentials, [field.key]: e.target.value },
                             })}
                             placeholder={field.label}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                       ))}
@@ -1442,7 +1415,7 @@ function SettingsPanel({
                         <button
                           onClick={handleAddChannel}
                           disabled={channelActionLoading === "add"}
-                          className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition"
+                          className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
                         >
                           {channelActionLoading === "add" ? "Adding..." : "Add Channel"}
                         </button>
@@ -1478,7 +1451,7 @@ function SettingsPanel({
                               disabled={channelActionLoading === ch.name}
                               className={`text-xs px-2 py-0.5 rounded-full transition ${
                                 ch.enabled
-                                  ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50"
+                                  ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 hover:bg-primary-200 dark:hover:bg-primary-900/50"
                                   : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-gray-200 dark:hover:bg-neutral-600"
                               }`}
                             >
@@ -1511,7 +1484,7 @@ function SettingsPanel({
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Available Models</h3>
                     <button
                       onClick={() => { setShowAddModel(!showAddModel); setAddModelError(""); }}
-                      className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition"
+                      className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
                     >
                       {showAddModel ? "Cancel" : "+ Add"}
                     </button>
@@ -1527,7 +1500,7 @@ function SettingsPanel({
                             value={newModel.name}
                             onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
                             placeholder="smart"
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                         <div>
@@ -1544,7 +1517,7 @@ function SettingsPanel({
                                 base_url: preset?.base_url || "",
                               });
                             }}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           >
                             {modelPresets.map((p) => (
                               <option key={p.name} value={p.name}>{p.display_name}</option>
@@ -1562,7 +1535,7 @@ function SettingsPanel({
                               <select
                                 value={newModel.model}
                                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
-                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                               >
                                 {preset.models.map((m) => (
                                   <option key={m} value={m}>{m}</option>
@@ -1574,7 +1547,7 @@ function SettingsPanel({
                                 value={newModel.model}
                                 onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
                                 placeholder="model-id"
-                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                                className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                               />
                             )}
                           </div>
@@ -1588,7 +1561,7 @@ function SettingsPanel({
                             value={newModel.api_key}
                             onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
                             placeholder="sk-..."
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                         <div>
@@ -1598,7 +1571,7 @@ function SettingsPanel({
                             value={newModel.base_url}
                             onChange={(e) => setNewModel({ ...newModel, base_url: e.target.value })}
                             placeholder={modelPresets.find((p) => p.name === newModel.provider)?.base_url || "https://..."}
-                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                            className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                           />
                         </div>
                       </div>
@@ -1609,7 +1582,7 @@ function SettingsPanel({
                         <button
                           onClick={handleAddModel}
                           disabled={modelActionLoading === "add"}
-                          className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition"
+                          className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
                         >
                           {modelActionLoading === "add" ? "Adding..." : "Add Model"}
                         </button>
@@ -1629,12 +1602,12 @@ function SettingsPanel({
                           </div>
                           <div className="flex items-center gap-2">
                             {config.model === m.id ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Default</span>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400">Default</span>
                             ) : (
                               <button
                                 onClick={() => handleSetDefaultModel(m.id)}
                                 disabled={modelActionLoading === `default_${m.id}`}
-                                className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:text-emerald-700 dark:hover:text-emerald-400 transition"
+                                className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400 hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-700 dark:hover:text-primary-400 transition"
                               >
                                 {modelActionLoading === `default_${m.id}` ? "..." : "Set Default"}
                               </button>
@@ -1673,7 +1646,7 @@ function SettingsPanel({
                         setSelectedAgentId(id);
                         loadAgentDetail(id);
                       }}
-                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                     >
                       {agentRegistry.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -1686,7 +1659,7 @@ function SettingsPanel({
 
                 {agentDetailLoading && (
                   <div className="text-sm text-gray-500 dark:text-neutral-400 flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-gray-200 dark:border-neutral-600 border-t-emerald-500 rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-gray-200 dark:border-neutral-600 border-t-primary-500 rounded-full animate-spin" />
                     Loading agent details...
                   </div>
                 )}
@@ -1723,7 +1696,7 @@ function SettingsPanel({
                         {"workspace_only" in (selectedAgentDetail.config as Record<string, unknown>) && (
                           <div className="mt-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 flex items-center justify-between">
                             <span className="text-sm text-gray-700 dark:text-gray-300">Workspace Only</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
                               {(selectedAgentDetail.config as Record<string, unknown>).workspace_only ? "Yes" : "No"}
                             </span>
                           </div>
@@ -1756,7 +1729,7 @@ function SettingsPanel({
                             <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">Identity</span>
                           )}
                           {Boolean((selectedAgentDetail.personality as Record<string, unknown>).has_memory) && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">Memory</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400">Memory</span>
                           )}
                         </div>
                       </div>
@@ -1781,28 +1754,28 @@ function SettingsPanel({
                             <div>
                               <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
                               <div className="flex items-center gap-2">
-                                <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
+                                <input type="range" min="0" max="2" step="0.1" value={(ac.temperature as number | undefined) ?? 0.7} onChange={(e) => update("default_agent.temperature", parseFloat(e.target.value))} className="flex-1 h-1.5 bg-gray-200 dark:bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-primary-500" />
                                 <span className="text-sm text-gray-600 dark:text-neutral-400 w-10 text-right tabular-nums">{((ac.temperature as number | undefined) ?? 0.7).toFixed(2)}</span>
                               </div>
                             </div>
                             <div>
                               <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-                              <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                              <input type="number" value={(ac.max_tokens as number | undefined) ?? 2048} onChange={(e) => update("default_agent.max_tokens", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Turns</label>
-                              <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                              <input type="number" value={(ac.max_turns as number | undefined) ?? ""} placeholder="Unlimited" onChange={(e) => update("default_agent.max_turns", e.target.value ? parseInt(e.target.value) : null)} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                             </div>
                             <div>
                               <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Max Concurrent Tools</label>
-                              <input type="number" value={(ac.max_concurrent_tools as number | undefined) ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                              <input type="number" value={(ac.max_concurrent_tools as number | undefined) ?? 5} onChange={(e) => update("default_agent.max_concurrent_tools", parseInt(e.target.value))} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                             </div>
                           </div>
                           <div>
                             <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">System Prompt</label>
-                            <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 resize-none font-mono" />
+                            <textarea value={(ac.system_prompt as string | undefined) || ""} onChange={(e) => update("default_agent.system_prompt", e.target.value)} className="w-full h-[60vh] rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30 resize-none font-mono" />
                           </div>
                         </div>
                       </>
@@ -1817,18 +1790,18 @@ function SettingsPanel({
                 <section>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">MCP Servers</h3>
-                    <button onClick={() => setShowAddMcp(true)} className="text-xs px-2 py-1 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition">+ Add</button>
+                    <button onClick={() => setShowAddMcp(true)} className="text-xs px-2 py-1 rounded bg-primary-500 text-white hover:bg-primary-600 transition">+ Add</button>
                   </div>
                   {showAddMcp && (
                     <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Server ID</label>
-                          <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                          <input type="text" value={newMcp.id} onChange={(e) => setNewMcp({ ...newMcp, id: e.target.value })} placeholder="filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                         </div>
                         <div>
                           <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Transport</label>
-                          <select value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30">
+                          <select value={newMcp.transport} onChange={(e) => setNewMcp({ ...newMcp, transport: e.target.value })} className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30">
                             <option value="stdio">stdio</option>
                             <option value="sse">sse</option>
                             <option value="streamable_http">streamable_http</option>
@@ -1839,26 +1812,26 @@ function SettingsPanel({
                         <>
                           <div>
                             <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Command</label>
-                            <input type="text" value={newMcp.command} onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                            <input type="text" value={newMcp.command} onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                           </div>
                           <div>
                             <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">Args (comma-separated)</label>
-                            <input type="text" value={newMcp.args} onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })} placeholder="/home/user/docs" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                            <input type="text" value={newMcp.args} onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })} placeholder="/home/user/docs" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                           </div>
                         </>
                       ) : (
                         <div>
                           <label className="block text-xs text-gray-600 dark:text-neutral-400 mb-1">URL</label>
-                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                          <input type="text" value={newMcp.url} onChange={(e) => setNewMcp({ ...newMcp, url: e.target.value })} placeholder="http://localhost:3000/sse" className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30" />
                         </div>
                       )}
                       <div className="flex items-center gap-2">
-                        <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-gray-300 text-emerald-500 focus:ring-emerald-500" />
+                        <input id="mcp-auto" type="checkbox" checked={newMcp.auto_connect} onChange={(e) => setNewMcp({ ...newMcp, auto_connect: e.target.checked })} className="rounded border-gray-300 text-primary-500 focus:ring-primary-500" />
                         <label htmlFor="mcp-auto" className="text-sm text-gray-700 dark:text-gray-300">Auto-connect</label>
                       </div>
                       {addMcpError && <div className="text-xs text-red-600 dark:text-red-400">{addMcpError}</div>}
                       <div className="flex justify-end">
-                        <button onClick={handleAddMcp} disabled={mcpActionLoading === "add"} className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition">
+                        <button onClick={handleAddMcp} disabled={mcpActionLoading === "add"} className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition">
                           {mcpActionLoading === "add" ? "Adding..." : "Add Server"}
                         </button>
                       </div>
@@ -1874,7 +1847,7 @@ function SettingsPanel({
                             <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{srv.id}</span>
                             <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-neutral-700 text-gray-600 dark:text-neutral-400 uppercase">{srv.transport}</span>
                             {srv.connected ? (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">connected</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400">connected</span>
                             ) : (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400">disconnected</span>
                             )}
@@ -1885,7 +1858,7 @@ function SettingsPanel({
                                 {mcpActionLoading === srv.id ? "..." : "Disconnect"}
                               </button>
                             ) : (
-                              <button onClick={() => handleConnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition">
+                              <button onClick={() => handleConnectMcp(srv.id)} disabled={mcpActionLoading === srv.id} className="text-xs px-2 py-0.5 rounded bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 hover:bg-primary-200 dark:hover:bg-primary-900/50 transition">
                                 {mcpActionLoading === srv.id ? "..." : "Connect"}
                               </button>
                             )}
@@ -1923,7 +1896,7 @@ function SettingsPanel({
                           <div key={i} className="px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800">
                             <div className="flex items-center justify-between">
                               <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{(j.name as string) || "Unnamed"}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${j.enabled ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${j.enabled ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
                                 {j.enabled ? "Enabled" : "Disabled"}
                               </span>
                             </div>
@@ -2010,7 +1983,7 @@ function SettingsPanel({
                               <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">{s.label || s.id}</span>
                               <div className="flex items-center gap-1.5">
                                 {isActive !== undefined && (
-                                  <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400" : "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"}`}>
                                     {isActive ? "Active" : "Inactive"}
                                   </span>
                                 )}
@@ -2055,7 +2028,7 @@ function SettingsPanel({
                     <h3 className="text-xs font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">Skills ({skills.length})</h3>
                     <button
                       onClick={() => { setShowAddSkill(!showAddSkill); setAddSkillError(""); }}
-                      className="px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium transition"
+                      className="px-3 py-1 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition"
                     >
                       {showAddSkill ? "Cancel" : "+ Install"}
                     </button>
@@ -2070,7 +2043,7 @@ function SettingsPanel({
                           value={newSkillName}
                           onChange={(e) => setNewSkillName(e.target.value)}
                           placeholder="my-skill"
-                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          className="w-full rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                         />
                       </div>
                       <div>
@@ -2079,7 +2052,7 @@ function SettingsPanel({
                           type="file"
                           accept=".zip"
                           onChange={(e) => setNewSkillZip(e.target.files?.[0] || null)}
-                          className="w-full text-sm text-gray-700 dark:text-neutral-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-emerald-50 file:text-emerald-700 dark:file:bg-emerald-900/20 dark:file:text-emerald-400 hover:file:bg-emerald-100"
+                          className="w-full text-sm text-gray-700 dark:text-neutral-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-primary-50 file:text-primary-700 dark:file:bg-primary-900/20 dark:file:text-primary-400 hover:file:bg-primary-100"
                         />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">ZIP must contain a SKILL.md file at the root.</p>
                       </div>
@@ -2090,7 +2063,7 @@ function SettingsPanel({
                         <button
                           onClick={handleAddSkill}
                           disabled={skillActionLoading === "add"}
-                          className="px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium transition"
+                          className="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
                         >
                           {skillActionLoading === "add" ? "Installing..." : "Install Skill"}
                         </button>

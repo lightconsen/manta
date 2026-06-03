@@ -1,4 +1,7 @@
-# Syscity
+<p align="center">
+  <img src="syscity.png" alt="Syscity" width="120" />
+</p>
+<h1 align="center">Syscity</h1>
 
 Syscity is an AI assistant that runs locally on your machine. Chat with it through a web interface, command line, or connect it to Telegram, Discord, Slack and more.
 
