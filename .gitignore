@@ -40,7 +40,6 @@ config.json
 node_modules/
 
 # Root-level workspace artifacts (not the actual project)
-/pnpm-lock.yaml
 /package.json
 
 # Chat UI source dependencies
