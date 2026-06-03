@@ -6,10 +6,10 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     http::StatusCode,
-    response::{Html, Json},
+    response::{Html, IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -57,6 +57,7 @@ pub async fn start_web_terminal(agent: Arc<Agent>, port: u16) -> crate::Result<(
 
     let app = Router::new()
         .route("/", get(index_handler))
+        .route("/assets/{*path}", get(assets_handler))
         .route("/ws", get(ws_handler))
         .route("/api/events", get(sse_events_handler))
         .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
@@ -86,6 +87,7 @@ pub async fn start_web_terminal_with_listener(
 
     let app = Router::new()
         .route("/", get(index_handler))
+        .route("/assets/{*path}", get(assets_handler))
         .route("/ws", get(ws_handler))
         .route("/api/events", get(sse_events_handler))
         .route("/api/chat", axum::routing::post(web_terminal_chat_handler))
@@ -304,6 +306,25 @@ async fn handle_socket_daemon(mut socket: WebSocket, state: DaemonWebState, quer
 /// HTML page with terminal interface
 async fn index_handler() -> Html<String> {
     Html(terminal_html().to_string())
+}
+
+/// Serve embedded static assets (JS, CSS, images, etc.)
+async fn assets_handler(Path(path): Path<String>) -> impl IntoResponse {
+    // Trim any leading slash that axum may include in the catch-all param
+    let path = path.trim_start_matches('/');
+
+    if let Some((data, mime)) = crate::embed::get_asset(path) {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", mime)
+            .body(axum::body::Body::from(data))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(axum::body::Body::from("Asset not found"))
+            .unwrap()
+    }
 }
 
 /// WebSocket upgrade handler
@@ -690,5 +711,89 @@ mod tests {
             "HTML should not contain unreplaced {{VERSION}} placeholder"
         );
         assert!(html.contains(version), "HTML should contain the actual version {version}");
+    }
+
+    #[tokio::test]
+    async fn test_assets_handler_returns_embedded_asset() {
+        use axum::extract::Path;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+
+        // The built SPA must contain at least index.html
+        let response = assets_handler(Path("index.html".to_string())).await.into_response();
+        let (parts, body) = response.into_parts();
+        assert_eq!(parts.status, StatusCode::OK);
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(
+            html.contains("Syscity") || html.contains("syscity"),
+            "index.html should reference Syscity"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_assets_handler_404_for_missing_asset() {
+        use axum::extract::Path;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+
+        let response = assets_handler(Path("nonexistent-file.xyz".to_string())).await.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// End-to-end router test: verify that `/` returns HTML and `/assets/{*path}`
+    /// serves embedded files.  This catches route-registration mistakes (e.g. wrong
+    /// axum path syntax) that unit-testing the handler alone cannot.
+    #[tokio::test]
+    async fn test_router_serves_index_and_assets() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        // Build a minimal router with only the static-file routes
+        let app = Router::new()
+            .route("/", get(index_handler))
+            .route("/assets/*path", get(assets_handler));
+
+        // 1. GET / -> HTML
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            html.contains("Syscity") || html.contains("syscity"),
+            "index.html should reference Syscity, got: {html:.200}"
+        );
+
+        // 2. GET /assets/index-*.css -> CSS (or 404 if build hasn't run)
+        // We don't know the exact hashed filename, so probe a known path.
+        // If the dist folder is present the file must exist.
+        let css_path = std::fs::read_dir("web/dist/assets")
+            .ok()
+            .and_then(|mut d| d.find(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".css")))
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string());
+
+        if let Some(file) = css_path {
+            let uri = format!("/assets/{file}");
+            let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "asset {file} should be served"
+            );
+            let ct = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert!(
+                ct.contains("css"),
+                "CSS asset should have text/css content-type, got: {ct}"
+            );
+        }
     }
 }

@@ -2272,6 +2272,7 @@ impl Gateway {
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
             .route("/favicon.svg", get(favicon_handler))
+            .route("/syscity.png", get(asset_handler))
             .route("/assets/*path", get(asset_handler));
 
         // Merge all routers and apply global CORS
@@ -4173,21 +4174,24 @@ async fn favicon_handler() -> impl IntoResponse {
 
 /// Asset handler — serves JS/CSS/fonts from embedded assets (or filesystem fallback).
 async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
-    // Try embedded assets first
-    if let Some(file) = crate::embed::WebAssets::get(&path) {
-        let mime = crate::embed::guess_mime(&path);
-        return ([(header::CONTENT_TYPE, mime)], file.data.to_vec()).into_response();
+    // Try embedded assets first (handles both direct keys and "assets/" prefix).
+    if let Some((data, mime)) = crate::embed::get_asset(&path) {
+        return ([(header::CONTENT_TYPE, mime)], data).into_response();
     }
 
     // Fallback to filesystem for development
-    let fs_path = format!("web/dist/{}", path);
-    match tokio::fs::read(&fs_path).await {
-        Ok(data) => {
+    let fs_paths = [
+        format!("web/dist/{}", path),
+        format!("web/dist/assets/{}", path),
+    ];
+    for fs_path in &fs_paths {
+        if let Ok(data) = tokio::fs::read(fs_path).await {
             let mime = crate::embed::guess_mime(&path);
-            ([(header::CONTENT_TYPE, mime)], data).into_response()
+            return ([(header::CONTENT_TYPE, mime)], data).into_response();
         }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+
+    StatusCode::NOT_FOUND.into_response()
 }
 
 /// Admin redirect handler — admin UI moved to CLI
