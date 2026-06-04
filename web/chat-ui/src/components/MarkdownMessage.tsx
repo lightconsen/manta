@@ -96,8 +96,23 @@ export function MarkdownMessage({ text }: { text: string }) {
   );
 }
 
+function isUnfetchableUrl(url?: string): boolean {
+  if (!url) return true;
+  // Browser security blocks file:// URLs entirely; skip the doomed request.
+  return url.startsWith("file://");
+}
+
 function ImageNode({ src, alt }: { src?: string; alt?: string }) {
   const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState(() => isUnfetchableUrl(src));
+
+  if (failed) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-300 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-800/50 px-4 py-3 text-xs text-gray-400 dark:text-neutral-500 inline-block">
+        (image not found: {src})
+      </div>
+    );
+  }
 
   return (
     <>
@@ -107,6 +122,7 @@ function ImageNode({ src, alt }: { src?: string; alt?: string }) {
         className="rounded-xl border border-gray-200 dark:border-neutral-700 max-w-full max-h-[400px] object-contain cursor-zoom-in hover:opacity-90 transition"
         onClick={() => setOpen(true)}
         loading="lazy"
+        onError={() => setFailed(true)}
       />
       {open && (
         <div
