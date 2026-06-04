@@ -1,10 +1,27 @@
 import { useState } from "react";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 interface ToolCallPartProps {
   toolName: string;
   args: Record<string, unknown>;
   result?: unknown;
   isError?: boolean;
+}
+
+/** Heuristic: does this string look like markdown content? */
+function looksLikeMarkdown(text: string): boolean {
+  const markdownPatterns = [
+    /^\s*#{1,6}\s+/m, // headers
+    /!\[.*?\]\(.*?\)/, // images
+    /\[.*?\]\(.*?\)/, // links
+    /(\*\*|__)(?=\S)(.*?\S)\1/m, // bold
+    /(\*|_)(?=\S)(.*?\S)\1/m, // italic
+    /^\s*[-*+]\s+/m, // lists
+    /^\s*```/m, // code blocks
+    /^\s*>\s+/m, // blockquote
+    /\|.*\|.*\|/, // tables
+  ];
+  return markdownPatterns.some((re) => re.test(text));
 }
 
 export function ToolCallPart({ toolName, args, result, isError }: ToolCallPartProps) {
@@ -21,6 +38,10 @@ export function ToolCallPart({ toolName, args, result, isError }: ToolCallPartPr
     : result !== undefined
     ? "Done"
     : "Running";
+
+  const resultString =
+    typeof result === "string" ? result : result !== undefined ? JSON.stringify(result, null, 2) : undefined;
+  const renderAsMarkdown = typeof result === "string" && looksLikeMarkdown(resultString || "");
 
   return (
     <div className={`my-2 rounded-lg border overflow-hidden ${statusColor}`}>
@@ -58,9 +79,15 @@ export function ToolCallPart({ toolName, args, result, isError }: ToolCallPartPr
           {result !== undefined && (
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-1">Result</div>
-              <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
-                {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
-              </pre>
+              {renderAsMarkdown ? (
+                <div className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full">
+                  <MarkdownMessage text={resultString || ""} />
+                </div>
+              ) : (
+                <pre className="bg-black/5 dark:bg-white/5 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap font-mono text-[11px]">
+                  {resultString}
+                </pre>
+              )}
             </div>
           )}
         </div>
