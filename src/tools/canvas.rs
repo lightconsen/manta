@@ -132,23 +132,32 @@ enum CanvasComponentArg {
 /// - External URLs (`http://`, `https://`, `data:`) are returned as-is.
 /// - Local file paths are read and encoded as base64 data URIs so the
 ///   frontend can display them without an extra HTTP request.
-async fn resolve_image_src(src: &str) -> String {
+async fn resolve_image_src(src: &str, working_dir: &std::path::Path) -> String {
     if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
         return src.to_string();
     }
 
-    match tokio::fs::read(src).await {
+    let path = if std::path::Path::new(src).is_absolute() {
+        std::path::PathBuf::from(src)
+    } else {
+        working_dir.join(src)
+    };
+
+    match tokio::fs::read(&path).await {
         Ok(bytes) => {
-            let mime = guess_mime_from_path(src);
+            let mime = guess_mime_from_path(&path);
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             format!("data:{};base64,{}", mime, b64)
         }
-        Err(_) => src.to_string(), // fallback: keep original path
+        Err(e) => {
+            tracing::warn!("Failed to read image for canvas at {:?}: {}", path, e);
+            format!("(image not found: {})", src)
+        }
     }
 }
 
-fn guess_mime_from_path(path: &str) -> &'static str {
-    match path.rsplit('.').next() {
+fn guess_mime_from_path(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
@@ -342,7 +351,7 @@ impl Tool for CanvasTool {
                         markdown.push_str(&format!("**{}**\n\n", t));
                     }
                     for (id, src) in &images {
-                        let resolved = resolve_image_src(src).await;
+                        let resolved = resolve_image_src(src, &_context.working_directory).await;
                         markdown.push_str(&format!("![{}]({})\n\n", id, resolved));
                     }
 
