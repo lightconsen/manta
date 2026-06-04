@@ -3,6 +3,12 @@
 </p>
 <h1 align="center">Syscity</h1>
 
+<p align="center">
+  <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
+    <img src="https://github.com/lightconsen/syscity/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  </a>
+</p>
+
 Syscity is an AI assistant that runs locally on your machine. Chat with it through a web interface, command line, or connect it to Telegram, Discord, Slack and more.
 
 ## Features
