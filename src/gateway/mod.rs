@@ -2272,7 +2272,7 @@ impl Gateway {
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
             .route("/favicon.svg", get(favicon_handler))
-            .route("/syscity.png", get(asset_handler))
+            .route("/syscity.png", get(syscity_png_handler))
             .route("/assets/*path", get(asset_handler));
 
         // Merge all routers and apply global CORS
@@ -4191,6 +4191,19 @@ async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
         }
     }
 
+    StatusCode::NOT_FOUND.into_response()
+}
+
+/// Logo handler for /syscity.png — static route with no path params.
+async fn syscity_png_handler() -> impl IntoResponse {
+    let path = "syscity.png";
+    if let Some((data, mime)) = crate::embed::get_asset(path) {
+        return ([(header::CONTENT_TYPE, mime)], data).into_response();
+    }
+    if let Ok(data) = tokio::fs::read(format!("web/dist/{}", path)).await {
+        let mime = crate::embed::guess_mime(path);
+        return ([(header::CONTENT_TYPE, mime)], data).into_response();
+    }
     StatusCode::NOT_FOUND.into_response()
 }
 

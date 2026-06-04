@@ -67,8 +67,6 @@ pub mod taskflow;
 pub mod team;
 pub mod tools;
 pub mod utils;
-pub mod web;
-
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
 
