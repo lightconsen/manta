@@ -262,7 +262,7 @@ function Avatar({ role }: { role: string }) {
   }
   return (
     <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white shrink-0">
-      <Logo className="w-3.5 h-3.5" />
+      <Logo className="w-3.5 h-3.5 brightness-0 invert" />
     </div>
   );
 }
@@ -642,7 +642,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-primary-500/20">
-                <Logo className="w-6 h-6" />
+                <Logo className="w-6 h-6 brightness-0 invert" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
                 Syscity
