@@ -160,6 +160,7 @@ impl AgentPersonality {
             workspace_dir: None,
             workspace_only: false,
             heartbeat: None,
+            agent_id: None,
         }
     }
 

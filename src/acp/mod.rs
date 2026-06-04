@@ -1092,6 +1092,7 @@ impl AcpControlPlane {
             workspace_dir: None,
             workspace_only: false,
             heartbeat: None,
+            agent_id: None,
         };
 
         // Create the agent (acquire builder, call, release)

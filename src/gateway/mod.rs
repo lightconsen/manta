@@ -2295,8 +2295,9 @@ impl Gateway {
 async fn spawn_agent_inner(
     state: Arc<GatewayState>,
     id: String,
-    config: AgentConfig,
+    mut config: AgentConfig,
 ) -> crate::Result<()> {
+    config.agent_id = Some(id.clone());
     info!("Spawning agent: {}", id);
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -5047,6 +5048,9 @@ async fn create_agent_handler(
     let agent_id = format!("agent-{}", uuid::Uuid::new_v4());
     info!("Creating new agent via API: {}", agent_id);
 
+    let mut config = config;
+    config.agent_id = Some(agent_id.clone());
+
     // Create communication channel
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -7174,7 +7178,8 @@ async fn spawn_discovered_agent_handler(
     };
 
     if let Some(personality) = personality {
-        let config = personality.to_agent_config();
+        let mut config = personality.to_agent_config();
+        config.agent_id = Some(id.clone());
 
         // Create provider from model router
         let provider = match state.model_router.create_default_provider().await {
@@ -7378,7 +7383,8 @@ async fn spawn_all_discovered_agents_handler(
         };
 
         if let Some(personality) = personality {
-            let config = personality.to_agent_config();
+            let mut config = personality.to_agent_config();
+            config.agent_id = Some(agent_id.clone());
 
             if let Ok(provider) = state.model_router.create_default_provider().await {
                 let tools = state.tool_registry.clone();

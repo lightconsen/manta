@@ -344,6 +344,12 @@ pub struct AgentConfig {
     /// When `None`, inherits from global `GatewayConfig.heartbeat`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat: Option<crate::heartbeat::HeartbeatConfig>,
+    /// Agent identifier — used to derive the default workspace directory.
+    ///
+    /// Set automatically when the agent is spawned. Not persisted in config
+    /// files because it is implied by the file path / agent name.
+    #[serde(skip)]
+    pub agent_id: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -406,6 +412,7 @@ The current time is provided in the context. When asked about time-sensitive inf
             workspace_dir: None,
             workspace_only: false,
             heartbeat: None,
+            agent_id: None,
         }
     }
 }
@@ -423,11 +430,15 @@ impl AgentConfig {
     ///
     /// Resolution order:
     /// 1. `workspace_dir` config value (with `~` expanded)
-    /// 2. `~/.syscity/workspace` (default)
+    /// 2. For the default agent: `~/.syscity/workspace`
+    /// 3. For named agents: `~/.syscity/agents/{agent_id}/workspace`
     pub fn resolve_workspace_dir(&self) -> std::path::PathBuf {
         match &self.workspace_dir {
             Some(dir) => crate::dirs::resolve_tilde(dir),
-            None => crate::dirs::workspace_data_dir(),
+            None => match self.agent_id.as_deref() {
+                Some("default") | None => crate::dirs::workspace_data_dir(),
+                Some(id) => crate::dirs::agent_workspace_dir(id),
+            },
         }
     }
 
@@ -3194,6 +3205,7 @@ mod tests {
                 model: Some("claude-haiku".to_string()),
                 provider: Some("anthropic".to_string()),
             }),
+            agent_id: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AgentConfig = serde_json::from_str(&json).unwrap();
@@ -3480,6 +3492,28 @@ mod tests {
         let config = AgentConfig::default();
         let resolved = config.resolve_workspace_dir();
         assert!(resolved.to_string_lossy().contains(".syscity"));
+        assert!(resolved.to_string_lossy().contains("workspace"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_dir_default_agent_id() {
+        let mut config = AgentConfig::default();
+        config.agent_id = Some("default".to_string());
+        let resolved = config.resolve_workspace_dir();
+        // Should use the global workspace dir, not agents/default/workspace
+        assert!(resolved.to_string_lossy().contains(".syscity"));
+        assert!(resolved.to_string_lossy().contains("workspace"));
+        assert!(!resolved.to_string_lossy().contains("agents"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_dir_named_agent() {
+        let mut config = AgentConfig::default();
+        config.agent_id = Some("my-agent".to_string());
+        let resolved = config.resolve_workspace_dir();
+        assert!(resolved.to_string_lossy().contains(".syscity"));
+        assert!(resolved.to_string_lossy().contains("agents"));
+        assert!(resolved.to_string_lossy().contains("my-agent"));
         assert!(resolved.to_string_lossy().contains("workspace"));
     }
 
