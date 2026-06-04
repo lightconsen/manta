@@ -4,6 +4,7 @@
 //! Wraps the existing CanvasManager to expose canvas operations to the agent.
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -126,8 +127,43 @@ enum CanvasComponentArg {
     },
 }
 
+/// Resolve an image src to a displayable URL/data-URI.
+///
+/// - External URLs (`http://`, `https://`, `data:`) are returned as-is.
+/// - Local file paths are read and encoded as base64 data URIs so the
+///   frontend can display them without an extra HTTP request.
+async fn resolve_image_src(src: &str) -> String {
+    if src.starts_with("http://")
+        || src.starts_with("https://")
+        || src.starts_with("data:")
+    {
+        return src.to_string();
+    }
+
+    match tokio::fs::read(src).await {
+        Ok(bytes) => {
+            let mime = guess_mime_from_path(src);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            format!("data:{};base64,{}", mime, b64)
+        }
+        Err(_) => src.to_string(), // fallback: keep original path
+    }
+}
+
+fn guess_mime_from_path(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        _ => "application/octet-stream",
+    }
+}
+
 impl CanvasComponentArg {
-    /// Recursively collect all image (id, src) pairs.
+    /// Recursively collect all image (id, src) pairs and inline SVG blocks.
     fn collect_images(&self, out: &mut Vec<(String, String)>) {
         match self {
             CanvasComponentArg::Container { children, .. } => {
@@ -137,6 +173,25 @@ impl CanvasComponentArg {
             }
             CanvasComponentArg::Image { id, src } => {
                 out.push((id.clone(), src.clone()));
+            }
+            CanvasComponentArg::Markdown { id, content } => {
+                // Extract <svg>...</svg> blocks and convert them to base64 data URIs.
+                let mut start = 0;
+                let mut idx = 0;
+                while let Some(svg_start) = content[start..].find("<svg") {
+                    let abs_start = start + svg_start;
+                    if let Some(svg_end) = content[abs_start..].find("</svg>") {
+                        let abs_end = abs_start + svg_end + "</svg>".len();
+                        let svg = &content[abs_start..abs_end];
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(svg.as_bytes());
+                        let data_uri = format!("data:image/svg+xml;base64,{}", b64);
+                        out.push((format!("{}_svg_{}", id, idx), data_uri));
+                        idx += 1;
+                        start = abs_end;
+                    } else {
+                        break;
+                    }
+                }
             }
             _ => {}
         }
@@ -290,7 +345,8 @@ impl Tool for CanvasTool {
                         markdown.push_str(&format!("**{}**\n\n", t));
                     }
                     for (id, src) in &images {
-                        markdown.push_str(&format!("![{}]({})\n\n", id, src));
+                        let resolved = resolve_image_src(src).await;
+                        markdown.push_str(&format!("![{}]({})\n\n", id, resolved));
                     }
 
                     info!(
