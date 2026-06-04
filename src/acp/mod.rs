@@ -1197,8 +1197,8 @@ impl AcpControlPlane {
                             Err(_) => Err("Timeout".to_string()),
                         };
 
-                        let _ =
-                            response_tx.send(response.map_err(crate::error::SyscityError::Internal));
+                        let _ = response_tx
+                            .send(response.map_err(crate::error::SyscityError::Internal));
 
                         // For Run mode, terminate after first message
                         if mode == SpawnMode::Run {
@@ -1515,7 +1515,9 @@ impl AcpControlPlane {
         match response_rx.await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(crate::error::SyscityError::Internal("Steer response dropped".to_string())),
+            Err(_) => {
+                Err(crate::error::SyscityError::Internal("Steer response dropped".to_string()))
+            }
         }
     }
 

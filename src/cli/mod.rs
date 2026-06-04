@@ -391,7 +391,8 @@ mod tests {
 
     #[test]
     fn parse_config_set_command() {
-        let cli = Cli::try_parse_from(["syscity", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["syscity", "config", "set", "gateway.host=0.0.0.0"]).unwrap();
         assert!(matches!(cli.command, Commands::Config { .. }));
     }
 

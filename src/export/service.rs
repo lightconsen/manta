@@ -9,7 +9,7 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use crate::export::formats::{
     ConversationExport, ExportFormat, ExportMeta, JsonLineMemory, JsonLineMessage, MemoryExport,
 };

@@ -572,7 +572,9 @@ impl Channel for WebchatChannel {
     }
 
     async fn delete_message(&self, _message_id: Id) -> crate::Result<()> {
-        Err(crate::error::SyscityError::Internal("WebChat delete not implemented".to_string()))
+        Err(crate::error::SyscityError::Internal(
+            "WebChat delete not implemented".to_string(),
+        ))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {

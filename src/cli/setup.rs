@@ -165,11 +165,7 @@ pub async fn run_setup() -> Result<()> {
         format!("\n3. API Key for {} (Enter to skip)", provider_name)
     } else {
         let masked = if existing_key.len() > 8 {
-            format!(
-                "{}...{}",
-                &existing_key[..4],
-                &existing_key[existing_key.len() - 4..]
-            )
+            format!("{}...{}", &existing_key[..4], &existing_key[existing_key.len() - 4..])
         } else {
             "***".to_string()
         };
@@ -184,7 +180,9 @@ pub async fn run_setup() -> Result<()> {
 
     let api_key = if api_key_input.trim().is_empty() {
         if existing_key.is_empty() {
-            println!("   ⚠️  No API key provided. You can set it later via SYSCITY_API_KEY env var.");
+            println!(
+                "   ⚠️  No API key provided. You can set it later via SYSCITY_API_KEY env var."
+            );
             String::new()
         } else {
             existing_key
@@ -232,10 +230,7 @@ pub async fn run_setup() -> Result<()> {
     println!("\n4. Server Settings");
 
     let host_input: String = Input::new()
-        .with_prompt(format!(
-            "   Host [{}] (Enter to keep)",
-            config.host
-        ))
+        .with_prompt(format!("   Host [{}] (Enter to keep)", config.host))
         .allow_empty(true)
         .interact_text()
         .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;
@@ -245,10 +240,7 @@ pub async fn run_setup() -> Result<()> {
     }
 
     let port_input: String = Input::new()
-        .with_prompt(format!(
-            "   Port [{}] (Enter to keep)",
-            config.port
-        ))
+        .with_prompt(format!("   Port [{}] (Enter to keep)", config.port))
         .allow_empty(true)
         .interact_text()
         .map_err(|e| crate::error::SyscityError::Internal(format!("Input error: {}", e)))?;

@@ -4645,7 +4645,11 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         .filter(|h| matches!(h.state, crate::model_router::CircuitState::Closed))
         .count() as f64;
     let total_providers = router_health.len() as f64;
-    gauge("syscity_providers_healthy", healthy_providers, "Number of healthy LLM providers");
+    gauge(
+        "syscity_providers_healthy",
+        healthy_providers,
+        "Number of healthy LLM providers",
+    );
     gauge(
         "syscity_providers_total",
         total_providers,

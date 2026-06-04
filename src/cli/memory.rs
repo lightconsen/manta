@@ -3,7 +3,7 @@
 //! Provides CLI access to vector memory: search and add documents.
 
 use crate::cli::OutputFormat;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

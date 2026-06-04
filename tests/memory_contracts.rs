@@ -4,8 +4,8 @@
 //! maintain stable serialization contracts and that in-memory store operations
 //! roundtrip correctly. Tests use isolated temporary directories.
 
-use syscity::memory::*;
 use serde_json::json;
+use syscity::memory::*;
 
 // ── MemoryId Serialization Contract ──────────────────────────────────────────
 

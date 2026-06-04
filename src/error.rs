@@ -173,7 +173,8 @@ mod tests {
 
     #[test]
     fn test_error_variants_display() {
-        let err = SyscityError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing"));
+        let err =
+            SyscityError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file missing"));
         assert!(err.to_string().contains("I/O error"));
 
         let err = SyscityError::Internal("something broke".to_string());

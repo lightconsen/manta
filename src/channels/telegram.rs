@@ -399,7 +399,10 @@ impl Channel for TelegramChannel {
 
             let chat_id: i64 = chat_id_str.parse().map_err(|e| {
                 error!("DEBUG: Failed to parse chat_id '{}': {:?}", chat_id_str, e);
-                crate::error::SyscityError::Validation(format!("Invalid chat ID: '{}'", chat_id_str))
+                crate::error::SyscityError::Validation(format!(
+                    "Invalid chat ID: '{}'",
+                    chat_id_str
+                ))
             })?;
 
             // Format content
@@ -464,10 +467,9 @@ impl Channel for TelegramChannel {
                 })?
             };
 
-            let chat_id: i64 = conversation_id
-                .0
-                .parse()
-                .map_err(|_| crate::error::SyscityError::Validation("Invalid chat ID".to_string()))?;
+            let chat_id: i64 = conversation_id.0.parse().map_err(|_| {
+                crate::error::SyscityError::Validation("Invalid chat ID".to_string())
+            })?;
 
             bot.send_chat_action(ChatId(chat_id), teloxide::types::ChatAction::Typing)
                 .await
@@ -704,10 +706,9 @@ impl Channel for TelegramChannel {
                 })?
             };
 
-            let chat_id: i64 = conversation_id
-                .0
-                .parse()
-                .map_err(|_| crate::error::SyscityError::Validation("Invalid chat ID".to_string()))?;
+            let chat_id: i64 = conversation_id.0.parse().map_err(|_| {
+                crate::error::SyscityError::Validation("Invalid chat ID".to_string())
+            })?;
 
             let poll_options: Vec<String> = options.into_iter().collect();
 

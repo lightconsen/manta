@@ -5,7 +5,7 @@
 
 use crate::agent::Agent;
 use crate::channels::IncomingMessage;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
@@ -1089,8 +1089,9 @@ impl CronScheduler {
         // Persist to JSONL file if store_path is configured
         if let Some(ref path) = store_path {
             let log_path = path.with_extension("runs.jsonl");
-            let line = serde_json::to_string(&entry)
-                .map_err(|e| SyscityError::Internal(format!("Failed to serialize run log: {}", e)))?;
+            let line = serde_json::to_string(&entry).map_err(|e| {
+                SyscityError::Internal(format!("Failed to serialize run log: {}", e))
+            })?;
             let mut file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)

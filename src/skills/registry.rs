@@ -4,7 +4,7 @@
 //! from a remote registry (e.g., skills.syscity.dev or ClawHub).
 
 use crate::dirs;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use crate::skills::frontmatter::SkillFile;
 use reqwest;
 use serde::{Deserialize, Serialize};

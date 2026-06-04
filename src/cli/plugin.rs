@@ -1,6 +1,6 @@
 //! Plugin management commands for Syscity
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 use std::path::PathBuf;
 

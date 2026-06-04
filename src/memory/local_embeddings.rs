@@ -23,7 +23,10 @@ static LLAMA_BACKEND: OnceLock<crate::Result<LlamaBackend>> = OnceLock::new();
 fn get_backend() -> crate::Result<&'static LlamaBackend> {
     let result = LLAMA_BACKEND.get_or_init(|| {
         LlamaBackend::init().map_err(|e| {
-            crate::error::SyscityError::Validation(format!("Failed to init llama.cpp backend: {}", e))
+            crate::error::SyscityError::Validation(format!(
+                "Failed to init llama.cpp backend: {}",
+                e
+            ))
         })
     });
     match result {
@@ -171,7 +174,10 @@ impl LazyEmbeddingModel {
 
                 let model =
                     LlamaModel::load_from_file(backend, &path, &model_params).map_err(|e| {
-                        crate::error::SyscityError::Validation(format!("Failed to load model: {}", e))
+                        crate::error::SyscityError::Validation(format!(
+                            "Failed to load model: {}",
+                            e
+                        ))
                     })?;
 
                 let context_params = LlamaContextParams::default().with_n_batch(512);

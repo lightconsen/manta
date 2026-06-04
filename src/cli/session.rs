@@ -3,7 +3,7 @@
 //! Provides introspection and control over the Session → Thread → Turn
 //! hierarchy stored in the running daemon.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

@@ -205,12 +205,12 @@ impl CompressedJsonlStore {
                 .map(|m| serde_json::to_string(m).unwrap())
                 .collect();
             let compressed = Self::compress_lines(&lines)?;
-            fs::write(&shard, compressed)
-                .await
-                .map_err(|e| crate::error::SyscityError::Storage {
+            fs::write(&shard, compressed).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
                     context: format!("Failed to rewrite archival shard: {:?}", shard),
                     details: e.to_string(),
-                })?;
+                }
+            })?;
         }
 
         Ok(())

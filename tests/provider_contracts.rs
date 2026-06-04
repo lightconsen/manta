@@ -5,8 +5,8 @@
 //! of Message, ToolCall, CompletionResponse, etc. signals a breaking change for
 //! LLM integrations.
 
-use syscity::providers::*;
 use serde_json::json;
+use syscity::providers::*;
 
 // ── Message Serialization Contract ───────────────────────────────────────────
 

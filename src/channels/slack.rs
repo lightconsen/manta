@@ -453,7 +453,10 @@ impl Channel for SlackChannel {
                 .send()
                 .await
                 .map_err(|e| {
-                    crate::error::SyscityError::Internal(format!("Slack edit request failed: {}", e))
+                    crate::error::SyscityError::Internal(format!(
+                        "Slack edit request failed: {}",
+                        e
+                    ))
                 })?;
 
             let resp_json: serde_json::Value = resp.json().await.unwrap_or_default();

@@ -4,7 +4,7 @@
 //! operations. It is independent of external adapters.
 
 use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, instrument, warn};
@@ -146,9 +146,11 @@ impl Engine {
             .write()
             .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
-        let entity = entities.get_mut(&id).ok_or_else(|| SyscityError::NotFound {
-            resource: format!("Entity with ID '{}' not found", id),
-        })?;
+        let entity = entities
+            .get_mut(&id)
+            .ok_or_else(|| SyscityError::NotFound {
+                resource: format!("Entity with ID '{}' not found", id),
+            })?;
 
         request.apply(entity)?;
 

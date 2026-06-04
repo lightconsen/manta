@@ -1445,10 +1445,12 @@ impl Tool for BrowserTool {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let actions: Vec<BrowserAction> =
-            serde_json::from_value(args.get("actions").cloned().unwrap_or(json!([]))).map_err(
-                |e| crate::error::SyscityError::Validation(format!("Invalid browser actions: {}", e)),
-            )?;
+        let actions: Vec<BrowserAction> = serde_json::from_value(
+            args.get("actions").cloned().unwrap_or(json!([])),
+        )
+        .map_err(|e| {
+            crate::error::SyscityError::Validation(format!("Invalid browser actions: {}", e))
+        })?;
 
         if actions.is_empty() {
             return Ok(ToolExecutionResult::error("No browser actions specified"));

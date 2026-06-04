@@ -120,7 +120,10 @@ impl Channel for ChannelSenderBridge {
 
     async fn send(&self, message: OutgoingMessage) -> crate::Result<Id> {
         self.outbound_tx.send(message).await.map_err(|e| {
-            crate::error::SyscityError::Internal(format!("Extension outbound channel closed: {}", e))
+            crate::error::SyscityError::Internal(format!(
+                "Extension outbound channel closed: {}",
+                e
+            ))
         })?;
         Ok(Id::new())
     }

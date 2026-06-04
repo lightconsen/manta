@@ -2,7 +2,7 @@
 //!
 //! Top-level CLI for listing, enabling, disabling, and switching model providers.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

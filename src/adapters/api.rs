@@ -4,7 +4,7 @@
 //! external APIs.
 
 use crate::config::ServiceConfig;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use crate::secrets::SecretRef;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};

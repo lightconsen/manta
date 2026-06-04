@@ -2,7 +2,7 @@
 //!
 //! Human-in-the-loop approval for high-risk tool executions.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

@@ -5,8 +5,8 @@
 //! backend.  This is the core of the "Effectiveness 闭环反馈" feature.
 
 use syscity::memory::{
-    EffectivenessAction, EffectivenessConfig, EffectivenessTracker, Memory, MemoryStore, MemoryTier,
-    TieredStore,
+    EffectivenessAction, EffectivenessConfig, EffectivenessTracker, Memory, MemoryStore,
+    MemoryTier, TieredStore,
 };
 
 /// Simulate recall events with configurable hit rates.
@@ -21,14 +21,7 @@ async fn simulate_recalls(
     for i in 0..count {
         let recall_id = format!("recall-{}-{}", memory_id, i);
         tracker
-            .record_recall(
-                &recall_id,
-                memory_id,
-                session_key,
-                "fact",
-                importance,
-                0,
-            )
+            .record_recall(&recall_id, memory_id, session_key, "fact", importance, 0)
             .await;
         if hit {
             tracker.mark_hit(&recall_id).await;
@@ -160,11 +153,7 @@ async fn effectiveness_penalty_triggers_tier_demotion() {
 
     // 4. Evaluate and apply penalty
     let action = tracker.evaluate(&id.0, 0.8).await;
-    assert_eq!(
-        action,
-        EffectivenessAction::Penalize,
-        "0/3 hits should trigger Penalize"
-    );
+    assert_eq!(action, EffectivenessAction::Penalize, "0/3 hits should trigger Penalize");
 
     let penalised_score = tracker.apply_action(action, 0.8);
     assert!(
@@ -232,13 +221,9 @@ async fn effectiveness_noop_preserves_tier() {
     let store = TieredStore::new_in_memory().await.unwrap();
 
     // Store a medium-importance memory → ShortTerm tier
-    let mem =
-        Memory::new("u1", "Stable tier memory", "fact").with_importance_score(0.4);
+    let mem = Memory::new("u1", "Stable tier memory", "fact").with_importance_score(0.4);
     let id = store.store(mem.clone()).await.unwrap();
-    assert_eq!(
-        store.tier_index().get_tier(&id.0),
-        Some(MemoryTier::ShortTerm)
-    );
+    assert_eq!(store.tier_index().get_tier(&id.0), Some(MemoryTier::ShortTerm));
 
     let tracker = EffectivenessTracker::new(EffectivenessConfig {
         auto_adjust: true,
@@ -257,17 +242,10 @@ async fn effectiveness_noop_preserves_tier() {
     tracker.mark_hit(&format!("recall-{}-0", id.0)).await;
 
     let action = tracker.evaluate(&id.0, 0.4).await;
-    assert_eq!(
-        action,
-        EffectivenessAction::NoOp,
-        "mixed hit rate should yield NoOp"
-    );
+    assert_eq!(action, EffectivenessAction::NoOp, "mixed hit rate should yield NoOp");
 
     let new_score = tracker.apply_action(action, 0.4);
-    assert!(
-        (new_score - 0.4).abs() < 0.001,
-        "NoOp should preserve importance"
-    );
+    assert!((new_score - 0.4).abs() < 0.001, "NoOp should preserve importance");
 
     let mut updated = mem.clone();
     updated.id = id.clone();
@@ -329,18 +307,11 @@ async fn effectiveness_data_consistency_across_backends() {
         MemoryTier::LongTerm,
         MemoryTier::Archival,
     ] {
-        let exists = store
-            .tier_index()
-            .ids_in_tier(tier)
-            .contains(&id.0);
+        let exists = store.tier_index().ids_in_tier(tier).contains(&id.0);
         if tier == current_tier {
             assert!(exists, "memory should be in current tier {:?}", tier);
         } else {
-            assert!(
-                !exists,
-                "memory should NOT remain in old tier {:?}",
-                tier
-            );
+            assert!(!exists, "memory should NOT remain in old tier {:?}", tier);
         }
     }
 

@@ -350,7 +350,9 @@ impl QqChannel {
             .as_ref()
             .or(req.guild_id.as_ref())
             .ok_or_else(|| {
-                crate::error::SyscityError::Validation("Channel ID or Guild ID required".to_string())
+                crate::error::SyscityError::Validation(
+                    "Channel ID or Guild ID required".to_string(),
+                )
             })?;
 
         let endpoint = endpoint.replace("{channel_id}", channel_id);

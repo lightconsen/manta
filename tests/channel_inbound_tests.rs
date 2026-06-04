@@ -6,12 +6,12 @@
 //! These tests verify that inbound message handling correctly applies
 //! security policies without requiring live network connections.
 
+use std::sync::Arc;
 use syscity::channels::lark::{LarkChannel, LarkConfig};
 use syscity::channels::qq::{QqChannel, QqConfig};
 use syscity::channels::slack::{SlackChannel, SlackConfig};
 use syscity::channels::whatsapp::{WhatsappChannel, WhatsappConfig};
 use syscity::security::pairing::{DmPolicy, PairingStore};
-use std::sync::Arc;
 
 // ── Slack Channel Access Control ─────────────────────────────────────────────
 

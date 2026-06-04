@@ -333,10 +333,9 @@ impl McpClient {
             crate::error::SyscityError::Internal(format!("Failed to spawn MCP server: {}", e))
         })?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| crate::error::SyscityError::Internal("Failed to get stdin".to_string()))?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            crate::error::SyscityError::Internal("Failed to get stdin".to_string())
+        })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
             crate::error::SyscityError::Internal("Failed to get stdout".to_string())

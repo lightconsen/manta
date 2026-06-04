@@ -200,11 +200,12 @@ pub struct KnowledgeGraph {
 impl KnowledgeGraph {
     /// Save the knowledge graph to disk as JSON.
     pub async fn save_to_disk(&self, path: impl AsRef<std::path::Path>) -> crate::Result<()> {
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
+            crate::error::SyscityError::Storage {
                 context: "Failed to serialize knowledge graph".to_string(),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
         if let Some(parent) = path.as_ref().parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 crate::error::SyscityError::Storage {

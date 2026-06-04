@@ -5,10 +5,12 @@
 //! shape, or result structure without updating these tests signals a
 //! breaking change for LLM integrations.
 
+use std::time::Duration;
+
+use serde_json::json;
+
 use syscity::providers::FunctionDefinition;
 use syscity::tools::*;
-use serde_json::json;
-use std::time::Duration;
 
 /// Build a minimal tool context for contract verification.
 fn test_context() -> ToolContext {

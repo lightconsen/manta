@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use syscity::providers::{Message, Role, ToolCall};
 use serde_json;
+use syscity::providers::{Message, Role, ToolCall};
 
 fn bench_message_serialization(c: &mut Criterion) {
     let msg = Message::assistant("This is a moderately long assistant response that contains some reasoning about the problem at hand.")

@@ -2,7 +2,7 @@
 //!
 //! Provides CLI access to device pairing state: list, approve, revoke.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

@@ -71,7 +71,8 @@ impl TieredStore {
             short_term: DatabaseStore::new_in_memory().await?,
             long_term: DatabaseStore::new_in_memory().await?,
             archival: CompressedJsonlStore::new(
-                std::env::temp_dir().join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4())),
+                std::env::temp_dir()
+                    .join(format!("syscity_archival_test_{}", uuid::Uuid::new_v4())),
             ),
             evaluator: Arc::new(TierEvaluator::new(TierSystemConfig::default())),
             index: Arc::new(TierIndex::new()),
@@ -173,10 +174,7 @@ impl TieredStore {
         // Update index
         self.index.update_tier(&id.0, target_tier);
 
-        info!(
-            "Memory {} explicitly migrated from {} to {}",
-            id, current_tier, target_tier
-        );
+        info!("Memory {} explicitly migrated from {} to {}", id, current_tier, target_tier);
         Ok(())
     }
 
@@ -640,7 +638,10 @@ mod tests {
         assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::ShortTerm));
 
         // Explicitly migrate to Archival
-        store.migrate_memory(&mem, MemoryTier::Archival).await.unwrap();
+        store
+            .migrate_memory(&mem, MemoryTier::Archival)
+            .await
+            .unwrap();
 
         assert_eq!(store.index.get_tier(&id.0), Some(MemoryTier::Archival));
 

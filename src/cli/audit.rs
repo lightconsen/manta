@@ -2,7 +2,7 @@
 //!
 //! View system audit logs and security audit results.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

@@ -559,11 +559,12 @@ impl PersistedPlan {
                 }
             })?;
         }
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
+            crate::error::SyscityError::Storage {
                 context: "Failed to serialize plan".to_string(),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
         tokio::fs::write(path, json)
             .await
             .map_err(|e| crate::error::SyscityError::Storage {

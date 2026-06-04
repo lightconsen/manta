@@ -8,14 +8,14 @@
 
 #![cfg(feature = "browser")]
 
+use serde_json::json;
+use serial_test::serial;
 use syscity::browser::{
     assert_navigation_allowed, ActKind, BrowserPool, BrowserPoolConfig, BrowserProfile,
     NavigationPolicy,
 };
 use syscity::tools::browser::BrowserTool;
 use syscity::tools::{Tool, ToolContext};
-use serde_json::json;
-use serial_test::serial;
 
 /// Check if Chrome/Chromium is available on the system
 fn chrome_available() -> bool {

@@ -4,12 +4,12 @@
 //! disk budget, session files) work correctly in isolation and can be wired
 //! into the Agent via the builder pattern. Tests use isolated temp directories.
 
+use std::sync::Arc;
 use syscity::agent::{
     AgentBuilder, AgentConfig, ArtifactStore, BudgetCategory, DiskBudgetManager,
     SessionFileManager, TranscriptStore,
 };
 use syscity::tools::ToolRegistry;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 // ── Disk Budget Tracking Contract ────────────────────────────────────────────

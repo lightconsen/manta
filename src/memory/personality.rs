@@ -1081,7 +1081,9 @@ These files are loaded into the system prompt at startup."#
 
                 "append" => {
                     let content = args["content"].as_str().ok_or_else(|| {
-                        SyscityError::Validation("content is required for append action".to_string())
+                        SyscityError::Validation(
+                            "content is required for append action".to_string(),
+                        )
                     })?;
 
                     self.memory.append(mem_type, content).await?;

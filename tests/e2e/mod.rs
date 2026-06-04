@@ -3,14 +3,14 @@
 //! Simulates a complete frontend client connecting via WebSocket.
 
 pub use futures_util::{SinkExt, StreamExt};
-pub use syscity::gateway::protocol::AuthMode;
-pub use syscity::gateway::{Gateway, GatewayConfig};
-pub use syscity::model_router::{ProviderConfig, ProviderType};
 pub use serde_json::json;
 pub use serial_test::serial;
 pub use std::collections::VecDeque;
 pub use std::path::Path;
 pub use std::time::Duration;
+pub use syscity::gateway::protocol::AuthMode;
+pub use syscity::gateway::{Gateway, GatewayConfig};
+pub use syscity::model_router::{ProviderConfig, ProviderType};
 pub use tokio::time::timeout;
 pub use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
@@ -99,11 +99,13 @@ pub fn discover_local_providers() -> Vec<LocalProviderConfig> {
 }
 
 pub fn pick_test_provider() -> Option<LocalProviderConfig> {
-    if let (Ok(key), Ok(name)) =
-        (std::env::var("SYSCITY_TEST_PROVIDER_KEY"), std::env::var("SYSCITY_TEST_PROVIDER"))
-    {
+    if let (Ok(key), Ok(name)) = (
+        std::env::var("SYSCITY_TEST_PROVIDER_KEY"),
+        std::env::var("SYSCITY_TEST_PROVIDER"),
+    ) {
         let base_url = std::env::var("SYSCITY_TEST_BASE_URL").unwrap_or_default();
-        let model = std::env::var("SYSCITY_TEST_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let model =
+            std::env::var("SYSCITY_TEST_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
         let is_anthropic = name == "anthropic" || name == "kimi";
         return Some(LocalProviderConfig {
             name,

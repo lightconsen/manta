@@ -428,9 +428,9 @@ Actions:
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action'".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Validation("Missing 'action'".to_string())
+        })?;
 
         match action {
             "search" => {
@@ -582,9 +582,9 @@ Actions:
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| crate::error::SyscityError::Validation("Missing 'action'".to_string()))?;
+        let action = args["action"].as_str().ok_or_else(|| {
+            crate::error::SyscityError::Validation("Missing 'action'".to_string())
+        })?;
 
         match action {
             "retrieve" => {

@@ -164,15 +164,13 @@ impl DaemonClient {
     /// Check if daemon is running and has AI agent
     pub async fn health(&self) -> crate::Result<HealthResponse> {
         let url = format!("{}/health", self.base_url);
-        let response =
-            self.client.get(&url).send().await.map_err(|e| {
-                crate::error::SyscityError::Internal(format!("Failed to connect: {}", e))
-            })?;
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to connect: {}", e))
+        })?;
 
-        let health: HealthResponse = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let health: HealthResponse = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
 
         Ok(health)
     }
@@ -208,10 +206,9 @@ impl DaemonClient {
             )));
         }
 
-        let chat_response: ChatResponse = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let chat_response: ChatResponse = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
 
         Ok(chat_response)
     }
@@ -256,7 +253,9 @@ impl DaemonClient {
                 Err(e) => {
                     Err(crate::error::SyscityError::Internal(format!("WebSocket error: {}", e)))
                 }
-                _ => Err(crate::error::SyscityError::Internal("Unexpected message type".to_string())),
+                _ => {
+                    Err(crate::error::SyscityError::Internal("Unexpected message type".to_string()))
+                }
             }
         } else {
             Err(crate::error::SyscityError::Internal("No response received".to_string()))
@@ -283,10 +282,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let status = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let status = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(status)
     }
 
@@ -298,10 +296,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let providers = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let providers = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(providers)
     }
 
@@ -313,10 +310,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let models = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let models = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(models)
     }
 
@@ -328,10 +324,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let model = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let model = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(model)
     }
 
@@ -348,10 +343,9 @@ impl DaemonClient {
             .await
             .map_err(|e| crate::error::SyscityError::Internal(format!("Request failed: {}", e)))?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -363,10 +357,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -378,10 +371,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -396,10 +388,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -411,10 +402,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -426,10 +416,9 @@ impl DaemonClient {
                 crate::error::SyscityError::Internal(format!("Request failed: {}", e))
             })?;
 
-        let agents = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let agents = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(agents)
     }
 
@@ -456,10 +445,9 @@ impl DaemonClient {
             .await
             .map_err(|e| crate::error::SyscityError::Internal(format!("Request failed: {}", e)))?;
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 
@@ -485,10 +473,9 @@ impl DaemonClient {
             )));
         }
 
-        let history = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let history = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(history)
     }
 
@@ -510,10 +497,9 @@ impl DaemonClient {
             )));
         }
 
-        let result = response
-            .json()
-            .await
-            .map_err(|e| crate::error::SyscityError::Internal(format!("Invalid response: {}", e)))?;
+        let result = response.json().await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+        })?;
         Ok(result)
     }
 }

@@ -1,7 +1,7 @@
 //! Chat and web interface commands for Syscity
 
 use crate::config::Config;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 
 /// Default daemon base URL.
 const DAEMON_URL: &str = "http://127.0.0.1:18080";

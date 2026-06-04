@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn memory_tool_creates_and_reads() {
-    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memory_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("syscity_e2e_memory_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let tool = MemoryTool::with_database_url(&db_url)
         .await
@@ -45,7 +46,8 @@ async fn memory_tool_creates_and_reads() {
 
 #[tokio::test]
 async fn memory_search_tool_searches() {
-    let db_path = std::env::temp_dir().join(format!("syscity_e2e_search_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("syscity_e2e_search_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
         syscity::memory::SqliteMemoryStore::new(&db_url)
@@ -327,7 +329,8 @@ async fn memory_search_store_then_search() {
 
 #[tokio::test]
 async fn memory_get_delete_nonexistent_fails() {
-    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("syscity_e2e_memget_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
         syscity::memory::SqliteMemoryStore::new(&db_url)
@@ -349,7 +352,8 @@ async fn memory_get_delete_nonexistent_fails() {
 
 #[tokio::test]
 async fn memory_get_list_returns_all() {
-    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget2_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("syscity_e2e_memget2_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
         syscity::memory::SqliteMemoryStore::new(&db_url)
@@ -389,7 +393,8 @@ async fn memory_get_list_returns_all() {
 
 #[tokio::test]
 async fn memory_get_update_nonexistent_fails() {
-    let db_path = std::env::temp_dir().join(format!("syscity_e2e_memget3_{}.db", std::process::id()));
+    let db_path =
+        std::env::temp_dir().join(format!("syscity_e2e_memget3_{}.db", std::process::id()));
     let db_url = format!("sqlite:/// {}", db_path.display()).replace("/ /", "/");
     let store = Arc::new(
         syscity::memory::SqliteMemoryStore::new(&db_url)

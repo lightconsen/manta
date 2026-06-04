@@ -2,7 +2,7 @@
 //!
 //! Persists channel state (offsets, session mappings) to SQLite for recovery.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};

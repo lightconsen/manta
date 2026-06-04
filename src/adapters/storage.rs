@@ -47,7 +47,9 @@ impl From<StorageError> for SyscityError {
             StorageError::Serialization(msg) => {
                 SyscityError::Internal(format!("Serialization error: {}", msg))
             }
-            StorageError::Backend(msg) => SyscityError::Internal(format!("Storage backend: {}", msg)),
+            StorageError::Backend(msg) => {
+                SyscityError::Internal(format!("Storage backend: {}", msg))
+            }
         }
     }
 }

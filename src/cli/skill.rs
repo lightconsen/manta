@@ -1,7 +1,7 @@
 //! Skill management commands for Syscity
 
 use crate::cli::OutputFormat;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use crate::skills::{install_all, SkillFile};
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -261,9 +261,9 @@ async fn install_skill_local(source: &str, name: Option<&str>) -> Result<()> {
         if !src_path.exists() {
             return Err(SyscityError::Internal(format!("Source path does not exist: {}", source)));
         }
-        copy_dir_recursive(src_path, &dest)
-            .await
-            .map_err(|e| SyscityError::Internal(format!("Failed to copy skill directory: {}", e)))?;
+        copy_dir_recursive(src_path, &dest).await.map_err(|e| {
+            SyscityError::Internal(format!("Failed to copy skill directory: {}", e))
+        })?;
     }
 
     println!("Skill '{}' installed to {:?}", skill_name, dest);

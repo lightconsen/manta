@@ -4,7 +4,7 @@
 //! diagnosing provider health, auth status, circuit state, and generating
 //! actionable recommendations.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -497,8 +497,9 @@ async fn run_diagnostics(
     };
 
     if provider_diagnostics.is_empty() && filter_provider.is_none() {
-        recommendations
-            .push("No providers configured. Run `syscity setup` to configure providers.".to_string());
+        recommendations.push(
+            "No providers configured. Run `syscity setup` to configure providers.".to_string(),
+        );
     }
 
     // Add deprecation warnings to recommendations

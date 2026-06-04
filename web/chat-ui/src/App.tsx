@@ -32,6 +32,19 @@ function Logo({ className }: { className?: string }) {
   );
 }
 
+function RobotIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v4" />
+      <circle cx="8" cy="15" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="15" r="1.5" fill="currentColor" stroke="none" />
+      <path d="M9 19h6" />
+    </svg>
+  );
+}
+
 function ChevronLeftIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -262,7 +275,7 @@ function Avatar({ role }: { role: string }) {
   }
   return (
     <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white shrink-0">
-      <Logo className="w-3.5 h-3.5 brightness-0 invert" />
+      <RobotIcon className="w-3.5 h-3.5" />
     </div>
   );
 }
@@ -642,7 +655,7 @@ function ChatContent({ messages, transport }: { messages: ChatMessage[]; transpo
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-primary-500/20">
-                <Logo className="w-6 h-6 brightness-0 invert" />
+                <RobotIcon className="w-6 h-6" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
                 Syscity

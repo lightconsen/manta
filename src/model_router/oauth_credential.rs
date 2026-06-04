@@ -171,7 +171,8 @@ pub fn resolve_from_env_and_config(
     config_api_key: &str,
     config_api_keys: &[String],
 ) -> Option<Credential> {
-    let env_key = format!("SYSCITY_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
+    let env_key =
+        format!("SYSCITY_PROVIDER_{}_KEY", provider_name.to_uppercase().replace('-', "_"));
 
     // 1. Environment variable (highest priority)
     if let Ok(key) = std::env::var(&env_key) {

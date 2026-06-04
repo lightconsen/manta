@@ -3,7 +3,7 @@
 //! Provides persistent session storage using SQLite instead of in-memory HashMaps.
 //! This gives us ACID guarantees, automatic crash recovery, and simpler querying.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};

@@ -148,11 +148,12 @@ impl WorkspaceState {
                 details: e.to_string(),
             })?;
 
-        let payload =
-            serde_json::to_string_pretty(self).map_err(|e| crate::error::SyscityError::Storage {
+        let payload = serde_json::to_string_pretty(self).map_err(|e| {
+            crate::error::SyscityError::Storage {
                 context: "Failed to serialize workspace state".to_string(),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
 
         // Write atomically via temp file + rename
         let tmp_path = state_path.with_extension(format!(

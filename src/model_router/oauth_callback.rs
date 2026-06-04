@@ -18,13 +18,12 @@ use tracing::{debug, error, info, warn};
 /// Returns `Err` if the timeout expires or the request is malformed.
 pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(String, String)> {
     let addr = format!("127.0.0.1:{}", port);
-    let listener =
-        TcpListener::bind(&addr)
-            .await
-            .map_err(|e| crate::error::SyscityError::ExternalService {
-                source: format!("Failed to bind callback server to {}: {}", addr, e),
-                cause: Some(Box::new(e)),
-            })?;
+    let listener = TcpListener::bind(&addr).await.map_err(|e| {
+        crate::error::SyscityError::ExternalService {
+            source: format!("Failed to bind callback server to {}: {}", addr, e),
+            cause: Some(Box::new(e)),
+        }
+    })?;
 
     info!("Waiting for OAuth callback on http://{}/callback", addr);
 
@@ -42,14 +41,12 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
 
         // Read the first HTTP request line
         let mut buf = [0u8; 4096];
-        let n =
-            stream
-                .peek(&mut buf)
-                .await
-                .map_err(|e| crate::error::SyscityError::ExternalService {
-                    source: format!("Failed to read callback request: {}", e),
-                    cause: Some(Box::new(e)),
-                })?;
+        let n = stream.peek(&mut buf).await.map_err(|e| {
+            crate::error::SyscityError::ExternalService {
+                source: format!("Failed to read callback request: {}", e),
+                cause: Some(Box::new(e)),
+            }
+        })?;
 
         let request = String::from_utf8_lossy(&buf[..n]);
         debug!("Callback request: {}", request.lines().next().unwrap_or("(empty)"));
@@ -96,13 +93,14 @@ pub async fn wait_for_callback(port: u16, timeout_secs: u64) -> crate::Result<(S
 
 fn parse_callback_request(request: &str) -> crate::Result<(String, String)> {
     // Find the request line: GET /callback?code=xxx&state=yyy HTTP/1.1
-    let line = request
-        .lines()
-        .next()
-        .ok_or_else(|| crate::error::SyscityError::ExternalService {
-            source: "OAuth callback request is empty".to_string(),
-            cause: None,
-        })?;
+    let line =
+        request
+            .lines()
+            .next()
+            .ok_or_else(|| crate::error::SyscityError::ExternalService {
+                source: "OAuth callback request is empty".to_string(),
+                cause: None,
+            })?;
 
     let path_part = line.split_whitespace().nth(1).ok_or_else(|| {
         crate::error::SyscityError::ExternalService {

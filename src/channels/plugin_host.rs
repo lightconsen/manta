@@ -93,7 +93,9 @@ fn write_string_to_memory(
     // Check memory bounds
     let mem_size = memory.data_size(&*store);
     if (ptr as usize + len) > mem_size {
-        return Err(crate::error::SyscityError::Plugin("Allocated memory out of bounds".to_string()));
+        return Err(crate::error::SyscityError::Plugin(
+            "Allocated memory out of bounds".to_string(),
+        ));
     }
 
     // Write the string
@@ -417,11 +419,15 @@ impl PluginChannel {
 
             let send_typing_fn = instance
                 .get_typed_func::<(i32, i32), i32>(&mut store, "send_typing")
-                .map_err(|e| crate::error::SyscityError::Plugin(format!("No send_typing: {}", e)))?;
+                .map_err(|e| {
+                    crate::error::SyscityError::Plugin(format!("No send_typing: {}", e))
+                })?;
 
             let edit_message_fn = instance
                 .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "edit_message")
-                .map_err(|e| crate::error::SyscityError::Plugin(format!("No edit_message: {}", e)))?;
+                .map_err(|e| {
+                    crate::error::SyscityError::Plugin(format!("No edit_message: {}", e))
+                })?;
 
             let delete_message_fn = instance
                 .get_typed_func::<(i32, i32), i32>(&mut store, "delete_message")
@@ -431,7 +437,9 @@ impl PluginChannel {
 
             let health_check_fn = instance
                 .get_typed_func::<(), i32>(&mut store, "health_check")
-                .map_err(|e| crate::error::SyscityError::Plugin(format!("No health_check: {}", e)))?;
+                .map_err(|e| {
+                    crate::error::SyscityError::Plugin(format!("No health_check: {}", e))
+                })?;
 
             (
                 init_fn,
@@ -481,7 +489,9 @@ impl PluginChannel {
                 // Free the memory
                 free_fn
                     .call(&mut store, (result_ptr, result_len))
-                    .map_err(|e| crate::error::SyscityError::Plugin(format!("Free failed: {}", e)))?;
+                    .map_err(|e| {
+                        crate::error::SyscityError::Plugin(format!("Free failed: {}", e))
+                    })?;
 
                 // Parse JSON
                 match serde_json::from_str::<CapabilitiesJson>(&caps_json) {
@@ -703,7 +713,9 @@ impl Channel for PluginChannel {
         let result = self
             .send_typing_fn
             .call(&mut *store, (ptr, len))
-            .map_err(|e| crate::error::SyscityError::Plugin(format!("Send_typing failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::SyscityError::Plugin(format!("Send_typing failed: {}", e))
+            })?;
 
         self.free_fn
             .call(&mut *store, (ptr, len))
@@ -773,10 +785,9 @@ impl Channel for PluginChannel {
 
     async fn health_check(&self) -> crate::Result<bool> {
         let mut store = self.store.lock().await;
-        let result = self
-            .health_check_fn
-            .call(&mut *store, ())
-            .map_err(|e| crate::error::SyscityError::Plugin(format!("Health check failed: {}", e)))?;
+        let result = self.health_check_fn.call(&mut *store, ()).map_err(|e| {
+            crate::error::SyscityError::Plugin(format!("Health check failed: {}", e))
+        })?;
 
         Ok(result == 1)
     }

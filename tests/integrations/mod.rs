@@ -2,6 +2,9 @@
 //!
 //! Each file tests a category of tools without going through Gateway/WebSocket.
 
+pub use serde_json::json;
+pub use std::sync::Arc;
+pub use std::time::Duration;
 pub use syscity::tools::{
     AcpSessionTool, AcpSpawnTool, ApplyPatchTool, BrowserTool, CanvasTool, CodeExecutionTool,
     CronTool, DelegateTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
@@ -10,9 +13,6 @@ pub use syscity::tools::{
     SessionsSendTool, SessionsYieldTool, ShellTool, TimeTool, TodoTool, Tool, ToolContext, TtsTool,
     UpdatePlanTool, WebFetchTool, WebSearchTool,
 };
-pub use serde_json::json;
-pub use std::sync::Arc;
-pub use std::time::Duration;
 
 /// Create a test ToolContext with a unique conversation_id to avoid cross-test pollution.
 pub fn test_context() -> ToolContext {

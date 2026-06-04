@@ -65,7 +65,8 @@ async fn sessions_history_tool_returns_history() {
             .unwrap(),
     );
     let session_id = "test-session-history";
-    let meta = syscity::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
+    let meta =
+        syscity::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
     store.save_session(session_id, &meta, "{}").await.unwrap();
     store
         .append_message(session_id, "user", "Hello", None, None, None, None, None)

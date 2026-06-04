@@ -7,12 +7,12 @@
 
 use super::*;
 use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Arc;
 use syscity::channels::{Channel, ChannelCapabilities, ChatType, ConversationId, OutgoingMessage};
 use syscity::core::models::Id;
 use syscity::gateway::{GatewayConfig, GatewayState};
 use syscity::tools::message::MessageTool;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 // ── Dummy pipelines (required by GatewayState but unused by these tests) ─────
@@ -74,7 +74,8 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         Arc::new(syscity::outbound::SideEffectExecutor::new(side_effect_registry));
     let sse_streamer = Arc::new(syscity::outbound::SseStreamer::new());
 
-    let inbound_pipeline: Arc<dyn syscity::inbound::InboundPipeline> = Arc::new(DummyInboundPipeline);
+    let inbound_pipeline: Arc<dyn syscity::inbound::InboundPipeline> =
+        Arc::new(DummyInboundPipeline);
     let outbound_pipeline: Arc<dyn syscity::outbound::OutboundPipeline> =
         Arc::new(DummyOutboundPipeline);
 
@@ -149,7 +150,9 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         outbound_pipeline,
         side_effect_executor,
         sse_streamer,
-        channel_extensions: Arc::new(RwLock::new(syscity::channels::ChannelExtensionRegistry::new())),
+        channel_extensions: Arc::new(RwLock::new(
+            syscity::channels::ChannelExtensionRegistry::new(),
+        )),
         provider_sdk: Arc::new(RwLock::new(syscity::providers::ProviderSdk::new())),
         tool_sdk: Arc::new(RwLock::new(syscity::tools::ToolSdk::new())),
         session_message_buffer: Arc::new(RwLock::new(HashMap::new())),

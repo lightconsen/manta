@@ -63,17 +63,17 @@ pub mod secrets;
 pub mod security;
 pub mod server;
 pub mod skills;
+#[cfg(feature = "tailscale")]
+pub mod tailscale;
 pub mod taskflow;
 pub mod team;
 pub mod tools;
 pub mod utils;
-#[cfg(feature = "tailscale")]
-pub mod tailscale;
 
 // Re-export commonly used types
 pub use crate::core::Engine;
 pub use config::{Config, ConfigWatcher, ReloadableConfig};
-pub use error::{SyscityError, Result};
+pub use error::{Result, SyscityError};
 
 // Re-export hot reload types
 pub use config::hot_reload::{
@@ -128,6 +128,8 @@ mod tests {
     fn test_environment() {
         // Should return development by default
         let env = environment();
-        assert!(env == "development" || !std::env::var("SYSCITY_ENV").unwrap_or_default().is_empty());
+        assert!(
+            env == "development" || !std::env::var("SYSCITY_ENV").unwrap_or_default().is_empty()
+        );
     }
 }

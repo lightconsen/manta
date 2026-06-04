@@ -4,11 +4,11 @@
 //! the OpenAI and Anthropic providers correctly serialize requests and
 //! deserialize responses. Tests run serially to avoid mock server conflicts.
 
+use serde_json::json;
+use serial_test::serial;
 use syscity::providers::{
     AnthropicProvider, CompletionRequest, Message, OpenAiProvider, Provider, Role, ToolDefinition,
 };
-use serde_json::json;
-use serial_test::serial;
 use wiremock::{
     matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,

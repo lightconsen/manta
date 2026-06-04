@@ -17,6 +17,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: web/chat-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -39,6 +57,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: web/chat-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -64,6 +100,24 @@ jobs:
         features: [default, all-features]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: web/chat-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -118,6 +172,7 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

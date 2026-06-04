@@ -1,7 +1,7 @@
 //! Entity management commands for Syscity
 
 use crate::core::models::Status;
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 
 /// Default daemon base URL.

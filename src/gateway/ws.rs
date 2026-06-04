@@ -711,7 +711,10 @@ async fn handle_device_auth(
             });
             error_invalid_request(
                 &req.id,
-                format!("Device pairing required. Use 'syscity device approve {}' to approve.", code),
+                format!(
+                    "Device pairing required. Use 'syscity device approve {}' to approve.",
+                    code
+                ),
             )
         }
         DeviceAccessResult::AlreadyPending { code } => error_invalid_request(

@@ -2,7 +2,7 @@
 //!
 //! Provides security audit, DM pairing, and access control management.
 
-use crate::error::{SyscityError, Result};
+use crate::error::{Result, SyscityError};
 use clap::Subcommand;
 use serde_json::json;
 
