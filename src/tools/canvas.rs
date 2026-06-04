@@ -127,6 +127,21 @@ enum CanvasComponentArg {
 }
 
 impl CanvasComponentArg {
+    /// Recursively collect all image (id, src) pairs.
+    fn collect_images(&self, out: &mut Vec<(String, String)>) {
+        match self {
+            CanvasComponentArg::Container { children, .. } => {
+                for child in children {
+                    child.collect_images(out);
+                }
+            }
+            CanvasComponentArg::Image { id, src } => {
+                out.push((id.clone(), src.clone()));
+            }
+            _ => {}
+        }
+    }
+
     fn into_component(self) -> CanvasComponent {
         match self {
             CanvasComponentArg::Container { id, children, layout } => CanvasComponent::Container {
@@ -263,6 +278,38 @@ impl Tool for CanvasTool {
 
         match action {
             CanvasAction::Present { session_id, title, components } => {
+                // Collect images from the component tree for inline display
+                let mut images = Vec::new();
+                for component in &components {
+                    component.collect_images(&mut images);
+                }
+
+                if !images.is_empty() {
+                    let mut markdown = String::new();
+                    if let Some(ref t) = title {
+                        markdown.push_str(&format!("**{}**\n\n", t));
+                    }
+                    for (id, src) in &images {
+                        markdown.push_str(&format!("![{}]({})\n\n", id, src));
+                    }
+
+                    info!(
+                        "Canvas images presented inline for session {}",
+                        session_id
+                    );
+                    return Ok(ToolExecutionResult {
+                        success: true,
+                        output: markdown.trim().to_string(),
+                        error: None,
+                        data: Some(serde_json::json!({
+                            "session_id": session_id,
+                            "images": images,
+                            "inline": true,
+                        })),
+                        execution_time: start.elapsed(),
+                    });
+                }
+
                 let (_tx, _rx): (mpsc::Sender<crate::canvas::CanvasEvent>, _) = mpsc::channel(16);
                 let _session = self.manager.get_or_create_for_session(&session_id).await;
 
@@ -499,6 +546,75 @@ mod tests {
         assert_eq!(tool.name(), "canvas");
         let schema = tool.parameters_schema();
         assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_present_images_inline() {
+        let manager = Arc::new(CanvasManager::new());
+        let tool = CanvasTool::new(manager.clone());
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "present",
+                    "session_id": "sess-img",
+                    "title": "Generated Image",
+                    "components": [
+                        {
+                            "type": "image",
+                            "id": "img1",
+                            "src": "https://example.com/cat.png"
+                        }
+                    ]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("![img1](https://example.com/cat.png)"));
+        assert!(result.output.contains("**Generated Image**"));
+        assert!(
+            result.data.as_ref().unwrap().get("inline").unwrap().as_bool().unwrap()
+        );
+
+        // Should NOT create a canvas session when images are inline
+        let sessions = manager.list_sessions().await;
+        assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_canvas_present_no_images_goes_to_manager() {
+        let manager = Arc::new(CanvasManager::new());
+        let tool = CanvasTool::new(manager.clone());
+        let ctx = ToolContext::new("user", "conv");
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "action": "present",
+                    "session_id": "sess-text",
+                    "components": [
+                        {
+                            "type": "text",
+                            "id": "t1",
+                            "content": "Hello"
+                        }
+                    ]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("Canvas presented"));
+
+        // Should create a canvas session for non-image content
+        let sessions = manager.list_sessions().await;
+        assert_eq!(sessions.len(), 1);
     }
 
     #[test]
