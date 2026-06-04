@@ -429,7 +429,9 @@ impl Channel for TelegramChannel {
             if let Some(reply_id) = message.reply_to {
                 let map = self.message_map.read().await;
                 if let Some((_, telegram_msg_id)) = map.get(&reply_id) {
-                    req = req.reply_to_message_id(teloxide::types::MessageId(*telegram_msg_id));
+                    req = req.reply_parameters(teloxide::types::ReplyParameters::new(
+                        teloxide::types::MessageId(*telegram_msg_id),
+                    ));
                 } else {
                     debug!("Reply message ID {} not found in mapping", reply_id);
                 }
@@ -710,7 +712,10 @@ impl Channel for TelegramChannel {
                 crate::error::SyscityError::Validation("Invalid chat ID".to_string())
             })?;
 
-            let poll_options: Vec<String> = options.into_iter().collect();
+            let poll_options: Vec<teloxide::types::InputPollOption> = options
+                .into_iter()
+                .map(teloxide::types::InputPollOption::new)
+                .collect();
 
             let sent = bot
                 .send_poll(ChatId(chat_id), question, poll_options)
@@ -750,13 +755,16 @@ async fn handle_message_with_sender(
     allow_from: Arc<RwLock<Vec<String>>>,
 ) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
-        let user = msg.from();
+        let user = msg.from.as_ref();
         let username: String = user
-            .as_ref()
             .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
             .unwrap_or_else(|| "unknown".to_string());
         let chat_id = msg.chat.id.0;
-        let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
+        let user_id = msg
+            .from
+            .as_ref()
+            .map(|u| u.id.0.to_string())
+            .unwrap_or_default();
 
         // Check DM policy
         let policy = *dm_policy.read().await;
@@ -911,7 +919,11 @@ async fn handle_message_with_sender(
         };
 
         // Create incoming message with UUID session
-        let user_id = msg.from().map(|u| u.id.0.to_string()).unwrap_or_default();
+        let user_id = msg
+            .from
+            .as_ref()
+            .map(|u| u.id.0.to_string())
+            .unwrap_or_default();
 
         let incoming = IncomingMessage::new(&user_id, &session_id, text).with_metadata(
             MessageMetadata::new()

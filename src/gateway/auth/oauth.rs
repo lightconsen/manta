@@ -9,8 +9,8 @@ use axum::{
     response::{IntoResponse, Redirect},
 };
 use oauth2::{
-    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl,
-    Scope, TokenResponse, TokenUrl,
+    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    EndpointNotSet, EndpointSet, RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -42,22 +42,33 @@ fn build_oauth_client(
     config: &OAuthProviderConfig,
     auth_url: &str,
     token_url: &str,
-) -> Result<BasicClient, String> {
-    let client = BasicClient::new(
-        ClientId::new(config.client_id.clone()),
-        Some(ClientSecret::new(config.client_secret.clone())),
-        AuthUrl::new(auth_url.to_string()).map_err(|e| format!("Invalid auth URL: {}", e))?,
-        Some(
+) -> Result<
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
+    String,
+> {
+    let client = BasicClient::new(ClientId::new(config.client_id.clone()))
+        .set_client_secret(ClientSecret::new(config.client_secret.clone()))
+        .set_auth_uri(
+            AuthUrl::new(auth_url.to_string()).map_err(|e| format!("Invalid auth URL: {}", e))?,
+        )
+        .set_token_uri(
             TokenUrl::new(token_url.to_string())
                 .map_err(|e| format!("Invalid token URL: {}", e))?,
-        ),
-    )
-    .set_redirect_uri(
-        RedirectUrl::new(config.redirect_uri.clone())
-            .map_err(|e| format!("Invalid redirect URI: {}", e))?,
-    );
+        )
+        .set_redirect_uri(
+            RedirectUrl::new(config.redirect_uri.clone())
+                .map_err(|e| format!("Invalid redirect URI: {}", e))?,
+        );
 
     Ok(client)
+}
+
+/// Shared HTTP client for OAuth token exchanges.
+fn oauth_http_client() -> reqwest::Client {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("OAuth HTTP client should build")
 }
 
 /// Handler: Initiate GitHub OAuth login
@@ -158,7 +169,7 @@ pub async fn github_callback_handler(
     // Exchange code for token
     let token_result = match client
         .exchange_code(AuthorizationCode::new(params.code.clone()))
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&oauth_http_client())
         .await
     {
         Ok(token) => token,
@@ -363,7 +374,7 @@ pub async fn google_callback_handler(
 
     let token_result = match client
         .exchange_code(AuthorizationCode::new(params.code.clone()))
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&oauth_http_client())
         .await
     {
         Ok(token) => token,

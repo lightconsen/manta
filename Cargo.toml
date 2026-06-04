@@ -38,7 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 config = "0.14"
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
 openssl = { version = "0.10", features = ["vendored"] }
 bytes = "1.5"
 
@@ -49,7 +49,7 @@ tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 
 # WebSocket client
-tokio-tungstenite = "0.21"
+tokio-tungstenite = "0.24"
 futures-util = "0.3"
 
 # JSON
@@ -85,7 +85,7 @@ glob = "0.3"
 urlencoding = "2.1"
 
 # OAuth2
-oauth2 = "4.4"
+oauth2 = { version = "5.0", features = ["reqwest"] }
 
 # Regex for security scanning
 regex = "1.10"
@@ -98,7 +98,7 @@ url = "2.5"
 shellexpand = "3.1"
 
 # LRU cache for session caching
-lru = "0.12"
+lru = "0.18"
 
 # Concurrent hashmap for rate limiter
 dashmap = "6.0"
@@ -127,7 +127,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 daemonize = "0.5"
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
 
 # Vector database (QMD/LanceDB-style)
 pgvector = { version = "0.4", optional = true }
@@ -148,7 +148,7 @@ wit-bindgen = { version = "0.17", optional = true }
 notify-debouncer-full = { version = "0.3", optional = true }
 
 # Channels (optional)
-teloxide = { version = "0.12", features = ["macros"], optional = true }
+teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
 [features]
