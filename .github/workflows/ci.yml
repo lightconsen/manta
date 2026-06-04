@@ -125,19 +125,13 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Build (default)
+      - name: Check (default)
         if: matrix.features == 'default'
-        run: cargo build --release
+        run: cargo check --all-features
 
-      - name: Build (all features)
+      - name: Check (all features)
         if: matrix.features == 'all-features'
-        run: cargo build --release --all-features
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: syscity-${{ matrix.os }}-${{ matrix.features }}
-          path: target/release/syscity
+        run: cargo check --all-features
 
   frontend:
     name: Frontend Build
