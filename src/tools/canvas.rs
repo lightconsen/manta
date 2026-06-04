@@ -133,10 +133,7 @@ enum CanvasComponentArg {
 /// - Local file paths are read and encoded as base64 data URIs so the
 ///   frontend can display them without an extra HTTP request.
 async fn resolve_image_src(src: &str) -> String {
-    if src.starts_with("http://")
-        || src.starts_with("https://")
-        || src.starts_with("data:")
-    {
+    if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
         return src.to_string();
     }
 
@@ -349,10 +346,7 @@ impl Tool for CanvasTool {
                         markdown.push_str(&format!("![{}]({})\n\n", id, resolved));
                     }
 
-                    info!(
-                        "Canvas images presented inline for session {}",
-                        session_id
-                    );
+                    info!("Canvas images presented inline for session {}", session_id);
                     return Ok(ToolExecutionResult {
                         success: true,
                         output: markdown.trim().to_string(),
@@ -630,11 +624,18 @@ mod tests {
             .unwrap();
 
         assert!(result.success);
-        assert!(result.output.contains("![img1](https://example.com/cat.png)"));
+        assert!(result
+            .output
+            .contains("![img1](https://example.com/cat.png)"));
         assert!(result.output.contains("**Generated Image**"));
-        assert!(
-            result.data.as_ref().unwrap().get("inline").unwrap().as_bool().unwrap()
-        );
+        assert!(result
+            .data
+            .as_ref()
+            .unwrap()
+            .get("inline")
+            .unwrap()
+            .as_bool()
+            .unwrap());
 
         // Should NOT create a canvas session when images are inline
         let sessions = manager.list_sessions().await;
