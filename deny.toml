@@ -1,0 +1,71 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Check with all features enabled
+all-features = true
+
+[advisories]
+# A list of advisory IDs to ignore with documented justification
+ignore = [
+    # daemonize (RUSTSEC-2025-0069): unmaintained, no safe upgrade available.
+    # Only used for daemonization on Unix, not a security vulnerability.
+    { id = "RUSTSEC-2025-0069", reason = "unmaintained but no security vulnerability; no alternative crate available" },
+    # rustls-webpki vulnerabilities via serenity's transitive dependency.
+    # serenity 0.12.5 locks tokio-tungstenite 0.21.0 -> rustls 0.22.4 -> rustls-webpki 0.102.8.
+    # serenity upstream has not released a fix yet.
+    { id = "RUSTSEC-2026-0049", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
+    { id = "RUSTSEC-2026-0098", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
+    { id = "RUSTSEC-2026-0099", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
+    { id = "RUSTSEC-2026-0104", reason = "transitive dependency via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4; serenity has not released a fix" },
+]
+
+[licenses]
+# Explicitly allowed licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "Unlicense",
+    "BSL-1.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Warn when multiple versions of the same crate are detected
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+# Skip duplicate detection for transitive dependency trees that are out of our control.
+# These are pulled in by different upstream crates locking different semver ranges.
+skip-tree = [
+    # serenity 0.12.5 locks tokio-tungstenite 0.21 -> rustls 0.22 -> rustls-webpki 0.102
+    { crate = "serenity@0.12.5", depth = 10 },
+    # chromiumoxide pulls in reqwest 0.13 and tungstenite 0.28 alongside our reqwest 0.12 / tungstenite 0.24
+    { crate = "chromiumoxide@0.9.1", depth = 10 },
+    # config 0.14 uses toml 0.8; other crates pull toml 0.9
+    { crate = "config@0.14.1", depth = 5 },
+    # wasmtime ecosystem pulls in multiple versions of wasm-encoder, wasmparser, hashbrown, etc.
+    { crate = "wasmtime@45.0.0", depth = 10 },
+    # dialoguer pulls console 0.16 alongside our console 0.15 (via other deps)
+    { crate = "dialoguer@0.11.0", depth = 5 },
+    # itertools duplicates from different upstream crates
+    { crate = "itertools@0.10.5", depth = 5 },
+    # nix duplicates (0.27 via our Cargo.toml, 0.28 via notify)
+    { crate = "nix@0.27.1", depth = 5 },
+]
+
+[sources]
+# Only allow crates.io
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

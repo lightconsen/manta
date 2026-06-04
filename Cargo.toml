@@ -17,7 +17,7 @@ tokio = { version = "1.35", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # CLI
@@ -45,8 +45,8 @@ bytes = "1.5"
 # HTTP server
 axum = { version = "0.7", features = ["ws"] }
 axum-extra = "0.9"
-tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
 
 # WebSocket client
 tokio-tungstenite = "0.24"
@@ -59,7 +59,7 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 notify = { version = "6.1", default-features = false, features = ["macos_fsevent"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
-dirs = "5.0"
+dirs = "6.0"
 
 # YAML support
 serde_yaml = "0.9"

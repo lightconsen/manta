@@ -18,32 +18,47 @@ Syscity implements multiple layers of security:
 
 ### Vulnerabilities (from cargo audit)
 
-#### 1. RSA Timing Sidechannel (RUSTSEC-2023-0071)
-- **Crate**: `rsa` v0.9.10
-- **Severity**: Medium (5.9)
-- **Issue**: Potential key recovery through timing sidechannels
-- **Status**: No fixed upgrade available (upstream dependency via sqlx-mysql)
-- **Impact**: Syscity uses SQLite, not MySQL, so this vulnerability is **not exploitable** in Syscity deployments
-- **Mitigation**: We don't use RSA for cryptographic operations in Syscity
-
-#### 2. SQLx Binary Protocol Issue (RUSTSEC-2024-0363)
-- **Crate**: `sqlx` v0.7.4
+#### 1. SQLx Binary Protocol Issue (RUSTSEC-2024-0363) — RESOLVED
+- **Crate**: `sqlx` v0.7.4 → v0.8.6
 - **Severity**: High
 - **Issue**: Binary Protocol Misinterpretation caused by Truncating or Overflowing Casts
-- **Status**: Upgrade to >=0.8.1 required
+- **Status**: **Fixed** — upgraded to 0.8.6 on 2026-06-04
 - **Impact**: Affects SQLite protocol handling
-- **Mitigation**: We recommend:
-  - Regular database backups
-  - Input validation on all database queries
-  - Monitoring for unusual database behavior
+
+#### 2. Wasmtime Sandbox Escapes (Multiple RUSTSEC advisories) — RESOLVED
+- **Crate**: `wasmtime` v15.0 → v45.0.0, `wasmtime-wasi` v15.0 → v45.0.0
+- **Severity**: High/Critical
+- **Issues**: ~15 vulnerabilities including sandbox escapes, data leakage, panics, heap OOB reads
+- **Status**: **Fixed** — upgraded to 45.0.0 on 2026-06-04
+- **Impact**: Affects WASM plugin execution
+
+### Previously Reported (Now Resolved)
+
+#### RSA Timing Sidechannel (RUSTSEC-2023-0071)
+- **Crate**: `rsa` v0.9.10
+- **Status**: **No longer in dependency tree** — `rsa` was a transitive dependency of `sqlx-mysql`, which Syscity does not use (only SQLite). It has been removed from the resolved dependency graph.
+
+#### rustls-pemfile v1.0.4 (RUSTSEC-2025-0134)
+- **Status**: **No longer in dependency tree** — removed after upstream crate updates.
+
+### Transitive Vulnerabilities (Blocked by Upstream)
+
+The following vulnerabilities exist in transitive dependencies and cannot be fixed until upstream crates release updates:
+
+#### rustls-webpki Certificate Parsing Vulnerabilities
+- **Crate**: `rustls-webpki` v0.102.8 (via `serenity` → `tokio-tungstenite` 0.21.0 → `rustls` 0.22.4)
+- **Advisories**: RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104
+- **Issues**: CRL parsing panic, name constraint bypass, wildcard certificate acceptance
+- **Status**: **Blocked upstream** — `serenity` 0.12.5 locks `tokio-tungstenite` 0.21.0 which requires `rustls` 0.22.4
+- **Mitigation**: Tracked in `deny.toml` ignore list with documented reason; monitor serenity releases
 
 ### Unmaintained Dependencies
 
 The following dependencies are unmaintained but don't have known security vulnerabilities:
 
-1. **paste** (RUSTSEC-2024-0436) - Used by sqlx-core
-2. **proc-macro-error** (RUSTSEC-2024-0370) - Used by teloxide
-3. **rustls-pemfile** v1.0.4 (RUSTSEC-2025-0134) - Used by reqwest
+1. **paste** (RUSTSEC-2024-0436) — Used by sqlx-core, will be resolved when sqlx removes it
+2. **proc-macro-error** (RUSTSEC-2024-0370) — Used by teloxide, will be resolved when teloxide updates
+3. **daemonize** (RUSTSEC-2025-0069) — Used for Unix daemonization, no safe upgrade available
 
 These are transitive dependencies and will be updated when upstream crates release updates.
 
@@ -199,6 +214,7 @@ We will respond within 48 hours and work on a fix.
 | Date | Auditor | Scope | Results |
 |------|---------|-------|---------|
 | 2024-03 | cargo-audit | Dependencies | 2 vulnerabilities, 3 unmaintained |
+| 2026-06-04 | cargo-audit + cargo-deny | Dependencies | wasmtime 15→45, sqlx 0.7→0.8.6, rustls-pemfile removed, rsa removed from tree |
 
 ## References
 
