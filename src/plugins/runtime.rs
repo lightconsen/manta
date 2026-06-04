@@ -208,11 +208,11 @@ impl PluginRuntime {
             caller: &mut wasmtime::Caller<'_, PluginState>,
             ptr: i32,
             len: i32,
-        ) -> anyhow::Result<String> {
+        ) -> wasmtime::Result<String> {
             let data = memory.data(caller);
             let bytes = &data[ptr as usize..(ptr + len) as usize];
             Ok(std::str::from_utf8(bytes)
-                .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in WASM memory: {}", e))?
+                .map_err(|e| wasmtime::Error::msg(format!("Invalid UTF-8 in WASM memory: {}", e)))?
                 .to_string())
         }
 
@@ -226,12 +226,12 @@ impl PluginRuntime {
                 |mut caller: wasmtime::Caller<'_, PluginState>,
                  ptr: i32,
                  len: i32|
-                 -> anyhow::Result<()> {
+                 -> wasmtime::Result<()> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let data = memory.data(&caller);
                     let message = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
@@ -254,12 +254,12 @@ impl PluginRuntime {
                  key_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
@@ -286,12 +286,12 @@ impl PluginRuntime {
                 |mut caller: wasmtime::Caller<'_, PluginState>,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let state = caller.data();
                     let config_str =
@@ -318,12 +318,12 @@ impl PluginRuntime {
                  key_len: i32,
                  val_ptr: i32,
                  val_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let value: Vec<u8> = memory.data(&caller)
@@ -350,12 +350,12 @@ impl PluginRuntime {
                  key_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
@@ -388,12 +388,12 @@ impl PluginRuntime {
                  prefix_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let prefix = read_memory_string(&memory, &mut caller, prefix_ptr, prefix_len)?;
                     let state = caller.data();
@@ -433,12 +433,12 @@ impl PluginRuntime {
                  key_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
@@ -476,12 +476,12 @@ impl PluginRuntime {
                  key_len: i32,
                  val_ptr: i32,
                  val_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let value = read_memory_string(&memory, &mut caller, val_ptr, val_len)?;
@@ -513,12 +513,12 @@ impl PluginRuntime {
                  url_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                     let out_ptr = out_ptr as usize;
@@ -549,12 +549,12 @@ impl PluginRuntime {
                  ct_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                     let body = read_memory_string(&memory, &mut caller, body_ptr, body_len)?;
@@ -589,12 +589,12 @@ impl PluginRuntime {
                  type_len: i32,
                  payload_ptr: i32,
                  payload_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let event_type = read_memory_string(&memory, &mut caller, type_ptr, type_len)?;
                     let payload_str =
@@ -625,12 +625,12 @@ impl PluginRuntime {
                  key_len: i32,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let key = read_memory_string(&memory, &mut caller, key_ptr, key_len)?;
                     let state = caller.data();
@@ -662,12 +662,12 @@ impl PluginRuntime {
                 |mut caller: wasmtime::Caller<'_, PluginState>,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let state = caller.data();
                     let sid = state.shared_state.session_id.clone();
@@ -700,12 +700,12 @@ impl PluginRuntime {
                 |mut caller: wasmtime::Caller<'_, PluginState>,
                  out_ptr: i32,
                  out_len: i32|
-                 -> anyhow::Result<i32> {
+                 -> wasmtime::Result<i32> {
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
                         .ok_or_else(|| {
-                            anyhow::anyhow!("Plugin does not export a memory segment")
+                            wasmtime::Error::msg("Plugin does not export a memory segment")
                         })?;
                     let state = caller.data();
                     let plugin_id = state.plugin_id.clone();
