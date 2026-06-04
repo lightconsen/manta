@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.75"
 authors = ["Syscity Contributors"]
 description = "Syscity - A Rust application"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/example/syscity"
 
 [workspace]
