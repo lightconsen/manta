@@ -34,9 +34,11 @@ Syscity implements multiple layers of security:
 
 ### Previously Reported (Now Resolved)
 
-#### RSA Timing Sidechannel (RUSTSEC-2023-0071)
+#### RSA Timing Sidechannel (RUSTSEC-2023-0071) — NOT EXPLOITABLE
 - **Crate**: `rsa` v0.9.10
-- **Status**: **No longer in dependency tree** — `rsa` was a transitive dependency of `sqlx-mysql`, which Syscity does not use (only SQLite). It has been removed from the resolved dependency graph.
+- **Status**: **Present in build dependencies only** — `rsa` is a transitive dependency of `sqlx-mysql`, pulled in via `sqlx-macros` during compile-time macro expansion.
+- **Impact**: Syscity only uses SQLite (`sqlx-sqlite`). MySQL support is never enabled at runtime, and the `rsa` crate is never loaded or executed.
+- **Mitigation**: Tracked in `.cargo/audit.toml` ignore list with documented reason; no runtime exposure.
 
 #### rustls-pemfile v1.0.4 (RUSTSEC-2025-0134)
 - **Status**: **No longer in dependency tree** — removed after upstream crate updates.
