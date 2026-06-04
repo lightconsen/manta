@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn acp_spawn_tool_executes_without_agent_builder() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool
@@ -21,7 +21,7 @@ async fn acp_spawn_tool_executes_without_agent_builder() {
 
 #[tokio::test]
 async fn acp_session_tool_lists_sessions() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"action": "list"}), &ctx).await.unwrap();
@@ -96,7 +96,7 @@ async fn sessions_history_tool_returns_history() {
 
 #[tokio::test]
 async fn sessions_send_tool_fails_for_missing_subagent() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -119,7 +119,7 @@ async fn sessions_send_tool_fails_for_missing_subagent() {
 
 #[tokio::test]
 async fn sessions_yield_tool_fails_for_missing_subagent() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = SessionsYieldTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -172,7 +172,7 @@ async fn apply_patch_tool_validates_patch() {
 
 #[tokio::test]
 async fn acp_session_invalid_action_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
@@ -207,7 +207,7 @@ async fn sessions_history_empty_session_returns_zero_messages() {
 
 #[tokio::test]
 async fn sessions_send_missing_args_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({"session_id": "x"}), &ctx).await;
@@ -216,7 +216,7 @@ async fn sessions_send_missing_args_fails() {
 
 #[tokio::test]
 async fn sessions_yield_missing_subagent_id_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = SessionsYieldTool::new(acp);
     let ctx = test_context();
     let result = tool.execute(json!({}), &ctx).await;
@@ -285,7 +285,7 @@ async fn apply_patch_missing_patch_fails() {
 
 #[tokio::test]
 async fn acp_spawn_missing_task_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool.execute(json!({"mode": "run"}), &ctx).await;
@@ -302,7 +302,7 @@ async fn acp_spawn_missing_task_fails() {
 
 #[tokio::test]
 async fn acp_spawn_with_timeout_accepted() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSpawnTool::new(acp, None);
     let ctx = test_context();
     let result = tool
@@ -321,7 +321,7 @@ async fn acp_spawn_with_timeout_accepted() {
 
 #[tokio::test]
 async fn acp_session_get_nonexistent_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -335,7 +335,7 @@ async fn acp_session_get_nonexistent_fails() {
 
 #[tokio::test]
 async fn acp_session_terminate_nonexistent_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -348,7 +348,7 @@ async fn acp_session_terminate_nonexistent_fails() {
 
 #[tokio::test]
 async fn sessions_send_missing_session_id_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = SessionsSendTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -362,7 +362,7 @@ async fn sessions_send_missing_session_id_fails() {
 
 #[tokio::test]
 async fn acp_session_kill_nonexistent_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool
@@ -376,7 +376,7 @@ async fn acp_session_kill_nonexistent_fails() {
 
 #[tokio::test]
 async fn acp_session_steer_nonexistent_fails() {
-    let acp = Arc::new(syscity::acp::AcpControlPlane::new());
+    let acp = Arc::new(syscity::acp::AcpControlPlane::new(10));
     let tool = AcpSessionTool::new(acp);
     let ctx = test_context();
     let result = tool

@@ -394,7 +394,7 @@ impl RouteResolver {
         let mut rules = self.rules.write().await;
         rules.push(rule);
         // Sort by priority descending
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        rules.sort_by_key(|b| std::cmp::Reverse(b.priority));
         debug!("Added route rule, total rules: {}", rules.len());
     }
 

@@ -132,7 +132,7 @@ impl Engine {
         };
 
         // Sort by creation date (newest first)
-        result.sort_by(|a, b| b.metadata.created_at.cmp(&a.metadata.created_at));
+        result.sort_by_key(|b| std::cmp::Reverse(b.metadata.created_at));
 
         debug!(count = result.len(), "Listed entities");
         Ok(result)

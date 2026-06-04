@@ -888,7 +888,7 @@ impl VectorMemoryService {
         let mut embedded_chunks = Vec::new();
         let embeddings = self.embedding_provider.embed_batch(&chunks).await?;
 
-        for (pos, (text, embedding)) in chunks.into_iter().zip(embeddings.into_iter()).enumerate() {
+        for (pos, (text, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
             embedded_chunks.push(EmbeddedChunk {
                 id: format!("{}-{}", memory.id, pos),
                 source_id: memory.id.to_string(),
@@ -971,7 +971,7 @@ impl VectorMemoryService {
 
         let embedded_chunks: Vec<EmbeddedChunk> = chunks
             .into_iter()
-            .zip(embeddings.into_iter())
+            .zip(embeddings)
             .enumerate()
             .map(|(pos, (text, embedding))| EmbeddedChunk {
                 id: format!("{}-{}-{}", doc_id, collection, pos),

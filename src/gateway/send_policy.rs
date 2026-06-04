@@ -227,7 +227,7 @@ impl SendPolicy {
         let mut inner = self.inner.write().expect("SendPolicy lock poisoned");
         inner.rules.push(rule);
         // Sort descending by priority so we always evaluate high-priority first.
-        inner.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        inner.rules.sort_by_key(|b| std::cmp::Reverse(b.priority));
     }
 
     /// Remove all rules with the given name.

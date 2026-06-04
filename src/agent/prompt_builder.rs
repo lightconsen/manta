@@ -435,7 +435,7 @@ impl PromptBuilder {
     pub fn build(self) -> String {
         // Sort sections by priority (highest first)
         let mut sections = self.sections;
-        sections.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sections.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         // Keep adding sections until we hit token limit
         let mut included = Vec::new();

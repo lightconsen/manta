@@ -90,6 +90,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
 
     GatewayState {
         config: Arc::new(RwLock::new(config)),
+        start_time: std::time::Instant::now(),
         channels: Arc::new(RwLock::new(HashMap::new())),
         agents: Arc::new(RwLock::new(HashMap::new())),
         session_routing: Arc::new(RwLock::new(HashMap::new())),
@@ -103,6 +104,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         )),
         tool_registry: Arc::new(syscity::tools::ToolRegistry::new()),
         event_tx,
+        log_tx: tokio::sync::broadcast::channel(1000).0,
         hook_registry: Arc::new(syscity::gateway::hooks::EventHookRegistry::new()),
         message_queue: message_queue_tx,
         canvas_manager: Arc::new(syscity::canvas::CanvasManager::new()),
@@ -111,12 +113,15 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
                 .await
                 .expect("plugin manager"),
         ),
-        acp: Arc::new(syscity::acp::AcpControlPlane::new()),
+        acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
         vector_memory: RwLock::new(None),
         session_search: RwLock::new(None),
         memory_manager: RwLock::new(None),
         hot_reload: RwLock::new(None),
         cron_scheduler: RwLock::new(None),
+        heartbeat_wake_tx: RwLock::new(None),
+        heartbeat_event_tx: RwLock::new(None),
+        dream_scheduler: RwLock::new(None),
         auth_manager: Arc::new(syscity::security::AuthManager::new()),
         pairing_store: Arc::new(syscity::security::pairing::PairingStore::new()),
         device_pairing_store: Arc::new(syscity::security::device_pairing::DevicePairingStore::new()),

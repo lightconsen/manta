@@ -202,7 +202,7 @@ async fn process_batch<P: PipelineEmbeddingProvider>(provider: &Arc<P>, batch: V
 
     match provider.embed_batch(texts).await {
         Ok(embeddings) => {
-            for (job, emb) in batch.into_iter().zip(embeddings.into_iter()) {
+            for (job, emb) in batch.into_iter().zip(embeddings) {
                 let _ = job.response_tx.send(Ok(emb));
             }
         }

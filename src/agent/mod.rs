@@ -660,12 +660,11 @@ impl Agent {
                     }));
                 }
             }
-            crate::providers::stream_wrappers::ProviderStreamFamily::GoogleThinking => {
-                // Gemini thinking models
-                if model.contains("thinking") || model.contains("-exp") {
-                    request.extra =
-                        Some(serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }));
-                }
+            crate::providers::stream_wrappers::ProviderStreamFamily::GoogleThinking
+                if model.contains("thinking") || model.contains("-exp") =>
+            {
+                request.extra =
+                    Some(serde_json::json!({ "thinkingConfig": { "thinkingBudget": 16000 } }));
             }
             _ => {}
         }

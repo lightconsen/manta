@@ -785,7 +785,7 @@ impl SkillManager {
             .collect();
 
         // Prefer higher-trust skills first.
-        matched.sort_by(|a, b| b.metadata.trust.cmp(&a.metadata.trust));
+        matched.sort_by_key(|b| std::cmp::Reverse(b.metadata.trust));
 
         if max_skills > 0 {
             matched.truncate(max_skills);

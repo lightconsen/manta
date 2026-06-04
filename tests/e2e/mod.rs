@@ -158,6 +158,7 @@ pub fn test_config(port: u16, with_provider: bool) -> GatewayConfig {
                 api_key: provider.api_key,
                 api_keys: vec![],
                 auth_profile: None,
+                oauth: None,
                 base_url: if provider.base_url.is_empty() {
                     None
                 } else {
