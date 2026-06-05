@@ -98,7 +98,7 @@ impl ServiceManagerTool {
                     for line in output.lines() {
                         if line.starts_with("   Active:") {
                             if let Some(st) = line.split(':').nth(1) {
-                                result.state = Some(st.trim().split_whitespace().next().unwrap_or("").to_string());
+                                result.state = Some(st.split_whitespace().next().unwrap_or("").to_string());
                             }
                         } else if line.starts_with("   Loaded:") {
                             result.enabled = Some(line.contains("enabled"));

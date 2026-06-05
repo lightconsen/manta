@@ -1,4 +1,4 @@
-//! Linux Server capability set — headless system management tools.
+//! Linux capability set — system management tools for Linux.
 
 pub mod service_manager;
 pub mod system_inspect;
@@ -9,33 +9,33 @@ pub use system_inspect::SystemInspectTool;
 use super::{CapabilitySet, OsControlScope, PlatformConstraints};
 use crate::tools::Tool;
 
-/// Linux Server capability set — provides system inspection and service
-/// management tools for headless Linux environments.
-pub struct LinuxServerSet;
+/// Linux capability set — provides system inspection and service
+/// management tools for Linux environments (server and desktop).
+pub struct LinuxSet;
 
-impl LinuxServerSet {
+impl LinuxSet {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for LinuxServerSet {
+impl Default for LinuxSet {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CapabilitySet for LinuxServerSet {
+impl CapabilitySet for LinuxSet {
     fn id(&self) -> &str {
-        "linux-server"
+        "linux"
     }
 
     fn name(&self) -> &str {
-        "Linux Server Control"
+        "Linux Control"
     }
 
     fn description(&self) -> &str {
-        "Headless Linux server management: system inspection, \
+        "Linux system management: system inspection, \
          systemd services, logs, network, packages, and users."
     }
 

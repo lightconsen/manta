@@ -22,7 +22,7 @@ pub enum OsControlScope {
 }
 
 /// Platform constraints that determine whether a `CapabilitySet` is available.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PlatformConstraints {
     /// Target operating systems (e.g. `["linux"]`, `["macos"]`).
     pub target_os: Vec<String>,
@@ -30,16 +30,6 @@ pub struct PlatformConstraints {
     pub requires_gui: bool,
     /// Optional services that must be available (e.g. `["systemd"]`).
     pub requires_services: Vec<String>,
-}
-
-impl Default for PlatformConstraints {
-    fn default() -> Self {
-        Self {
-            target_os: Vec::new(),
-            requires_gui: false,
-            requires_services: Vec::new(),
-        }
-    }
 }
 
 impl PlatformConstraints {
@@ -183,10 +173,17 @@ impl CapabilityProfile {
 /// Detect whether a display server is available.
 fn has_display_server() -> bool {
     // Check common display environment variables.
-    std::env::var("DISPLAY").is_ok()
-        || std::env::var("WAYLAND_DISPLAY").is_ok()
-        || cfg!(target_os = "macos")
-        || cfg!(target_os = "windows")
+    has_x11() || has_wayland() || cfg!(target_os = "macos") || cfg!(target_os = "windows")
+}
+
+/// Detect whether an X11 display server is available.
+fn has_x11() -> bool {
+    std::env::var("DISPLAY").is_ok() && std::env::var("WAYLAND_DISPLAY").is_err()
+}
+
+/// Detect whether a Wayland display server is available.
+fn has_wayland() -> bool {
+    std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
 /// Detect whether a system service is available.
@@ -197,11 +194,19 @@ fn is_service_available(name: &str) -> bool {
     }
 }
 
-pub mod linux_server;
+pub mod linux;
+pub mod linux_desktop_wayland;
+pub mod linux_desktop_x11;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod registry;
 
-pub use linux_server::LinuxServerSet;
+pub use linux::LinuxSet;
+pub use linux_desktop_wayland::LinuxDesktopWaylandSet;
+pub use linux_desktop_x11::LinuxDesktopX11Set;
 pub use registry::CapabilityRegistry;
+#[cfg(target_os = "macos")]
+pub use macos::MacosSet;
 
 /// Return all capability sets compiled into this binary.
 ///
@@ -209,11 +214,18 @@ pub use registry::CapabilityRegistry;
 /// runtime detection (`PlatformConstraints::check`) decides what *is*
 /// available on the current host.
 pub fn all_known_sets() -> Vec<Box<dyn CapabilitySet>> {
-    let sets: Vec<Box<dyn CapabilitySet>> = Vec::new();
+    let mut sets: Vec<Box<dyn CapabilitySet>> = Vec::new();
 
     #[cfg(target_os = "linux")]
     {
-        sets.push(Box::new(LinuxServerSet::new()));
+        sets.push(Box::new(LinuxSet::new()));
+        sets.push(Box::new(LinuxDesktopX11Set::new()));
+        sets.push(Box::new(LinuxDesktopWaylandSet::new()));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        sets.push(Box::new(MacosSet::new()));
     }
 
     sets

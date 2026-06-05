@@ -3,10 +3,11 @@
 ## 核心问题
 
 OS 控制功能需要按平台/场景组织为可插拔的集合：
-- **Linux Server** — 无 GUI，systemd，命令行管理
-- **Linux Desktop** — 有 GUI，at-spi2，截图+UI树
-- **macOS Desktop** — AXUIElement，AppleScript
-- **Windows Desktop** — UI Automation，PowerShell
+- **Linux** — 无 GUI，systemd，命令行管理
+- **Linux Desktop (X11)** — X11 环境，xdotool/xclip/xwd 截图+UI树
+- **Linux Desktop (Wayland)** — Wayland 环境，xdg-desktop-portal/grim 截图+UI树
+- **macOS** — AXUIElement，AppleScript
+- **Windows** — UI Automation，PowerShell
 - **未来扩展** — Android、iOS、嵌入式、机器人...
 
 每个集合内部有相似的能力（感知、操作、诊断），但实现方式完全不同。
@@ -36,8 +37,8 @@ OS 控制功能需要按平台/场景组织为可插拔的集合：
 │  ── 按平台/场景组织工具集合，运行时检测，动态注册               │
 │                                                              │
 │  CapabilitySet ──→ 包含多个 Tool                              │
-│    LinuxServerSet { system_inspect, service_manager, ... }   │
-│    LinuxDesktopSet { desktop_control, accessibility, ... }   │
+│    LinuxSet { system_inspect, service_manager, ... }   │
+│    LinuxDesktopX11Set { desktop_control, accessibility, ... }   │
 │    ...                                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -59,7 +60,7 @@ OS 控制功能需要按平台/场景组织为可插拔的集合：
 /// 每个 CapabilitySet 代表一个"环境"（如 Linux Server、macOS Desktop），
 /// 包含该平台下所有相关的工具。
 pub trait CapabilitySet: Send + Sync {
-    /// 唯一标识，如 "linux-server"
+    /// 唯一标识，如 "linux"
     fn id(&self) -> &str;
 
     /// 人类可读名称
@@ -147,13 +148,13 @@ pub enum OsControlScope {
 ### 具体集合实现
 
 ```rust
-// src/capabilities/linux_server.rs
+// src/capabilities/linux.rs
 
 /// Linux Server 能力集合
-pub struct LinuxServerSet;
+pub struct LinuxSet;
 
-impl CapabilitySet for LinuxServerSet {
-    fn id(&self) -> &str { "linux-server" }
+impl CapabilitySet for LinuxSet {
+    fn id(&self) -> &str { "linux" }
     fn name(&self) -> &str { "Linux Server Control" }
     fn description(&self) -> &str {
         "Complete control over a headless Linux server via structured system commands"
@@ -187,13 +188,13 @@ impl CapabilitySet for LinuxServerSet {
 ```
 
 ```rust
-// src/capabilities/linux_desktop.rs
+// src/capabilities/linux_desktop_x11.rs
 
 /// Linux Desktop 能力集合
-pub struct LinuxDesktopSet;
+pub struct LinuxDesktopX11Set;
 
-impl CapabilitySet for LinuxDesktopSet {
-    fn id(&self) -> &str { "linux-desktop" }
+impl CapabilitySet for LinuxDesktopX11Set {
+    fn id(&self) -> &str { "linux-desktop-x11" }
     fn name(&self) -> &str { "Linux Desktop Control" }
     fn description(&self) -> &str {
         "Control a Linux desktop environment via Accessibility API + screenshot hybrid"
@@ -223,13 +224,13 @@ impl CapabilitySet for LinuxDesktopSet {
 ```
 
 ```rust
-// src/capabilities/macos_desktop.rs
+// src/capabilities/macos.rs
 
 /// macOS Desktop 能力集合
-pub struct MacosDesktopSet;
+pub struct MacosSet;
 
-impl CapabilitySet for MacosDesktopSet {
-    fn id(&self) -> &str { "macos-desktop" }
+impl CapabilitySet for MacosSet {
+    fn id(&self) -> &str { "macos" }
     fn name(&self) -> &str { "macOS Desktop Control" }
 
     fn constraints(&self) -> &PlatformConstraints {
@@ -254,13 +255,13 @@ impl CapabilitySet for MacosDesktopSet {
 ```
 
 ```rust
-// src/capabilities/windows_desktop.rs
+// src/capabilities/windows.rs
 
 /// Windows Desktop 能力集合
-pub struct WindowsDesktopSet;
+pub struct WindowsSet;
 
-impl CapabilitySet for WindowsDesktopSet {
-    fn id(&self) -> &str { "windows-desktop" }
+impl CapabilitySet for WindowsSet {
+    fn id(&self) -> &str { "windows" }
     fn name(&self) -> &str { "Windows Desktop Control" }
 
     fn constraints(&self) -> &PlatformConstraints {
@@ -400,8 +401,8 @@ impl CapabilityRegistry {
 
 ```
 Linux 开发机（有 GUI + systemd）
-  ├─ LinuxServerSet     → system_inspect, service_manager, log_analyzer...
-  ├─ LinuxDesktopSet    → desktop_control, accessibility, screenshot...
+  ├─ LinuxSet     → system_inspect, service_manager, log_analyzer...
+  ├─ LinuxDesktopX11Set    → desktop_control, accessibility, screenshot...
   └─ 合并注册到 ToolRegistry
         → LLM 同时看到 Server 和 Desktop 工具
 ```
@@ -548,7 +549,7 @@ profile = "server"
 
 # 或者自定义组合
 # profile = "custom"
-# custom_sets = ["linux-server", "linux-desktop"]
+# custom_sets = ["linux", "linux-desktop-x11"]
 
 # 权限上限
 max_scope = "System"
@@ -566,20 +567,20 @@ fn init_capabilities() -> CapabilityRegistry {
     // 只在 Linux 编译 Linux 相关集合
     #[cfg(target_os = "linux")]
     {
-        cap_reg.register(Box::new(LinuxServerSet));
+        cap_reg.register(Box::new(LinuxSet));
 
         // Desktop 只在有 GUI 时可用（由运行时检测决定）
-        cap_reg.register(Box::new(LinuxDesktopSet));
+        cap_reg.register(Box::new(LinuxDesktopX11Set));
     }
 
     #[cfg(target_os = "macos")]
     {
-        cap_reg.register(Box::new(MacosDesktopSet));
+        cap_reg.register(Box::new(MacosSet));
     }
 
     #[cfg(target_os = "windows")]
     {
-        cap_reg.register(Box::new(WindowsDesktopSet));
+        cap_reg.register(Box::new(WindowsSet));
     }
 
     // ── 未来扩展：动态加载第三方集合 ──
@@ -623,7 +624,7 @@ fn init_tools(cap_reg: &CapabilityRegistry) -> ToolRegistry {
 auto_detect = true
 
 # 手动控制特定集合
-disabled = ["linux-desktop"]  # 在服务器上禁用 desktop 控制
+disabled = ["linux-desktop-x11"]  # 在服务器上禁用 desktop 控制
 
 # 权限范围上限（防止 Agent 越权）
 max_scope = "System"  # 可选: ReadOnly, UserSpace, System, Root
@@ -651,10 +652,10 @@ src/
 │   ├── mod.rs              # CapabilitySet trait, PlatformConstraints, OsControlScope
 │   ├── registry.rs         # CapabilityRegistry
 │   ├── config.rs           # CapabilitiesConfig
-│   ├── linux_server.rs     # LinuxServerSet
-│   ├── linux_desktop.rs    # LinuxDesktopSet
-│   ├── macos_desktop.rs    # MacosDesktopSet
-│   ├── windows_desktop.rs  # WindowsDesktopSet
+│   ├── linux.rs     # LinuxSet
+│   ├── linux_desktop_x11.rs    # LinuxDesktopX11Set
+│   ├── macos.rs    # MacosSet
+│   ├── windows.rs  # WindowsSet
 │   └── common/             # 跨平台共享的 OS 工具实现
 │       ├── mod.rs
 │       ├── system_inspect.rs

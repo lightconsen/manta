@@ -4359,7 +4359,14 @@ async fn create_default_tool_registry(
 
         #[cfg(target_os = "linux")]
         {
-            cap_reg.register(Box::new(crate::capabilities::LinuxServerSet::new()));
+            cap_reg.register(Box::new(crate::capabilities::LinuxSet::new()));
+            cap_reg.register(Box::new(crate::capabilities::LinuxDesktopX11Set::new()));
+            cap_reg.register(Box::new(crate::capabilities::LinuxDesktopWaylandSet::new()));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            cap_reg.register(Box::new(crate::capabilities::MacosSet::new()));
         }
 
         // Apply profile (could be loaded from config in the future)

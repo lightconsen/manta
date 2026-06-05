@@ -162,7 +162,7 @@ impl SystemInspectTool {
 
         let memory = mem
             .as_deref()
-            .and_then(|s| parse_free_output(s))
+            .and_then(parse_free_output)
             .unwrap_or(MemoryInfo {
                 total_mb: 0,
                 used_mb: 0,
@@ -203,7 +203,7 @@ impl SystemInspectTool {
         let output = Self::run_cmd(&cmd, 10).await;
         output
             .as_deref()
-            .map(|s| parse_systemctl_output(s))
+            .map(parse_systemctl_output)
             .unwrap_or_default()
     }
 
@@ -211,7 +211,7 @@ impl SystemInspectTool {
         let output = Self::run_cmd("ss -tulnp --no-header 2>/dev/null || netstat -tulnp 2>/dev/null", 10).await;
         output
             .as_deref()
-            .map(|s| parse_ss_output(s))
+            .map(parse_ss_output)
             .unwrap_or_default()
     }
 
@@ -224,7 +224,7 @@ impl SystemInspectTool {
         let output = Self::run_cmd(&cmd, 10).await;
         output
             .as_deref()
-            .map(|s| parse_journalctl_output(s))
+            .map(parse_journalctl_output)
             .unwrap_or_default()
     }
 }
