@@ -10,7 +10,10 @@ pub use std::path::Path;
 pub use std::time::Duration;
 pub use syscity::gateway::protocol::AuthMode;
 pub use syscity::gateway::{Gateway, GatewayConfig};
-pub use syscity::model_router::{ProviderConfig, ProviderType};
+pub use syscity::model_router::{ModelAlias, ProviderConfig, ProviderType};
+pub use syscity::providers::{
+    mock::MockProvider, FunctionCall, Message as ProviderMessage, ToolCall,
+};
 pub use tokio::time::timeout;
 pub use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
@@ -183,6 +186,50 @@ pub async fn start_test_gateway(port: u16, with_provider: bool) {
     let gateway = Gateway::new(config, None)
         .await
         .expect("Failed to create test gateway");
+
+    tokio::spawn(async move {
+        let _ = gateway.start().await;
+    });
+
+    let url = format!("ws://127.0.0.1:{}/ws", port);
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if connect_async(&url).await.is_ok() {
+            return;
+        }
+    }
+    panic!("Gateway did not start within 10 seconds");
+}
+
+/// Start a test Gateway with a programmable MockProvider injected.
+///
+/// The `mock` is pre-configured with responses (sequence or callback) and
+/// registered as the default provider under the name "mock".
+pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
+    let mut config = test_config(port, false);
+    config.model_provider = "mock".to_string();
+    config.model = "mock-model".to_string();
+
+    let gateway = Gateway::new(config, None)
+        .await
+        .expect("Failed to create test gateway");
+
+    let router = gateway.model_router();
+    router
+        .add_provider_instance("mock", std::sync::Arc::new(mock))
+        .await
+        .expect("Failed to register mock provider");
+
+    // Register a model alias so the router can resolve "mock-model" -> mock provider
+    router
+        .set_alias(ModelAlias {
+            name: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            model: "mock-model".to_string(),
+            temperature: None,
+            max_tokens: None,
+        })
+        .await;
 
     tokio::spawn(async move {
         let _ = gateway.start().await;
@@ -515,5 +562,6 @@ mod browser_chat_tests;
 mod command_tests;
 mod health_tests;
 mod llm_chat_tests;
+mod mock_chat_tests;
 mod session_tests;
 mod tool_chat_tests;

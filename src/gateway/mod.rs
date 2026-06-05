@@ -1852,6 +1852,14 @@ impl Gateway {
         Ok(Self { state, config })
     }
 
+    /// Return a clone of the internal `ModelRouter` arc.
+    ///
+    /// Primarily used in integration / E2E tests to inject a mock provider
+    /// before calling `start()`.
+    pub fn model_router(&self) -> Arc<crate::model_router::ModelRouter> {
+        self.state.model_router.clone()
+    }
+
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
         info!("Starting Syscity Gateway control plane...");

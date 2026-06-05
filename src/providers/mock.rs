@@ -52,6 +52,9 @@ use super::{
     Usage,
 };
 
+/// Callback signature for dynamic mock responses.
+type MockCallback = Box<dyn Fn(&[Message]) -> Message + Send + Sync>;
+
 /// Internal mutable state for the mock provider.
 struct MockState {
     /// Predefined responses returned in order.
@@ -59,7 +62,7 @@ struct MockState {
     /// Current position in `responses`.
     index: usize,
     /// Optional dynamic callback that inspects the conversation history.
-    callback: Option<Box<dyn Fn(&[Message]) -> Message + Send + Sync>>,
+    callback: Option<MockCallback>,
     /// Record of every `CompletionRequest` received.
     history: Vec<CompletionRequest>,
 }
@@ -225,9 +228,7 @@ impl Provider for MockProvider {
             }),
         });
 
-        Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(
-            rx,
-        )))
+        Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
     }
 
     async fn health_check(&self) -> crate::Result<bool> {
@@ -242,10 +243,8 @@ mod tests {
 
     #[test]
     fn test_sequence_mode() {
-        let mock = MockProvider::new().with_responses(vec![
-            Message::assistant("first"),
-            Message::assistant("second"),
-        ]);
+        let mock = MockProvider::new()
+            .with_responses(vec![Message::assistant("first"), Message::assistant("second")]);
 
         let req = CompletionRequest::default();
         let rt = tokio::runtime::Runtime::new().unwrap();
