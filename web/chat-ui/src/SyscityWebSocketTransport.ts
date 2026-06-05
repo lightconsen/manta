@@ -138,7 +138,26 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     this.sessionId = storedSession || `web:${this.deviceId}`;
     localStorage.setItem("syscity_session", this.sessionId);
 
-    this.connect();
+    const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+    if (isTauri) {
+      // In Tauri the backend may have auto-detected a different port.
+      // Resolve the actual URL before connecting.
+      this.resolveTauriGatewayUrl().then(() => this.connect());
+    } else {
+      this.connect();
+    }
+  }
+
+  /** Ask the Tauri backend for the actual Gateway URL (handles port auto-detection). */
+  private async resolveTauriGatewayUrl() {
+    try {
+      // Dynamic import keeps the Tauri API out of browser bundles.
+      const { invoke } = await import("@tauri-apps/api/core");
+      const apiUrl = await invoke<string>("get_api_url");
+      this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
+    } catch {
+      this.gatewayUrl = "ws://127.0.0.1:18080/ws";
+    }
   }
 
   onEvent(callback: EventCallback): () => void {
@@ -195,8 +214,20 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
 
     this.setStatus("connecting");
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${proto}//${location.host}/ws`;
+
+    // In Tauri WebView the Gateway runs on localhost, not the WebView's own origin.
+    const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+
+    let url: string;
+    if (isTauri && this.gatewayUrl) {
+      url = this.gatewayUrl;
+    } else if (isTauri) {
+      url = "ws://127.0.0.1:18080/ws";
+    } else {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      url = `${proto}//${location.host}/ws`;
+    }
+
     this.gatewayUrl = url;
     this.ws = new WebSocket(url);
 
