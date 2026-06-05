@@ -79,9 +79,101 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: ./${{ matrix.asset_name }}.tar.gz
 
+  build-desktop:
+    name: Build Desktop Apps
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_prefix: syscity-desktop-linux-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_prefix: syscity-desktop-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_prefix: syscity-desktop-macos-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_prefix: syscity-desktop-windows-amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: web/chat-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0.0"
+
+      - name: Build Tauri App
+        working-directory: desktop/src
+        run: cargo tauri build --target ${{ matrix.target }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          BUNDLE_DIR="desktop/src/target/${{ matrix.target }}/release/bundle"
+          OUTPUT_DIR="desktop-artifacts"
+          mkdir -p "$OUTPUT_DIR"
+
+          # macOS
+          for f in "$BUNDLE_DIR"/dmg/*.dmg; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.dmg"
+          done
+
+          # Windows
+          for f in "$BUNDLE_DIR"/msi/*.msi; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.msi"
+          done
+
+          # Linux
+          for f in "$BUNDLE_DIR"/deb/*.deb; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.deb"
+          done
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/${{ matrix.asset_prefix }}.AppImage"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_prefix }}
+          path: desktop-artifacts/*
+
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, build-desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -98,6 +190,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*.tar.gz
+          files: artifacts/*
           generate_release_notes: true
 
