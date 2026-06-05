@@ -11,6 +11,7 @@ import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
 import { Mic, Image, Paperclip, Square, Send } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface ChatContentProps {
@@ -27,6 +28,20 @@ export function ChatContent({ transport }: ChatContentProps) {
 
   const messages = useChatStore((s) => s.messages);
   const isRunning = useChatStore((s) => s.isRunning);
+
+  const { isListening, toggle, supported } = useSpeechRecognition({
+    onResult: (text) => {
+      const current = inputRef.current?.value || "";
+      const next = current ? `${current} ${text}` : text;
+      composer.setText(next);
+      // Restore focus so the user can keep typing / sending
+      setTimeout(() => inputRef.current?.focus(), 0);
+    },
+    onError: (err) => {
+      console.warn("Speech recognition error:", err);
+    },
+    lang: "zh-CN",
+  });
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -177,10 +192,17 @@ export function ChatContent({ transport }: ChatContentProps) {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  title="Voice input"
-                  aria-label="Voice input"
-                  className="p-2 rounded-lg text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50 transition"
-                  onClick={() => alert("Voice input coming soon")}
+                  title={isListening ? "Stop listening" : "Voice input"}
+                  aria-label={isListening ? "Stop listening" : "Voice input"}
+                  className={`p-2 rounded-lg transition ${
+                    isListening
+                      ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse"
+                      : supported
+                        ? "text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50"
+                        : "text-gray-300 dark:text-neutral-600 cursor-not-allowed"
+                  }`}
+                  onClick={toggle}
+                  disabled={!supported}
                 >
                   <Mic className="w-5 h-5" />
                 </button>
