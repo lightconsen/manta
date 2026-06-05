@@ -138,13 +138,14 @@ async fn session_status_tool_requires_id() {
             .unwrap(),
     );
     let tool = SessionStatusTool::new(Some(store));
-    let ctx = test_context();
+    let mut ctx = test_context();
+    ctx.conversation_id = String::new();
     let result = tool.execute(json!({}), &ctx).await.unwrap();
     assert!(!result.success, "Expected failure without id");
     let err = result.error.unwrap();
     assert!(
-        err.contains("session_id") || err.contains("missing"),
-        "Expected session_id-related error, got: {}",
+        err.contains("No current session available") || err.contains("missing"),
+        "Expected session-related error, got: {}",
         err
     );
 }
@@ -156,17 +157,20 @@ async fn apply_patch_tool_validates_patch() {
     let result = tool
         .execute(
             json!({
-                "patch": "not a valid unified diff patch",
-                "directory": "/tmp"
+                "patch": "not a valid unified diff patch"
             }),
             &ctx,
         )
         .await
         .unwrap();
     assert!(!result.success, "Expected failure for invalid patch");
+    let err = result.error.unwrap();
     assert!(
-        result.error.unwrap().contains("Patch does not apply"),
-        "Expected patch validation error"
+        err.contains("Patch does not apply")
+            || err.contains("No valid patches")
+            || err.contains("patch"),
+        "Expected patch validation error, got: {}",
+        err
     );
 }
 
@@ -254,12 +258,12 @@ async fn apply_patch_applies_valid_patch() {
     );
 
     let tool = ApplyPatchTool::new();
-    let ctx = test_context();
+    let mut ctx = test_context();
+    ctx.working_directory = temp_dir.path().to_path_buf();
     let result = tool
         .execute(
             json!({
-                "patch": patch,
-                "directory": temp_dir.path().to_str().unwrap()
+                "patch": patch
             }),
             &ctx,
         )

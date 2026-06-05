@@ -18,6 +18,7 @@ pub use syscity::tools::{
 pub fn test_context() -> ToolContext {
     ToolContext::new("test_user", format!("test-session-{}", std::process::id()))
         .with_timeout(Duration::from_secs(10))
+        .with_workspace_only(false)
 }
 
 mod acp_tests;

@@ -902,4 +902,163 @@ mod tests {
         let registry = AgentRegistry::new();
         assert!(registry.find_by_alias("nonexistent").is_none());
     }
+
+    // ── Template / seeding tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn seed_creates_identity_with_correct_format() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_id = unique_test_id("identity");
+        let agent_dir = temp_dir.path().join(&agent_id);
+        let params = AgentTemplateParams {
+            agent_id: agent_id.clone(),
+            display_name: "Identity Agent".to_string(),
+            description: "Tests the identity template.".to_string(),
+            emoji: "🆔".to_string(),
+        };
+
+        seed_agent_personality(&agent_dir, &params).await.unwrap();
+
+        let identity_path = agent_dir.join("IDENTITY.md");
+        assert!(identity_path.exists());
+        let content = std::fs::read_to_string(&identity_path).unwrap();
+        assert!(content.starts_with("# Identity Agent\n"));
+        assert!(content.contains("## name\n"));
+        assert!(content.contains("Identity Agent"));
+        assert!(content.contains("Tests the identity template."));
+
+        cleanup_test_agent(&params.agent_id);
+    }
+
+    #[tokio::test]
+    async fn seed_creates_soul_with_yaml_frontmatter() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_id = unique_test_id("soul");
+        let agent_dir = temp_dir.path().join(&agent_id);
+        let params = AgentTemplateParams {
+            agent_id: agent_id.clone(),
+            display_name: "Soul Agent".to_string(),
+            description: "Tests the soul template.".to_string(),
+            emoji: "✨".to_string(),
+        };
+
+        seed_agent_personality(&agent_dir, &params).await.unwrap();
+
+        let soul_path = agent_dir.join("SOUL.md");
+        assert!(soul_path.exists());
+        let content = std::fs::read_to_string(&soul_path).unwrap();
+
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("name: Soul Agent\n"));
+        assert!(content.contains("persona: Tests the soul template.\n"));
+        assert!(content.contains("emoji: \"✨\"\n"));
+        assert!(content.contains("voice: concise, direct, no filler\n"));
+        assert!(content.contains("proactive: false\n"));
+        assert!(content.contains("ask_before_destructive: true\n"));
+        assert!(content.contains("language: en-US\n"));
+        assert!(content.contains("format: markdown\n"));
+        assert!(content.contains("---\n\n# Core Principles\n"));
+        assert!(content.contains("Be genuinely helpful"));
+
+        cleanup_test_agent(&params.agent_id);
+    }
+
+    #[tokio::test]
+    async fn seeded_personality_loads_and_is_valid() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_id = unique_test_id("load");
+        let agent_dir = temp_dir.path().join(&agent_id);
+        let params = AgentTemplateParams {
+            agent_id: agent_id.clone(),
+            display_name: "Loadable Agent".to_string(),
+            description: "Tests load after seed.".to_string(),
+            emoji: "📦".to_string(),
+        };
+
+        seed_agent_personality(&agent_dir, &params).await.unwrap();
+
+        let personality = AgentPersonality::load(&agent_dir).await.unwrap();
+        assert!(personality.is_valid, "Seeded personality should be valid");
+        assert_eq!(personality.id, params.agent_id);
+        assert_eq!(personality.display_name(), "Loadable Agent");
+        assert!(!personality.identity.is_empty());
+        assert!(!personality.soul.is_empty());
+
+        cleanup_test_agent(&params.agent_id);
+    }
+
+    #[test]
+    fn seed_sync_matches_async_output() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_id = unique_test_id("sync");
+        let agent_dir = temp_dir.path().join(&agent_id);
+        let params = AgentTemplateParams {
+            agent_id: agent_id.clone(),
+            display_name: "Sync Agent".to_string(),
+            description: "Tests sync seeding.".to_string(),
+            emoji: "⚡".to_string(),
+        };
+
+        seed_agent_personality_sync(&agent_dir, &params).unwrap();
+
+        let identity = std::fs::read_to_string(agent_dir.join("IDENTITY.md")).unwrap();
+        let soul = std::fs::read_to_string(agent_dir.join("SOUL.md")).unwrap();
+
+        assert!(identity.contains("# Sync Agent"));
+        assert!(identity.contains("## name\n"));
+        assert!(soul.contains("name: Sync Agent"));
+        assert!(soul.contains("persona: Tests sync seeding."));
+        assert!(soul.contains("emoji: \"⚡\""));
+        assert!(soul.starts_with("---\n"));
+
+        cleanup_test_agent(&params.agent_id);
+    }
+
+    #[tokio::test]
+    async fn seed_does_not_overwrite_existing_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_id = unique_test_id("no-clobber");
+        let agent_dir = temp_dir.path().join(&agent_id);
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let existing_identity = "# Existing Agent\nCustom content.";
+        std::fs::write(agent_dir.join("IDENTITY.md"), existing_identity).unwrap();
+
+        let params = AgentTemplateParams {
+            agent_id: agent_id.clone(),
+            display_name: "New Agent".to_string(),
+            description: "Should not overwrite.".to_string(),
+            emoji: "🚫".to_string(),
+        };
+
+        seed_agent_personality(&agent_dir, &params).await.unwrap();
+
+        let content = std::fs::read_to_string(agent_dir.join("IDENTITY.md")).unwrap();
+        assert_eq!(content, existing_identity);
+
+        cleanup_test_agent(&params.agent_id);
+    }
+
+    #[test]
+    fn humanize_agent_id_variations() {
+        assert_eq!(humanize_agent_id("code-reviewer"), "Code Reviewer");
+        assert_eq!(humanize_agent_id("my-special-agent"), "My Special Agent");
+        assert_eq!(humanize_agent_id("default"), "Default");
+        assert_eq!(humanize_agent_id(""), "");
+        assert_eq!(humanize_agent_id("single"), "Single");
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    fn unique_test_id(prefix: &str) -> String {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        format!("test-{}-{}-{}", prefix, std::process::id(), ts)
+    }
+
+    fn cleanup_test_agent(agent_id: &str) {
+        let path = dirs::agents_dir().join(agent_id);
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
