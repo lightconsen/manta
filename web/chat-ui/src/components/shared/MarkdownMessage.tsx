@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useState } from "react";
+import { Children, isValidElement, useState } from "react";
+import { CodeBlock } from "./CodeBlock";
 
 /** Detect bare image/video URLs and convert them to markdown embeds. */
 function autoEmbedMedia(text: string): string {
@@ -38,19 +39,28 @@ export function MarkdownMessage({ text }: { text: string }) {
             <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>
           ),
           code: ({ children, className }) => {
-            const isBlock = className?.includes("language-");
-            if (isBlock) return <code className={className}>{children}</code>;
+            if (className?.includes("language-")) {
+              const language = className.replace("language-", "");
+              const code = String(children).replace(/\n$/, "");
+              return <CodeBlock code={code} language={language} />;
+            }
             return (
               <code className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-neutral-700 text-gray-800 dark:text-gray-200 text-xs font-mono">
                 {children}
               </code>
             );
           },
-          pre: ({ children }) => (
-            <pre className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 p-4 overflow-x-auto my-3 text-xs font-mono leading-relaxed">
-              {children}
-            </pre>
-          ),
+          pre: ({ children }) => {
+            const child = Children.toArray(children)[0];
+            if (isValidElement(child) && child.type === CodeBlock) {
+              return <>{children}</>;
+            }
+            return (
+              <pre className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 p-4 overflow-x-auto my-3 text-xs font-mono leading-relaxed">
+                {children}
+              </pre>
+            );
+          },
           blockquote: ({ children }) => (
             <blockquote className="border-l-3 border-emerald-400 dark:border-emerald-600 pl-4 my-3 text-gray-600 dark:text-gray-400 italic">
               {children}
