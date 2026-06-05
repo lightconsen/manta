@@ -274,9 +274,7 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> Result<(), Box<dyn std::error::E
     let show_i = MenuItemBuilder::new("Show Window")
         .id("show")
         .build(handle)?;
-    let quit_i = MenuItemBuilder::new("Quit")
-        .id("quit")
-        .build(handle)?;
+    let quit_i = MenuItemBuilder::new("Quit").id("quit").build(handle)?;
 
     let tray_menu = MenuBuilder::new(handle)
         .item(&show_i)

@@ -407,9 +407,8 @@ pub use fallback::{FallbackChainBuilder, FallbackProvider};
 pub use openai::OpenAiProvider;
 pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
 
-/// Re-export the programmable mock provider for tests inside the crate.
-#[cfg(test)]
-pub(crate) use mock::MockProvider;
+/// Re-export the programmable mock provider for tests (unit + integration).
+pub use mock::MockProvider;
 
 #[cfg(test)]
 mod tests {
