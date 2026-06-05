@@ -4,11 +4,13 @@ import {
   ComposerPrimitive,
   useComposerRuntime,
 } from "@assistant-ui/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { MessageBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
 import { Mic, Image, Paperclip, Square, Send } from "lucide-react";
+import { MessageSkeleton } from "@/components/ui/Skeleton";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface ChatContentProps {
@@ -17,6 +19,7 @@ interface ChatContentProps {
 
 export function ChatContent({ transport }: ChatContentProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const composer = useComposerRuntime();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -25,11 +28,29 @@ export function ChatContent({ transport }: ChatContentProps) {
   const messages = useChatStore((s) => s.messages);
   const isRunning = useChatStore((s) => s.isRunning);
 
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 120,
+    measureElement: (el) => el.getBoundingClientRect().height,
+    overscan: 5,
+  });
+
+  // Sync run state into store
   useEffect(() => {
     return transport.onRunStateChange((running) => {
       useChatStore.getState().setIsRunning(running);
     });
   }, [transport]);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 0) {
+      requestAnimationFrame(() => {
+        virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      });
+    }
+  }, [messages.length, virtualizer]);
 
   const handleInput = useCallback(() => {
     const val = inputRef.current?.value || "";
@@ -77,9 +98,18 @@ export function ChatContent({ transport }: ChatContentProps) {
     [composer]
   );
 
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalHeight = virtualizer.getTotalSize();
+
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto" role="log" aria-live="polite">
+      {/* Scrollable message area */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto"
+        role="log"
+        aria-live="polite"
+      >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -95,10 +125,29 @@ export function ChatContent({ transport }: ChatContentProps) {
             </div>
           </div>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-      </ThreadPrimitive.Viewport>
+
+        {messages.length > 0 && (
+          <div style={{ height: `${totalHeight}px`, position: "relative" }}>
+            {virtualItems.map((virtualItem) => (
+              <div
+                key={virtualItem.key}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                <MessageBubble message={messages[virtualItem.index]} />
+              </div>
+            ))}
+          </div>
+        )}
+        {isRunning && <MessageSkeleton />}
+      </div>
 
       <div className="bg-white dark:bg-neutral-900 px-4 py-3 shrink-0">
         <ComposerPrimitive.Root className="max-w-3xl mx-auto w-full">
