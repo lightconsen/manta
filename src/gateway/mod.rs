@@ -4346,6 +4346,49 @@ async fn create_default_tool_registry(
     // Register nodes/Tailscale tool
     registry.register(Box::new(NodesTool::new()));
 
+    // Register capability discovery tool
+    registry.register(Box::new(ListCapabilitiesTool::new()));
+
+    // ── Register platform-specific capability sets ──
+    {
+        use crate::capabilities::{
+            CapabilityProfile, CapabilityRegistry, ToolConflictStrategy,
+        };
+
+        let mut cap_reg = CapabilityRegistry::new();
+
+        #[cfg(target_os = "linux")]
+        {
+            cap_reg.register(Box::new(crate::capabilities::LinuxServerSet::new()));
+        }
+
+        // Apply profile (could be loaded from config in the future)
+        let profile = CapabilityProfile::Full;
+        profile.apply(&mut cap_reg);
+
+        // Log detected capabilities before exporting
+        let available = cap_reg.available_sets();
+        if available.is_empty() {
+            info!("No platform-specific capability sets detected on this host");
+        } else {
+            for set in &available {
+                info!(
+                    "Capability set available: {} ({}) — {}",
+                    set.name(),
+                    set.id(),
+                    set.description()
+                );
+            }
+        }
+
+        cap_reg.export_to_tool_registry(&mut registry, ToolConflictStrategy::Reject);
+
+        info!(
+            "Capability sets exported: {} set(s) active",
+            available.len()
+        );
+    }
+
     // Gate high-privilege tools behind SkillTrust::Trusted.
     // Community-trust skills see only read-only / informational tools.
     registry.mark_privileged("shell");
@@ -4363,6 +4406,10 @@ async fn create_default_tool_registry(
     registry.mark_privileged("message");
     registry.mark_privileged("process");
     registry.mark_privileged("image_generate");
+
+    // OS control tools — privileged because they modify system state.
+    registry.mark_privileged("system_inspect");
+    registry.mark_privileged("service_manager");
 
     Ok(registry)
 }

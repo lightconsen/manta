@@ -454,7 +454,7 @@ impl AgentConfig {
         let base_prompt = self.full_system_prompt();
 
         // Load personality memory
-        match crate::memory::PersonalityMemory::new().await {
+        let result = match crate::memory::PersonalityMemory::new().await {
             Ok(memory) => {
                 // Initialize default files if they don't exist
                 let _ = memory.initialize_defaults().await;
@@ -499,7 +499,12 @@ impl AgentConfig {
                 parts.join("\n")
             }
             Err(_) => base_prompt,
-        }
+        };
+
+        // Inject host environment awareness so the LLM knows what OS
+        // controls are available on this machine.
+        let host_env = crate::capabilities::host_environment_summary();
+        format!("{}\n\n## Host Environment\n\n{}", result, host_env)
     }
 }
 
