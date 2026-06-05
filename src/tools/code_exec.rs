@@ -414,6 +414,7 @@ impl Default for CodeExecutionTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_code_validation() {
@@ -610,5 +611,40 @@ mod tests {
         assert!(!result.success);
         let err_text = result.error.as_ref().unwrap();
         assert!(err_text.contains("boom") || err_text.contains("ValueError"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_python_timeout() {
+        // Skip if python3 is not available in the test environment.
+        let python_check = tokio::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .await;
+        if python_check.map(|o| !o.status.success()).unwrap_or(true) {
+            return;
+        }
+
+        let tool = CodeExecutionTool::new();
+        let ctx = ToolContext::new("user1", "conv1");
+        let args = serde_json::json!({
+            "code": "import time\ntime.sleep(100)",
+            "timeout": 1
+        });
+
+        let start = Instant::now();
+        let result = tool.execute(args, &ctx).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(!result.success, "timed-out code execution should not succeed");
+        assert!(
+            result.error.as_ref().unwrap().contains("timed out"),
+            "expected timeout error, got {:?}",
+            result.error
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "code execution was not killed within timeout: {:?}",
+            elapsed
+        );
     }
 }

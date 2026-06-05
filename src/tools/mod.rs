@@ -316,11 +316,7 @@ impl ToolContext {
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
         // ── workspace boundary check (OpenClaw-style) ──────────────────────
         if self.workspace_only {
-            let resolved = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                self.workspace_root.join(path)
-            };
+            let resolved = self.resolve_path(path);
             let resolved_canon = resolved.canonicalize().ok();
             let root_canon = self.workspace_root.canonicalize().ok();
 
@@ -1756,5 +1752,167 @@ mod tests {
             "command": "ls; rm -rf /"
         });
         assert!(validator.validate_input("test", &cmd_inject_args).is_err());
+    }
+
+    // ── Path sandbox penetration tests ───────────────────────────────────────
+
+    use tempfile::tempdir;
+
+    fn workspace_context(root: &std::path::Path) -> ToolContext {
+        ToolContext::new("user", "conv1")
+            .with_workspace_root(root)
+            .with_workspace_only(true)
+    }
+
+    #[test]
+    fn test_path_allowed_relative_within_workspace() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(ctx.is_path_allowed(std::path::Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn test_path_allowed_relative_traversal_outside_workspace() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let outside = tmp.path().join("outside.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(!ctx.is_path_allowed(std::path::Path::new("../outside.txt")));
+    }
+
+    #[test]
+    fn test_path_allowed_dotdot_combo_traversal() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir_all(ws.join("subdir")).unwrap();
+        let outside = tmp.path().join("outside.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(!ctx.is_path_allowed(std::path::Path::new("subdir/../../outside.txt")));
+    }
+
+    #[test]
+    fn test_path_allowed_absolute_outside_workspace() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(!ctx.is_path_allowed(std::path::Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn test_path_allowed_absolute_inside_workspace() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let inside = ws.join("file.txt");
+        std::fs::write(&inside, "ok").unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(ctx.is_path_allowed(&inside));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_path_allowed_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let secret = outside.join("secret.txt");
+        std::fs::write(&secret, "secret").unwrap();
+        symlink(&outside, ws.join("link")).unwrap();
+        let ctx = workspace_context(&ws);
+        assert!(!ctx.is_path_allowed(std::path::Path::new("link/secret.txt")));
+    }
+
+    #[test]
+    fn test_path_allowed_tilde_expansion_outside_workspace() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir(&ws).unwrap();
+        let ctx = workspace_context(&ws);
+        // `~` resolves to the user's home directory, which is outside the workspace.
+        assert!(!ctx.is_path_allowed(std::path::Path::new("~/anything.txt")));
+    }
+
+    #[test]
+    fn test_path_allowed_with_allowlist() {
+        let tmp = tempdir().unwrap();
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir(&allowed).unwrap();
+        let ctx = ToolContext::new("user", "conv1")
+            .with_workspace_only(false)
+            .allow_path(&allowed);
+        let inside = allowed.join("file.txt");
+        assert!(ctx.is_path_allowed(&inside));
+        assert!(!ctx.is_path_allowed(std::path::Path::new("/etc/passwd")));
+    }
+
+    // ── Skill trust boundary tests ───────────────────────────────────────────
+
+    struct ReadTool;
+
+    #[async_trait]
+    impl Tool for ReadTool {
+        fn name(&self) -> &str {
+            "read"
+        }
+
+        fn description(&self) -> &str {
+            "Read a file"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema(
+                "Read a file",
+                serde_json::json!({"path": {"type": "string"}}),
+                vec!["path"],
+            )
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("ok"))
+        }
+    }
+
+    #[test]
+    fn test_skill_trust_boundary_excludes_privileged_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ShellTool::new()));
+        registry.register(Box::new(ReadTool));
+        registry.mark_privileged("shell");
+
+        let trusted_ctx = ToolContext::new("user", "conv1").with_skill_trust(SkillTrust::Trusted);
+        let community_ctx =
+            ToolContext::new("user", "conv1").with_skill_trust(SkillTrust::Community);
+
+        let trusted: Vec<String> = registry
+            .get_available(&trusted_ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        let community: Vec<String> = registry
+            .get_available(&community_ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(trusted.contains(&"shell".to_string()), "Trusted context should see shell");
+        assert!(trusted.contains(&"read".to_string()), "Trusted context should see read");
+        assert!(
+            !community.contains(&"shell".to_string()),
+            "Community context must not see shell"
+        );
+        assert!(community.contains(&"read".to_string()), "Community context should see read");
     }
 }

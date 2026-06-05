@@ -263,7 +263,7 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn test_shell_tool_creation() {
@@ -299,22 +299,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_shell_tool_timeout() {
-        // Skip this test on macOS as sleep behaves differently
-        if cfg!(target_os = "macos") {
-            return;
-        }
-
         let tool = ShellTool::new();
         // Use a 1s timeout to avoid flakiness on oversubscribed CI runners.
         let context = ToolContext::new("user", "conv1").with_timeout(Duration::from_secs(1));
 
         let args = serde_json::json!({
-            "command": "sleep 10"
+            "command": "sleep 100"
         });
 
+        let start = Instant::now();
         let result = tool.execute(args, &context).await.unwrap();
-        // Just verify the command did not succeed (it timed out or was killed).
-        assert!(!result.success);
+        let elapsed = start.elapsed();
+
+        assert!(!result.success, "timed-out shell command should not report success");
+        assert!(
+            result.error.as_ref().unwrap().contains("timed out"),
+            "expected timeout error, got {:?}",
+            result.error
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "shell command was not killed within timeout: {:?}",
+            elapsed
+        );
     }
 
     #[test]

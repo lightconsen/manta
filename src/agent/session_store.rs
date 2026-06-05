@@ -1494,6 +1494,7 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::future::join_all;
 
     async fn create_test_store() -> SessionStore {
         // Use in-memory SQLite for tests
@@ -1941,5 +1942,60 @@ mod tests {
             .await
             .unwrap();
         assert!(other.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_session_access_no_deadlock() {
+        let store = create_test_store().await;
+        let session_id = "concurrent-session";
+        let meta = SessionMetadata::new(session_id, "main", "cli", "local");
+        store.save_session(session_id, &meta, "{}").await.unwrap();
+
+        let mut tasks = Vec::new();
+        for i in 0..10usize {
+            let store = store.clone();
+            let sid = session_id.to_string();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .append_message(
+                        &sid,
+                        "user",
+                        &format!("msg-{}", i),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .expect("append should succeed");
+            }));
+        }
+        for _ in 0..5usize {
+            let store = store.clone();
+            let sid = session_id.to_string();
+            tasks.push(tokio::spawn(async move {
+                let loaded = store.load_session(&sid).await.expect("load should succeed");
+                assert!(loaded.is_some(), "session should exist");
+            }));
+        }
+        for i in 0..5usize {
+            let store = store.clone();
+            let sid = session_id.to_string();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .set_session_name(&sid, &format!("name-{}", i))
+                    .await
+                    .expect("set_name should succeed");
+            }));
+        }
+
+        join_all(tasks)
+            .await
+            .into_iter()
+            .for_each(|r| r.expect("concurrent task should not panic"));
+
+        let final_session = store.load_session(session_id).await.unwrap().unwrap();
+        assert_eq!(final_session.message_count, 10, "all 10 concurrent appends should be recorded");
     }
 }

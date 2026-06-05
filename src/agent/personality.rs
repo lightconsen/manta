@@ -536,10 +536,13 @@ impl AgentRegistry {
         }
     }
 
-    /// Discover agents from the agents/ directory
+    /// Discover agents from the configured agents/ directory.
     pub async fn discover(&mut self) -> crate::Result<usize> {
-        let agents_dir = dirs::agents_dir();
+        self.discover_in_dir(&dirs::agents_dir()).await
+    }
 
+    /// Discover agents from a specific directory.
+    pub async fn discover_in_dir(&mut self, agents_dir: &Path) -> crate::Result<usize> {
         if !agents_dir.exists() {
             info!("Agents directory does not exist: {:?}", agents_dir);
             return Ok(0);
@@ -548,7 +551,7 @@ impl AgentRegistry {
         info!("Discovering agents from: {:?}", agents_dir);
 
         let mut count = 0;
-        let mut entries = fs::read_dir(&agents_dir).await?;
+        let mut entries = fs::read_dir(agents_dir).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
@@ -1045,6 +1048,62 @@ mod tests {
         assert_eq!(humanize_agent_id("default"), "Default");
         assert_eq!(humanize_agent_id(""), "");
         assert_eq!(humanize_agent_id("single"), "Single");
+    }
+
+    #[tokio::test]
+    async fn test_registry_discovers_valid_skips_invalid_and_seeds_empty() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agents_dir = temp_dir.path().join("agents");
+
+        let valid_id = unique_test_id("valid");
+        let valid_dir = agents_dir.join(&valid_id);
+        std::fs::create_dir_all(&valid_dir).unwrap();
+        std::fs::write(
+            valid_dir.join("IDENTITY.md"),
+            format!("# Valid Agent\n## name\n{}\n", valid_id),
+        )
+        .unwrap();
+        std::fs::write(
+            valid_dir.join("SOUL.md"),
+            "---\nname: Valid\npersona: test\n---\n# Soul\nbe good.".to_string(),
+        )
+        .unwrap();
+
+        let empty_id = unique_test_id("empty");
+        let empty_dir = agents_dir.join(&empty_id);
+        std::fs::create_dir_all(&empty_dir).unwrap();
+
+        std::fs::write(agents_dir.join("not-a-dir.txt"), "ignore").unwrap();
+
+        let mut registry = AgentRegistry::new();
+        let count = registry.discover_in_dir(&agents_dir).await.unwrap();
+        assert_eq!(count, 2, "Should discover valid agent and seed empty dir");
+        assert!(registry.has(&valid_id));
+        assert!(registry.has(&empty_id));
+
+        cleanup_test_agent(&valid_id);
+        cleanup_test_agent(&empty_id);
+        let _ = std::fs::remove_dir_all(dirs::agent_workspace_dir(&valid_id));
+        let _ = std::fs::remove_dir_all(dirs::agent_data_dir(&valid_id));
+        let _ = std::fs::remove_dir_all(dirs::agent_workspace_dir(&empty_id));
+        let _ = std::fs::remove_dir_all(dirs::agent_data_dir(&empty_id));
+    }
+
+    #[tokio::test]
+    async fn test_primary_prompt_token_budget() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agent_dir = temp_dir.path().join("default");
+        let params = AgentTemplateParams::default();
+        seed_agent_personality(&agent_dir, &params).await.unwrap();
+
+        let personality = AgentPersonality::load(&agent_dir).await.unwrap();
+        let config = personality.to_agent_config_for(PersonalityContext::Primary);
+        let estimated_tokens = config.system_prompt.chars().count() / 4;
+        assert!(
+            estimated_tokens <= 8000,
+            "Primary system prompt estimated {} tokens, exceeds 8k budget",
+            estimated_tokens
+        );
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
