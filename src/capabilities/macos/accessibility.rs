@@ -66,45 +66,47 @@ impl AccessibilityTool {
 end tell
 
 on describe_elements(_container, _indent)
-    set _result to ""
-    try
-        repeat with _elem in (get every UI element of _container)
-            try
-                set _role to role of _elem as string
-            on error
-                set _role to "unknown"
-            end try
-            try
-                set _name to name of _elem as string
-            on error
-                set _name to ""
-            end try
-            try
-                set _value to value of _elem as string
-            on error
-                set _value to ""
-            end try
-            try
-                set _enabled to enabled of _elem as string
-            on error
-                set _enabled to ""
-            end try
-            try
-                set _pos to position of _elem as string
-            on error
-                set _pos to ""
-            end try
-            try
-                set _sz to size of _elem as string
-            on error
-                set _sz to ""
-            end try
+    tell application "System Events"
+        set _result to ""
+        try
+            repeat with _elem in (get every UI element of _container)
+                try
+                    set _role to role of _elem as string
+                on error
+                    set _role to "unknown"
+                end try
+                try
+                    set _name to name of _elem as string
+                on error
+                    set _name to ""
+                end try
+                try
+                    set _value to value of _elem as string
+                on error
+                    set _value to ""
+                end try
+                try
+                    set _enabled to enabled of _elem as string
+                on error
+                    set _enabled to ""
+                end try
+                try
+                    set _pos to position of _elem as string
+                on error
+                    set _pos to ""
+                end try
+                try
+                    set _sz to size of _elem as string
+                on error
+                    set _sz to ""
+                end try
 
-            set _result to _result & _indent & _role & "|" & _name & "|" & _value & "|" & _enabled & "|" & _pos & "|" & _sz & "\n"
-            set _result to _result & my describe_elements(_elem, _indent & "  ")
-        end repeat
-    end try
-    return _result
+                set _result to _result & _indent & _role & "|" & _name & "|" & _value & "|" & _enabled & "|" & _pos & "|" & _sz & "\n"
+                set _result to _result & my describe_elements(_elem, _indent & "  ")
+            end repeat
+        end try
+        return _result
+    end tell
 end describe_elements"#,
             app_name
         )
@@ -132,45 +134,47 @@ end describe_elements"#,
 end tell
 
 on describe_elements(_container, _indent)
-    set _result to ""
-    try
-        repeat with _elem in (get every UI element of _container)
-            try
-                set _role to role of _elem as string
-            on error
-                set _role to "unknown"
-            end try
-            try
-                set _name to name of _elem as string
-            on error
-                set _name to ""
-            end try
-            try
-                set _value to value of _elem as string
-            on error
-                set _value to ""
-            end try
-            try
-                set _enabled to enabled of _elem as string
-            on error
-                set _enabled to ""
-            end try
-            try
-                set _pos to position of _elem as string
-            on error
-                set _pos to ""
-            end try
-            try
-                set _sz to size of _elem as string
-            on error
-                set _sz to ""
-            end try
+    tell application "System Events"
+        set _result to ""
+        try
+            repeat with _elem in (get every UI element of _container)
+                try
+                    set _role to role of _elem as string
+                on error
+                    set _role to "unknown"
+                end try
+                try
+                    set _name to name of _elem as string
+                on error
+                    set _name to ""
+                end try
+                try
+                    set _value to value of _elem as string
+                on error
+                    set _value to ""
+                end try
+                try
+                    set _enabled to enabled of _elem as string
+                on error
+                    set _enabled to ""
+                end try
+                try
+                    set _pos to position of _elem as string
+                on error
+                    set _pos to ""
+                end try
+                try
+                    set _sz to size of _elem as string
+                on error
+                    set _sz to ""
+                end try
 
-            set _result to _result & _indent & _role & "|" & _name & "|" & _value & "|" & _enabled & "|" & _pos & "|" & _sz & "\n"
-            set _result to _result & my describe_elements(_elem, _indent & "  ")
-        end repeat
-    end try
-    return _result
+                set _result to _result & _indent & _role & "|" & _name & "|" & _value & "|" & _enabled & "|" & _pos & "|" & _sz & "\n"
+                set _result to _result & my describe_elements(_elem, _indent & "  ")
+            end repeat
+        end try
+        return _result
+    end tell
 end describe_elements"#
         .to_string()
     }

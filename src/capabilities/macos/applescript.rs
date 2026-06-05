@@ -37,26 +37,42 @@ impl AppleScriptTool {
         info!("Executing AppleScript ({} chars)", script.len());
 
         let script_owned = script.to_string();
-        let result = timeout(
+
+        // Spawn child first so we can kill it if the timeout fires.
+        let mut child = match Command::new("osascript")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to spawn osascript: {}", e);
+                return AppleScriptResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to spawn osascript: {}", e)),
+                };
+            }
+        };
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(script_owned.as_bytes()).await;
+        }
+
+        let mut child_opt = Some(child);
+        let wait_result = timeout(
             Duration::from_secs(timeout_secs),
             async {
-                let mut child = Command::new("osascript")
-                    .arg("-")
-                    .stdin(std::process::Stdio::piped())
-                    .spawn()?;
-
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(script_owned.as_bytes()).await;
-                }
-
-                child.wait_with_output().await
+                let c = child_opt.take().unwrap();
+                c.wait_with_output().await
             },
         )
         .await;
 
-        match result {
+        match wait_result {
             Ok(Ok(output)) => {
-
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -71,19 +87,25 @@ impl AppleScriptTool {
                 }
             }
             Ok(Err(e)) => {
-                warn!("Failed to run osascript: {}", e);
+                warn!("Failed to collect osascript output: {}", e);
                 AppleScriptResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!("Failed to run osascript: {}", e)),
+                    error: Some(format!("Failed to collect osascript output: {}", e)),
                 }
             }
             Err(_) => {
-                warn!("osascript timed out");
+                warn!(
+                    "osascript timed out after {}s, killing process",
+                    timeout_secs
+                );
+                if let Some(mut c) = child_opt {
+                    let _ = c.kill().await;
+                }
                 AppleScriptResult {
                     success: false,
                     output: String::new(),
-                    error: Some("osascript timed out".to_string()),
+                    error: Some(format!("osascript timed out after {} seconds", timeout_secs)),
                 }
             }
         }
