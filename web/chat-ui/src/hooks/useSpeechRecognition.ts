@@ -4,6 +4,8 @@ interface UseSpeechRecognitionOptions {
   onResult: (text: string) => void;
   onInterim?: (text: string) => void;
   onError?: (error: string) => void;
+  onSubmit?: () => void;
+  autoSubmit?: boolean;
   lang?: string;
 }
 
@@ -11,11 +13,14 @@ export function useSpeechRecognition({
   onResult,
   onInterim,
   onError,
+  onSubmit,
+  autoSubmit = false,
   lang = "zh-CN",
 }: UseSpeechRecognitionOptions) {
   const [isListening, setIsListening] = useState(false);
   const [supported, setSupported] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Detect support on mount
   useEffect(() => {
@@ -58,6 +63,15 @@ export function useSpeechRecognition({
       }
       if (finalTranscript) {
         onResult(finalTranscript);
+        if (autoSubmit && finalTranscript.trim()) {
+          if (submitTimerRef.current) {
+            clearTimeout(submitTimerRef.current);
+          }
+          submitTimerRef.current = setTimeout(() => {
+            onSubmit?.();
+            submitTimerRef.current = null;
+          }, 300);
+        }
       }
     };
 
@@ -75,13 +89,17 @@ export function useSpeechRecognition({
     recognitionRef.current = recognition;
 
     return () => {
+      if (submitTimerRef.current) {
+        clearTimeout(submitTimerRef.current);
+        submitTimerRef.current = null;
+      }
       try {
         recognition.abort();
       } catch {
         // ignore
       }
     };
-  }, [lang, onResult, onInterim, onError]);
+  }, [lang, onResult, onInterim, onError, onSubmit, autoSubmit]);
 
   const start = useCallback(() => {
     if (!recognitionRef.current) {

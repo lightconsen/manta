@@ -7,6 +7,7 @@ interface ChatState {
   currentSessionId: string;
   networkStatus: NetworkStatus;
   isRunning: boolean;
+  voiceMode: boolean;
 
   setMessages: (messages: ChatMessage[]) => void;
   appendMessage: (message: ChatMessage) => void;
@@ -15,6 +16,7 @@ interface ChatState {
   setCurrentSessionId: (id: string) => void;
   setNetworkStatus: (status: NetworkStatus) => void;
   setIsRunning: (running: boolean) => void;
+  setVoiceMode: (enabled: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -23,6 +25,7 @@ export const useChatStore = create<ChatState>((set) => ({
   currentSessionId: "",
   networkStatus: "connecting",
   isRunning: false,
+  voiceMode: false,
 
   setMessages: (messages) => set({ messages }),
   appendMessage: (message) => set((s) => ({ messages: [...s.messages, message] })),
@@ -34,4 +37,5 @@ export const useChatStore = create<ChatState>((set) => ({
   setCurrentSessionId: (id) => set({ currentSessionId: id }),
   setNetworkStatus: (status) => set({ networkStatus: status }),
   setIsRunning: (running) => set({ isRunning: running }),
+  setVoiceMode: (voiceMode) => set({ voiceMode }),
 }));

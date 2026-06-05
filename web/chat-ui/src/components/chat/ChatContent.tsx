@@ -12,6 +12,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { Mic, Image, Paperclip, Square, Send } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useTextToSpeech } from "@/hooks/useTextToSpeech";
 import type { SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface ChatContentProps {
@@ -28,20 +29,82 @@ export function ChatContent({ transport }: ChatContentProps) {
 
   const messages = useChatStore((s) => s.messages);
   const isRunning = useChatStore((s) => s.isRunning);
+  const voiceMode = useChatStore((s) => s.voiceMode);
+  const setVoiceMode = useChatStore((s) => s.setVoiceMode);
 
-  const { isListening, toggle, supported } = useSpeechRecognition({
-    onResult: (text) => {
+  /* ── TTS: auto-read AI replies in voice mode ── */
+  const {
+    isSpeaking,
+    speak,
+    stop: stopSpeaking,
+    supported: ttsSupported,
+  } = useTextToSpeech({
+    lang: "zh-CN",
+    onEnd: () => {
+      // After speaking, re-start listening if still in voice mode
+      if (useChatStore.getState().voiceMode) {
+        setTimeout(() => startListening(), 400);
+      }
+    },
+  });
+
+  /* ── STT: voice input with auto-submit ── */
+  const handleVoiceResult = useCallback(
+    (text: string) => {
       const current = inputRef.current?.value || "";
       const next = current ? `${current} ${text}` : text;
       composer.setText(next);
-      // Restore focus so the user can keep typing / sending
       setTimeout(() => inputRef.current?.focus(), 0);
     },
-    onError: (err) => {
-      console.warn("Speech recognition error:", err);
+    [composer]
+  );
+
+  const {
+    isListening,
+    start: startListening,
+    stop: stopListening,
+    supported: sttSupported,
+  } = useSpeechRecognition({
+    onResult: handleVoiceResult,
+    onError: (err) => console.warn("Speech recognition error:", err),
+    onSubmit: () => {
+      // Auto-send when voice input completes (only in voice mode)
+      if (useChatStore.getState().voiceMode) {
+        composer.send?.();
+      }
     },
+    autoSubmit: true,
     lang: "zh-CN",
   });
+
+  const voiceSupported = sttSupported && ttsSupported;
+
+  /* ── Voice mode toggle ── */
+  const toggleVoiceMode = useCallback(() => {
+    const next = !voiceMode;
+    setVoiceMode(next);
+    if (next) {
+      startListening();
+    } else {
+      stopListening();
+      stopSpeaking();
+    }
+  }, [voiceMode, setVoiceMode, startListening, stopListening, stopSpeaking]);
+
+  /* ── Auto-read when AI reply completes ── */
+  const prevIsRunningRef = useRef(isRunning);
+  useEffect(() => {
+    const wasRunning = prevIsRunningRef.current;
+    prevIsRunningRef.current = isRunning;
+
+    if (wasRunning && !isRunning && voiceMode) {
+      const msgs = useChatStore.getState().messages;
+      const last = msgs[msgs.length - 1];
+      if (last?.role === "assistant" && last.content) {
+        speak(last.content);
+      }
+    }
+  }, [isRunning, voiceMode, speak]);
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -115,6 +178,33 @@ export function ChatContent({ transport }: ChatContentProps) {
 
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
+
+  /* ── Mic button helpers ── */
+  const micTitle = !voiceSupported
+    ? "Voice not supported"
+    : voiceMode
+      ? isListening
+        ? "Stop listening"
+        : isSpeaking
+          ? "Speaking..."
+          : "Voice mode on"
+      : "Voice mode";
+
+  const micClass = () => {
+    if (!voiceSupported) {
+      return "text-gray-300 dark:text-neutral-600 cursor-not-allowed";
+    }
+    if (voiceMode) {
+      if (isListening) {
+        return "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse";
+      }
+      if (isSpeaking) {
+        return "text-blue-500 bg-blue-50 dark:bg-blue-900/20";
+      }
+      return "text-orange-500 bg-orange-50 dark:bg-orange-900/20";
+    }
+    return "text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50";
+  };
 
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden">
@@ -192,17 +282,11 @@ export function ChatContent({ transport }: ChatContentProps) {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  title={isListening ? "Stop listening" : "Voice input"}
-                  aria-label={isListening ? "Stop listening" : "Voice input"}
-                  className={`p-2 rounded-lg transition ${
-                    isListening
-                      ? "text-red-500 bg-red-50 dark:bg-red-900/20 animate-pulse"
-                      : supported
-                        ? "text-gray-400 dark:text-neutral-500 hover:text-primary-500 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-neutral-700/50"
-                        : "text-gray-300 dark:text-neutral-600 cursor-not-allowed"
-                  }`}
-                  onClick={toggle}
-                  disabled={!supported}
+                  title={micTitle}
+                  aria-label={micTitle}
+                  className={`p-2 rounded-lg transition ${micClass()}`}
+                  onClick={toggleVoiceMode}
+                  disabled={!voiceSupported}
                 >
                   <Mic className="w-5 h-5" />
                 </button>
