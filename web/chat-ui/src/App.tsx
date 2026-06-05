@@ -1681,7 +1681,12 @@ function SettingsPanel({
                   <section className="space-y-4">
                     {/* Agent header */}
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedAgentDetail.agent_id}</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {selectedAgentDetail.personality
+                          ? String((selectedAgentDetail.personality as Record<string, unknown>).display_name ?? selectedAgentDetail.agent_id)
+                          : selectedAgentDetail.agent_id}
+                      </span>
+                      <span className="text-xs text-gray-400 dark:text-neutral-500 font-mono">({selectedAgentDetail.agent_id})</span>
                     </div>
 
                     {/* Config */}

@@ -228,8 +228,77 @@ pub async fn init() -> crate::Result<PathBuf> {
         }
     }
 
+    // Seed default agent personality templates
+    seed_default_agent_personality(&base).await?;
+
     info!("Syscity directories initialized at: {:?}", base);
     Ok(base)
+}
+
+/// Seed the default agent (`agents/default/`) with standard OpenClaw-style
+/// personality files if they don't already exist.
+async fn seed_default_agent_personality(base: &Path) -> crate::Result<()> {
+    let default_agent_dir = base.join("agents").join("default");
+
+    if !default_agent_dir.exists() {
+        tokio::fs::create_dir_all(&default_agent_dir)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to create default agent dir: {:?}", default_agent_dir),
+                details: e.to_string(),
+            })?;
+    }
+
+    let identity_path = default_agent_dir.join("IDENTITY.md");
+    if !identity_path.exists() {
+        let template = concat!(
+            "# Default Agent\n",
+            "\n",
+            "## name\n",
+            "Default Agent\n",
+            "\n",
+            "Your friendly local AI assistant running on your machine.\n",
+        );
+        tokio::fs::write(&identity_path, template)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to write IDENTITY.md: {:?}", identity_path),
+                details: e.to_string(),
+            })?;
+        info!("Created default agent IDENTITY.md");
+    }
+
+    let soul_path = default_agent_dir.join("SOUL.md");
+    if !soul_path.exists() {
+        let template = concat!(
+            "---\n",
+            "name: Default Agent\n",
+            "persona: Helpful AI assistant running locally\n",
+            "voice: concise, direct, no filler\n",
+            "emoji: \"🦑\"\n",
+            "behavior:\n",
+            "  proactive: false\n",
+            "  ask_before_destructive: true\n",
+            "preferences:\n",
+            "  language: en-US\n",
+            "  format: markdown\n",
+            "---\n",
+            "\n",
+            "# Core Principles\n",
+            "\n",
+            "Be genuinely helpful, not performatively helpful.\n",
+            "Prioritize correctness and clarity over speed.\n",
+        );
+        tokio::fs::write(&soul_path, template).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write SOUL.md: {:?}", soul_path),
+                details: e.to_string(),
+            }
+        })?;
+        info!("Created default agent SOUL.md");
+    }
+
+    Ok(())
 }
 
 /// Initialize directories synchronously (for non-async contexts)
@@ -264,8 +333,74 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         }
     }
 
+    // Seed default agent personality templates (sync)
+    seed_default_agent_personality_sync(&base)?;
+
     info!("Syscity directories initialized at: {:?}", base);
     Ok(base)
+}
+
+/// Synchronous version of `seed_default_agent_personality`.
+fn seed_default_agent_personality_sync(base: &Path) -> crate::Result<()> {
+    let default_agent_dir = base.join("agents").join("default");
+
+    if !default_agent_dir.exists() {
+        std::fs::create_dir_all(&default_agent_dir).map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to create default agent dir: {:?}", default_agent_dir),
+                details: e.to_string(),
+            }
+        })?;
+    }
+
+    let identity_path = default_agent_dir.join("IDENTITY.md");
+    if !identity_path.exists() {
+        let template = concat!(
+            "# Default Agent\n",
+            "\n",
+            "## name\n",
+            "Default Agent\n",
+            "\n",
+            "Your friendly local AI assistant running on your machine.\n",
+        );
+        std::fs::write(&identity_path, template).map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write IDENTITY.md: {:?}", identity_path),
+                details: e.to_string(),
+            }
+        })?;
+        info!("Created default agent IDENTITY.md");
+    }
+
+    let soul_path = default_agent_dir.join("SOUL.md");
+    if !soul_path.exists() {
+        let template = concat!(
+            "---\n",
+            "name: Default Agent\n",
+            "persona: Helpful AI assistant running locally\n",
+            "voice: concise, direct, no filler\n",
+            "emoji: \"🦑\"\n",
+            "behavior:\n",
+            "  proactive: false\n",
+            "  ask_before_destructive: true\n",
+            "preferences:\n",
+            "  language: en-US\n",
+            "  format: markdown\n",
+            "---\n",
+            "\n",
+            "# Core Principles\n",
+            "\n",
+            "Be genuinely helpful, not performatively helpful.\n",
+            "Prioritize correctness and clarity over speed.\n",
+        );
+        std::fs::write(&soul_path, template).map_err(|e| crate::error::SyscityError::Storage {
+            context: format!("Failed to write SOUL.md: {:?}", soul_path),
+            details: e.to_string(),
+        })?;
+        info!("Created default agent SOUL.md");
+    }
+
+    Ok(())
 }
 
 /// Check if Syscity directories are initialized
