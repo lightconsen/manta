@@ -81,7 +81,10 @@ pub use disk_budget::{
 pub use group::{
     GroupManagerStats, GroupMember, GroupRole, GroupSession, GroupSessionError, GroupSessionManager,
 };
-pub use personality::{AgentPersonality, AgentRegistry, PersonalityContext, SharedAgentRegistry};
+pub use personality::{
+    seed_agent_personality, seed_agent_personality_sync, AgentPersonality, AgentRegistry,
+    AgentTemplateParams, PersonalityContext, SharedAgentRegistry,
+};
 pub use planner::PersistedPlan;
 pub use planner::{ActivePlan, TaskPlan, TaskPlanner};
 pub use prompt_builder::{ConversationPhase, PromptBuilder, PromptContext, TaskType};

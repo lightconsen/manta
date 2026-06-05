@@ -30,6 +30,172 @@ pub enum PersonalityContext {
     Subagent,
 }
 
+/// Parameters for seeding a new agent personality from the unified template.
+#[derive(Debug, Clone)]
+pub struct AgentTemplateParams {
+    /// Agent directory name (used as fallback display name).
+    pub agent_id: String,
+    /// Human-readable display name (e.g. "Code Reviewer").
+    pub display_name: String,
+    /// Short description of the agent's role (e.g. "Senior code reviewer focused on safety").
+    pub description: String,
+    /// Signature emoji.
+    pub emoji: String,
+}
+
+impl Default for AgentTemplateParams {
+    fn default() -> Self {
+        Self {
+            agent_id: "default".to_string(),
+            display_name: "Default Agent".to_string(),
+            description: "Your friendly local AI assistant running on your machine.".to_string(),
+            emoji: "🦑".to_string(),
+        }
+    }
+}
+
+/// Seed an agent directory with standard OpenClaw-style personality files.
+///
+/// Uses the unified template with placeholder substitution so every agent
+/// gets a consistent IDENTITY.md + SOUL.md structure, while still allowing
+/// per-agent customisation of name, description, and emoji.
+pub async fn seed_agent_personality(
+    agent_dir: &Path,
+    params: &AgentTemplateParams,
+) -> crate::Result<()> {
+    if !agent_dir.exists() {
+        tokio::fs::create_dir_all(agent_dir).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to create agent dir: {:?}", agent_dir),
+                details: e.to_string(),
+            }
+        })?;
+    }
+
+    // Ensure workspace/ and data/ subdirectories exist
+    let id = params.agent_id.clone();
+    for sub in [&dirs::agent_workspace_dir(&id), &dirs::agent_data_dir(&id)] {
+        if !sub.exists() {
+            tokio::fs::create_dir_all(sub).await.map_err(|e| {
+                crate::error::SyscityError::Storage {
+                    context: format!("Failed to create agent subdirectory: {:?}", sub),
+                    details: e.to_string(),
+                }
+            })?;
+        }
+    }
+
+    // IDENTITY.md — simple heading + ## name format (parsed by display_name())
+    let identity_path = agent_dir.join("IDENTITY.md");
+    if !identity_path.exists() {
+        let identity = format_identity(params);
+        tokio::fs::write(&identity_path, identity)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to write IDENTITY.md: {:?}", identity_path),
+                details: e.to_string(),
+            })?;
+        info!("Created IDENTITY.md for agent '{}'", id);
+    }
+
+    // SOUL.md — structured YAML frontmatter + markdown body
+    let soul_path = agent_dir.join("SOUL.md");
+    if !soul_path.exists() {
+        let soul = format_soul(params);
+        tokio::fs::write(&soul_path, soul).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write SOUL.md: {:?}", soul_path),
+                details: e.to_string(),
+            }
+        })?;
+        info!("Created SOUL.md for agent '{}'", id);
+    }
+
+    Ok(())
+}
+
+/// Synchronous version of `seed_agent_personality`.
+pub fn seed_agent_personality_sync(
+    agent_dir: &Path,
+    params: &AgentTemplateParams,
+) -> crate::Result<()> {
+    if !agent_dir.exists() {
+        std::fs::create_dir_all(agent_dir).map_err(|e| crate::error::SyscityError::Storage {
+            context: format!("Failed to create agent dir: {:?}", agent_dir),
+            details: e.to_string(),
+        })?;
+    }
+
+    let id = params.agent_id.clone();
+    for sub in [&dirs::agent_workspace_dir(&id), &dirs::agent_data_dir(&id)] {
+        if !sub.exists() {
+            std::fs::create_dir_all(sub).map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to create agent subdirectory: {:?}", sub),
+                details: e.to_string(),
+            })?;
+        }
+    }
+
+    let identity_path = agent_dir.join("IDENTITY.md");
+    if !identity_path.exists() {
+        let identity = format_identity(params);
+        std::fs::write(&identity_path, identity).map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write IDENTITY.md: {:?}", identity_path),
+                details: e.to_string(),
+            }
+        })?;
+        info!("Created IDENTITY.md for agent '{}'", id);
+    }
+
+    let soul_path = agent_dir.join("SOUL.md");
+    if !soul_path.exists() {
+        let soul = format_soul(params);
+        std::fs::write(&soul_path, soul).map_err(|e| crate::error::SyscityError::Storage {
+            context: format!("Failed to write SOUL.md: {:?}", soul_path),
+            details: e.to_string(),
+        })?;
+        info!("Created SOUL.md for agent '{}'", id);
+    }
+
+    Ok(())
+}
+
+fn format_identity(params: &AgentTemplateParams) -> String {
+    format!(
+        "# {}\n\
+         \n\
+         ## name\n\
+         {}\n\
+         \n\
+         {}\n",
+        params.display_name, params.display_name, params.description
+    )
+}
+
+fn format_soul(params: &AgentTemplateParams) -> String {
+    format!(
+        "---\n\
+         name: {}\n\
+         persona: {}\n\
+         voice: concise, direct, no filler\n\
+         emoji: \"{}\"\n\
+         behavior:\n\
+         proactive: false\n\
+         ask_before_destructive: true\n\
+         preferences:\n\
+         language: en-US\n\
+         format: markdown\n\
+         ---\n\
+         \n\
+         # Core Principles\n\
+         \n\
+         Be genuinely helpful, not performatively helpful.\n\
+         Prioritize correctness and clarity over speed.\n",
+        params.display_name, params.description, params.emoji
+    )
+}
+
 /// Agent personality loaded from markdown files
 #[derive(Debug, Clone, Default)]
 pub struct AgentPersonality {
@@ -395,19 +561,47 @@ impl AgentRegistry {
             // Load personality
             match AgentPersonality::load(&path).await {
                 Ok(personality) => {
+                    let agent_id = personality.id.clone();
                     if personality.is_valid {
                         // Ensure agent subdirectories exist (workspace/, data/)
-                        let agent_id = &personality.id;
-                        let workspace_dir = dirs::agent_workspace_dir(agent_id);
-                        let data_dir = dirs::agent_data_dir(agent_id);
+                        let workspace_dir = dirs::agent_workspace_dir(&agent_id);
+                        let data_dir = dirs::agent_data_dir(&agent_id);
                         for dir in [&workspace_dir, &data_dir] {
                             if let Err(e) = tokio::fs::create_dir_all(dir).await {
                                 warn!("Failed to create agent directory {:?}: {}", dir, e);
                             }
                         }
-                        self.personalities
-                            .insert(personality.id.clone(), personality);
+                        self.personalities.insert(agent_id, personality);
                         count += 1;
+                    } else {
+                        // Directory exists but no valid personality — seed from template
+                        info!(
+                            "Agent '{}' has no personality files, seeding from template",
+                            agent_id
+                        );
+                        let params = AgentTemplateParams {
+                            agent_id: agent_id.clone(),
+                            display_name: humanize_agent_id(&agent_id),
+                            description: format!(
+                                "AI assistant specialised for the '{}' role.",
+                                agent_id
+                            ),
+                            emoji: "🤖".to_string(),
+                        };
+                        if let Err(e) = seed_agent_personality(&path, &params).await {
+                            warn!("Failed to seed personality for '{}': {}", agent_id, e);
+                        } else {
+                            // Reload after seeding
+                            match AgentPersonality::load(&path).await {
+                                Ok(reloaded) if reloaded.is_valid => {
+                                    self.personalities.insert(agent_id.clone(), reloaded);
+                                    count += 1;
+                                }
+                                _ => {
+                                    warn!("Agent '{}' still invalid after seeding", agent_id);
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -496,6 +690,28 @@ impl AgentRegistry {
         }
         None
     }
+}
+
+/// Convert a kebab-case agent ID into a human-readable title.
+///
+/// Examples:
+/// - `code-reviewer` -> "Code Reviewer"
+/// - `my-agent`      -> "My Agent"
+/// - `default`       -> "Default"
+fn humanize_agent_id(id: &str) -> String {
+    id.split('-')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Global registry (can be stored in GatewayState)
