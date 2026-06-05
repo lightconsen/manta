@@ -3075,40 +3075,6 @@ mod tests {
     use crate::providers::{CompletionResponse, CompletionStream};
     use std::path::PathBuf;
 
-    // ── Mock Provider ─────────────────────────────────────────────────────────
-
-    struct MockProvider;
-
-    #[async_trait::async_trait]
-    impl crate::providers::Provider for MockProvider {
-        fn name(&self) -> &str {
-            "mock"
-        }
-        fn default_model(&self) -> &str {
-            "mock-model"
-        }
-        fn supports_tools(&self) -> bool {
-            false
-        }
-        fn max_context(&self) -> usize {
-            4096
-        }
-        async fn complete(&self, _req: CompletionRequest) -> crate::Result<CompletionResponse> {
-            Ok(CompletionResponse {
-                message: Message::assistant("hello"),
-                usage: None,
-                model: "mock-model".to_string(),
-                finish_reason: None,
-            })
-        }
-        async fn stream(&self, _req: CompletionRequest) -> crate::Result<CompletionStream> {
-            Ok(Box::pin(tokio_stream::iter(vec![])))
-        }
-        async fn health_check(&self) -> crate::Result<bool> {
-            Ok(true)
-        }
-    }
-
     // ── is_obviously_time_sensitive ───────────────────────────────────────────
 
     #[test]
@@ -3330,7 +3296,7 @@ mod tests {
         let builder = AgentBuilder::new()
             .config(AgentConfig::default())
             .skills("skill1".to_string())
-            .provider(Arc::new(MockProvider))
+            .provider(Arc::new(crate::providers::mock::MockProvider::new()))
             .tools(Arc::new(ToolRegistry::new()));
         assert!(builder.config.is_some());
         assert!(builder.provider.is_some());
@@ -3351,7 +3317,7 @@ mod tests {
     fn test_agent_builder_build_success() {
         let builder = AgentBuilder::new()
             .config(AgentConfig::default())
-            .provider(Arc::new(MockProvider))
+            .provider(Arc::new(crate::providers::mock::MockProvider::new()))
             .tools(Arc::new(ToolRegistry::new()));
         let result = builder.build();
         assert!(result.is_ok());
@@ -3369,7 +3335,7 @@ mod tests {
     fn test_agent_set_and_read_skill_trust() {
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         );
         assert_eq!(agent.current_skill_trust(), crate::tools::SkillTrust::Trusted);
@@ -3385,7 +3351,7 @@ mod tests {
     fn test_agent_update_config() {
         let mut agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         );
         let mut new_config = AgentConfig::default();
@@ -3400,7 +3366,7 @@ mod tests {
     fn test_agent_with_model() {
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         )
         .with_model("claude-sonnet-4-6".to_string());
@@ -3411,7 +3377,7 @@ mod tests {
     fn test_agent_builder_with_all_options() {
         let builder = AgentBuilder::new()
             .config(AgentConfig::default())
-            .provider(Arc::new(MockProvider))
+            .provider(Arc::new(crate::providers::mock::MockProvider::new()))
             .tools(Arc::new(ToolRegistry::new()));
         let result = builder.build();
         assert!(result.is_ok());
@@ -3454,7 +3420,7 @@ mod tests {
     async fn test_agent_get_chat_history_without_store() {
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         );
         let history = agent.get_chat_history("conv1", 10).await.unwrap();
@@ -3465,7 +3431,7 @@ mod tests {
     async fn test_agent_get_last_conversation_without_store() {
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         );
         let last = agent.get_last_conversation("user1").await.unwrap();
@@ -3534,7 +3500,7 @@ mod tests {
         // Create agent with skill manager injected
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         )
         .with_skill_manager(skill_manager);
@@ -3565,7 +3531,7 @@ mod tests {
 
         let agent = Agent::new(
             AgentConfig::default(),
-            Arc::new(MockProvider),
+            Arc::new(crate::providers::mock::MockProvider::new()),
             Arc::new(ToolRegistry::new()),
         )
         .with_skill_manager(skill_manager);

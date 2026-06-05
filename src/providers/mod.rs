@@ -397,6 +397,7 @@ impl ProviderRegistry {
 
 pub mod anthropic;
 pub mod fallback;
+pub mod mock;
 pub mod openai;
 pub mod sdk;
 pub mod stream_wrappers;
@@ -406,49 +407,9 @@ pub use fallback::{FallbackChainBuilder, FallbackProvider};
 pub use openai::OpenAiProvider;
 pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
 
-/// Test-only mock provider that returns fixed responses.
-/// Available under `#[cfg(test)]` for integration tests across the crate.
+/// Re-export the programmable mock provider for tests inside the crate.
 #[cfg(test)]
-pub(crate) struct MockProvider;
-
-#[cfg(test)]
-#[async_trait]
-impl Provider for MockProvider {
-    fn name(&self) -> &str {
-        "mock"
-    }
-    fn default_model(&self) -> &str {
-        "mock-model"
-    }
-    fn supports_tools(&self) -> bool {
-        true
-    }
-    fn max_context(&self) -> usize {
-        4096
-    }
-    async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
-        Ok(CompletionResponse {
-            message: Message::assistant("HEARTBEAT_OK".to_string()),
-            model: "mock-model".to_string(),
-            usage: None,
-            finish_reason: Some("stop".to_string()),
-        })
-    }
-    async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let _ = tx.send(CompletionChunk {
-            content: Some("HEARTBEAT_OK".to_string()),
-            reasoning_content: None,
-            tool_calls: None,
-            is_done: true,
-            usage: None,
-        });
-        Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
-    }
-    async fn health_check(&self) -> crate::Result<bool> {
-        Ok(true)
-    }
-}
+pub(crate) use mock::MockProvider;
 
 #[cfg(test)]
 mod tests {

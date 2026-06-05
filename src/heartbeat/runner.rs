@@ -551,7 +551,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (query_tx, _query_rx) = tokio::sync::mpsc::channel(1);
         let provider: Arc<dyn crate::providers::Provider> =
-            Arc::new(crate::providers::MockProvider);
+            Arc::new(crate::providers::mock::MockProvider::new());
         let tools = Arc::new(crate::tools::ToolRegistry::new());
         let agent = Arc::new(crate::agent::Agent::new(agent_config.clone(), provider, tools));
         crate::gateway::AgentHandle {
