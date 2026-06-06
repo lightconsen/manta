@@ -66,6 +66,10 @@ pub enum SyscityError {
     #[error("Subagent timed out waiting for completion")]
     SubagentTimeout,
 
+    /// Tool or operation timed out
+    #[error("Timed out: {0}")]
+    Timeout(String),
+
     /// Subagent run not found
     #[error("Subagent run not found")]
     SubagentNotFound,

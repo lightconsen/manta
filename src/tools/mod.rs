@@ -1199,6 +1199,7 @@ impl ToolRegistry {
 
     /// Execute a function call from an LLM.
     /// Checks both static and dynamic registries.
+    /// Enforces the timeout configured in `ToolContext`.
     pub async fn execute_call(
         &self,
         call: &FunctionCall,
@@ -1215,9 +1216,16 @@ impl ToolRegistry {
             })?
         };
 
+        let tool_name = call.name.clone();
+        let timeout = context.timeout;
+
         // Try static tools first
-        if let Some(tool) = self.get(&call.name) {
-            return tool.execute(args, context).await;
+        if let Some(tool) = self.get(&tool_name) {
+            return tokio::time::timeout(timeout, tool.execute(args, context))
+                .await
+                .map_err(|_| crate::error::SyscityError::Timeout(format!(
+                    "Tool '{}' timed out after {:?}", tool_name, timeout
+                )))?;
         }
 
         // Try dynamic tools
@@ -1225,17 +1233,21 @@ impl ToolRegistry {
             .dynamic_tools
             .read()
             .ok()
-            .and_then(|map| map.get(&call.name).cloned());
+            .and_then(|map| map.get(&tool_name).cloned());
 
         if let Some(tool) = dynamic_tool {
-            if !self.is_blocked(&call.name) && !self.is_degraded(&call.name) {
-                return tool.execute(args, context).await;
+            if !self.is_blocked(&tool_name) && !self.is_degraded(&tool_name) {
+                return tokio::time::timeout(timeout, tool.execute(args, context))
+                    .await
+                    .map_err(|_| crate::error::SyscityError::Timeout(format!(
+                        "Tool '{}' timed out after {:?}", tool_name, timeout
+                    )))?;
             }
         }
 
         Err(crate::error::SyscityError::Validation(format!(
             "Unknown tool: {}. Available tools: {}",
-            call.name,
+            tool_name,
             self.list().join(", ")
         )))
     }
