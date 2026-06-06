@@ -97,9 +97,11 @@ async fn anthropic_provider_streams_text_chunks() {
         "event: content_block_start\n",
         "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
         "event: content_block_delta\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Greetings\"}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"\
+         text\":\"Greetings\"}}\n\n",
         "event: content_block_delta\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" human\"}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"\
+         text\":\" human\"}}\n\n",
         "event: content_block_stop\n",
         "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
         "event: message_stop\n",
@@ -150,7 +152,8 @@ async fn anthropic_provider_stream_done_event() {
 
     let sse_body = concat!(
         "event: content_block_delta\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Done\"}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"\
+         text\":\"Done\"}}\n\n",
         "event: message_stop\n",
         "data: {\"type\":\"message_stop\"}\n\n",
     );
