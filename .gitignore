@@ -46,7 +46,7 @@ node_modules/
 web/chat-ui/node_modules/
 web/dist/
 
-# Local development scripts with sensitive data
-start-local-*.sh
+# Local development env with sensitive data
+scripts/.env
 
 OPENCLAW_MODULES.txt

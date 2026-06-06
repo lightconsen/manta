@@ -1,128 +1,138 @@
 #!/bin/bash
 # Syscity Release Script
-# Usage: ./scripts/release.sh <version>
-# Example: ./scripts/release.sh v0.2.0
+#
+# Usage:
+#   ./release.sh              # Auto-detect version from Cargo.toml and create tag
+#   ./release.sh --tag v1.2.3 # Use custom tag
 
 set -e
 
+# Navigate to project root (in case script is run from scripts/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-VERSION=$1
+# Parse arguments
+CUSTOM_TAG=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tag)
+            CUSTOM_TAG="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--tag <tag_name>]"
+            echo ""
+            echo "Options:"
+            echo "  --tag <tag>   Use a custom tag instead of auto-detecting from Cargo.toml"
+            echo "  -h, --help    Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0              # Release with version from Cargo.toml (e.g., v0.1.0)"
+            echo "  $0 --tag v1.0.0 # Release with custom tag"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            echo "Use '$0 --help' for usage."
+            exit 1
+            ;;
+    esac
+done
 
-if [ -z "$VERSION" ]; then
-    echo -e "${RED}Error: Version required${NC}"
-    echo "Usage: $0 <version>"
-    echo "Example: $0 v0.2.0"
+# Check if we are in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo -e "${RED}Error: Not in a git repository.${NC}"
     exit 1
 fi
 
-# Validate version format
-if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo -e "${RED}Error: Invalid version format. Use vX.Y.Z${NC}"
-    exit 1
-fi
-
-echo -e "${BLUE}🚀 Starting release process for ${VERSION}${NC}"
-
-# Check if we're in a git repo
-if [ ! -d .git ]; then
-    echo -e "${RED}Error: Not a git repository${NC}"
+# Check if we are on main branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" != "main" ]; then
+    echo -e "${RED}Error: You are on branch '$CURRENT_BRANCH'.${NC}"
+    echo "Releases must be created from the 'main' branch."
+    echo "Run: git checkout main && git pull origin main"
     exit 1
 fi
 
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
-    echo -e "${RED}Error: Uncommitted changes detected${NC}"
-    echo "Please commit or stash changes before releasing"
-    exit 1
+    echo -e "${YELLOW}Warning: You have uncommitted changes.${NC}"
+    git status --short
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
 fi
 
-# Run tests
-echo -e "\n${YELLOW}📋 Running tests...${NC}"
-cargo test --all-features
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Tests failed${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✅ Tests passed${NC}"
-
-# Check formatting
-echo -e "\n${YELLOW}🎨 Checking formatting...${NC}"
-cargo fmt -- --check
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Formatting check failed${NC}"
-    echo "Run 'cargo fmt' to fix"
-    exit 1
-fi
-echo -e "${GREEN}✅ Formatting OK${NC}"
-
-# Run clippy
-echo -e "\n${YELLOW}🔍 Running clippy...${NC}"
-cargo clippy --all-features -- -D warnings
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Clippy warnings found${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✅ Clippy OK${NC}"
-
-# Build release binaries
-echo -e "\n${YELLOW}🔨 Building release binaries...${NC}"
-cargo build --release --all-features
-echo -e "${GREEN}✅ Build successful${NC}"
-
-# Run security audit
-echo -e "\n${YELLOW}🔒 Running security audit...${NC}"
-if command -v cargo-audit &> /dev/null; then
-    cargo audit
-    echo -e "${GREEN}✅ Security audit passed${NC}"
+# Determine tag name
+if [ -n "$CUSTOM_TAG" ]; then
+    TAG="$CUSTOM_TAG"
+    echo "Using custom tag: $TAG"
 else
-    echo -e "${YELLOW}⚠️  cargo-audit not installed, skipping${NC}"
+    # Read version from Cargo.toml
+    VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    if [ -z "$VERSION" ]; then
+        echo -e "${RED}Error: Could not read version from Cargo.toml.${NC}"
+        exit 1
+    fi
+    TAG="v$VERSION"
+    echo "Detected version from Cargo.toml: $VERSION"
+    echo "Tag will be: $TAG"
 fi
 
-# Update version in Cargo.toml
-echo -e "\n${YELLOW}📝 Updating version in Cargo.toml...${NC}"
-sed -i.bak "s/^version = \"[0-9]\+\.[0-9]\+\.[0-9]\+\"$/version = \"${VERSION#v}\"/" Cargo.toml
-rm Cargo.toml.bak
-echo -e "${GREEN}✅ Updated Cargo.toml${NC}"
+# Validate tag format
+if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+    echo -e "${YELLOW}Warning: Tag '$TAG' does not follow semver with 'v' prefix.${NC}"
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
 
-# Update CHANGELOG.md
-echo -e "\n${YELLOW}📝 Updating CHANGELOG.md...${NC}"
-DATE=$(date +%Y-%m-%d)
-CHANGELOG_ENTRY="## [${VERSION#v}] - ${DATE}\n\n### Added\n- Release ${VERSION}\n\n"
+# Check if tag already exists locally
+if git rev-parse "$TAG" > /dev/null 2>&1; then
+    echo -e "${RED}Error: Tag '$TAG' already exists locally.${NC}"
+    exit 1
+fi
 
-if [ -f CHANGELOG.md ]; then
-    # Insert after the header
-    sed -i.bak "/^# Changelog/a\\
-\\
-${CHANGELOG_ENTRY}" CHANGELOG.md
-    rm CHANGELOG.md.bak
+# Check if tag already exists on remote
+git fetch --tags origin > /dev/null 2>&1
+if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+    echo -e "${RED}Error: Tag '$TAG' already exists on remote.${NC}"
+    exit 1
+fi
+
+# Confirm release
+if [ -n "$CUSTOM_TAG" ]; then
+    echo -e "${GREEN}Ready to create release with tag: $TAG${NC}"
 else
-    echo -e "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n${CHANGELOG_ENTRY}" > CHANGELOG.md
+    echo -e "${GREEN}Ready to create release with version $TAG from Cargo.toml${NC}"
 fi
-echo -e "${GREEN}✅ Updated CHANGELOG.md${NC}"
-
-# Commit version bump
-echo -e "\n${YELLOW}💾 Committing version bump...${NC}"
-git add Cargo.toml Cargo.lock CHANGELOG.md
-git commit -m "chore: bump version to ${VERSION}"
-echo -e "${GREEN}✅ Committed version bump${NC}"
-
-# Create git tag
-echo -e "\n${YELLOW}🏷️  Creating git tag...${NC}"
-git tag -a "$VERSION" -m "Release $VERSION"
-echo -e "${GREEN}✅ Created tag ${VERSION}${NC}"
-
-echo -e "\n${GREEN}✨ Release ${VERSION} prepared!${NC}"
+read -p "Push tag to trigger GitHub Actions release? (y/N) " -n 1 -r
 echo
-echo -e "Next steps:"
-echo -e "  1. Review the changes: ${BLUE}git show ${VERSION}${NC}"
-echo -e "  2. Push to remote: ${BLUE}git push origin main --tags${NC}"
-echo -e "  3. GitHub Actions will build and publish the release"
-echo
-echo -e "Or to undo:"
-echo -e "  ${BLUE}git tag -d ${VERSION}${NC}"
-echo -e "  ${BLUE}git reset --soft HEAD~1${NC}"
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+# Create and push tag
+echo "Creating tag $TAG..."
+git tag "$TAG"
+
+echo "Pushing tag to origin..."
+git push origin "$TAG"
+
+echo ""
+echo -e "${GREEN}Release tag '$TAG' pushed successfully!${NC}"
+echo ""
+echo "GitHub Actions will now build and publish the release."
+echo "Track progress at:"
+echo "  https://github.com/$(git remote get-url origin | sed 's/.*github.com[\/:]//' | sed 's/\.git$//')/actions"

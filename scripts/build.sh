@@ -15,6 +15,10 @@ fi
 
 echo "🚀 Starting Syscity build..."
 
+# Navigate to project root (in case script is run from scripts/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 # Build web frontend
 echo "📦 Building web frontend..."
 cd web/chat-ui
