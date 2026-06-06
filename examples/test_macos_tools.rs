@@ -1,8 +1,17 @@
 //! Example: test macOS desktop tools on the current host.
 
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("This example only runs on macOS.");
+    std::process::exit(1);
+}
+
+#[cfg(target_os = "macos")]
 use syscity::capabilities::{CapabilityRegistry, CapabilitySet, ToolConflictStrategy};
+#[cfg(target_os = "macos")]
 use syscity::tools::{ToolContext, ToolRegistry};
 
+#[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() {
     println!("=== macOS Capability Set Test ===\n");
