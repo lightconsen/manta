@@ -15,11 +15,15 @@ export function useSpeechRecognition({
   onError,
   onSubmit,
   autoSubmit = false,
-  lang = "zh-CN",
+  lang = typeof navigator !== "undefined"
+    ? navigator.language || "zh-CN"
+    : "zh-CN",
 }: UseSpeechRecognitionOptions) {
   const [isListening, setIsListening] = useState(false);
   const [supported, setSupported] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const shouldRestartRef = useRef(false);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Detect support on mount
@@ -36,7 +40,9 @@ export function useSpeechRecognition({
     if (!SpeechRecognitionCtor) return;
 
     const recognition = new SpeechRecognitionCtor();
-    recognition.continuous = true;
+    // Use continuous=false for reliable final results;
+    // auto-restart in onend keeps the loop going.
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = lang;
     recognition.maxAlternatives = 1;
@@ -76,7 +82,8 @@ export function useSpeechRecognition({
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      // "aborted" and "no-speech" are expected during normal stop / silence
+      // "no-speech" is normal — onend will auto-restart.
+      // "aborted" happens when we call .stop() / .abort().
       if (event.error !== "aborted" && event.error !== "no-speech") {
         onError?.(event.error);
       }
@@ -84,11 +91,28 @@ export function useSpeechRecognition({
 
     recognition.onend = () => {
       setIsListening(false);
+      // Auto-restart if voice mode is still active.
+      if (shouldRestartRef.current) {
+        restartTimerRef.current = setTimeout(() => {
+          if (shouldRestartRef.current) {
+            try {
+              recognitionRef.current?.start();
+            } catch {
+              // Already started or other race — ignore.
+            }
+          }
+        }, 300);
+      }
     };
 
     recognitionRef.current = recognition;
 
     return () => {
+      shouldRestartRef.current = false;
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
       if (submitTimerRef.current) {
         clearTimeout(submitTimerRef.current);
         submitTimerRef.current = null;
@@ -106,26 +130,20 @@ export function useSpeechRecognition({
       onError?.("Browser does not support speech recognition");
       return;
     }
+    shouldRestartRef.current = true;
     try {
       recognitionRef.current.start();
-    } catch {
-      // Already started — stop and restart
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
-      setTimeout(() => {
-        try {
-          recognitionRef.current?.start();
-        } catch (e) {
-          onError?.(e instanceof Error ? e.message : String(e));
-        }
-      }, 100);
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : String(e));
     }
   }, [onError]);
 
   const stop = useCallback(() => {
+    shouldRestartRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     try {
       recognitionRef.current?.stop();
     } catch {
