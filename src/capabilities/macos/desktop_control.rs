@@ -237,9 +237,15 @@ impl Tool for DesktopControlTool {
                         if let Some(data) = exec_result.data {
                             result.accessibility = Some(data);
                         }
+                        if !exec_result.success {
+                            let err = exec_result.error.unwrap_or_else(|| "Accessibility query failed".to_string());
+                            warn!("Accessibility query failed: {}", err);
+                            result.error = Some(err);
+                        }
                     }
                     Err(e) => {
                         warn!("Accessibility query failed: {}", e);
+                        result.error = Some(format!("Accessibility query failed: {}", e));
                     }
                 }
             }

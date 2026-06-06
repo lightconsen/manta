@@ -506,6 +506,9 @@ async fn dispatch_method(
         "acp.tree" => handle_acp_tree(req, state).await,
         "acp.execute.session" => handle_acp_execute_session(req, state).await,
         "acp.execute.run" => handle_acp_execute_run(req, state).await,
+        "permissions.request_macos_accessibility" => {
+            handle_permissions_request_macos_accessibility(req).await
+        }
         "subscribe" => handle_legacy_subscribe(req, conn, cmd_tx).await,
         "unsubscribe" => handle_legacy_unsubscribe(req, conn, cmd_tx).await,
         "subscribe_all" => {
@@ -513,6 +516,25 @@ async fn dispatch_method(
             WsResponse::ok(&req.id, serde_json::json!({"status": "subscribed_all"}))
         }
         _ => error_method_not_found(&req.id, &req.method),
+    }
+}
+
+async fn handle_permissions_request_macos_accessibility(req: &WsRequest) -> WsResponse {
+    #[cfg(target_os = "macos")]
+    {
+        crate::capabilities::macos::permissions::trigger_accessibility_prompt();
+        crate::capabilities::macos::permissions::open_accessibility_settings();
+        WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "status": "prompt_triggered",
+                "message": "System permission dialog triggered. Please allow access in System Settings → Privacy & Security → Accessibility, then restart Syscity."
+            }),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        WsResponse::err(&req.id, "UNSUPPORTED_PLATFORM", "This permission request is only available on macOS")
     }
 }
 

@@ -78,18 +78,49 @@ impl Tool for ScreenshotTool {
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
-                let bytes = tokio::fs::read(&temp_path).await.map_err(|e| {
+                // Compress the screenshot so the base64 payload stays small.
+                let compressed_path = temp_path.with_extension("compressed.jpg");
+                let compress_result = Command::new("sips")
+                    .arg("-Z")
+                    .arg("1280")
+                    .arg("-s")
+                    .arg("format")
+                    .arg("jpeg")
+                    .arg("-s")
+                    .arg("formatOptions")
+                    .arg("80")
+                    .arg(&temp_path)
+                    .arg("--out")
+                    .arg(&compressed_path)
+                    .output()
+                    .await;
+
+                let (read_path, format) = match compress_result {
+                    Ok(out) if out.status.success() => {
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        (compressed_path.clone(), "jpeg")
+                    }
+                    _ => {
+                        warn!("sips compression failed, using original PNG");
+                        (temp_path.clone(), "png")
+                    }
+                };
+
+                let bytes = tokio::fs::read(&read_path).await.map_err(|e| {
                     crate::error::SyscityError::Storage {
-                        context: format!("Failed to read screenshot: {}", temp_path.display()),
+                        context: format!("Failed to read screenshot: {}", read_path.display()),
                         details: e.to_string(),
                     }
                 })?;
 
-                // Clean up temp file
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                // Clean up temp file(s)
+                let _ = tokio::fs::remove_file(&read_path).await;
+                if compressed_path.exists() && read_path != compressed_path {
+                    let _ = tokio::fs::remove_file(&compressed_path).await;
+                }
 
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let data_url = format!("data:image/png;base64,{}", b64);
+                let data_url = format!("data:image/{};base64,{}", format, b64);
 
                 Ok(ToolExecutionResult::success(format!(
                     "Screenshot captured ({} bytes, base64: {}...)",
@@ -99,7 +130,7 @@ impl Tool for ScreenshotTool {
                 .with_data(serde_json::json!({
                     "image_base64": b64,
                     "data_url": data_url,
-                    "format": "png",
+                    "format": format,
                     "size": bytes.len()
                 })))
             }

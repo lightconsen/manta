@@ -259,6 +259,23 @@ impl Tool for AccessibilityTool {
         args: Value,
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
+        // Early-exit with a clear error if accessibility permission is missing.
+        if !super::permissions::has_accessibility_permission() {
+            let guide = super::permissions::accessibility_permission_guide();
+            let err_msg = format!(
+                "macOS Accessibility permission not granted. \
+                 Please grant it in System Settings → Privacy & Security → Accessibility.\n\n{}",
+                guide
+            );
+            warn!("Accessibility tool blocked: {}", err_msg);
+            return Ok(ToolExecutionResult::error(err_msg.clone())
+                .with_data(serde_json::json!({
+                    "success": false,
+                    "error": err_msg,
+                    "needs_permission": true,
+                })));
+        }
+
         let script = if let Some(app) = args["app"].as_str() {
             info!("Querying accessibility tree for app: {}", app);
             Self::build_ui_tree_script(app)

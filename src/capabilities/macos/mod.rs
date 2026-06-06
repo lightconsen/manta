@@ -3,6 +3,7 @@
 pub mod accessibility;
 pub mod applescript;
 pub mod desktop_control;
+pub mod permissions;
 pub mod screenshot;
 
 pub use accessibility::AccessibilityTool;
@@ -12,6 +13,7 @@ pub use screenshot::ScreenshotTool;
 
 use super::{CapabilitySet, OsControlScope, PlatformConstraints};
 use crate::tools::Tool;
+use tracing::{info, warn};
 
 /// macOS capability set — provides GUI automation, accessibility
 /// querying, screenshots, and AppleScript execution for macOS environments.
@@ -65,5 +67,30 @@ impl CapabilitySet for MacosSet {
             Box::new(AppleScriptTool::new()),
             Box::new(DesktopControlTool::new()),
         ]
+    }
+
+    fn is_available(&self) -> bool {
+        let base_ok = self.constraints().check();
+        if !base_ok {
+            return false;
+        }
+
+        // Check accessibility permissions on first call.
+        if !permissions::has_accessibility_permission() {
+            warn!(
+                "macOS Accessibility permission not granted. \
+                 Desktop control tools (accessibility, click, type) will not work."
+            );
+            info!(
+                "{}",
+                permissions::accessibility_permission_guide()
+            );
+            // Trigger the system permission dialog once.
+            permissions::trigger_accessibility_prompt();
+            // Still return true because screenshot and basic AppleScript
+            // work without accessibility; only UI-tree tools need it.
+        }
+
+        true
     }
 }
