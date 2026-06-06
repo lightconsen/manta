@@ -3,6 +3,7 @@
 //! Embeds the Syscity Gateway and serves it to the Tauri WebView.
 
 use std::sync::Arc;
+
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
