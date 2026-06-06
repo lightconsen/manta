@@ -49,13 +49,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
+
+      - name: Install nightly rustfmt
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo +nightly fmt -- --check
 
       - name: Run clippy
         run: cargo clippy --all-features -- -D warnings
