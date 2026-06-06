@@ -246,7 +246,7 @@ export function ChatContent({ transport }: ChatContentProps) {
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
               >
-                <MessageBubble message={messages[virtualItem.index]} />
+                <MessageBubble message={messages[virtualItem.index]} transport={transport} />
               </div>
             ))}
           </div>

@@ -5,13 +5,14 @@ import { Avatar } from "./Avatar";
 import { LiveStatusBar } from "./LiveStatusBar";
 import { Clock, Wrench } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
-import type { ChatMessage } from "@/SyscityWebSocketTransport";
+import type { ChatMessage, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  transport?: SyscityWebSocketTransport;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, transport }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   if (isUser) {
@@ -59,6 +60,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                       toolName={part.toolName || "tool"}
                       args={part.args || {}}
                       result={part.result}
+                      transport={transport}
                     />
                   );
                 }

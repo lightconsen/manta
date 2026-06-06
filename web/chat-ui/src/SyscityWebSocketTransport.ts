@@ -723,6 +723,18 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     }
   }
 
+  /* ── Permissions ── */
+  async requestMacosAccessibility(): Promise<{ status: string; message: string } | null> {
+    try {
+      const res = (await this.sendRequestAndWait("permissions.request_macos_accessibility", {})) as
+        | { status?: string; message?: string }
+        | undefined;
+      return res ? { status: res.status || "ok", message: res.message || "" } : null;
+    } catch {
+      return null;
+    }
+  }
+
   /* ── Log streaming ── */
   subscribeLogs(): void {
     this.sendRequest("logs.subscribe", {});
@@ -1066,6 +1078,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           case "tool.result": {
             const toolName = (evt.payload?.tool_name as string) || "";
             const result = evt.payload?.result;
+            let matched = false;
             // Find matching tool call by name and update with result
             for (const [id, tc] of toolCalls) {
               if (tc.toolName === toolName && tc.result === undefined) {
@@ -1076,8 +1089,12 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
                   result
                 );
                 toolCalls.set(id, updated);
+                matched = true;
                 break;
               }
+            }
+            if (!matched) {
+              console.warn("Tool result received but no matching tool call found:", toolName);
             }
             const newParts: typeof parts = [];
             if (currentReasoning) {
@@ -1093,6 +1110,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             parts.push(...newParts);
             aiMsg.content = currentText;
             aiMsg.parts = newParts.map(toChatPart);
+            // Keep liveStatus visible until chat.final so the user sees
+            // the tool is still part of the ongoing turn.
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: [...parts] };
             break;
@@ -1129,12 +1148,26 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           }
         }
       }
+    } catch (err) {
+      // On error, clear live status and append an error indicator
+      aiMsg.liveStatus = undefined;
+      aiMsg.content = currentText || "Error occurred";
+      aiMsg.durationMs = Date.now() - startTime;
+      aiMsg.toolCount = toolCalls.size;
+      this.messagesListeners.forEach((cb) => cb(this.messages));
+      throw err;
     } finally {
       if (aborted) {
         this.sendRequest("chat.abort", {
           session_id: this.sessionId,
         });
       }
+      // Safety net: always clear live status and running flag
+      if (aiMsg.durationMs === undefined) {
+        aiMsg.durationMs = Date.now() - startTime;
+        aiMsg.toolCount = toolCalls.size;
+      }
+      aiMsg.liveStatus = undefined;
       this.isRunningFlag = false;
       this.runListeners.forEach((cb) => cb(false));
       this.currentAbortController = null;
