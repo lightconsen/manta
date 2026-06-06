@@ -930,6 +930,7 @@ pub enum GatewayEvent {
         agent_id: String,
         tool_name: String,
         result: String,
+        data: Option<serde_json::Value>,
     },
     /// High-risk tool call is waiting for human approval
     ApprovalRequired {
@@ -2475,6 +2476,7 @@ async fn spawn_agent_inner(
                                         crate::agent::ProgressEvent::ToolResult {
                                             name,
                                             result,
+                                            data,
                                         } => {
                                             info!(
                                                 "ToolResult event: {} for session {}",
@@ -2485,6 +2487,7 @@ async fn spawn_agent_inner(
                                                 agent_id: agent_id.clone(),
                                                 tool_name: name.clone(),
                                                 result: result.clone(),
+                                                data: data.clone(),
                                             });
                                             let mut traj = trajectory.lock().await;
                                             traj.push(crate::outbound::TrajectoryEntry::ToolResult {
@@ -3576,7 +3579,7 @@ impl Gateway {
                             arguments: arguments.clone(),
                         });
                     }
-                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                    crate::agent::ProgressEvent::ToolResult { name, result, data } => {
                         // Skip tool events if verbose is off
                         if verbose_mode.as_deref() == Some("off") {
                             return;
@@ -3596,6 +3599,7 @@ impl Gateway {
                             agent_id: aid.clone(),
                             tool_name: name.clone(),
                             result,
+                            data,
                         });
                     }
                     crate::agent::ProgressEvent::Completed { response } => {
@@ -5259,7 +5263,7 @@ async fn create_agent_handler(
                                             tool_name: name.clone(), arguments: arguments.clone(),
                                         });
                                     }
-                                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                    crate::agent::ProgressEvent::ToolResult { name, result, data } => {
                                         if verbose_mode.as_deref() == Some("off") {
                                             return;
                                         }
@@ -5274,7 +5278,7 @@ async fn create_agent_handler(
                                         };
                                         let _ = state.event_tx.send(GatewayEvent::ToolResult {
                                             session_id: sid.clone(), agent_id: aid.clone(),
-                                            tool_name: name.clone(), result,
+                                            tool_name: name.clone(), result, data,
                                         });
                                     }
                                     crate::agent::ProgressEvent::Completed { response } => {

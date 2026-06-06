@@ -35,6 +35,7 @@ export interface ChatMessagePart {
   toolName?: string;
   args?: Record<string, unknown>;
   result?: unknown;
+  data?: unknown;
 }
 
 export interface ChatMessage {
@@ -69,7 +70,8 @@ function makeToolCallPart(
   toolCallId: string,
   toolName: string,
   args: Record<string, unknown>,
-  result?: unknown
+  result?: unknown,
+  data?: unknown
 ): ToolCallMessagePart {
   return {
     type: "tool-call",
@@ -78,6 +80,7 @@ function makeToolCallPart(
     args,
     argsText: JSON.stringify(args),
     result,
+    data,
   } as ToolCallMessagePart;
 }
 
@@ -91,6 +94,7 @@ function toChatPart(
       toolName: p.toolName,
       args: p.args,
       result: p.result,
+      data: (p as any).data,
     };
   }
   return { type: p.type, text: (p as any).text || "" };
@@ -1078,6 +1082,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           case "tool.result": {
             const toolName = (evt.payload?.tool_name as string) || "";
             const result = evt.payload?.result;
+            const data = evt.payload?.data;
             let matched = false;
             // Find matching tool call by name and update with result
             for (const [id, tc] of toolCalls) {
@@ -1086,7 +1091,8 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
                   id,
                   toolName,
                   tc.args,
-                  result
+                  result,
+                  data
                 );
                 toolCalls.set(id, updated);
                 matched = true;

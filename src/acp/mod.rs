@@ -1146,7 +1146,7 @@ impl AcpControlPlane {
                                             sid, name, arguments
                                         );
                                     }
-                                    crate::agent::ProgressEvent::ToolResult { name, result } => {
+                                    crate::agent::ProgressEvent::ToolResult { name, result, data: _ } => {
                                         debug!(
                                             "Subagent {} tool {} result: {} chars",
                                             sid,

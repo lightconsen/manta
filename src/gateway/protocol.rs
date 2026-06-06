@@ -389,6 +389,7 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
             agent_id,
             tool_name,
             result,
+            data,
         } => Some((
             "tool.result".to_string(),
             serde_json::json!({
@@ -396,6 +397,7 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "agent_id": agent_id,
                 "tool_name": tool_name,
                 "result": result,
+                "data": data,
             }),
         )),
         GatewayEvent::Completed { session_id, agent_id, response } => Some((

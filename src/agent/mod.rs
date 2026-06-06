@@ -23,7 +23,7 @@ pub enum ProgressEvent {
     /// Executing a tool
     ToolCalling { name: String, arguments: String },
     /// Tool execution completed
-    ToolResult { name: String, result: String },
+    ToolResult { name: String, result: String, data: Option<serde_json::Value> },
     /// LLM is generating reasoning/thinking content
     Generating { content: Option<String> },
     /// LLM is streaming text content delta
@@ -2339,6 +2339,7 @@ impl Agent {
                     name: tool_name.clone(),
                     result: "[Duplicate tool call skipped - already executed with same parameters]"
                         .to_string(),
+                    data: None,
                 })
                 .await;
 
@@ -2370,6 +2371,7 @@ impl Agent {
                 Ok(exec_result) => {
                     // Reset circuit-breaker on success
                     self.tools.reset_failure(&tool_name);
+                    let tool_data = exec_result.data.clone();
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     let result_str = tool_result.content.clone();
 
@@ -2380,6 +2382,7 @@ impl Agent {
                     (progress_cb)(ProgressEvent::ToolResult {
                         name: tool_name.clone(),
                         result: result_str.chars().take(200).collect(), // Truncate for display
+                        data: tool_data,
                     })
                     .await;
 
@@ -2395,6 +2398,7 @@ impl Agent {
                     (progress_cb)(ProgressEvent::ToolResult {
                         name: tool_name.clone(),
                         result: error_msg.clone(),
+                        data: None,
                     })
                     .await;
 

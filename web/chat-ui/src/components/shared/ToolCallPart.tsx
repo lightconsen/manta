@@ -6,6 +6,7 @@ interface ToolCallPartProps {
   toolName: string;
   args: Record<string, unknown>;
   result?: unknown;
+  data?: unknown;
   isError?: boolean;
   transport?: SyscityWebSocketTransport;
 }
@@ -36,12 +37,12 @@ function looksLikeMarkdown(text: string): boolean {
   return markdownPatterns.some((re) => re.test(text));
 }
 
-export function ToolCallPart({ toolName, args, result, isError, transport }: ToolCallPartProps) {
+export function ToolCallPart({ toolName, args, result, data, isError, transport }: ToolCallPartProps) {
   const [expanded, setExpanded] = useState(true);
   const [requesting, setRequesting] = useState(false);
   const [requestDone, setRequestDone] = useState(false);
 
-  const needsPermission = isPermissionError(result);
+  const needsPermission = isPermissionError(data);
 
   const statusColor = isError
     ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"

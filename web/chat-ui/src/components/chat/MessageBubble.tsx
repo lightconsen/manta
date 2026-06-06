@@ -60,6 +60,7 @@ export function MessageBubble({ message, transport }: MessageBubbleProps) {
                       toolName={part.toolName || "tool"}
                       args={part.args || {}}
                       result={part.result}
+                      data={part.data}
                       transport={transport}
                     />
                   );
