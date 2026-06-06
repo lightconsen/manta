@@ -2,8 +2,16 @@
 # Syscity Release Script
 #
 # Usage:
-#   ./release.sh              # Auto-detect version from Cargo.toml and create tag
-#   ./release.sh --tag v1.2.3 # Use custom tag
+#   ./release.sh              # Auto-increment patch version (e.g. 0.1.1 -> 0.1.2)
+#   ./release.sh --minor      # Increment minor version (e.g. 0.1.1 -> 0.2.0)
+#   ./release.sh --major      # Increment major version (e.g. 0.1.1 -> 1.0.0)
+#   ./release.sh --tag v1.2.3 # Use custom tag (skips version bump)
+#
+# Workflow:
+#   1. Bump version in Cargo.toml files
+#   2. Commit version bump
+#   3. Push commit to main
+#   4. Create and push tag
 
 set -e
 
@@ -18,23 +26,36 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Parse arguments
+BUMP="patch"
 CUSTOM_TAG=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --patch)
+            BUMP="patch"
+            shift
+            ;;
+        --minor)
+            BUMP="minor"
+            shift
+            ;;
+        --major)
+            BUMP="major"
+            shift
+            ;;
         --tag)
             CUSTOM_TAG="$2"
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--tag <tag_name>]"
+            echo "Usage: $0 [--patch|--minor|--major|--tag <tag_name>]"
             echo ""
             echo "Options:"
-            echo "  --tag <tag>   Use a custom tag instead of auto-detecting from Cargo.toml"
+            echo "  --patch       Increment patch version (default)  e.g. 0.1.1 -> 0.1.2"
+            echo "  --minor       Increment minor version            e.g. 0.1.1 -> 0.2.0"
+            echo "  --major       Increment major version            e.g. 0.1.1 -> 1.0.0"
+            echo "  --tag <tag>   Use a custom tag, skip version bump"
             echo "  -h, --help    Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  $0              # Release with version from Cargo.toml (e.g., v0.1.0)"
-            echo "  $0 --tag v1.0.0 # Release with custom tag"
             exit 0
             ;;
         *)
@@ -60,31 +81,54 @@ if [ "$CURRENT_BRANCH" != "main" ]; then
     exit 1
 fi
 
-# Check for uncommitted changes
+# Check working tree is clean (except for Cargo.toml changes we will make)
 if ! git diff-index --quiet HEAD --; then
-    echo -e "${YELLOW}Warning: You have uncommitted changes.${NC}"
+    echo -e "${RED}Error: You have uncommitted changes.${NC}"
     git status --short
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+    echo "Please commit or stash them before releasing."
+    exit 1
 fi
 
-# Determine tag name
+# Pull latest to avoid conflicts
+echo "Fetching latest from origin..."
+git pull origin main
+
+# Determine tag and version
 if [ -n "$CUSTOM_TAG" ]; then
     TAG="$CUSTOM_TAG"
     echo "Using custom tag: $TAG"
 else
-    # Read version from Cargo.toml
-    VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-    if [ -z "$VERSION" ]; then
+    # Read current version from root Cargo.toml
+    CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    if [ -z "$CURRENT_VERSION" ]; then
         echo -e "${RED}Error: Could not read version from Cargo.toml.${NC}"
         exit 1
     fi
-    TAG="v$VERSION"
-    echo "Detected version from Cargo.toml: $VERSION"
-    echo "Tag will be: $TAG"
+
+    # Parse version components
+    MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+    MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+    PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+
+    # Bump version
+    case "$BUMP" in
+        major)
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+            ;;
+        minor)
+            MINOR=$((MINOR + 1))
+            PATCH=0
+            ;;
+        patch)
+            PATCH=$((PATCH + 1))
+            ;;
+    esac
+
+    NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+    TAG="v${NEW_VERSION}"
+    echo "Bumping version: ${CURRENT_VERSION} -> ${NEW_VERSION}"
 fi
 
 # Validate tag format
@@ -110,18 +154,34 @@ if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
     exit 1
 fi
 
-# Confirm release
-if [ -n "$CUSTOM_TAG" ]; then
-    echo -e "${GREEN}Ready to create release with tag: $TAG${NC}"
-else
-    echo -e "${GREEN}Ready to create release with version $TAG from Cargo.toml${NC}"
+# If not using custom tag, bump versions in Cargo.toml files
+if [ -z "$CUSTOM_TAG" ]; then
+    echo "Updating version in Cargo.toml files..."
+
+    # Update root Cargo.toml
+    sed -i.bak "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+    rm -f Cargo.toml.bak
+
+    # Update desktop Cargo.toml
+    if [ -f "desktop/Cargo.toml" ]; then
+        sed -i.bak "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" desktop/Cargo.toml
+        rm -f desktop/Cargo.toml.bak
+    fi
+
+    # Stage version changes
+    git add Cargo.toml
+    if [ -f "desktop/Cargo.toml" ]; then
+        git add desktop/Cargo.toml
+    fi
+
+    # Commit version bump
+    echo "Committing version bump..."
+    git commit -m "chore(release): bump version to ${NEW_VERSION}"
 fi
-read -p "Push tag to trigger GitHub Actions release? (y/N) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
-fi
+
+# Push main branch
+echo "Pushing main branch..."
+git push origin main
 
 # Create and push tag
 echo "Creating tag $TAG..."
