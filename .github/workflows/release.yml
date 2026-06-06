@@ -41,10 +41,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
@@ -111,10 +111,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
@@ -137,13 +137,13 @@ jobs:
         run: cargo install tauri-cli --version "^2.0.0"
 
       - name: Build Tauri App
-        working-directory: desktop/src
+        working-directory: desktop
         run: cargo tauri build --target ${{ matrix.target }}
 
       - name: Collect artifacts
         shell: bash
         run: |
-          BUNDLE_DIR="desktop/src/target/${{ matrix.target }}/release/bundle"
+          BUNDLE_DIR="desktop/target/${{ matrix.target }}/release/bundle"
           OUTPUT_DIR="desktop-artifacts"
           mkdir -p "$OUTPUT_DIR"
 

@@ -1,18 +1,18 @@
 //! Embedded web frontend assets
 //!
-//! Uses rust-embed to compile the built React app (`web/dist/`) into the binary.
+//! Uses rust-embed to compile the built React app (`dist/`) into the binary.
 //! This allows distributing Syscity as a single executable without requiring
-//! the `web/dist/` directory at runtime.
+//! the `dist/` directory at runtime.
 
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "web/dist/"]
+#[folder = "dist/"]
 pub struct WebAssets;
 
 /// Look up an asset by its request path.
 ///
-/// Vite places hashed JS/CSS under `web/dist/assets/`, so the embedded key
+/// Vite places hashed JS/CSS under `dist/assets/`, so the embedded key
 /// is either the direct path or `"assets/{path}"`.  This helper tries both
 /// and returns `(bytes, mime_type)` on success.
 pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {

@@ -5,10 +5,10 @@ set -euo pipefail
 # Builds release binaries and installs to the platform-appropriate location.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUNDLE_DIR="${SCRIPT_DIR}/../src/target/release/bundle"
+BUNDLE_DIR="${SCRIPT_DIR}/../desktop/target/release/bundle"
 
 echo "Building Syscity Desktop release..."
-"${SCRIPT_DIR}/build.sh"
+"${SCRIPT_DIR}/build-desktop.sh"
 
 # Detect platform and install
 if [[ "$OSTYPE" == "darwin"* ]]; then

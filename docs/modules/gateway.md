@@ -59,7 +59,7 @@ pub struct GatewayState {
 - **📝 Partial**: Full ACP control plane integration — `ExecutionController` with pause/resume/step/cancel is wired into the agent tool loop (`src/acp/mod.rs:1833-1845`), but protocol handlers are transitional.
 - **📝 Partial**: Device identity system — `DevicePairingStore` exists in `GatewayState` (`src/gateway/mod.rs:598,1418-1419`) with 5-character codes and 1h TTL. Missing: QR-code pairing, 8-character codes, max pending limit.
 - **📝 Partial**: Multi-auth mode gateway — `AuthMode` enum exists (`src/gateway/mod.rs:316`) with None/Token/Device/Tailscale variants. Missing: mode ambiguity detection at startup, Tailscale `whois` verification, trusted proxy auth.
-- **📝 Partial**: Web UI — static file serving is wired (`src/gateway/mod.rs:1114-1117` serves `web/dist/assets`), and WebSocket handlers exist. May need verification of end-to-end real-time integration.
+- **📝 Partial**: Web UI — static file serving is wired (`src/gateway/mod.rs:1114-1117` serves `dist/assets`), and WebSocket handlers exist. May need verification of end-to-end real-time integration.
 - **❌ Missing**: Multi-instance coordination (distributed mode).
 - **❌ Missing**: Gateway Protocol Schema — JSON Schema / OpenAPI spec generation from Rust types (e.g. via `schemars`), multi-language binding generation pipeline.
 - **❌ Missing**: TUI client — `ratatui`-based interactive terminal UI with real-time streaming, session management, config editor.

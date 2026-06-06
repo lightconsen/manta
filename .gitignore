@@ -42,9 +42,11 @@ node_modules/
 # Root-level workspace artifacts (not the actual project)
 /package.json
 
+# Chat UI build output
+/dist/
+
 # Chat UI source dependencies
-web/chat-ui/node_modules/
-web/dist/
+web/node_modules/
 
 # Local development env with sensitive data
 scripts/.env

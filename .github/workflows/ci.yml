@@ -27,10 +27,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
@@ -68,10 +68,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
@@ -119,10 +119,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
@@ -157,18 +157,18 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/chat-ui/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: web/chat-ui
+        working-directory: web
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        working-directory: web/chat-ui
+        working-directory: web
         run: pnpm run build
 
       - name: Type check
-        working-directory: web/chat-ui
+        working-directory: web
         run: npx tsc --noEmit
 
   security:

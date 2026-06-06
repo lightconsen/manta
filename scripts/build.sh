@@ -21,14 +21,14 @@ cd "$SCRIPT_DIR/.."
 
 # Build web frontend
 echo "📦 Building web frontend..."
-cd web/chat-ui
+cd web
 pnpm install --frozen-lockfile
 pnpm build
-cd ../..
+cd ..
 
 if [ "$FRONT_ONLY" = true ]; then
   echo "✅ Frontend build complete!"
-  echo "📦 Web bundle: ./web/dist/"
+  echo "📦 Web bundle: ./dist/"
   exit 0
 fi
 

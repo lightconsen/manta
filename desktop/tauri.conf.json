@@ -3,9 +3,9 @@
   "productName": "Syscity",
   "identifier": "com.syscity.app",
   "build": {
-    "beforeDevCommand": "cd ../../web/chat-ui && npm run dev",
-    "beforeBuildCommand": "cd ../../web/chat-ui && npm run build",
-    "frontendDist": "../../web/dist",
+    "beforeDevCommand": "cd web && npm run dev",
+    "beforeBuildCommand": "cd web && npm run build",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
   },
   "app": {
@@ -26,7 +26,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "msi", "deb", "rpm", "appimage", "nsis"],
+    "targets": [
+      "dmg",
+      "app",
+      "msi",
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

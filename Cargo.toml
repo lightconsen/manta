@@ -9,7 +9,7 @@ license = "MIT"
 repository = "https://github.com/example/syscity"
 
 [workspace]
-members = ["crates/*", "desktop/src"]
+members = ["crates/*", "desktop"]
 
 [dependencies]
 # Async runtime
