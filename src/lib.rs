@@ -50,6 +50,7 @@ pub mod daemon;
 pub mod dirs;
 pub mod embed;
 pub mod error;
+pub mod eval;
 pub mod export;
 pub mod gateway;
 pub mod heartbeat;
