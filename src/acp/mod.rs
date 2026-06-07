@@ -1708,6 +1708,17 @@ impl AcpAgentExt for AgentHandle {
 mod tests {
     use super::*;
 
+    fn mock_agent_builder() -> impl Fn() -> crate::Result<Agent> + Send + Sync + 'static {
+        || {
+            let provider = Arc::new(crate::providers::mock::MockProvider::new().with_responses(vec![
+                crate::providers::Message::assistant("mock response"),
+            ]));
+            let tools = Arc::new(crate::tools::ToolRegistry::new());
+            let config = AgentConfig::default();
+            Ok(Agent::new(config, provider, tools))
+        }
+    }
+
     #[test]
     fn test_acp_session_id_new() {
         let id1 = AcpSessionId::new();
@@ -1879,5 +1890,52 @@ mod tests {
         ctrl.resume().await;
 
         assert!(handle.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_subagent_spawn() {
+        let acp = AcpControlPlane::new(50);
+        acp.set_agent_builder(mock_agent_builder()).await;
+        let session_id = acp.create_session("parent-1".to_string()).await;
+
+        let mut spawn_tasks = Vec::new();
+        for i in 0..10usize {
+            let acp_clone = acp.clone();
+            let sid = session_id.clone();
+            let config = SubagentConfig {
+                agent_type: "default".to_string(),
+                mode: SpawnMode::Run,
+                thread_binding: ThreadBinding::Auto,
+                system_prompt: Some(format!("subagent-{}", i)),
+                max_tokens: None,
+                temperature: None,
+                tools: vec![],
+                context: None,
+                timeout_seconds: Some(30),
+                retry_on_crash: false,
+                max_crash_retries: 0,
+            };
+            spawn_tasks.push(tokio::spawn(async move {
+                acp_clone.spawn_subagent(sid, "parent-1".to_string(), config).await
+            }));
+        }
+
+        let results = futures::future::join_all(spawn_tasks).await;
+        let mut handles = Vec::new();
+        for result in results {
+            let handle = result
+                .expect("spawn task should not panic")
+                .expect("spawn_subagent should succeed");
+            assert!(
+                handle.command_tx.send(SubagentCommand::Shutdown).await.is_ok(),
+                "subagent should accept shutdown"
+            );
+            handles.push(handle);
+        }
+
+        // All 10 subagents should have been created with unique IDs
+        assert_eq!(handles.len(), 10);
+        let ids: std::collections::HashSet<_> = handles.iter().map(|h| h.id.clone()).collect();
+        assert_eq!(ids.len(), 10, "all subagent IDs should be unique");
     }
 }

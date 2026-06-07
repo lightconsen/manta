@@ -1273,4 +1273,55 @@ mod tests {
         // Soul should be cut due to budget.
         assert!(!prompt.contains("SoulShouldBeExcluded"));
     }
+
+    #[tokio::test]
+    async fn test_subagent_prompt_excludes_memory_md() {
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
+
+        memory
+            .write(MemoryType::Memory, "SECRET_MEMORY_CONTENT")
+            .await
+            .unwrap();
+
+        let subagent_prompt = memory
+            .format_for_prompt_with_context(MemoryContext::Subagent)
+            .await
+            .unwrap();
+        assert!(!subagent_prompt.contains("SECRET_MEMORY_CONTENT"));
+    }
+
+    #[tokio::test]
+    async fn test_subagent_prompt_excludes_bootstrap_md() {
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
+
+        memory
+            .write(MemoryType::Bootstrap, "BOOTSTRAP_SECRET")
+            .await
+            .unwrap();
+
+        let subagent_prompt = memory
+            .format_for_prompt_with_context(MemoryContext::Subagent)
+            .await
+            .unwrap();
+        assert!(!subagent_prompt.contains("BOOTSTRAP_SECRET"));
+    }
+
+    #[tokio::test]
+    async fn test_primary_prompt_includes_memory_md() {
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
+
+        memory
+            .write(MemoryType::Memory, "PRIMARY_MEMORY_CONTENT")
+            .await
+            .unwrap();
+
+        let primary_prompt = memory.format_for_prompt().await.unwrap();
+        assert!(primary_prompt.contains("PRIMARY_MEMORY_CONTENT"));
+    }
 }

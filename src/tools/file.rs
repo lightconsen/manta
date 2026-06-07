@@ -14,6 +14,9 @@ use tracing::{debug, info, warn};
 /// Maximum file size to read (1MB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
 
+/// Maximum file size to write (10MB)
+const MAX_WRITE_SIZE: usize = 10 * 1024 * 1024;
+
 /// File read tool
 #[derive(Debug, Default)]
 pub struct FileReadTool;
@@ -215,6 +218,14 @@ impl Tool for FileWriteTool {
         let content = args["content"].as_str().ok_or_else(|| {
             crate::error::SyscityError::Validation("Missing 'content' argument".to_string())
         })?;
+
+        if content.len() > MAX_WRITE_SIZE {
+            return Ok(ToolExecutionResult::error(format!(
+                "Content too large: {} bytes (max {})",
+                content.len(),
+                MAX_WRITE_SIZE
+            )));
+        }
 
         let path = context.resolve_path(std::path::Path::new(path_str));
 
@@ -885,5 +896,42 @@ mod tests {
         let result = tool.execute(args, &context).await.unwrap();
         assert!(result.success);
         assert!(result.output.contains("No files found"));
+    }
+
+    #[tokio::test]
+    async fn test_file_write_size_limit() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("syscity_write_limit_{}.txt", uuid::Uuid::new_v4()));
+
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
+        let huge = "x".repeat(MAX_WRITE_SIZE + 1);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "content": huge
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("too large"));
+        assert!(!test_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_file_write_size_limit_boundary() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("syscity_write_bound_{}.txt", uuid::Uuid::new_v4()));
+
+        let tool = FileWriteTool::new();
+        let context = ToolContext::new("user", "conv1").with_workspace_root(&temp_dir);
+        let exactly_max = "x".repeat(MAX_WRITE_SIZE);
+        let args = serde_json::json!({
+            "path": test_file.to_string_lossy(),
+            "content": exactly_max
+        });
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(test_file.exists());
+
+        let _ = tokio_fs::remove_file(&test_file).await;
     }
 }

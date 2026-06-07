@@ -461,6 +461,16 @@ impl PromptBuilder {
         parts.join("\n\n")
     }
 
+    /// Get the current estimated token count.
+    pub fn token_count(&self) -> usize {
+        self.current_tokens
+    }
+
+    /// Check if the current prompt exceeds a given token threshold.
+    pub fn exceeds_threshold(&self, threshold: usize) -> bool {
+        self.current_tokens > threshold
+    }
+
     /// Build from a complete context in one call
     pub fn build_from_context(base_prompt: &str, ctx: &PromptContext, max_tokens: usize) -> String {
         let mut builder = Self::new(base_prompt).with_max_tokens(max_tokens);
@@ -615,5 +625,21 @@ mod tests {
         let prompt = builder.build();
         // Should have been pruned to fit within token limit
         assert!(prompt.len() < 1000);
+    }
+
+    #[test]
+    fn test_prompt_builder_token_count() {
+        let builder = PromptBuilder::new("Base prompt").with_max_tokens(1000);
+        assert!(builder.token_count() > 0);
+    }
+
+    #[test]
+    fn test_prompt_builder_exceeds_threshold() {
+        let mut builder = PromptBuilder::new("Base").with_max_tokens(1000);
+        assert!(!builder.exceeds_threshold(10_000));
+
+        // Add a huge section to push token count over a small threshold
+        builder.add_section(PromptSection::new("huge", "x".repeat(1_000)));
+        assert!(builder.exceeds_threshold(100)); // 1000 chars / 4 = ~250 tokens
     }
 }

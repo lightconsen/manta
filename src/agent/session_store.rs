@@ -1998,4 +1998,70 @@ mod tests {
         let final_session = store.load_session(session_id).await.unwrap().unwrap();
         assert_eq!(final_session.message_count, 10, "all 10 concurrent appends should be recorded");
     }
+
+    /// Simulate N concurrent sessions to measure throughput (RPS and memory).
+    #[tokio::test]
+    async fn test_throughput_n_concurrent_sessions() {
+        let store = create_test_store().await;
+        let n_sessions = 50usize;
+
+        let start = std::time::Instant::now();
+
+        let mut tasks = Vec::new();
+        for i in 0..n_sessions {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                let sid = format!("throughput-session-{}", i);
+                let meta = SessionMetadata::new(&sid, "main", "cli", "local");
+                store.save_session(&sid, &meta, "{}").await.unwrap();
+
+                // Append a few messages
+                for j in 0..5usize {
+                    store
+                        .append_message(
+                            &sid,
+                            "user",
+                            &format!("msg-{}", j),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                        .unwrap();
+                }
+
+                // Load back
+                let loaded = store.load_session(&sid).await.unwrap();
+                assert!(loaded.is_some());
+                loaded.unwrap().message_count
+            }));
+        }
+
+        let results = futures::future::join_all(tasks).await;
+        let elapsed = start.elapsed();
+
+        let total_messages: usize = results
+            .into_iter()
+            .map(|r| r.unwrap() as usize)
+            .sum();
+        assert_eq!(total_messages, n_sessions * 5);
+
+        // Rough throughput assertion: 50 sessions with 5 messages each should
+        // complete in under 10 seconds even on slow CI runners.
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "Throughput test too slow: {:?}",
+            elapsed
+        );
+
+        // Calculate RPS (requests per second) for informational purposes
+        let total_ops = n_sessions * 7; // save + 5 appends + load
+        let rps = total_ops as f64 / elapsed.as_secs_f64();
+        println!(
+            "Throughput: {} sessions, {} ops in {:?} = {:.1} RPS",
+            n_sessions, total_ops, elapsed, rps
+        );
+    }
 }

@@ -1057,6 +1057,21 @@ impl Agent {
         let user_id = message.user_id.0.clone();
         let content = message.content.clone();
 
+        // ── Prompt-injection guard ────────────────────────────────────────────
+        let input_scan = crate::skills::guard::scan_input(&content);
+        if !input_scan.passed {
+            warn!(
+                "Blocked suspicious input from user {}: {:?}",
+                user_id, input_scan.issues
+            );
+            return Ok(OutgoingMessage::new(
+                crate::channels::ConversationId(conversation_id),
+                "I'm unable to process this request as it contains potentially unsafe content. \
+                 If you believe this is a mistake, please rephrase your message."
+                    .to_string(),
+            ));
+        }
+
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
         // Skip cache if this looks like a follow-up (short message referring to previous context)
         let is_follow_up = content.len() < 50
@@ -1459,6 +1474,26 @@ impl Agent {
 
         // Notify started
         (progress_cb)(ProgressEvent::Started).await;
+
+        // ── Prompt-injection guard ────────────────────────────────────────────
+        let input_scan = crate::skills::guard::scan_input(&content);
+        if !input_scan.passed {
+            warn!(
+                "Blocked suspicious input from user {}: {:?}",
+                user_id, input_scan.issues
+            );
+            let rejection = "I'm unable to process this request as it contains potentially unsafe content. \
+                 If you believe this is a mistake, please rephrase your message."
+                .to_string();
+            (progress_cb)(ProgressEvent::Completed {
+                response: rejection.clone(),
+            })
+            .await;
+            return Ok(OutgoingMessage::new(
+                crate::channels::ConversationId(conversation_id),
+                rejection,
+            ));
+        }
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
         let is_follow_up = content.len() < 50

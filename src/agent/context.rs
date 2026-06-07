@@ -592,4 +592,39 @@ mod tests {
         // Should have fewer messages after summarization
         assert!(ctx.message_count() < before_count);
     }
+
+    #[test]
+    fn test_context_large_input_prunes_safely() {
+        // Simulate a 100k-character input (~25k tokens) against a small limit.
+        // The context must not panic. Pruning protects the last message, so
+        // we add a second small message to trigger pruning of the first.
+        let mut ctx = Context::new("test", "System", 100);
+        let huge = "x".repeat(100_000);
+        ctx.add_message(Message::user(huge));
+        ctx.add_message(Message::assistant("ack"));
+
+        assert!(ctx.token_count() <= ctx.max_tokens);
+        assert!(ctx.message_count() <= 2); // pruned aggressively
+    }
+
+    #[test]
+    fn test_tool_iteration_limit_blocks_infinite_loop() {
+        let mut ctx = Context::new("test", "System", 1000);
+        ctx.set_max_tool_iterations(3);
+
+        assert!(ctx.increment_tool_iteration()); // 1
+        assert!(ctx.increment_tool_iteration()); // 2
+        assert!(!ctx.increment_tool_iteration()); // 3 -> limit reached
+        assert!(ctx.is_tool_limit_reached());
+        assert_eq!(ctx.tool_iterations(), 3);
+    }
+
+    #[test]
+    fn test_duplicate_tool_call_detection() {
+        let mut ctx = Context::new("test", "System", 1000);
+        assert!(!ctx.is_tool_call_duplicate("file_read", "{\"path\":\"/tmp/test\"}"));
+        ctx.record_tool_call("file_read", "{\"path\":\"/tmp/test\"}");
+        assert!(ctx.is_tool_call_duplicate("file_read", "{\"path\":\"/tmp/test\"}"));
+        assert!(!ctx.is_tool_call_duplicate("file_read", "{\"path\":\"/tmp/other\"}"));
+    }
 }

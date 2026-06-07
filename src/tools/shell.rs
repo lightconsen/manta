@@ -354,4 +354,47 @@ mod tests {
         let truncated = tool.truncate_output(output.clone());
         assert_eq!(truncated, output);
     }
+
+    #[tokio::test]
+    async fn test_shell_tool_command_not_allowed() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").allow_command("ls");
+
+        let args = serde_json::json!({
+            "command": "rm -rf /"
+        });
+
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_tool_command_injection_blocked() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").allow_command("ls");
+
+        // Command chaining should be blocked when only 'ls' is allowed
+        let args = serde_json::json!({
+            "command": "ls; rm -rf /"
+        });
+
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_tool_allowed_command_executes() {
+        let tool = ShellTool::new();
+        let context = ToolContext::new("user", "conv1").allow_command("echo");
+
+        let args = serde_json::json!({
+            "command": "echo hello"
+        });
+
+        let result = tool.execute(args, &context).await.unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("hello"));
+    }
 }
