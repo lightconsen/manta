@@ -28,7 +28,7 @@ impl ScreenshotTool {
     /// Find the first available screenshot utility.
     async fn find_capture_tool() -> Option<&'static str> {
         for cmd in &["maim", "import", "gnome-screenshot", "flameshot"] {
-            if Command::new("which").arg(cmd).output().await.ok().map_or(false, |o| o.status.success()) {
+            if Command::new("which").arg(cmd).output().await.ok().is_some_and(|o| o.status.success()) {
                 return Some(cmd);
             }
         }

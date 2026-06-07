@@ -86,7 +86,7 @@ pub fn run() {
 
 /// Probe for an available TCP port starting at `start`.
 async fn find_available_port(host: &str, start: u16, max_attempts: u16) -> Option<u16> {
-    let end = (start + max_attempts).min(65535);
+    let end = start + max_attempts;
     for port in start..end {
         match tokio::net::TcpListener::bind(format!("{}:{}", host, port)).await {
             Ok(listener) => {

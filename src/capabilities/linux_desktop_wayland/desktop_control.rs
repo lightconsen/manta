@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Desktop control tool for Linux Wayland via `ydotool` / `wtype`.
 ///
@@ -34,7 +34,7 @@ impl DesktopControlTool {
                 .output()
                 .await
                 .ok()
-                .map_or(false, |o| o.status.success())
+                .is_some_and(|o| o.status.success())
             {
                 return Some(cmd);
             }

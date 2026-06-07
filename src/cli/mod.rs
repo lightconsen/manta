@@ -13,6 +13,7 @@ mod admin;
 mod agent;
 mod approval;
 mod audit;
+mod capability;
 mod channel;
 mod chat;
 mod config_cmd;
@@ -236,6 +237,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: DoctorCommands,
     },
+    /// Check and display available OS capability sets
+    Capabilities,
 }
 
 // AgentCommands is defined in agent.rs and re-exported here
@@ -362,6 +365,7 @@ impl Cli {
             Commands::Audit { command } => audit::run_audit_command(command).await,
             Commands::Provider { command } => provider::run_provider_command(command, config).await,
             Commands::Doctor { command } => doctor::run_doctor_command(command).await,
+            Commands::Capabilities => capability::run_capability_check().await,
         }
     }
 }

@@ -33,7 +33,7 @@ impl ScreenshotTool {
                 .output()
                 .await
                 .ok()
-                .map_or(false, |o| o.status.success())
+                .is_some_and(|o| o.status.success())
             {
                 return Some(cmd);
             }
