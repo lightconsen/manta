@@ -2,6 +2,7 @@
   <img src="syscity.png" alt="Syscity" width="120" />
 </p>
 <h1 align="center">Syscity</h1>
+<p align="center"><strong>The Operating System for Physical AI</strong></p>
 
 <p align="center">
   <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
@@ -9,139 +10,168 @@
   </a>
 </p>
 
-Syscity is an AI assistant that runs locally on your machine. Chat with it through a web interface, command line, or connect it to Telegram, Discord, Slack and more.
+Syscity is an **operating system for physical AI** — a runtime that lets AI agents perceive and act on your computer. Unlike chatbots that only read and write text, Syscity agents can **see your screen**, **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
 
-## Features
+Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
-- **Web Chat UI** — Built-in responsive chat interface
-- **Multi-Channel** — Telegram, Discord, Slack, WhatsApp, Signal, iMessage, QQ, Lark/Feishu
-- **Skills System** — Extensible skills with WASM plugin support
-- **Agent Teams** — Create teams of agents with roles and hierarchies
-- **Memory & Context** — Vector memory, session management, and conversation history
-- **Tools** — File operations, web search, shell commands, browser automation, and more
-- **Multi-Provider** — OpenAI, DeepSeek, Anthropic, Azure, Ollama, and custom endpoints
-- **MCP Support** — Model Context Protocol servers
+## What is Physical AI?
 
-## Quick Install
+Physical AI means AI agents that interact with the physical world through a computer's sensors and actuators:
 
-### One-line install (Linux / macOS)
+| Perception | Action |
+|---|---|
+| See the screen (screenshots) | Click, type, and send keyboard shortcuts |
+| Read the UI tree (accessibility) | Execute AppleScript / system automation |
+| Inspect files and processes | Run shell commands and code |
+| Browse the web | Control the browser programmatically |
+| Monitor system state | Manage services and scheduled tasks |
+
+Syscity provides the **perception layer**, **action layer**, **memory layer**, and **control plane** that turn a language model into a physical agent.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Interaction Layer                        │
+│  Web UI · Desktop App · CLI · Telegram · Discord · Slack     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                      Control Plane (Gateway)                  │
+│  Auth · Rate Limiting · WebSocket · ACP Protocol · Webhooks  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                      Agent Runtime                            │
+│  LLM Routing · Tool Loop · Memory · Agent Teams · MCP        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                      Physical Layer                           │
+│  Screenshot · Desktop Control · Accessibility · AppleScript  │
+│  Shell · File System · Browser · Code Execution · Web Search │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Perception
+
+- **Screenshot** — Capture the screen or a specific window so the agent can "see"
+- **Accessibility Tree** — Read the macOS UI hierarchy (window titles, buttons, text fields)
+- **File System** — List, read, write, and search files
+- **Process Monitor** — Inspect running processes and system state
+- **Browser Inspection** — Read page content, DOM, and execute JavaScript
+- **Web Search** — Search the internet for real-time information
+
+## Action
+
+- **Desktop Control** — Click, type, scroll, and send keyboard shortcuts (macOS)
+- **AppleScript** — Control macOS applications (Mail, Finder, Calendar, etc.)
+- **Shell Commands** — Execute bash/zsh commands in a sandboxed environment
+- **Code Execution** — Run Python, JavaScript, or shell scripts safely
+- **Browser Automation** — Navigate, click, fill forms, and scrape data
+- **File Operations** — Create, edit, move, delete, and patch files
+
+## Cognition
+
+- **Multi-Provider LLM** — OpenAI, Anthropic, DeepSeek, Azure, Ollama, and custom endpoints
+- **Agent Teams** — Create hierarchies of agents with roles and delegation
+- **Vector Memory** — Long-term semantic memory with conversation history
+- **MCP Support** — Model Context Protocol servers for external tool integration
+- **WASM Plugins** — Extend capabilities with sandboxed WebAssembly plugins
+
+## Quick Start
+
+### Install
 
 ```bash
+# macOS / Linux
 curl -sSL https://syscity.net/install.sh | bash
-```
 
-This downloads the latest release binary for your platform and installs it to `/usr/local/bin/syscity`.
-
-### Build from source
-
-```bash
-git clone https://github.com/syscity/syscity.git
+# Or build from source
+git clone https://github.com/lightconsen/syscity.git
 cd syscity
-./build.sh
+./scripts/build.sh
 ```
 
-Requires Rust 1.75+ and Node.js (for the web UI).
+Requires Rust 1.75+ and Node.js 22 (for the web UI).
 
-## Getting Started
-
-### 1. Configure
-
-Run the interactive setup wizard to configure your LLM provider and API key:
+### Configure
 
 ```bash
+# Interactive setup wizard
 syscity setup
 ```
 
-You'll be prompted to:
-- Select an LLM provider (OpenAI, DeepSeek, Anthropic, etc.)
-- Choose a model
-- Enter your API key
-- Optionally adjust server host/port
+Config is saved to `~/.syscity/syscity.toml`.
 
-The configuration is saved to `~/.syscity/syscity.toml`.
-
-You can also reconfigure later:
+### Start
 
 ```bash
-# Edit specific values
-syscity config set model=deepseek-chat
-syscity config set providers.deepseek.api_key=sk-xxxxx
-
-# Or open the wizard again
-syscity config
-```
-
-### 2. Start the server
-
-```bash
+# Start the daemon (web UI + API + WebSocket)
 syscity start
-```
 
-This starts the Syscity daemon with the web UI, WebSocket, and API server.
-
-To run in the foreground (useful for debugging):
-
-```bash
+# Or run in the foreground
 syscity start --foreground
 ```
 
-### 3. Open the Web UI
+Open `http://127.0.0.1:18080` for the Web UI.
 
-Open your browser to:
-
-```
-http://127.0.0.1:18080
-```
-
-The default port is `18080`. If you changed it during setup, use your configured port instead.
-
-### 4. Chat from the command line
+### Physical AI in Action
 
 ```bash
-# Interactive chat
-syscity chat
+# Chat from the terminal
+syscity chat --message "Take a screenshot and tell me what's on my screen"
 
-# One-shot message
-syscity chat --message "What is the weather today?"
+# The agent can:
+# - Capture your screen
+# - Read the UI tree of frontmost windows
+# - Click buttons or type text
+# - Execute AppleScript to control apps
+# - Run shell commands and return results
 ```
+
+## macOS Physical Control (Best Experience)
+
+On macOS, Syscity unlocks the full physical AI stack:
+
+| Tool | What it does |
+|---|---|
+| `macos_screenshot` | Capture full screen, window, or region |
+| `macos_accessibility` | Read UI tree of any application |
+| `macos_desktop_control` | Click, type, scroll, keyboard shortcuts |
+| `applescript` | Control Mail, Calendar, Finder, Music, etc. |
+
+Grant **Screen Recording** and **Accessibility** permissions in System Settings for full capability.
+
+## Desktop App
+
+Build the native desktop app:
+
+```bash
+./scripts/build-desktop.sh
+```
+
+Runs as a menu-bar app with the web UI embedded. macOS deployment target: 10.15+.
 
 ## Configuration
 
-Configuration is stored in `~/.syscity/syscity.toml`. You can also use environment variables:
-
 ```bash
-export SYSCITY_API_KEY="your-api-key"
-export SYSCITY_BASE_URL="https://api.openai.com/v1"
-export SYSCITY_MODEL="gpt-4o"
-```
-
-Or set values via CLI:
-
-```bash
-syscity config set model=gpt-4o
+# Set LLM provider and key
 syscity config set providers.openai.api_key=sk-xxxxx
-syscity config show
-```
+syscity config set model=gpt-4o
 
-## Running as a Service (Linux)
-
-```bash
-# Install systemd service
-sudo bash deploy/systemd/install.sh
-
-# Start the service
-sudo systemctl start syscity
-
-# Check status
-sudo systemctl status syscity
+# Or use environment variables
+export SYSCITY_API_KEY="your-api-key"
+export SYSCITY_MODEL="gpt-4o"
 ```
 
 ## Documentation
 
 - [Architecture](docs/arch.md)
+- [OS Capability Architecture](docs/os-capability-arch.md)
+- [Protocol](docs/protocol.md)
 - [Commands](docs/command.md)
 - [Channels](docs/modules/channels.md)
-- [Skills](docs/modules/skills.md)
 - [Providers](docs/modules/providers.md)
 
 ## License
