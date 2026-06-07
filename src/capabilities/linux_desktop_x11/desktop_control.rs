@@ -1,0 +1,258 @@
+//! Linux X11 desktop control tool using `xdotool`.
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::process::Command;
+use tokio::time::{timeout, Duration};
+use tracing::info;
+
+/// Action to perform on the X11 desktop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopAction {
+    /// Get active window info.
+    Inspect,
+    /// Click at coordinates or on a window.
+    Click {
+        x: Option<i32>,
+        y: Option<i32>,
+        window_id: Option<String>,
+        button: Option<u8>,
+    },
+    /// Type text.
+    Type { text: String },
+    /// Press keyboard keys.
+    Key { keys: Vec<String> },
+    /// Get window list.
+    ListWindows,
+    /// Activate a window by name or ID.
+    ActivateWindow { name: Option<String>, window_id: Option<String> },
+}
+
+/// Desktop control tool for Linux X11 via `xdotool`.
+#[derive(Debug)]
+pub struct DesktopControlTool;
+
+impl Default for DesktopControlTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DesktopControlTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    async fn run_xdotool(args: &[&str]) -> crate::Result<(bool, String, String)> {
+        let output = timeout(Duration::from_secs(10), Command::new("xdotool").args(args).output()).await;
+        match output {
+            Ok(Ok(out)) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                Ok((out.status.success(), stdout, stderr))
+            }
+            Ok(Err(e)) => Ok((false, String::new(), format!("xdotool spawn error: {}", e))),
+            Err(_) => Ok((false, String::new(), "xdotool timed out".to_string())),
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for DesktopControlTool {
+    fn name(&self) -> &str {
+        "linux_x11_desktop_control"
+    }
+
+    fn description(&self) -> &str {
+        "Control the Linux X11 desktop using xdotool. \
+         Supports click, type, key presses, window inspection, and window activation."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema(
+            "Perform a desktop control action",
+            serde_json::json!({
+                "action": {
+                    "type": "string",
+                    "description": "Action to perform: inspect, click, type, key, list_windows, activate_window",
+                    "enum": ["inspect", "click", "type", "key", "list_windows", "activate_window"]
+                },
+                "x": {
+                    "type": "integer",
+                    "description": "X coordinate for click"
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "Y coordinate for click"
+                },
+                "window_id": {
+                    "type": "string",
+                    "description": "Window ID for click or activate"
+                },
+                "button": {
+                    "type": "integer",
+                    "description": "Mouse button (1=left, 2=middle, 3=right)",
+                    "default": 1
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to type"
+                },
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Keys to press (e.g. [\"ctrl\", \"c\"])"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Window name for activate"
+                }
+            }),
+            vec!["action"],
+        )
+    }
+
+    async fn execute(
+        &self,
+        args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("inspect");
+
+        info!("X11 desktop control action: {}", action);
+
+        match action {
+            "inspect" => {
+                let (ok, active, err) = Self::run_xdotool(&["getactivewindow"]).await?;
+                if !ok {
+                    return Ok(ToolExecutionResult::error(format!("getactivewindow failed: {}", err)));
+                }
+                let win_id = active.trim();
+
+                let (ok2, name, err2) = Self::run_xdotool(&["getwindowname", win_id]).await?;
+                let window_name = if ok2 { name } else { err2 };
+
+                let (ok3, pid, _) = Self::run_xdotool(&["getwindowpid", win_id]).await?;
+                let window_pid = if ok3 { pid } else { "unknown".to_string() };
+
+                let (ok4, geometry, _) = Self::run_xdotool(&["getwindowgeometry", win_id]).await?;
+                let geo = if ok4 { geometry } else { "unknown".to_string() };
+
+                let output = format!(
+                    "Active window:\n  ID: {}\n  Name: {}\n  PID: {}\n  Geometry: {}",
+                    win_id, window_name, window_pid, geo
+                );
+
+                Ok(ToolExecutionResult::success(output).with_data(serde_json::json!({
+                    "window_id": win_id,
+                    "window_name": window_name,
+                    "pid": window_pid,
+                    "geometry": geo
+                })))
+            }
+            "click" => {
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                let button = args.get("button").and_then(|v| v.as_u64()).unwrap_or(1);
+                let window_id = args.get("window_id").and_then(|v| v.as_str());
+
+                if let (Some(xv), Some(yv)) = (x, y) {
+                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                } else if let Some(wid) = window_id {
+                    let _ = Self::run_xdotool(&["windowfocus", wid]).await?;
+                    let _ = Self::run_xdotool(&["windowactivate", wid]).await?;
+                }
+
+                let (ok, _, err) = Self::run_xdotool(&["click", &format!("{}", button)]).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Clicked button {}", button)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Click failed: {}", err)))
+                }
+            }
+            "type" => {
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let (ok, _, err) = Self::run_xdotool(&["type", text]).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Typed text: {}", text)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Type failed: {}", err)))
+                }
+            }
+            "key" => {
+                let keys: Vec<String> = args.get("keys")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let key_str = keys.join("+");
+                let (ok, _, err) = Self::run_xdotool(&["key", &key_str]).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Pressed keys: {}", key_str)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Key press failed: {}", err)))
+                }
+            }
+            "list_windows" => {
+                let (ok, stdout, err) = Self::run_xdotool(&["search", "--onlyvisible", ".*", "getwindowname", "%@"]).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Visible windows:\n{}", stdout)))
+                } else {
+                    let (ok2, stdout2, _) = Self::run_xdotool(&["search", ".*"]).await?;
+                    if ok2 {
+                        Ok(ToolExecutionResult::success(format!("Window IDs:\n{}", stdout2)))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("List windows failed: {}", err)))
+                    }
+                }
+            }
+            "activate_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let window_id = args.get("window_id").and_then(|v| v.as_str());
+
+                if let Some(wid) = window_id {
+                    let (ok, _, err) = Self::run_xdotool(&["windowactivate", wid]).await?;
+                    if ok {
+                        return Ok(ToolExecutionResult::success(format!("Activated window {}", wid)));
+                    } else {
+                        return Ok(ToolExecutionResult::error(format!("Activate failed: {}", err)));
+                    }
+                }
+
+                if let Some(n) = name {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok && !wid.trim().is_empty() {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        let (ok2, _, err2) = Self::run_xdotool(&["windowactivate", first]).await?;
+                        if ok2 {
+                            return Ok(ToolExecutionResult::success(format!("Activated window '{}' (id: {})", n, first)));
+                        } else {
+                            return Ok(ToolExecutionResult::error(format!("Activate failed: {}", err2)));
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+
+                Ok(ToolExecutionResult::error("Provide either 'name' or 'window_id'".to_string()))
+            }
+            _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
+        }
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        std::env::var("DISPLAY").is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_desktop_control_tool_creation() {
+        let tool = DesktopControlTool::new();
+        assert_eq!(tool.name(), "linux_x11_desktop_control");
+    }
+}

@@ -1,50 +1,54 @@
-//! Linux Wayland desktop capability set — GUI automation via Wayland portals.
+//! Windows capability set — GUI automation and system control tools.
 
+pub mod clipboard;
 pub mod desktop_control;
+pub mod powershell;
 pub mod screenshot;
 
+pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
+pub use powershell::PowerShellTool;
 pub use screenshot::ScreenshotTool;
 
 use super::{CapabilitySet, OsControlScope, PlatformConstraints};
 use crate::tools::Tool;
 
-/// Linux Wayland desktop capability set — provides GUI automation through
-/// Wayland-specific mechanisms such as `grim`, `ydotool`, and `wtype`.
-pub struct LinuxDesktopWaylandSet;
+/// Windows capability set — provides desktop automation, screenshots,
+/// clipboard access, and PowerShell execution for Windows environments.
+pub struct WindowsSet;
 
-impl LinuxDesktopWaylandSet {
+impl WindowsSet {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for LinuxDesktopWaylandSet {
+impl Default for WindowsSet {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CapabilitySet for LinuxDesktopWaylandSet {
+impl CapabilitySet for WindowsSet {
     fn id(&self) -> &str {
-        "linux-desktop-wayland"
+        "windows"
     }
 
     fn name(&self) -> &str {
-        "Linux Wayland Desktop Control"
+        "Windows Control"
     }
 
     fn description(&self) -> &str {
-        "Linux Wayland desktop automation: screenshots (grim/spectacle/gnome-screenshot) \
-         and input simulation (ydotool/wtype for click, type, key). \
-         Note: Wayland restricts window introspection compared to X11."
+        "Windows desktop automation: screenshots (PowerShell/.NET), \
+         desktop control (click, type, key, window management), \
+         clipboard access, and PowerShell script execution."
     }
 
     fn constraints(&self) -> &PlatformConstraints {
         static CONSTRAINTS: std::sync::OnceLock<PlatformConstraints> =
             std::sync::OnceLock::new();
         CONSTRAINTS.get_or_init(|| PlatformConstraints {
-            target_os: vec!["linux".to_string()],
+            target_os: vec!["windows".to_string()],
             requires_gui: true,
             requires_services: Vec::new(),
         })
@@ -58,10 +62,12 @@ impl CapabilitySet for LinuxDesktopWaylandSet {
         vec![
             Box::new(ScreenshotTool::new()),
             Box::new(DesktopControlTool::new()),
+            Box::new(ClipboardTool::new()),
+            Box::new(PowerShellTool::new()),
         ]
     }
 
     fn is_available(&self) -> bool {
-        super::has_wayland()
+        cfg!(target_os = "windows")
     }
 }

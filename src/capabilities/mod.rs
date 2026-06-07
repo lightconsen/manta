@@ -200,6 +200,7 @@ pub mod linux_desktop_x11;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod registry;
+pub mod windows;
 
 pub use linux::LinuxSet;
 pub use linux_desktop_wayland::LinuxDesktopWaylandSet;
@@ -207,6 +208,7 @@ pub use linux_desktop_x11::LinuxDesktopX11Set;
 pub use registry::CapabilityRegistry;
 #[cfg(target_os = "macos")]
 pub use macos::MacosSet;
+pub use windows::WindowsSet;
 
 /// Return all capability sets compiled into this binary.
 ///
@@ -226,6 +228,11 @@ pub fn all_known_sets() -> Vec<Box<dyn CapabilitySet>> {
     #[cfg(target_os = "macos")]
     {
         sets.push(Box::new(MacosSet::new()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        sets.push(Box::new(WindowsSet::new()));
     }
 
     sets
