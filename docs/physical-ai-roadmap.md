@@ -55,19 +55,19 @@
 
 当前已有点击、输入、按键。需要补充：
 
-- ⬜ **鼠标拖拽**：框选文本、拖拽文件、调整滑块 — `DesktopAction::Drag` 尚未定义
-- ⬜ **滚轮/手势**：页面滚动、缩放、多指触控板手势 — `DesktopAction::Scroll` 尚未定义
-- ⬜ **右键菜单**：context menu 操作
-- ⬜ **组合键序列**：带延时的复杂快捷键（如 IDE 的多步重构）
+- ✅ **鼠标拖拽**：框选文本、拖拽文件、调整滑块 — `DesktopAction::Drag` 已定义，全平台适配器已实现
+- ✅ **滚轮/手势**：页面滚动、缩放 — `DesktopAction::Scroll` 已定义，全平台适配器已实现
+- ✅ **右键菜单**：context menu 操作 — `Click` + `MouseButton::Right` 已支持
+- ✅ **组合键序列**：带延时的复杂快捷键 — `DesktopAction::KeySequence { keys, delays_ms }` 已实现
 
 ### 2.2 应用生命周期管理
 
 Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软件"。
 
 - ✅ **启动应用**：支持各种启动方式（双击、命令行、Spotlight/Start Menu）— `LaunchApp` 已实现，`wait_for_ready` 通过 `wait_for(ProcessRunning, 10s)` 实际检测进程就绪（替代固定 sleep）
-- ⬜ **等待就绪**：检测窗口出现、加载完成（而非固定 sleep）
+- ✅ **等待就绪**：检测窗口出现、加载完成 — `WaitCondition::WindowTitleContains` 已实现（headless xdotool 轮询）
 - ✅ **进程管理**：kill 卡死进程、重启服务、设置进程优先级 — `KillProcess`/`ListProcesses`/`RestartProcess`/`SetProcessPriority` 均已实现（`src/computer/system.rs` + 各平台适配器）
-- ⬜ **软件安装**：包管理器调用（brew/apt/winget），静默安装，等待完成
+- ✅ **软件安装**：包管理器调用 — `DesktopAction::InstallPackage { manager, packages, timeout_secs }` 支持 brew/apt/dnf/pacman/apk/winget/choco/macports
 
 ### 2.3 浏览器自动化 ✅ 已实现
 
@@ -82,16 +82,16 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 
 ### 2.4 文件系统代理 ⬜ 未实现
 
-- ⬜ **智能文件浏览**：ls + grep 组合，支持自然语言过滤（"找到最近修改的日志文件"）
-- ⬜ **文件内容操作**：读取、编辑、搜索替换（支持大文件分块）
-- ⬜ **压缩/解压**：zip/tar/7z 操作
-- ⬜ **跨设备文件传输**：SCP/Rsync/SMB 集成
+- ✅ **智能文件浏览**：ls + 元数据过滤，支持自然语言排序/过滤 — `DesktopAction::BrowseFiles { path, filter_description, max_results }` 已实现
+- ✅ **文件内容操作**：大文件分块读取 + 搜索替换 — `DesktopAction::ReadFileChunked` / `EditFile` 已实现
+- ✅ **压缩/解压**：zip/tar — `DesktopAction::Compress { sources, destination, format }` / `Decompress` 已实现
+- ✅ **跨设备文件传输**：SCP/Rsync — `DesktopAction::TransferFile { source, destination, method }` 已实现（SMB 占位）
 
-### 2.5 工作流录制与回放 ⬜ 未实现
+### 2.5 工作流录制与回放 ✅ 已实现
 
-- ⬜ **动作录制**：记录用户的鼠标/键盘/命令序列
-- ⬜ **参数化回放**：将录制的动作转换为带变量的可复用脚本
-- ⬜ **异常处理**：回放失败时的自动重试、跳过、人工介入
+- ✅ **动作录制**：记录用户的鼠标/键盘/命令序列 — `WorkflowRecorder` 已实现
+- ✅ **参数化回放**：将录制的动作转换为带变量的可复用脚本 — `Workflow::bind_parameters()` 已实现
+- ✅ **异常处理**：回放失败时的自动重试、跳过、人工介入 — `WorkflowPlayer` + `FailureStrategy::Abort/Skip/Retry` 已实现
 
 ---
 

@@ -185,6 +185,14 @@ Available DesktopAction types (JSON shape):
 - { "wait": { "milliseconds": 500 } }
 - { "clipboard_get": {} }
 - { "clipboard_set": { "text": "copied" } }
+- { "key_sequence": { "keys": ["ctrl", "a", "delete"], "delays_ms": [100, 50, 0] } }
+- { "install_package": { "manager": "brew", "packages": ["node"], "timeout_secs": 300 } }
+- { "browse_files": { "path": "/var/log", "filter_description": "recently modified logs", "max_results": 10 } }
+- { "read_file_chunked": { "path": "/tmp/big.log", "offset": 0, "limit_bytes": 8192 } }
+- { "edit_file": { "path": "/tmp/config.ini", "search": "old_value", "replace": "new_value" } }
+- { "compress": { "sources": ["/tmp/logs"], "destination": "/tmp/logs.zip", "format": "zip" } }
+- { "decompress": { "archive": "/tmp/logs.zip", "destination": "/tmp/extracted" } }
+- { "transfer_file": { "source": "/tmp/file.txt", "destination": "user@host:/tmp/file.txt", "method": "scp" } }
 
 Available verification types:
 - { "success": {} }

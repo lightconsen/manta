@@ -12,9 +12,10 @@
 
 use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
-    Rect, Result, Screenshot, UiElement, WaitCondition,
+    Rect, Result, ScrollDirection, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
+use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -418,6 +419,143 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 }
                 Ok(ActionResult::success(format!("Launched {}", name)))
             }
+            DesktopAction::Scroll { target, direction, amount } => {
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
+                let (x, y) = match target {
+                    ClickTarget::Coordinate(p) => (p.x, p.y),
+                    _ => {
+                        return Err(ComputerError::Other(
+                            "Headless adapter only supports coordinate scrolls".to_string(),
+                        ))
+                    }
+                };
+                let dir = match direction {
+                    ScrollDirection::Up => "4",
+                    ScrollDirection::Down => "5",
+                    ScrollDirection::Left => "6",
+                    ScrollDirection::Right => "7",
+                };
+                let output = tokio::process::Command::new("xdotool")
+                    .env("DISPLAY", display)
+                    .args(["mousemove", &x.to_string(), &y.to_string()])
+                    .output()
+                    .await
+                    .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                if !output.status.success() {
+                    return Err(ComputerError::ToolFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+                for _ in 0..amount {
+                    let output = tokio::process::Command::new("xdotool")
+                        .env("DISPLAY", display)
+                        .args(["click", dir])
+                        .output()
+                        .await
+                        .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                    if !output.status.success() {
+                        return Err(ComputerError::ToolFailed(
+                            String::from_utf8_lossy(&output.stderr).to_string(),
+                        ));
+                    }
+                }
+                Ok(ActionResult::success(format!(
+                    "Scrolled {:?} {} times at {}, {}",
+                    direction, amount, x, y
+                )))
+            }
+            DesktopAction::Drag { from, to } => {
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
+                let (x1, y1) = match from {
+                    ClickTarget::Coordinate(p) => (p.x, p.y),
+                    _ => {
+                        return Err(ComputerError::Other(
+                            "Headless adapter only supports coordinate drags".to_string(),
+                        ))
+                    }
+                };
+                let (x2, y2) = match to {
+                    ClickTarget::Coordinate(p) => (p.x, p.y),
+                    _ => {
+                        return Err(ComputerError::Other(
+                            "Headless adapter only supports coordinate drags".to_string(),
+                        ))
+                    }
+                };
+                let output = tokio::process::Command::new("xdotool")
+                    .env("DISPLAY", display)
+                    .args(["mousemove", &x1.to_string(), &y1.to_string()])
+                    .output()
+                    .await
+                    .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                if !output.status.success() {
+                    return Err(ComputerError::ToolFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+                let output = tokio::process::Command::new("xdotool")
+                    .env("DISPLAY", display)
+                    .args(["mousedown", "1"])
+                    .output()
+                    .await
+                    .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                if !output.status.success() {
+                    return Err(ComputerError::ToolFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+                let output = tokio::process::Command::new("xdotool")
+                    .env("DISPLAY", display)
+                    .args(["mousemove", &x2.to_string(), &y2.to_string()])
+                    .output()
+                    .await
+                    .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                if !output.status.success() {
+                    return Err(ComputerError::ToolFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+                let output = tokio::process::Command::new("xdotool")
+                    .env("DISPLAY", display)
+                    .args(["mouseup", "1"])
+                    .output()
+                    .await
+                    .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                if !output.status.success() {
+                    return Err(ComputerError::ToolFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+                Ok(ActionResult::success(format!(
+                    "Dragged from {},{} to {},{}",
+                    x1, y1, x2, y2
+                )))
+            }
+            DesktopAction::KeySequence { keys, delays_ms } => {
+                let display = self.display().ok_or_else(|| ComputerError::NoDisplay)?;
+                for (i, key) in keys.iter().enumerate() {
+                    let delay = if i < delays_ms.len() {
+                        delays_ms[i]
+                    } else {
+                        delays_ms.last().copied().unwrap_or(0)
+                    };
+                    if delay > 0 {
+                        tokio::time::sleep(Duration::from_millis(delay)).await;
+                    }
+                    let output = tokio::process::Command::new("xdotool")
+                        .env("DISPLAY", display)
+                        .args(["key", key])
+                        .output()
+                        .await
+                        .map_err(|e| ComputerError::ToolFailed(format!("xdotool: {}", e)))?;
+                    if !output.status.success() {
+                        return Err(ComputerError::ToolFailed(
+                            String::from_utf8_lossy(&output.stderr).to_string(),
+                        ));
+                    }
+                }
+                Ok(ActionResult::success(format!("Key sequence executed: {:?}", keys)))
+            }
             DesktopAction::ActivateWindow { .. } => {
                 Err(ComputerError::Other(
                     "Window activation not available in headless mode".to_string(),
@@ -576,6 +714,253 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     updated_pid
                 )))
             }
+            DesktopAction::InstallPackage { manager, packages, timeout_secs } => {
+                let count = packages.len();
+                let (cmd, args) = match manager {
+                    crate::computer::PackageManager::Brew => {
+                        let mut a = vec!["install".to_string()];
+                        a.extend(packages);
+                        ("brew", a)
+                    }
+                    crate::computer::PackageManager::Apt => {
+                        let mut a = vec!["install".to_string(), "-y".to_string()];
+                        a.extend(packages);
+                        ("apt-get", a)
+                    }
+                    crate::computer::PackageManager::Dnf => {
+                        let mut a = vec!["install".to_string(), "-y".to_string()];
+                        a.extend(packages);
+                        ("dnf", a)
+                    }
+                    crate::computer::PackageManager::Pacman => {
+                        let mut a = vec!["-S".to_string(), "--noconfirm".to_string()];
+                        a.extend(packages);
+                        ("pacman", a)
+                    }
+                    crate::computer::PackageManager::Apk => {
+                        let mut a = vec!["add".to_string()];
+                        a.extend(packages);
+                        ("apk", a)
+                    }
+                    crate::computer::PackageManager::Winget => {
+                        let mut a = vec!["install".to_string(), "--accept-source-agreements".to_string(), "--accept-package-agreements".to_string()];
+                        a.extend(packages);
+                        ("winget", a)
+                    }
+                    crate::computer::PackageManager::Choco => {
+                        let mut a = vec!["install".to_string(), "-y".to_string()];
+                        a.extend(packages);
+                        ("choco", a)
+                    }
+                    crate::computer::PackageManager::Macports => {
+                        let mut a = vec!["install".to_string()];
+                        a.extend(packages);
+                        ("port", a)
+                    }
+                };
+                let mut cmd = tokio::process::Command::new(cmd);
+                cmd.args(&args).kill_on_drop(true);
+                let output = if timeout_secs > 0 {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(timeout_secs),
+                        cmd.output(),
+                    ).await {
+                        Ok(r) => r.map_err(|e| ComputerError::ToolFailed(format!("Package install failed: {}", e)))?,
+                        Err(_) => return Err(ComputerError::ToolFailed(
+                            format!("Package install timed out after {}s", timeout_secs)
+                        )),
+                    }
+                } else {
+                    cmd.output().await.map_err(|e| ComputerError::ToolFailed(format!("Package install failed: {}", e)))?
+                };
+                if output.status.success() {
+                    Ok(ActionResult::success(format!(
+                        "Installed {} packages via {:?}",
+                        count, manager
+                    )))
+                } else {
+                    Err(ComputerError::ToolFailed(format!(
+                        "Package install failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    )))
+                }
+            }
+            DesktopAction::BrowseFiles { path, filter_description, max_results } => {
+                let max = max_results.unwrap_or(50);
+                let mut entries = Vec::new();
+                let mut read_dir = tokio::fs::read_dir(&path).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Cannot read directory: {}", e)))?;
+                while let Some(entry) = read_dir.next_entry().await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Read dir error: {}", e)))?
+                {
+                    let meta = entry.metadata().await.ok();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let full_path = entry.path().to_string_lossy().to_string();
+                    entries.push(crate::computer::FileEntry {
+                        path: full_path,
+                        name,
+                        size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                        modified_secs: meta.as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                        is_directory: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                    });
+                }
+                if let Some(ref desc) = filter_description {
+                    let desc_lower = desc.to_lowercase();
+                    if desc_lower.contains("recent") || desc_lower.contains("latest") {
+                        entries.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+                    } else if desc_lower.contains("largest") || desc_lower.contains("biggest") {
+                        entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+                    } else if desc_lower.contains("smallest") {
+                        entries.sort_by(|a, b| a.size_bytes.cmp(&b.size_bytes));
+                    } else if desc_lower.contains("log") {
+                        entries.retain(|e| e.name.ends_with(".log") || e.name.contains("log"));
+                    } else if desc_lower.contains("old") || desc_lower.contains("earliest") {
+                        entries.sort_by(|a, b| a.modified_secs.cmp(&b.modified_secs));
+                    }
+                }
+                entries.truncate(max);
+                let count = entries.len();
+                Ok(ActionResult::success(format!("Found {} entries in {}", count, path))
+                    .with_data(serde_json::to_value(&entries).unwrap_or_default()))
+            }
+            DesktopAction::ReadFileChunked { path, offset, limit_bytes } => {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut file = tokio::fs::File::open(&path).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Cannot open file: {}", e)))?;
+                file.seek(std::io::SeekFrom::Start(offset)).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Seek failed: {}", e)))?;
+                let mut buf = vec![0u8; limit_bytes as usize];
+                let n = file.read(&mut buf).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Read failed: {}", e)))?;
+                buf.truncate(n);
+                let text = String::from_utf8_lossy(&buf).to_string();
+                Ok(ActionResult::success(format!(
+                    "Read {} bytes from {} at offset {}",
+                    n, path, offset
+                )).with_data(serde_json::json!({
+                    "path": path,
+                    "offset": offset,
+                    "bytes_read": n,
+                    "content": text,
+                })))
+            }
+            DesktopAction::EditFile { path, search, replace } => {
+                let content = tokio::fs::read_to_string(&path).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Cannot read file: {}", e)))?;
+                let new_content = content.replace(&search, &replace);
+                if new_content == content {
+                    return Ok(ActionResult::success(format!(
+                        "No replacements made in {} (pattern not found)",
+                        path
+                    )));
+                }
+                tokio::fs::write(&path, new_content).await
+                    .map_err(|e| ComputerError::ToolFailed(format!("Write failed: {}", e)))?;
+                Ok(ActionResult::success(format!(
+                    "Replaced occurrences in {}",
+                    path
+                )))
+            }
+            DesktopAction::Compress { sources, destination, format } => {
+                let result = tokio::task::spawn_blocking(move || {
+                    match format {
+                        crate::computer::CompressionFormat::Zip => {
+                            let file = std::fs::File::create(&destination)?;
+                            let mut zip = zip::ZipWriter::new(file);
+                            let options = zip::write::SimpleFileOptions::default()
+                                .compression_method(zip::CompressionMethod::Deflated);
+                            for src in &sources {
+                                if std::fs::metadata(src)?.is_dir() {
+                                    return Err("Zip directories not supported in headless adapter; use Tar instead".into());
+                                } else {
+                                    let name = std::path::Path::new(src).file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(src);
+                                    zip.start_file(name, options)?;
+                                    let data = std::fs::read(src)?;
+                                    zip.write_all(&data)?;
+                                }
+                            }
+                            zip.finish()?;
+                            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(destination.clone())
+                        }
+                        crate::computer::CompressionFormat::Tar => {
+                            let file = std::fs::File::create(&destination)?;
+                            let mut builder = tar::Builder::new(file);
+                            for src in &sources {
+                                if std::fs::metadata(src)?.is_dir() {
+                                    builder.append_dir_all(src, src)?;
+                                } else {
+                                    builder.append_path(src)?;
+                                }
+                            }
+                            builder.finish()?;
+                            Ok(destination.clone())
+                        }
+                        _ => Err(format!("Compression format {:?} not yet supported", format).into()),
+                    }
+                }).await
+                .map_err(|e| ComputerError::Other(format!("Compression task failed: {}", e)))?
+                .map_err(|e| ComputerError::ToolFailed(format!("Compression failed: {}", e)))?;
+                Ok(ActionResult::success(format!("Compressed to {}", result)))
+            }
+            DesktopAction::Decompress { archive, destination } => {
+                let result = tokio::task::spawn_blocking(move || {
+                    if archive.ends_with(".zip") {
+                        let file = std::fs::File::open(&archive)?;
+                        let mut archive = zip::ZipArchive::new(file)?;
+                        std::fs::create_dir_all(&destination)?;
+                        archive.extract(&destination)?;
+                        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(destination.clone())
+                    } else if archive.ends_with(".tar") || archive.ends_with(".tar.gz") || archive.ends_with(".tgz") {
+                        let file = std::fs::File::open(&archive)?;
+                        let mut archive = tar::Archive::new(file);
+                        std::fs::create_dir_all(&destination)?;
+                        archive.unpack(&destination)?;
+                        Ok(destination.clone())
+                    } else {
+                        Err(format!("Unknown archive format: {}", archive).into())
+                    }
+                }).await
+                .map_err(|e| ComputerError::Other(format!("Decompression task failed: {}", e)))?
+                .map_err(|e| ComputerError::ToolFailed(format!("Decompression failed: {}", e)))?;
+                Ok(ActionResult::success(format!("Decompressed to {}", result)))
+            }
+            DesktopAction::TransferFile { source, destination, method } => {
+                let result = tokio::task::spawn_blocking(move || {
+                    let output = match method {
+                        crate::computer::TransferMethod::Scp => {
+                            std::process::Command::new("scp")
+                                .args(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", &source, &destination])
+                                .output()
+                        }
+                        crate::computer::TransferMethod::Rsync => {
+                            std::process::Command::new("rsync")
+                                .args(["-avz", "--progress", &source, &destination])
+                                .output()
+                        }
+                        crate::computer::TransferMethod::Smb => {
+                            return Err(ComputerError::Other(
+                                "SMB transfer not implemented in headless adapter".to_string()
+                            ));
+                        }
+                    };
+                    let output = output.map_err(|e| ComputerError::ToolFailed(format!("Transfer command failed: {}", e)))?;
+                    if output.status.success() {
+                        Ok(destination)
+                    } else {
+                        Err(ComputerError::ToolFailed(
+                            String::from_utf8_lossy(&output.stderr).to_string()
+                        ))
+                    }
+                }).await
+                .map_err(|e| ComputerError::Other(format!("Transfer task failed: {}", e)))??;
+                Ok(ActionResult::success(format!("Transferred to {}", result)))
+            }
             _ => Err(ComputerError::Other(
                 "Action not available in headless mode".to_string(),
             )),
@@ -608,6 +993,13 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 }
                 WaitCondition::FileExists { path } => {
                     tokio::fs::try_exists(path).await.unwrap_or(false)
+                }
+                WaitCondition::WindowTitleContains { pattern } => {
+                    let output = tokio::process::Command::new("xdotool")
+                        .args(["search", "--name", pattern])
+                        .output()
+                        .await;
+                    matches!(output, Ok(out) if out.status.success())
                 }
                 _ => false,
             };

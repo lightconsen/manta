@@ -523,6 +523,112 @@ pub enum DesktopAction {
         /// Windows priority class: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High, 5=Realtime.
         priority: i32,
     },
+    /// Press a sequence of keys with configurable delays between them.
+    ///
+    /// Useful for IDE multi-step shortcuts or timed interactions.
+    KeySequence {
+        keys: Vec<String>,
+        /// Delay in milliseconds before each key (first element = delay before first key).
+        /// If shorter than keys, the last delay is repeated.
+        delays_ms: Vec<u64>,
+    },
+    /// Install software packages using the platform's package manager.
+    InstallPackage {
+        manager: PackageManager,
+        packages: Vec<String>,
+        timeout_secs: u64,
+    },
+    /// Browse files in a directory with optional natural-language filtering.
+    BrowseFiles {
+        path: String,
+        /// Optional filter description (e.g. "recently modified logs", "largest files").
+        filter_description: Option<String>,
+        max_results: Option<usize>,
+    },
+    /// Read a chunk of a potentially large file.
+    ReadFileChunked {
+        path: String,
+        /// Byte offset to start reading from.
+        offset: u64,
+        /// Maximum bytes to read.
+        limit_bytes: u64,
+    },
+    /// Search and replace text in a file.
+    EditFile {
+        path: String,
+        search: String,
+        replace: String,
+    },
+    /// Compress files/directories into an archive.
+    Compress {
+        sources: Vec<String>,
+        destination: String,
+        format: CompressionFormat,
+    },
+    /// Decompress an archive.
+    Decompress {
+        archive: String,
+        destination: String,
+    },
+    /// Transfer a file to/from a remote host.
+    TransferFile {
+        source: String,
+        destination: String,
+        method: TransferMethod,
+    },
+}
+
+/// Package manager supported for software installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageManager {
+    /// macOS Homebrew.
+    Brew,
+    /// Debian/Ubuntu APT.
+    Apt,
+    /// Fedora DNF.
+    Dnf,
+    /// Arch pacman.
+    Pacman,
+    /// Alpine apk.
+    Apk,
+    /// Windows winget.
+    Winget,
+    /// Windows Chocolatey.
+    Choco,
+    /// macOS MacPorts.
+    Macports,
+}
+
+/// Archive compression format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressionFormat {
+    Zip,
+    Tar,
+    TarGz,
+    TarBz2,
+    TarXz,
+    SevenZ,
+}
+
+/// File transfer method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferMethod {
+    Scp,
+    Rsync,
+    Smb,
+}
+
+/// A file entry returned by BrowseFiles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub path: String,
+    pub name: String,
+    pub size_bytes: u64,
+    pub modified_secs: u64,
+    pub is_directory: bool,
 }
 
 /// Result of executing a desktop action.

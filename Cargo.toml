@@ -117,6 +117,7 @@ subtle = "2.5"
 zeroize = { version = "1.7", features = ["derive"] }
 flate2 = "1.1.9"
 zip = "2"
+tar = "0.4"
 
 # Embed frontend assets into binary for single-file distribution
 rust-embed = "8"
