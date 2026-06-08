@@ -151,7 +151,7 @@ teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
 
 [features]
-default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings"]
+default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings", "browser"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
