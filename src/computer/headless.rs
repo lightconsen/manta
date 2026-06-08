@@ -445,6 +445,30 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                 .map_err(|e| ComputerError::Other(format!("Kill failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Killed process {}", killed_pid)))
             }
+            DesktopAction::WatchDirectory { path } => {
+                Ok(ActionResult::success(format!(
+                    "Watch directory request accepted for {} (headless adapter does not persist watchers)",
+                    path
+                )))
+            }
+            DesktopAction::UnwatchDirectory { path } => {
+                Ok(ActionResult::success(format!(
+                    "Unwatch directory request accepted for {} (headless adapter does not persist watchers)",
+                    path
+                )))
+            }
+            DesktopAction::WatchFile { path } => {
+                Ok(ActionResult::success(format!(
+                    "Watch file request accepted for {} (headless adapter does not persist watchers)",
+                    path
+                )))
+            }
+            DesktopAction::UnwatchFile { path } => {
+                Ok(ActionResult::success(format!(
+                    "Unwatch file request accepted for {} (headless adapter does not persist watchers)",
+                    path
+                )))
+            }
             _ => Err(ComputerError::Other(
                 "Action not available in headless mode".to_string(),
             )),

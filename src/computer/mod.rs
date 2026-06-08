@@ -26,6 +26,7 @@ pub mod reflection;
 pub mod use_loop;
 pub mod rollback;
 pub mod headless;
+pub mod fs_watch;
 #[cfg(feature = "vision")]
 pub mod vision;
 
@@ -42,6 +43,7 @@ pub use verification::{VerificationConfig, VerificationCriteria, VerificationEng
 pub use use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopResult, LoopState, StepRecord};
 pub use rollback::{RollbackManager, Snapshot};
 pub use headless::{HeadlessComputerAdapter, VirtualDisplay};
+pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher};
 
 /// Unified error type for computer operations.
 #[derive(Debug, thiserror::Error)]
@@ -142,6 +144,38 @@ pub trait ComputerAdapter: Send + Sync {
     ) -> Result<ActionResult> {
         self.execute(DesktopAction::ClipboardSet {
             text: text.to_string(),
+        })
+        .await
+    }
+
+    /// Convenience: watch a directory for changes.
+    async fn watch_directory(&self, path: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::WatchDirectory {
+            path: path.to_string(),
+        })
+        .await
+    }
+
+    /// Convenience: stop watching a directory.
+    async fn unwatch_directory(&self, path: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::UnwatchDirectory {
+            path: path.to_string(),
+        })
+        .await
+    }
+
+    /// Convenience: watch a single file for changes.
+    async fn watch_file(&self, path: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::WatchFile {
+            path: path.to_string(),
+        })
+        .await
+    }
+
+    /// Convenience: stop watching a single file.
+    async fn unwatch_file(&self, path: &str) -> Result<ActionResult> {
+        self.execute(DesktopAction::UnwatchFile {
+            path: path.to_string(),
         })
         .await
     }

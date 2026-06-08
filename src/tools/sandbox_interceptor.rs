@@ -19,6 +19,7 @@ use super::hooks::ToolPolicyDecision;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Violation detected by the sandbox interceptor.
@@ -67,6 +68,11 @@ pub struct SandboxInterceptor {
     path_blacklist: Vec<Regex>,
     /// If non-empty, only these domains may be accessed by network tools.
     domain_allowlist: Vec<String>,
+    /// If non-empty, only paths under these prefixes are permitted.
+    /// When both `path_allowlist` and `path_blacklist` are configured,
+    /// the allowlist is checked first (path must match at least one
+    /// allowlist entry) and then the blacklist is applied.
+    path_allowlist: Vec<PathBuf>,
     /// When `true`, the interceptor returns `NeedsApproval` instead of
     /// `Deny` for sensitive-content detections.
     flag_sensitive_for_approval: bool,
@@ -127,6 +133,7 @@ impl SandboxInterceptor {
             command_blacklist,
             path_blacklist,
             domain_allowlist: vec![],
+            path_allowlist: vec![],
             flag_sensitive_for_approval: true,
         }
     }
@@ -151,6 +158,16 @@ impl SandboxInterceptor {
         self
     }
 
+    /// Restrict file access to the given path prefixes only.
+    ///
+    /// When the allowlist is non-empty, any path argument must be a
+    /// descendant of at least one allowed prefix.  The blacklist is
+    /// still applied afterwards.
+    pub fn allow_paths(mut self, paths: Vec<PathBuf>) -> Self {
+        self.path_allowlist = paths;
+        self
+    }
+
     /// Evaluate a tool call against the sandbox rules.
     ///
     /// Returns `Ok(())` if the call passes all checks, or `Err(SandboxError)`
@@ -170,8 +187,26 @@ impl SandboxInterceptor {
             }
         }
 
-        // 2. Path blacklist
-        for path in extract_paths(args) {
+        // 2. Path allowlist (checked first, if configured)
+        let paths = extract_paths(args);
+        if !self.path_allowlist.is_empty() {
+            for path in &paths {
+                let path_buf = PathBuf::from(path);
+                let allowed = self.path_allowlist.iter().any(|a| path_buf.starts_with(a));
+                if !allowed {
+                    return Err(SandboxError::PathBlocked {
+                        path: path.clone(),
+                        pattern: format!(
+                            "not in allowlist: {:?}",
+                            self.path_allowlist
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 3. Path blacklist
+        for path in paths {
             for pattern in &self.path_blacklist {
                 if pattern.is_match(&path) {
                     return Err(SandboxError::PathBlocked {
@@ -182,7 +217,7 @@ impl SandboxInterceptor {
             }
         }
 
-        // 3. Network domain allowlist
+        // 4. Network domain allowlist
         if !self.domain_allowlist.is_empty() {
             if let Some(domain) = extract_domain(args) {
                 let allowed = self
@@ -198,7 +233,7 @@ impl SandboxInterceptor {
             }
         }
 
-        // 4. Sensitive content detection (does not block, just flags)
+        // 5. Sensitive content detection (does not block, just flags)
         if let Some(detection) = detect_sensitive_content(name, args) {
             return Err(detection);
         }
@@ -460,6 +495,33 @@ mod tests {
             .allow_domains(vec!["example.com".to_string()]);
         let args = json!({"url": "https://example.com/api"});
         assert!(interceptor.check("web_fetch", &args).is_ok());
+    }
+
+    #[test]
+    fn test_path_allowlist_blocks_outside() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_paths(vec![PathBuf::from("/home/user/projects"), PathBuf::from("/tmp")]);
+        let args = json!({"path": "/etc/passwd"});
+        let err = interceptor.check("file_read", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::PathBlocked { .. }));
+    }
+
+    #[test]
+    fn test_path_allowlist_allows_inside() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_paths(vec![PathBuf::from("/home/user/projects"), PathBuf::from("/tmp")]);
+        let args = json!({"path": "/tmp/test.txt"});
+        assert!(interceptor.check("file_read", &args).is_ok());
+    }
+
+    #[test]
+    fn test_path_allowlist_blocks_then_blacklist() {
+        // Allowlist permits /home/user/projects, but blacklist blocks .ssh
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_paths(vec![PathBuf::from("/home/user")]);
+        let args = json!({"path": "/home/user/.ssh/id_rsa"});
+        let err = interceptor.check("file_read", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::PathBlocked { .. }));
     }
 
     #[test]

@@ -103,6 +103,8 @@ pub struct ComputerUseLoop {
     adapter: Arc<dyn ComputerAdapter>,
     verifier: VerificationEngine,
     config: LoopConfig,
+    /// Optional execution controller for pause / resume / step / cancel.
+    execution_controller: Option<Arc<crate::acp::ExecutionController>>,
 }
 
 impl ComputerUseLoop {
@@ -113,6 +115,7 @@ impl ComputerUseLoop {
             adapter,
             verifier,
             config: LoopConfig::default(),
+            execution_controller: None,
         }
     }
 
@@ -120,6 +123,15 @@ impl ComputerUseLoop {
         self.verifier = VerificationEngine::new(self.adapter.clone())
             .with_config(config.verification);
         self.config = config;
+        self
+    }
+
+    /// Attach an execution controller for pause / resume / step / cancel.
+    pub fn with_execution_controller(
+        mut self,
+        controller: Arc<crate::acp::ExecutionController>,
+    ) -> Self {
+        self.execution_controller = Some(controller);
         self
     }
 
@@ -143,6 +155,28 @@ impl ComputerUseLoop {
         let mut current_settle_delay_ms = self.config.settle_delay_ms;
 
         for step in 0..self.config.max_steps {
+            // Check execution controller for pause / resume / step / cancel.
+            if let Some(ref ctrl) = self.execution_controller {
+                if let Err(reason) = ctrl.check_and_wait().await {
+                    let final_screenshot = self
+                        .adapter
+                        .screenshot(self.config.screenshot_region)
+                        .await
+                        .unwrap_or_else(|_| Screenshot {
+                            base64: String::new(),
+                            width: 0,
+                            height: 0,
+                        });
+                    return Ok(LoopResult {
+                        success: false,
+                        steps_taken: step,
+                        history,
+                        final_screenshot,
+                        message: reason.to_string(),
+                    });
+                }
+            }
+
             // Auto-escalation: too many consecutive failures.
             if consecutive_failures >= 5 {
                 let final_screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
@@ -363,6 +397,10 @@ impl ComputerUseLoop {
                 }
             }
             DesktopAction::GetSystemStatus | DesktopAction::ListProcesses { .. } => Ok(true),
+            DesktopAction::WatchDirectory { .. }
+            | DesktopAction::UnwatchDirectory { .. }
+            | DesktopAction::WatchFile { .. }
+            | DesktopAction::UnwatchFile { .. } => Ok(true),
             _ => Ok(true), // Other actions: assume success.
         }
     }
@@ -409,5 +447,33 @@ mod tests {
         assert_eq!(state.step, 0);
         assert!(state.history.is_empty());
         assert_eq!(state.consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execution_controller_cancels_loop() {
+        // Verify that attaching an already-cancelled controller aborts the loop
+        // immediately with a cancellation message.
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
+            Arc::new(crate::tools::ToolRegistry::new()),
+        ));
+        let ctrl = crate::acp::ExecutionController::new();
+        ctrl.cancel().await;
+
+        let loop_ = ComputerUseLoop::new(adapter)
+            .with_execution_controller(ctrl);
+
+        let result = loop_
+            .run("test goal", |_state| async {
+                Ok(LoopDecision::Done {
+                    message: "should not reach".to_string(),
+                })
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.steps_taken, 0);
+        assert!(result.message.contains("cancelled"));
     }
 }

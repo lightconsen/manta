@@ -37,6 +37,8 @@ pub struct TaskExecutor {
     adapter: Arc<dyn ComputerAdapter>,
     verifier: VerificationEngine,
     config: ExecutorConfig,
+    /// Optional execution controller for pause / resume / step / cancel.
+    execution_controller: Option<Arc<crate::acp::ExecutionController>>,
 }
 
 impl TaskExecutor {
@@ -48,11 +50,21 @@ impl TaskExecutor {
             adapter,
             verifier,
             config: ExecutorConfig::default(),
+            execution_controller: None,
         }
     }
 
     pub fn with_config(mut self, config: ExecutorConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Attach an execution controller for pause / resume / step / cancel.
+    pub fn with_execution_controller(
+        mut self,
+        controller: Arc<crate::acp::ExecutionController>,
+    ) -> Self {
+        self.execution_controller = Some(controller);
         self
     }
 
@@ -95,6 +107,20 @@ impl TaskExecutor {
         let mut rolled_back = HashSet::<String>::new();
 
         loop {
+            // Check execution controller for pause / resume / step / cancel.
+            if let Some(ref ctrl) = self.execution_controller {
+                if let Err(reason) = ctrl.check_and_wait().await {
+                    return Ok(PlanResult {
+                        success: false,
+                        goal: plan.goal.clone(),
+                        tasks_completed: completed.len(),
+                        tasks_failed: failed.len(),
+                        tasks_rolled_back: rolled_back.len(),
+                        message: reason.to_string(),
+                    });
+                }
+            }
+
             // Find tasks that are ready to run.
             let ready = scheduler.next_ready(plan, &completed, &failed);
 
@@ -200,6 +226,17 @@ impl TaskExecutor {
 
         // Execute with retries.
         for attempt in 0..=task.max_retries {
+            // Check execution controller before each attempt.
+            if let Some(ref ctrl) = self.execution_controller {
+                if let Err(reason) = ctrl.check_and_wait().await {
+                    plan.fail_task(
+                        &id,
+                        format!("Execution cancelled: {}", reason),
+                    );
+                    return Err(crate::error::SyscityError::Internal(reason.to_string()));
+                }
+            }
+
             match self.adapter.execute(task.action.clone()).await {
                 Ok(result) => {
                     // Verify if criteria are set.
@@ -289,7 +326,6 @@ impl TaskExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::computer::DesktopAction;
     use crate::planner::{Plan, Task};
 
     #[test]
@@ -297,5 +333,37 @@ mod tests {
         let cfg = ExecutorConfig::default();
         assert_eq!(cfg.max_concurrency, 4);
         assert!(cfg.enable_rollback);
+    }
+
+    #[tokio::test]
+    async fn test_executor_with_cancelled_controller() {
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
+            Arc::new(crate::tools::ToolRegistry::new()),
+        ));
+        let verifier = VerificationEngine::new(adapter.clone());
+        let ctrl = crate::acp::ExecutionController::new();
+        ctrl.cancel().await;
+
+        let executor = TaskExecutor::new(adapter, verifier)
+            .with_execution_controller(ctrl);
+
+        let mut plan = Plan::new("test plan".to_string());
+        plan.add_task(Task {
+            id: "t1".to_string(),
+            description: "noop".to_string(),
+            action: crate::computer::DesktopAction::Wait { milliseconds: 0 },
+            dependencies: vec![],
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(0),
+            verification: None,
+            snapshot_before: false,
+            status: crate::planner::TaskStatus::Pending,
+            error: None,
+            result: None,
+        });
+
+        let result = executor.execute(&mut plan).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("cancelled"));
     }
 }

@@ -263,6 +263,22 @@ pub enum DesktopAction {
         name: Option<String>,
         force: bool,
     },
+    /// Watch a directory for changes.
+    WatchDirectory {
+        path: String,
+    },
+    /// Stop watching a directory.
+    UnwatchDirectory {
+        path: String,
+    },
+    /// Watch a single file for changes.
+    WatchFile {
+        path: String,
+    },
+    /// Stop watching a single file.
+    UnwatchFile {
+        path: String,
+    },
 }
 
 /// Result of executing a desktop action.
