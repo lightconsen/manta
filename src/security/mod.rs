@@ -1202,5 +1202,13 @@ pub mod tailscale;
 /// Multi-dimensional allowlist
 pub mod allowlist;
 
+/// PII detection and content filtering
+pub mod pii;
+
 // Re-export SecurityValidator and validation types from tools module for use in security tests
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
+
+// Re-export PII types
+pub use pii::{
+    DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern,
+};

@@ -343,7 +343,7 @@ impl ReflectionEngine {
 
         let query = MemoryQuery::new()
             .of_type("failure_experience")
-            .with_content(&analysis.root_cause.to_string())
+            .with_content(analysis.root_cause.to_string())
             .limit(5);
 
         let memories = match store.search(query).await {

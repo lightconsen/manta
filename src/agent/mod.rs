@@ -577,6 +577,8 @@ pub struct Agent {
     model_override: Arc<RwLock<Option<String>>>,
     /// Directory for persisting active plans (JSON files).
     plans_dir: Option<std::path::PathBuf>,
+    /// PII detector for output content filtering.
+    pii_detector: Option<Arc<crate::security::PiiDetector>>,
 }
 
 impl Agent {
@@ -614,6 +616,7 @@ impl Agent {
             model_alias: None,
             model_override: Arc::new(RwLock::new(None)),
             plans_dir: None,
+            pii_detector: None,
         }
     }
 
@@ -883,6 +886,12 @@ impl Agent {
     /// Set the model alias used when routing through the model router.
     pub fn with_model_alias(mut self, alias: impl Into<String>) -> Self {
         self.model_alias = Some(alias.into());
+        self
+    }
+
+    /// Attach a PII detector for output content filtering.
+    pub fn with_pii_detector(mut self, detector: Arc<crate::security::PiiDetector>) -> Self {
+        self.pii_detector = Some(detector);
         self
     }
 
@@ -1447,10 +1456,44 @@ impl Agent {
             }
         }
 
+        // ── PII output filtering ─────────────────────────────────────────────
+        let filtered_content = if let Some(ref detector) = self.pii_detector {
+            match detector.filter_response(&response.message.content) {
+                crate::security::FilterResult::Clean(text) => text,
+                crate::security::FilterResult::Redacted(text, findings) => {
+                    tracing::info!(
+                        "Redacted {} PII findings from response for conversation {}",
+                        findings.len(),
+                        conversation_id
+                    );
+                    text
+                }
+                crate::security::FilterResult::Blocked(findings) => {
+                    let restricted_count = findings
+                        .iter()
+                        .filter(|f| {
+                            f.classification
+                                == crate::security::DataClassification::Restricted
+                        })
+                        .count();
+                    tracing::warn!(
+                        "Blocked response containing {} restricted PII items for conversation {}",
+                        restricted_count,
+                        conversation_id
+                    );
+                    "⚠️ This response contains sensitive personal information and has been blocked. \
+                     Please review the content before sharing."
+                        .to_string()
+                }
+            }
+        } else {
+            response.message.content.clone()
+        };
+
         // Create outgoing message with usage tracking
         let mut outgoing = OutgoingMessage::new(
             crate::channels::ConversationId(conversation_id),
-            response.message.content.clone(),
+            filtered_content,
         );
         if let Some(ref usage) = response.usage {
             outgoing.usage = Some(*usage);
@@ -2946,6 +2989,8 @@ pub struct AgentBuilder {
     /// Model name for the task planner (bypasses provider default).
     planner_model: Option<String>,
     skill_manager: Option<Arc<tokio::sync::RwLock<crate::skills::SkillManager>>>,
+    /// PII detector for output content filtering.
+    pii_detector: Option<Arc<crate::security::PiiDetector>>,
 }
 
 impl AgentBuilder {
@@ -3051,6 +3096,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Set PII detector for output content filtering.
+    pub fn with_pii_detector(mut self, detector: Arc<crate::security::PiiDetector>) -> Self {
+        self.pii_detector = Some(detector);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -3107,6 +3158,10 @@ impl AgentBuilder {
 
         if let Some(manager) = self.skill_manager {
             agent = agent.with_skill_manager(manager);
+        }
+
+        if let Some(detector) = self.pii_detector {
+            agent = agent.with_pii_detector(detector);
         }
 
         Ok(agent)
