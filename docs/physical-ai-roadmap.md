@@ -44,7 +44,7 @@
 
 - 🔄 **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏 — `SystemMonitor` 已有基础查询，缺实时连续监控与告警
 - ✅ **文件系统监控**：watch 关键目录变化，自动响应配置文件修改 — `src/computer/fs_watch.rs`（基于 `notify`  crate）
-- ⬜ **网络状态**：端口占用、网络连通性、防火墙规则
+- ✅ **网络状态**：端口占用、网络连通性、防火墙规则 — `src/computer/network.rs`（`NetworkInspector`：跨平台端口扫描、ICMP ping、TCP 连通性测试、防火墙规则读取）
 - ⬜ **日志聚合**：实时 tail syslog/journald/Event Viewer，异常自动告警
 
 ---
