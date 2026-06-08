@@ -263,6 +263,37 @@ end tell"#,
                 tokio::time::sleep(Duration::from_millis(milliseconds)).await;
                 Ok(ActionResult::success(format!("Waited {}ms", milliseconds)))
             }
+            DesktopAction::GetSystemStatus => {
+                let status = tokio::task::spawn_blocking(|| {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.get_status()
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("System monitor failed: {}", e)))?;
+                Ok(ActionResult::success("System status retrieved").with_data(
+                    serde_json::to_value(&status).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::ListProcesses { filter, limit } => {
+                let procs = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.list_processes(filter.as_deref(), limit)
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("Process list failed: {}", e)))?;
+                Ok(ActionResult::success(format!("Found {} processes", procs.len())).with_data(
+                    serde_json::to_value(&procs).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::KillProcess { pid, name, force } => {
+                let killed_pid = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.kill_process(pid, name.as_deref(), force)
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("Kill failed: {}", e)))??;
+                Ok(ActionResult::success(format!("Killed process {}", killed_pid)))
+            }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on macOS".to_string(),
             )),

@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod types;
+pub mod system;
 pub mod verification;
 pub mod use_loop;
 pub mod rollback;
@@ -60,6 +61,10 @@ pub enum ComputerError {
     ScreenshotFailed(String),
     #[error("Adapter not initialized")]
     NotInitialized,
+    #[error("Process not found: {0}")]
+    ProcessNotFound(String),
+    #[error("Failed to kill process: {0}")]
+    KillFailed(String),
     #[error("Other: {0}")]
     Other(String),
 }

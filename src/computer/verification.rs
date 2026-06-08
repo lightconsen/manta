@@ -25,6 +25,8 @@ pub enum VerificationCriteria {
     ScreenshotStable { max_pixel_diff: u32, poll_ms: u64 },
     /// A process with the given name must be running.
     ProcessRunning { name: String },
+    /// A process with the given name must no longer be running.
+    ProcessExited { name: String },
     /// The active window title must contain the given pattern.
     WindowTitleContains { pattern: String },
     /// A file must exist at the given path.
@@ -181,6 +183,16 @@ impl VerificationEngine {
                 self.adapter
                     .wait_for(
                         crate::computer::WaitCondition::ProcessRunning {
+                            name: name.clone(),
+                        },
+                        Duration::from_secs(1),
+                    )
+                    .await
+            }
+            VerificationCriteria::ProcessExited { name } => {
+                self.adapter
+                    .wait_for(
+                        crate::computer::WaitCondition::ProcessExited {
                             name: name.clone(),
                         },
                         Duration::from_secs(1),

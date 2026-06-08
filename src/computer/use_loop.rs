@@ -294,6 +294,23 @@ impl ComputerUseLoop {
                     )
                     .await
             }
+            DesktopAction::KillProcess { name, .. } => {
+                // Verify the process is no longer running.
+                if let Some(process_name) = name {
+                    self.verifier
+                        .verify(
+                            &VerificationCriteria::ProcessExited {
+                                name: process_name.clone(),
+                            },
+                            &ActionResult::success(""),
+                            None,
+                        )
+                        .await
+                } else {
+                    Ok(true)
+                }
+            }
+            DesktopAction::GetSystemStatus | DesktopAction::ListProcesses { .. } => Ok(true),
             _ => Ok(true), // Other actions: assume success.
         }
     }

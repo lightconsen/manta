@@ -250,6 +250,19 @@ pub enum DesktopAction {
     ClipboardSet {
         text: String,
     },
+    /// Query system resource status (CPU, memory, disk, network, uptime).
+    GetSystemStatus,
+    /// List running processes, optionally filtered by name.
+    ListProcesses {
+        filter: Option<String>,
+        limit: Option<usize>,
+    },
+    /// Kill a process by PID or name.
+    KillProcess {
+        pid: Option<u32>,
+        name: Option<String>,
+        force: bool,
+    },
 }
 
 /// Result of executing a desktop action.
@@ -309,4 +322,52 @@ pub enum WaitCondition {
     ScreenshotStable { max_pixel_diff: u32, timeout_ms: u64 },
     /// Wait for a file to appear.
     FileExists { path: String },
+}
+
+/// Cross-platform system resource snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemStatus {
+    pub hostname: String,
+    pub os_name: String,
+    pub os_version: String,
+    pub kernel_version: String,
+    pub uptime_seconds: u64,
+    pub cpu_usage_percent: f32,
+    pub cpu_count: usize,
+    pub memory_total_mb: u64,
+    pub memory_used_mb: u64,
+    pub memory_available_mb: u64,
+    pub swap_total_mb: u64,
+    pub swap_used_mb: u64,
+    pub disks: Vec<DiskStatus>,
+    pub networks: Vec<NetworkStatus>,
+}
+
+/// Disk usage information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskStatus {
+    pub name: String,
+    pub mount_point: String,
+    pub total_gb: f64,
+    pub used_gb: f64,
+    pub available_gb: f64,
+}
+
+/// Network interface statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkStatus {
+    pub name: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+/// A single running process entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessEntry {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub memory_mb: u64,
+    pub status: String,
+    pub start_time: Option<String>,
 }
