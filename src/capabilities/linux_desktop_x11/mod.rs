@@ -1,9 +1,11 @@
 //! Linux X11 desktop capability set — GUI automation via X11 protocols.
 
+pub mod accessibility;
 pub mod clipboard;
 pub mod desktop_control;
 pub mod screenshot;
 
+pub use accessibility::X11AccessibilityTool;
 pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
 pub use screenshot::ScreenshotTool;
@@ -61,6 +63,7 @@ impl CapabilitySet for LinuxDesktopX11Set {
             Box::new(ScreenshotTool::new()),
             Box::new(DesktopControlTool::new()),
             Box::new(ClipboardTool::new()),
+            Box::new(X11AccessibilityTool::new()),
         ]
     }
 

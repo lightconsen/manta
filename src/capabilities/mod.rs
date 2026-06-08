@@ -199,12 +199,14 @@ pub mod linux_desktop_wayland;
 pub mod linux_desktop_x11;
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod mobile;
 pub mod registry;
 pub mod windows;
 
 pub use linux::LinuxSet;
 pub use linux_desktop_wayland::LinuxDesktopWaylandSet;
 pub use linux_desktop_x11::LinuxDesktopX11Set;
+pub use mobile::{AndroidSet, IosSet};
 pub use registry::CapabilityRegistry;
 #[cfg(target_os = "macos")]
 pub use macos::MacosSet;
@@ -234,6 +236,10 @@ pub fn all_known_sets() -> Vec<Box<dyn CapabilitySet>> {
     {
         sets.push(Box::new(WindowsSet::new()));
     }
+
+    // Mobile bridges are platform-agnostic (depend on external CLI tools)
+    sets.push(Box::new(AndroidSet::new()));
+    sets.push(Box::new(IosSet::new()));
 
     sets
 }

@@ -64,7 +64,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action: inspect, click, type, key, list_windows, activate_window",
-                    "enum": ["inspect", "click", "type", "key", "list_windows", "activate_window"]
+                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -83,9 +83,35 @@ impl Tool for DesktopControlTool {
                     "items": { "type": "string" },
                     "description": "Keys to press (e.g. ['ctrl', 'c'] sends ^c)"
                 },
+                "direction": {
+                    "type": "string",
+                    "description": "Scroll direction",
+                    "enum": ["up", "down", "left", "right"]
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "Scroll amount (wheel clicks)",
+                    "default": 3
+                },
+                "from_x": {
+                    "type": "integer",
+                    "description": "Start X for drag"
+                },
+                "from_y": {
+                    "type": "integer",
+                    "description": "Start Y for drag"
+                },
+                "to_x": {
+                    "type": "integer",
+                    "description": "End X for drag"
+                },
+                "to_y": {
+                    "type": "integer",
+                    "description": "End Y for drag"
+                },
                 "name": {
                     "type": "string",
-                    "description": "Window name for activate"
+                    "description": "Window name for activate / close"
                 }
             }),
             vec!["action"],
@@ -154,6 +180,90 @@ public class Click {{ [DllImport("user32.dll")] public static extern void mouse_
                     Ok(ToolExecutionResult::success(format!("Clicked at {}, {}", x, y)))
                 } else {
                     Ok(ToolExecutionResult::error(format!("Click failed: {}", err)))
+                }
+            }
+            "double_click" => {
+                let x = args.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let y = args.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let script = format!(
+                    r#"
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {})
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class Click {{ [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo); }}
+"@
+[Click]::mouse_event(0x02, 0, 0, 0, 0)
+[Click]::mouse_event(0x04, 0, 0, 0, 0)
+Start-Sleep -Milliseconds 50
+[Click]::mouse_event(0x02, 0, 0, 0, 0)
+[Click]::mouse_event(0x04, 0, 0, 0, 0)
+"#,
+                    x, y
+                );
+                let (ok, _, err) = Self::run_ps(&script).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Double-clicked at {}, {}", x, y)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Double-click failed: {}", err)))
+                }
+            }
+            "scroll" => {
+                let x = args.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let y = args.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
+                let delta = if direction == "up" {
+                    120i64 * amount as i64
+                } else if direction == "down" {
+                    -120i64 * amount as i64
+                } else {
+                    0i64
+                };
+                let script = format!(
+                    r#"
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {})
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class Click {{ [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo); }}
+"@
+[Click]::mouse_event(0x0800, 0, 0, {}, 0)
+"#,
+                    x, y, delta
+                );
+                let (ok, _, err) = Self::run_ps(&script).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Scrolled {} at {}, {}", direction, x, y)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Scroll failed: {}", err)))
+                }
+            }
+            "drag" => {
+                let from_x = args.get("from_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let from_y = args.get("from_y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_x = args.get("to_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_y = args.get("to_y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let script = format!(
+                    r#"
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {})
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class Click {{ [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo); }}
+"@
+[Click]::mouse_event(0x02, 0, 0, 0, 0)
+Start-Sleep -Milliseconds 100
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {})
+[Click]::mouse_event(0x04, 0, 0, 0, 0)
+"#,
+                    from_x, from_y, to_x, to_y
+                );
+                let (ok, _, err) = Self::run_ps(&script).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Dragged from ({}, {}) to ({}, {})", from_x, from_y, to_x, to_y)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Drag failed: {}", err)))
                 }
             }
             "type" => {
@@ -264,6 +374,35 @@ public class WinAPI {{
                 } else {
                     Ok(ToolExecutionResult::error(
                         "Provide 'name' to activate a window".to_string(),
+                    ))
+                }
+            }
+            "close_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let script = format!(
+                        r#"
+$proc = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{name}*' }} | Select-Object -First 1
+if ($proc -ne $null) {{
+    $proc.CloseMainWindow() | Out-Null
+    Start-Sleep -Milliseconds 500
+    if (!$proc.HasExited) {{ Stop-Process -Id $proc.Id -Force }}
+    "Closed: $($proc.MainWindowTitle)"
+}} else {{
+    Write-Error "Window not found"
+}}
+"#,
+                        name = n.replace("'", "''")
+                    );
+                    let (ok, stdout, err) = Self::run_ps(&script).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(stdout))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Close failed: {}", err)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error(
+                        "Provide 'name' to close a window".to_string(),
                     ))
                 }
             }

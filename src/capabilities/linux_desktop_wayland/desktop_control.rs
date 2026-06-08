@@ -80,7 +80,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action: click, type, key",
-                    "enum": ["click", "type", "key"]
+                    "enum": ["click", "double_click", "type", "key", "scroll", "drag", "close_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -98,6 +98,36 @@ impl Tool for DesktopControlTool {
                 "text": {
                     "type": "string",
                     "description": "Text to type"
+                },
+                "direction": {
+                    "type": "string",
+                    "description": "Scroll direction",
+                    "enum": ["up", "down", "left", "right"]
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "Scroll amount",
+                    "default": 3
+                },
+                "from_x": {
+                    "type": "integer",
+                    "description": "Start X for drag"
+                },
+                "from_y": {
+                    "type": "integer",
+                    "description": "Start Y for drag"
+                },
+                "to_x": {
+                    "type": "integer",
+                    "description": "End X for drag"
+                },
+                "to_y": {
+                    "type": "integer",
+                    "description": "End Y for drag"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Window / process name for close_window"
                 },
                 "keys": {
                     "type": "array",
@@ -148,11 +178,102 @@ impl Tool for DesktopControlTool {
                         Ok(ToolExecutionResult::error(format!("Click failed: {}", err)))
                     }
                 } else {
-                    // wtype does not support mouse click
                     Ok(ToolExecutionResult::error(
                         "wtype does not support mouse clicks. Install ydotool for click support."
                             .to_string(),
                     ))
+                }
+            }
+            "double_click" => {
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                let button = args.get("button").and_then(|v| v.as_u64()).unwrap_or(1);
+
+                if tool == "ydotool" {
+                    if let (Some(xv), Some(yv)) = (x, y) {
+                        let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)]).await?;
+                    }
+                    let (ok, _, _) = Self::run_cmd("ydotool", &["click", "--repeat", "2", &format!("{}", button)]).await?;
+                    if ok {
+                        return Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)));
+                    }
+                    // Fallback: two separate clicks
+                    let (ok1, _, _) = Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let (ok2, _, err2) = Self::run_cmd("ydotool", &["click", &format!("{}", button)]).await?;
+                    if ok1 && ok2 {
+                        Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Double-click failed: {}", err2)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("wtype does not support mouse clicks".to_string()))
+                }
+            }
+            "scroll" => {
+                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
+
+                if tool == "ydotool" {
+                    let key = match direction {
+                        "up" => "PageUp",
+                        "down" => "PageDown",
+                        "left" => "Left",
+                        "right" => "Right",
+                        _ => "PageDown",
+                    };
+                    for _ in 0..amount {
+                        let _ = Self::run_cmd("ydotool", &["key", key]).await?;
+                    }
+                } else {
+                    let wtype_key = match direction {
+                        "up" => "Page_Up",
+                        "down" => "Page_Down",
+                        "left" => "Left",
+                        "right" => "Right",
+                        _ => "Page_Down",
+                    };
+                    for _ in 0..amount {
+                        let _ = Self::run_cmd("wtype", &[wtype_key]).await?;
+                    }
+                }
+
+                Ok(ToolExecutionResult::success(format!("Scrolled {} ({})", direction, amount)))
+            }
+            "drag" => {
+                let from_x = args.get("from_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let from_y = args.get("from_y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_x = args.get("to_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_y = args.get("to_y").and_then(|v| v.as_i64()).unwrap_or(0);
+
+                if tool == "ydotool" {
+                    let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", from_x, from_y)]).await?;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", to_x, to_y)]).await?;
+                    Ok(ToolExecutionResult::success(format!(
+                        "Dragged from ({}, {}) to ({}, {}). Wayland drag is best-effort.",
+                        from_x, from_y, to_x, to_y
+                    )))
+                } else {
+                    Ok(ToolExecutionResult::error("wtype does not support drag".to_string()))
+                }
+            }
+            "close_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    let (ok, _, _) = Self::run_cmd("pkill", &["-f", n]).await?;
+                    if ok {
+                        Ok(ToolExecutionResult::success(format!("Closed process matching '{}'", n)))
+                    } else {
+                        let (ok2, _, err2) = Self::run_cmd("killall", &[n]).await?;
+                        if ok2 {
+                            Ok(ToolExecutionResult::success(format!("Closed process '{}'", n)))
+                        } else {
+                            Ok(ToolExecutionResult::error(format!("Close failed: {}", err2)))
+                        }
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for close_window".to_string()))
                 }
             }
             "type" => {

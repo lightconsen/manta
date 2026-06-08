@@ -78,7 +78,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action to perform: inspect, click, type, key, list_windows, activate_window",
-                    "enum": ["inspect", "click", "type", "key", "list_windows", "activate_window"]
+                    "enum": ["inspect", "click", "double_click", "type", "key", "scroll", "drag", "list_windows", "activate_window", "close_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -96,6 +96,32 @@ impl Tool for DesktopControlTool {
                     "type": "integer",
                     "description": "Mouse button (1=left, 2=middle, 3=right)",
                     "default": 1
+                },
+                "direction": {
+                    "type": "string",
+                    "description": "Scroll direction",
+                    "enum": ["up", "down", "left", "right"]
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "Scroll amount (number of wheel clicks)",
+                    "default": 3
+                },
+                "from_x": {
+                    "type": "integer",
+                    "description": "Start X coordinate for drag"
+                },
+                "from_y": {
+                    "type": "integer",
+                    "description": "Start Y coordinate for drag"
+                },
+                "to_x": {
+                    "type": "integer",
+                    "description": "End X coordinate for drag"
+                },
+                "to_y": {
+                    "type": "integer",
+                    "description": "End Y coordinate for drag"
                 },
                 "text": {
                     "type": "string",
@@ -208,6 +234,66 @@ impl Tool for DesktopControlTool {
                     }
                 }
             }
+            "double_click" => {
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                let button = args.get("button").and_then(|v| v.as_u64()).unwrap_or(1);
+
+                if let (Some(xv), Some(yv)) = (x, y) {
+                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                }
+
+                let (ok, _, err) = Self::run_xdotool(&["click", "--repeat", "2", &format!("{}", button)]).await?;
+                if ok {
+                    Ok(ToolExecutionResult::success(format!("Double-clicked button {}", button)))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Double-click failed: {}", err)))
+                }
+            }
+            "scroll" => {
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
+                let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
+                let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
+
+                if let (Some(xv), Some(yv)) = (x, y) {
+                    let _ = Self::run_xdotool(&["mousemove", &format!("{}", xv), &format!("{}", yv)]).await?;
+                }
+
+                let btn = match direction {
+                    "up" => "4",
+                    "down" => "5",
+                    "left" => "6",
+                    "right" => "7",
+                    _ => "5",
+                };
+
+                for _ in 0..amount {
+                    let _ = Self::run_xdotool(&["click", btn]).await?;
+                }
+
+                Ok(ToolExecutionResult::success(format!("Scrolled {} ({} clicks)", direction, amount)))
+            }
+            "drag" => {
+                let from_x = args.get("from_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let from_y = args.get("from_y").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_x = args.get("to_x").and_then(|v| v.as_i64()).unwrap_or(0);
+                let to_y = args.get("to_y").and_then(|v| v.as_i64()).unwrap_or(0);
+
+                let _ = Self::run_xdotool(&["mousemove", &format!("{}", from_x), &format!("{}", from_y)]).await?;
+                let _ = Self::run_xdotool(&["mousedown", "1"]).await?;
+                let _ = Self::run_xdotool(&["mousemove", &format!("{}", to_x), &format!("{}", to_y)]).await?;
+                let (ok, _, err) = Self::run_xdotool(&["mouseup", "1"]).await?;
+
+                if ok {
+                    Ok(ToolExecutionResult::success(format!(
+                        "Dragged from ({}, {}) to ({}, {})",
+                        from_x, from_y, to_x, to_y
+                    )))
+                } else {
+                    Ok(ToolExecutionResult::error(format!("Drag failed: {}", err)))
+                }
+            }
             "activate_window" => {
                 let name = args.get("name").and_then(|v| v.as_str());
                 let window_id = args.get("window_id").and_then(|v| v.as_str());
@@ -236,6 +322,35 @@ impl Tool for DesktopControlTool {
                 }
 
                 Ok(ToolExecutionResult::error("Provide either 'name' or 'window_id'".to_string()))
+            }
+            "close_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                let window_id = args.get("window_id").and_then(|v| v.as_str());
+
+                if let Some(wid) = window_id {
+                    let (ok, _, err) = Self::run_xdotool(&["windowclose", wid]).await?;
+                    if ok {
+                        return Ok(ToolExecutionResult::success(format!("Closed window {}", wid)));
+                    } else {
+                        return Ok(ToolExecutionResult::error(format!("Close failed: {}", err)));
+                    }
+                }
+
+                if let Some(n) = name {
+                    let (ok, wid, err) = Self::run_xdotool(&["search", "--name", n]).await?;
+                    if ok && !wid.trim().is_empty() {
+                        let first = wid.lines().next().unwrap_or("").trim();
+                        let (ok2, _, err2) = Self::run_xdotool(&["windowclose", first]).await?;
+                        if ok2 {
+                            return Ok(ToolExecutionResult::success(format!("Closed window '{}' (id: {})", n, first)));
+                        } else {
+                            return Ok(ToolExecutionResult::error(format!("Close failed: {}", err2)));
+                        }
+                    }
+                    return Ok(ToolExecutionResult::error(format!("Window '{}' not found: {}", n, err)));
+                }
+
+                Ok(ToolExecutionResult::error("Provide 'name' or 'window_id' for close_window".to_string()))
             }
             _ => Ok(ToolExecutionResult::error(format!("Unknown action: {}", action))),
         }

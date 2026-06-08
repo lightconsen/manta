@@ -158,7 +158,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action to perform",
-                    "enum": ["inspect", "click", "type", "key_shortcut"]
+                    "enum": ["inspect", "click", "type", "key_shortcut", "close_window"]
                 },
                 "mode": {
                     "type": "string",
@@ -333,6 +333,25 @@ impl Tool for DesktopControlTool {
                 } else {
                     Err(crate::error::SyscityError::Validation(
                         as_result.error.unwrap_or_else(|| "Keystroke failed".to_string())
+                    ))
+                }
+            }
+            "close_window" => {
+                let app = args["app"].as_str().unwrap_or("System Events");
+                let script = format!(
+                    r#"tell application "{}" to activate
+delay 0.2
+tell application "System Events"
+    keystroke "w" using command down
+end tell"#,
+                    app
+                );
+                let as_result = super::applescript::AppleScriptTool::execute_script(&script, 15).await;
+                if as_result.success {
+                    Ok(())
+                } else {
+                    Err(crate::error::SyscityError::Validation(
+                        as_result.error.unwrap_or_else(|| "Close window failed".to_string())
                     ))
                 }
             }

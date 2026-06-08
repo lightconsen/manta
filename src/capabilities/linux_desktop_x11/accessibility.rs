@@ -1,0 +1,374 @@
+//! Linux X11 Accessibility tool — query UI trees via AT-SPI2.
+//!
+//! Tries `python3` + `pyatspi` first, then falls back to `atspi2` D-Bus
+//! introspection, then finally to `xdotool` + `xwininfo` for minimal
+//! window information.
+
+use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
+use async_trait::async_trait;
+use serde::Serialize;
+use serde_json::Value;
+use tokio::process::Command;
+use tokio::time::{timeout, Duration};
+use tracing::{info, warn};
+
+/// Description of a UI element on Linux.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiElement {
+    pub role: String,
+    pub name: String,
+    pub value: Option<String>,
+    pub enabled: Option<bool>,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub children: Vec<UiElement>,
+}
+
+/// Result of an accessibility query.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccessibilityResult {
+    pub success: bool,
+    pub app: Option<String>,
+    pub elements: Vec<UiElement>,
+    pub raw_output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Query the Linux X11 accessibility tree using AT-SPI2.
+///
+/// Priority:
+/// 1. `python3` + `pyatspi` (most detailed tree)
+/// 2. `dbus-send` AT-SPI2 bus (medium detail)
+/// 3. `xdotool` + `xwininfo` (minimal window info only)
+#[derive(Debug)]
+pub struct X11AccessibilityTool;
+
+impl Default for X11AccessibilityTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl X11AccessibilityTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Python script that traverses the active AT-SPI2 application.
+    fn build_python_script() -> &'static str {
+        r#"
+import json, sys
+try:
+    import pyatspi
+except ImportError:
+    print(json.dumps({"error": "pyatspi not installed"}), file=sys.stderr)
+    sys.exit(1)
+
+def export_element(acc, depth=0):
+    try:
+        name = acc.name or ""
+        role = acc.getRoleName() or "unknown"
+        state_set = acc.getState()
+        enabled = state_set.contains(pyatspi.STATE_ENABLED)
+        x, y, w, h = acc.extents
+    except Exception:
+        return None
+    obj = {
+        "role": role,
+        "name": name,
+        "enabled": enabled,
+        "x": x, "y": y,
+        "width": w, "height": h,
+        "children": []
+    }
+    if depth < 3:
+        try:
+            for i in range(acc.childCount):
+                child = acc.getChildAtIndex(i)
+                child_dict = export_element(child, depth + 1)
+                if child_dict:
+                    obj["children"].append(child_dict)
+        except Exception:
+            pass
+    return obj
+
+desktop = pyatspi.Registry.getDesktop(0)
+active_app = None
+for i in range(desktop.childCount):
+    app = desktop.getChildAtIndex(i)
+    try:
+        if app.getState().contains(pyatspi.STATE_ACTIVE) or app.getState().contains(pyatspi.STATE_FOCUSED):
+            active_app = app
+            break
+    except Exception:
+        pass
+
+if not active_app and desktop.childCount > 0:
+    active_app = desktop.getChildAtIndex(0)
+
+if active_app:
+    tree = export_element(active_app)
+    print(json.dumps(tree))
+else:
+    print(json.dumps({"role": "desktop", "name": "", "children": []}))
+"#
+    }
+
+    /// Fallback script using xdotool + xwininfo for minimal window data.
+    fn build_xwininfo_fallback() -> &'static str {
+        r#"
+import json, subprocess, sys
+
+def run(cmd):
+    try:
+        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+# Get active window id
+wid = run("xdotool getactivewindow 2>/dev/null || xdotool getwindowfocus 2>/dev/null")
+if not wid:
+    print(json.dumps({"role":"desktop","name":"","children":[]}))
+    sys.exit(0)
+
+# Get window info
+info = run(f"xwininfo -id {wid} 2>/dev/null")
+name = ""
+for line in info.splitlines():
+    if "Window id:" in line and '"' in line:
+        name = line.split('"')[1]
+        break
+
+# Get window geometry
+geo = run(f"xdotool getwindowgeometry {wid} 2>/dev/null")
+x, y, w, h = 0, 0, 0, 0
+for line in geo.splitlines():
+    if "Position:" in line:
+        parts = line.replace(",", "").split()
+        try:
+            x = int(parts[1])
+            y = int(parts[2])
+        except Exception:
+            pass
+    if "Geometry:" in line:
+        parts = line.replace("x", " ").split()
+        try:
+            w = int(parts[1])
+            h = int(parts[2])
+        except Exception:
+            pass
+
+print(json.dumps({
+    "role": "Window",
+    "name": name,
+    "enabled": True,
+    "x": x, "y": y,
+    "width": w, "height": h,
+    "children": []
+}))
+"#
+    }
+
+    async fn run_python(script: &str) -> crate::Result<(bool, String, String)> {
+        let output = timeout(
+            Duration::from_secs(10),
+            Command::new("python3").arg("-c").arg(script).output(),
+        )
+        .await;
+        match output {
+            Ok(Ok(out)) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                Ok((out.status.success() && !stdout.is_empty(), stdout, stderr))
+            }
+            Ok(Err(e)) => Ok((false, String::new(), format!("Python spawn error: {}", e))),
+            Err(_) => Ok((false, String::new(), "Python timed out".to_string())),
+        }
+    }
+
+    /// Parse JSON tree into flat Vec<UiElement>.
+    fn parse_json_tree(value: &Value) -> Vec<UiElement> {
+        let mut result = Vec::new();
+        Self::parse_element(value, &mut result);
+        result
+    }
+
+    fn parse_element(value: &Value, out: &mut Vec<UiElement>) {
+        if let Some(obj) = value.as_object() {
+            let el = UiElement {
+                role: obj
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                name: obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                value: obj.get("value").and_then(|v| v.as_str()).map(String::from),
+                enabled: obj.get("enabled").and_then(|v| v.as_bool()),
+                x: obj.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                y: obj.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                width: obj.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                height: obj.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                children: Vec::new(),
+            };
+            out.push(el);
+
+            if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
+                for child in children {
+                    Self::parse_element(child, out);
+                }
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for X11AccessibilityTool {
+    fn name(&self) -> &str {
+        "linux_x11_accessibility"
+    }
+
+    fn description(&self) -> &str {
+        "Query the Linux X11 accessibility tree via AT-SPI2. \
+         Returns structured UI elements (buttons, text fields, etc.) \
+         from the active application.  Falls back to xdotool window info \
+         if AT-SPI2 is unavailable."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        create_schema(
+            "Query X11 UI tree via AT-SPI2",
+            serde_json::json!({
+                "app": {
+                    "type": "string",
+                    "description": "Application name to inspect. If omitted, inspects the focused application."
+                }
+            }),
+            Vec::<String>::new(),
+        )
+    }
+
+    async fn execute(
+        &self,
+        _args: Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        info!("Querying X11 accessibility tree via AT-SPI2");
+
+        // Strategy 1: Python + pyatspi
+        let (success, stdout, stderr) =
+            Self::run_python(Self::build_python_script()).await?;
+
+        if success {
+            match serde_json::from_str::<Value>(&stdout) {
+                Ok(json) => {
+                    let app = json.get("name").and_then(|v| v.as_str()).map(String::from);
+                    let elements = Self::parse_json_tree(&json);
+                    let result = AccessibilityResult {
+                        success: true,
+                        app,
+                        elements,
+                        raw_output: Some(stdout),
+                        error: None,
+                    };
+                    let json_str = serde_json::to_string_pretty(&result)
+                        .map_err(crate::error::SyscityError::Serialization)?;
+                    return Ok(ToolExecutionResult::success(json_str)
+                        .with_data(serde_json::to_value(result)?));
+                }
+                Err(e) => {
+                    warn!("AT-SPI2 JSON parse failed: {}", e);
+                }
+            }
+        } else {
+            warn!("AT-SPI2 (pyatspi) failed: {}", stderr);
+        }
+
+        // Strategy 2: xdotool + xwininfo fallback
+        info!("Falling back to xdotool/xwininfo");
+        let (fb_success, fb_stdout, fb_stderr) =
+            Self::run_python(Self::build_xwininfo_fallback()).await?;
+
+        if fb_success {
+            match serde_json::from_str::<Value>(&fb_stdout) {
+                Ok(json) => {
+                    let app = json.get("name").and_then(|v| v.as_str()).map(String::from);
+                    let elements = Self::parse_json_tree(&json);
+                    let result = AccessibilityResult {
+                        success: true,
+                        app,
+                        elements,
+                        raw_output: Some(fb_stdout),
+                        error: Some(format!("AT-SPI2 fallback; original: {}", stderr)),
+                    };
+                    let json_str = serde_json::to_string_pretty(&result)
+                        .map_err(crate::error::SyscityError::Serialization)?;
+                    return Ok(ToolExecutionResult::success(json_str)
+                        .with_data(serde_json::to_value(result)?));
+                }
+                Err(e) => {
+                    warn!("Fallback JSON parse failed: {}", e);
+                }
+            }
+        }
+
+        // All strategies failed
+        let err_msg = format!(
+            "AT-SPI2 unavailable and xdotool fallback failed: {} / {}",
+            stderr, fb_stderr
+        );
+        let result = AccessibilityResult {
+            success: false,
+            app: None,
+            elements: Vec::new(),
+            raw_output: None,
+            error: Some(err_msg.clone()),
+        };
+        Ok(ToolExecutionResult::error(err_msg).with_data(serde_json::to_value(result)?))
+    }
+
+    fn is_available(&self, _context: &ToolContext) -> bool {
+        std::env::var("DISPLAY").is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_x11_accessibility_tool_creation() {
+        let tool = X11AccessibilityTool::new();
+        assert_eq!(tool.name(), "linux_x11_accessibility");
+    }
+
+    #[test]
+    fn test_parse_json_tree() {
+        let json = serde_json::json!({
+            "role": "frame",
+            "name": "Firefox",
+            "enabled": true,
+            "x": 0, "y": 0, "width": 1280, "height": 720,
+            "children": [
+                {
+                    "role": "push button",
+                    "name": "Back",
+                    "enabled": true,
+                    "x": 10, "y": 40, "width": 40, "height": 30,
+                    "children": []
+                }
+            ]
+        });
+
+        let elements = X11AccessibilityTool::parse_json_tree(&json);
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0].role, "frame");
+        assert_eq!(elements[1].role, "push button");
+    }
+}

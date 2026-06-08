@@ -569,6 +569,7 @@ pub mod patch;
 pub mod pdf;
 pub mod process;
 pub mod sandbox;
+pub mod sandbox_interceptor;
 pub mod sdk;
 pub mod session;
 pub mod shell;

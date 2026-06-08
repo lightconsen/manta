@@ -1,10 +1,12 @@
 //! Windows capability set — GUI automation and system control tools.
 
+pub mod accessibility;
 pub mod clipboard;
 pub mod desktop_control;
 pub mod powershell;
 pub mod screenshot;
 
+pub use accessibility::WindowsAccessibilityTool;
 pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
 pub use powershell::PowerShellTool;
@@ -64,6 +66,7 @@ impl CapabilitySet for WindowsSet {
             Box::new(DesktopControlTool::new()),
             Box::new(ClipboardTool::new()),
             Box::new(PowerShellTool::new()),
+            Box::new(WindowsAccessibilityTool::new()),
         ]
     }
 

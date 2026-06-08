@@ -59,6 +59,8 @@ pub mod logs;
 pub mod memory;
 pub mod model_router;
 pub mod outbound;
+pub mod computer;
+pub mod planner;
 pub mod plugins;
 pub mod providers;
 pub mod secrets;

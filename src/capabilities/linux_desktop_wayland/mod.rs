@@ -1,8 +1,10 @@
 //! Linux Wayland desktop capability set — GUI automation via Wayland portals.
 
+pub mod accessibility;
 pub mod desktop_control;
 pub mod screenshot;
 
+pub use accessibility::WaylandAccessibilityTool;
 pub use desktop_control::DesktopControlTool;
 pub use screenshot::ScreenshotTool;
 
@@ -58,6 +60,7 @@ impl CapabilitySet for LinuxDesktopWaylandSet {
         vec![
             Box::new(ScreenshotTool::new()),
             Box::new(DesktopControlTool::new()),
+            Box::new(WaylandAccessibilityTool::new()),
         ]
     }
 

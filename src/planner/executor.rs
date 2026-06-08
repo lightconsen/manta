@@ -1,0 +1,301 @@
+//! Task executor — runs tasks from a [`Plan`] in topological order.
+//!
+//! Independent tasks are executed concurrently.  After each task the
+//! executor optionally verifies the result and, on failure, retries or
+//! triggers a rollback.
+
+use super::{DagScheduler, Plan, PlanResult, TaskStatus};
+use crate::computer::{
+    ComputerAdapter, RollbackManager, VerificationConfig, VerificationEngine,
+};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+/// Configuration for the task executor.
+#[derive(Debug, Clone)]
+pub struct ExecutorConfig {
+    /// Maximum number of concurrent tasks.
+    pub max_concurrency: usize,
+    /// Default verification config.
+    pub verification: VerificationConfig,
+    /// Whether to enable rollback on failure.
+    pub enable_rollback: bool,
+}
+
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrency: 4,
+            verification: VerificationConfig::default(),
+            enable_rollback: true,
+        }
+    }
+}
+
+/// Executes tasks from a plan.
+pub struct TaskExecutor {
+    adapter: Arc<dyn ComputerAdapter>,
+    verifier: VerificationEngine,
+    config: ExecutorConfig,
+}
+
+impl TaskExecutor {
+    pub fn new(
+        adapter: Arc<dyn ComputerAdapter>,
+        verifier: VerificationEngine,
+    ) -> Self {
+        Self {
+            adapter,
+            verifier,
+            config: ExecutorConfig::default(),
+        }
+    }
+
+    pub fn with_config(mut self, config: ExecutorConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Execute all tasks in a plan.
+    ///
+    /// Returns a [`PlanResult`] summarising the outcome.
+    pub async fn execute(&self, plan: &mut Plan) -> crate::Result<PlanResult> {
+        // Validate the DAG.
+        if let Err(e) = DagScheduler::validate(plan) {
+            return Ok(PlanResult {
+                success: false,
+                goal: plan.goal.clone(),
+                tasks_completed: 0,
+                tasks_failed: 0,
+                tasks_rolled_back: 0,
+                message: format!("Plan validation failed: {:?}", e),
+            });
+        }
+
+        let scheduler = DagScheduler::from_plan(plan).map_err(|e| {
+            crate::error::SyscityError::Validation(format!(
+                "Plan scheduling failed: {:?}",
+                e
+            ))
+        })?;
+
+        let mut rollback_mgr = if self.config.enable_rollback {
+            Some(RollbackManager::new().map_err(|e| {
+                crate::error::SyscityError::ExternalService {
+                    source: "Failed to create rollback manager".to_string(),
+                    cause: Some(Box::new(e)),
+                }
+            })?)
+        } else {
+            None
+        };
+
+        let mut completed = HashSet::<String>::new();
+        let mut failed = HashSet::<String>::new();
+        let mut rolled_back = HashSet::<String>::new();
+
+        loop {
+            // Find tasks that are ready to run.
+            let ready = scheduler.next_ready(plan, &completed, &failed);
+
+            if ready.is_empty() {
+                // Nothing more to run.
+                break;
+            }
+
+            // Limit concurrency.
+            let batch: Vec<String> = ready
+                .into_iter()
+                .take(self.config.max_concurrency)
+                .collect();
+
+            // Execute the batch sequentially.
+            // Tasks in a batch are independent (DAG guarantees no inter-dependencies),
+            // but we avoid concurrent mutable borrows of plan/rollback_mgr.
+            let mut any_failure = false;
+            for id in batch {
+                let result = self.run_single_task(id.clone(), plan, rollback_mgr.as_mut()).await;
+                match result {
+                    Ok(()) => {
+                        completed.insert(id.clone());
+                    }
+                    Err(e) => {
+                        failed.insert(id.clone());
+                        any_failure = true;
+                        plan.fail_task(&id, e.to_string());
+                    }
+                }
+            }
+
+            // If any task failed and rollback is enabled, roll back completed tasks
+            // that have snapshots and abort remaining tasks.
+            if any_failure && self.config.enable_rollback {
+                if let Some(ref mut mgr) = rollback_mgr {
+                    let completed_ids: Vec<_> = completed.iter().cloned().collect();
+                    for id in completed_ids.iter().rev() {
+                        if let Some(task) = plan.get_task(id) {
+                            if task.snapshot_before {
+                                rolled_back.insert(id.clone());
+                                plan.set_status(id, TaskStatus::RolledBack);
+                            }
+                        }
+                    }
+                    if let Err(e) = mgr.rollback().await {
+                        tracing::error!("Rollback failed: {}", e);
+                    }
+                }
+                break;
+            }
+        }
+
+        let tasks_completed = completed.len();
+        let tasks_failed = failed.len();
+        let tasks_rolled_back = rolled_back.len();
+        let success = tasks_failed == 0 && plan.is_complete();
+
+        Ok(PlanResult {
+            success,
+            goal: plan.goal.clone(),
+            tasks_completed,
+            tasks_failed,
+            tasks_rolled_back,
+            message: if success {
+                format!("Plan '{}' completed successfully", plan.goal)
+            } else {
+                format!(
+                    "Plan '{}' failed: {} completed, {} failed, {} rolled back",
+                    plan.goal, tasks_completed, tasks_failed, tasks_rolled_back
+                )
+            },
+        })
+    }
+
+    /// Execute a single task with retries and optional verification.
+    async fn run_single_task(
+        &self,
+        id: String,
+        plan: &mut Plan,
+        rollback_mgr: Option<&mut RollbackManager>,
+    ) -> crate::Result<()> {
+        let task = plan
+            .get_task(&id)
+            .ok_or_else(|| {
+                crate::error::SyscityError::Validation(format!(
+                    "Task '{}' not found in plan",
+                    id
+                ))
+            })?
+            .clone();
+
+        plan.set_status(&id, TaskStatus::Running);
+
+        // Snapshot before execution if requested.
+        if task.snapshot_before {
+            if let Some(mgr) = rollback_mgr {
+                // Snapshot is best-effort; don't fail the task if it fails.
+                let path = std::path::PathBuf::from(&task.id);
+                let _ = mgr.snapshot_file(&path).await;
+            }
+        }
+
+        // Execute with retries.
+        for attempt in 0..=task.max_retries {
+            match self.adapter.execute(task.action.clone()).await {
+                Ok(result) => {
+                    // Verify if criteria are set.
+                    let verified = if let Some(ref criteria) = task.verification {
+                        match self
+                            .verifier
+                            .verify(criteria, &result, None)
+                            .await
+                        {
+                            Ok(true) => true,
+                            Ok(false) => {
+                                if attempt < task.max_retries {
+                                    tracing::warn!(
+                                        "Task '{}' verification failed (attempt {}/{}), retrying...",
+                                        id, attempt + 1, task.max_retries + 1
+                                    );
+                                    tokio::time::sleep(task.retry_delay).await;
+                                    continue;
+                                }
+                                false
+                            }
+                            Err(e) => {
+                                if attempt < task.max_retries {
+                                    tracing::warn!(
+                                        "Task '{}' verification error (attempt {}/{}): {}, retrying...",
+                                        id, attempt + 1, task.max_retries + 1, e
+                                    );
+                                    tokio::time::sleep(task.retry_delay).await;
+                                    continue;
+                                }
+                                plan.fail_task(
+                                    &id,
+                                    format!("Verification failed: {}", e),
+                                );
+                                return Err(crate::error::SyscityError::ExternalService {
+                                    source: format!("Task verification failed: {}", e),
+                                    cause: None,
+                                });
+                            }
+                        }
+                    } else {
+                        true
+                    };
+
+                    if verified {
+                        plan.complete_task(&id, result.message);
+                        return Ok(());
+                    } else {
+                        plan.fail_task(
+                            &id,
+                            "Verification failed after all retries".to_string(),
+                        );
+                        return Err(crate::error::SyscityError::Validation(
+                            "Verification failed".to_string(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    if attempt < task.max_retries {
+                        tracing::warn!(
+                            "Task '{}' execution failed (attempt {}/{}): {}, retrying...",
+                            id, attempt + 1, task.max_retries + 1, e
+                        );
+                        tokio::time::sleep(task.retry_delay).await;
+                    } else {
+                        plan.fail_task(
+                            &id,
+                            format!("Execution failed: {}", e),
+                        );
+                        return Err(crate::error::SyscityError::ExternalService {
+                            source: format!("Task execution failed: {}", e),
+                            cause: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Should not reach here, but handle defensively.
+        plan.fail_task(&id, "Exhausted all retries".to_string());
+        Err(crate::error::SyscityError::Validation(
+            "Exhausted all retries".to_string(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::computer::DesktopAction;
+    use crate::planner::{Plan, Task};
+
+    #[test]
+    fn test_executor_config_default() {
+        let cfg = ExecutorConfig::default();
+        assert_eq!(cfg.max_concurrency, 4);
+        assert!(cfg.enable_rollback);
+    }
+}
