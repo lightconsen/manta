@@ -159,6 +159,12 @@ impl From<serde_yaml::Error> for SyscityError {
     }
 }
 
+impl From<crate::computer::ComputerError> for SyscityError {
+    fn from(err: crate::computer::ComputerError) -> Self {
+        SyscityError::Internal(format!("Computer adapter error: {}", err))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

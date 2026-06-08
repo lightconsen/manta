@@ -348,6 +348,11 @@ workspace_only = true
         // Create and start the Gateway
         let gateway = Gateway::new(gateway_config.clone(), Some(config_path.clone())).await?;
 
+        // Startup recovery: scan for incomplete plans
+        if let Err(e) = run_startup_recovery(&gateway).await {
+            warn!("Startup recovery check failed: {}", e);
+        }
+
         println!("✅ Gateway ready");
         println!("   URL: http://{}:{}", gateway_config.host, gateway_config.port);
 
@@ -547,6 +552,89 @@ workspace_only = true
 
         crate::memory::SqliteMemoryStore::new(&db_url).await
     }
+}
+
+/// Scan for incomplete plans at startup and optionally resume them.
+async fn run_startup_recovery(
+    gateway: &crate::gateway::Gateway,
+) -> crate::Result<()> {
+    let db_path = crate::dirs::syscity_dir().join("planner.db");
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let url = format!("sqlite:/// {}", db_path.display());
+    let store = match crate::planner::TaskStateStore::new(&url).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to open planner state store: {}", e);
+            return Ok(());
+        }
+    };
+
+    let summaries = match store.load_plan_summaries().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to load plan summaries: {}", e);
+            return Ok(());
+        }
+    };
+
+    if summaries.is_empty() {
+        return Ok(());
+    }
+
+    println!("\n📋 Interrupted plans detected:");
+    println!("{:-<60}", "");
+    for s in &summaries {
+        println!(
+            "  • {} (created: {})",
+            s.goal,
+            s.created_at.split('T').next().unwrap_or(&s.created_at)
+        );
+        println!(
+            "    Progress: {}/{} completed, {} failed, {} pending",
+            s.completed_tasks, s.total_tasks, s.failed_tasks, s.pending_tasks
+        );
+    }
+    println!("{:-<60}\n", "");
+
+    let auto_resume = std::env::var("SYSCITY_AUTO_RESUME")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if auto_resume {
+        tracing::info!("Auto-resume enabled — resuming interrupted plans");
+
+        let registry = gateway.tool_registry();
+        let adapter = crate::computer::create_adapter(registry).await?;
+        let adapter: std::sync::Arc<dyn crate::computer::ComputerAdapter> =
+            std::sync::Arc::from(adapter);
+
+        let provider = gateway.model_router().create_default_provider().await?;
+
+        let planner = crate::planner::GoalPlanner::with_provider(adapter, provider)
+            .with_state_store(store);
+
+        for s in summaries {
+            match planner.resume_plan(&s.id).await {
+                Ok(Some(result)) => {
+                    println!("✅ Plan '{}' resumed: {}", s.goal, result.message);
+                }
+                Ok(None) => {
+                    tracing::warn!("Plan '{}' no longer exists", s.id);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to resume plan '{}': {}", s.id, e);
+                }
+            }
+        }
+    } else {
+        println!("Set SYSCITY_AUTO_RESUME=1 to automatically resume on startup.");
+        println!("Or use the API / CLI to resume individual plans.\n");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1861,6 +1861,11 @@ impl Gateway {
         self.state.model_router.clone()
     }
 
+    /// Return a clone of the internal `ToolRegistry` arc.
+    pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
+        self.state.tool_registry.clone()
+    }
+
     /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
         info!("Starting Syscity Gateway control plane...");

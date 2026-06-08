@@ -367,7 +367,21 @@ impl TaskStateStore {
 
         Ok(Some(plan))
     }
+}
 
+/// Summary of an incomplete plan for startup recovery display.
+#[derive(Debug, Clone)]
+pub struct PlanSummary {
+    pub id: String,
+    pub goal: String,
+    pub created_at: String,
+    pub total_tasks: usize,
+    pub completed_tasks: usize,
+    pub failed_tasks: usize,
+    pub pending_tasks: usize,
+}
+
+impl TaskStateStore {
     /// List all plan IDs that are not yet marked completed.
     pub async fn list_incomplete_plans(&self) -> crate::Result<Vec<String>> {
         let rows = sqlx::query(
@@ -385,6 +399,76 @@ impl TaskStateStore {
             .map(|r| r.try_get::<String, _>("id").unwrap_or_default())
             .filter(|s| !s.is_empty())
             .collect())
+    }
+
+    /// Load summaries for all incomplete plans (with task progress counts).
+    pub async fn load_plan_summaries(&self) -> crate::Result<Vec<PlanSummary>> {
+        let plan_rows = sqlx::query(
+            r#"
+            SELECT id, goal, created_at
+            FROM planner_plans
+            WHERE completed_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to load incomplete plan summaries".to_string(),
+            details: e.to_string(),
+        })?;
+
+        let mut summaries = Vec::new();
+        for row in plan_rows {
+            let id: String = row.try_get("id").unwrap_or_default();
+            let goal: String = row.try_get("goal").unwrap_or_default();
+            let created_at: String = row.try_get("created_at").unwrap_or_default();
+
+            let counts = sqlx::query(
+                r#"
+                SELECT status, COUNT(*) as cnt
+                FROM planner_tasks
+                WHERE plan_id = ?1
+                GROUP BY status
+                "#,
+            )
+            .bind(&id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: format!("Failed to count tasks for plan '{}'", id),
+                details: e.to_string(),
+            })?;
+
+            let mut total = 0usize;
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            let mut pending = 0usize;
+
+            for c in counts {
+                let status_str: String = c.try_get("status").unwrap_or_default();
+                let cnt: i64 = c.try_get("cnt").unwrap_or(0);
+                let n = cnt as usize;
+                total += n;
+                match status_str.as_str() {
+                    "Completed" | "completed" => completed += n,
+                    "Failed" | "failed" | "RolledBack" | "rolled_back" => failed += n,
+                    _ => pending += n,
+                }
+            }
+
+            summaries.push(PlanSummary {
+                id,
+                goal,
+                created_at,
+                total_tasks: total,
+                completed_tasks: completed,
+                failed_tasks: failed,
+                pending_tasks: pending,
+            });
+        }
+
+        Ok(summaries)
     }
 
     /// Delete a plan and all its tasks.

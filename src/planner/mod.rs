@@ -15,12 +15,14 @@ use std::time::Duration;
 pub mod dag;
 pub mod decomposer;
 pub mod executor;
+pub mod recovery;
 pub mod state;
 pub mod workflow;
 
 pub use dag::DagScheduler;
 pub use decomposer::{GoalDecomposer, SubTask};
 pub use executor::TaskExecutor;
+pub use recovery::{check_startup_recovery, RecoveryOutcome};
 pub use state::TaskStateStore;
 pub use workflow::{FailureStrategy, RecordedStep, StepResult, Workflow, WorkflowAction, WorkflowPlayer, WorkflowRecorder};
 
