@@ -3,21 +3,26 @@
 > 本文档基于当前已实现的能力，梳理 Syscity 从 "具备 OS 控制工具的 AI 助手" 进化为 "Physical AI 操作系统" 所需的核心功能缺口。
 >
 > 当前已实现：多平台截图（X11/Wayland/Windows/macOS）、桌面控制（点击/输入/窗口管理）、剪贴板操作、PowerShell/Shell 执行、能力集自动检测、多 Agent 协作、向量记忆、MCP 协议。
+>
+> **实现状态图例**：
+> - ✅ **已实现** — 代码已合入主干，可用
+> - 🔄 **部分实现** — 核心骨架完成，仍需完善
+> - ⬜ **未实现** — 仅有设计或完全缺失
 
 ---
 
 ## 一、感知层（Perception）— 从"看见屏幕"到"理解界面"
 
-### 1.1 结构化 UI 感知（最高优先级）
+### 1.1 结构化 UI 感知（最高优先级） ✅ 已实现
 
 纯截图方案效率低、成本高、易误判。Agent 需要的是类似浏览器的 DOM 树，而非像素。
 
-| 平台 | 技术方案 | 能力 |
-|------|---------|------|
-| macOS | AXUIElement / Accessibility API | 读取控件类型、文本、位置、可点击状态 |
-| Windows | UIAutomation / MSAA | 遍历窗口树、获取按钮/输入框属性 |
-| Linux X11 | AT-SPI2 | 获取 GTK/Qt 应用的完整控件结构 |
-| Linux Wayland | xdg-desktop-portal + a11y bus | Wayland 安全限制下获取有限 UI 信息 |
+| 平台 | 技术方案 | 能力 | 状态 |
+|------|---------|------|------|
+| macOS | AXUIElement / Accessibility API | 读取控件类型、文本、位置、可点击状态 | ✅ `src/capabilities/macos/accessibility.rs` |
+| Windows | UIAutomation / MSAA | 遍历窗口树、获取按钮/输入框属性 | ✅ `src/capabilities/windows/accessibility.rs` |
+| Linux X11 | AT-SPI2 | 获取 GTK/Qt 应用的完整控件结构 | ✅ `src/capabilities/linux_desktop_x11/accessibility.rs` |
+| Linux Wayland | xdg-desktop-portal + a11y bus | Wayland 安全限制下获取有限 UI 信息 | ✅ `src/capabilities/linux_desktop_wayland/accessibility.rs` |
 
 **核心循环（混合感知）**：
 ```
@@ -30,17 +35,17 @@
 
 ### 1.2 视觉理解增强
 
-- **OCR**：从截图中提取不可选中的文本（图片中的文字、游戏 UI）
-- **UI 元素检测**：训练小模型识别按钮、输入框、下拉菜单的位置（作为 Accessibility API 的 fallback）
-- **屏幕录制/视频流**：理解动画、加载状态、过渡效果（视频理解模型）
-- **音频捕获**：系统音频分析（错误提示音）、麦克风语音指令输入
+- ✅ **OCR**：从截图中提取不可选中的文本（图片中的文字、游戏 UI）— `src/computer/vision/ocr_rapid.rs`（RapidOCR ONNX，需 `vision` feature）
+- ✅ **UI 元素检测**：训练小模型识别按钮、输入框、下拉菜单的位置（作为 Accessibility API 的 fallback）— `src/computer/vision/ui_onnx.rs`（OmniParser ONNX，需 `vision` feature）
+- ⬜ **屏幕录制/视频流**：理解动画、加载状态、过渡效果（视频理解模型）
+- ⬜ **音频捕获**：系统音频分析（错误提示音）、麦克风语音指令输入
 
 ### 1.3 系统状态感知
 
-- **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏
-- **文件系统监控**：watch 关键目录变化，自动响应配置文件修改
-- **网络状态**：端口占用、网络连通性、防火墙规则
-- **日志聚合**：实时 tail syslog/journald/Event Viewer，异常自动告警
+- 🔄 **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏 — `SystemMonitor` 已有基础查询，缺实时连续监控与告警
+- ✅ **文件系统监控**：watch 关键目录变化，自动响应配置文件修改 — `src/computer/fs_watch.rs`（基于 `notify`  crate）
+- ⬜ **网络状态**：端口占用、网络连通性、防火墙规则
+- ⬜ **日志聚合**：实时 tail syslog/journald/Event Viewer，异常自动告警
 
 ---
 
@@ -50,47 +55,49 @@
 
 当前已有点击、输入、按键。需要补充：
 
-- **鼠标拖拽**：框选文本、拖拽文件、调整滑块
-- **滚轮/手势**：页面滚动、缩放、多指触控板手势
-- **右键菜单**：context menu 操作
-- **组合键序列**：带延时的复杂快捷键（如 IDE 的多步重构）
+- ⬜ **鼠标拖拽**：框选文本、拖拽文件、调整滑块 — `DesktopAction::Drag` 尚未定义
+- ⬜ **滚轮/手势**：页面滚动、缩放、多指触控板手势 — `DesktopAction::Scroll` 尚未定义
+- ⬜ **右键菜单**：context menu 操作
+- ⬜ **组合键序列**：带延时的复杂快捷键（如 IDE 的多步重构）
 
 ### 2.2 应用生命周期管理
 
 Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软件"。
 
-- **启动应用**：支持各种启动方式（双击、命令行、Spotlight/Start Menu）
-- **等待就绪**：检测窗口出现、加载完成（而非固定 sleep）
-- **进程管理**：kill 卡死进程、重启服务、设置进程优先级
-- **软件安装**：包管理器调用（brew/apt/winget），静默安装，等待完成
+- 🔄 **启动应用**：支持各种启动方式（双击、命令行、Spotlight/Start Menu）— `LaunchApp` 已存在，但 `wait_for_ready` 仅为固定 sleep
+- ⬜ **等待就绪**：检测窗口出现、加载完成（而非固定 sleep）
+- 🔄 **进程管理**：kill 卡死进程、重启服务、设置进程优先级 — `KillProcess`/`ListProcesses` 已实现，缺重启与优先级调整
+- ⬜ **软件安装**：包管理器调用（brew/apt/winget），静默安装，等待完成
 
-### 2.3 浏览器自动化
+### 2.3 浏览器自动化 ✅ 已实现
 
 现代桌面应用大量基于 Web（Electron、PWA、SaaS）。截图+点击的误点击率高。
 
-- **Playwright/Selenium 集成**：DOM 级别的精准操作
-- **多标签管理**：切换标签页、获取页面标题/URL
-- **Cookie/Storage 操作**：登录态管理、本地存储读写
-- **下载管理**：监控下载进度、获取下载文件路径
+- ✅ **CDP 浏览器自动化**：基于 `chromiumoxide` 的完整 Chrome DevTools Protocol 集成 — `src/tools/browser.rs` + `src/browser/`
+- ✅ **多标签管理**：切换标签页、获取页面标题/URL — `BrowserAction::ListTabs` / `SwitchTab` / `CloseTab`
+- ✅ **Cookie/Storage 操作**：登录态管理、本地存储读写 — `GetCookies` / `SetCookie` / `ClearCookies`
+- ✅ **下载管理**：监控下载进度、获取下载文件路径 — `SetDownloadBehavior`
+- ✅ **ARIA Snapshot**：LLM 友好的可访问树快照 + ref 标记交互 — `src/browser/aria_snapshot.rs`
+- ✅ **浏览器会话池**：持久化实例缓存、空闲驱逐、多配置 — `BrowserPool`（`src/browser/pool.rs`）
 
-### 2.4 文件系统代理
+### 2.4 文件系统代理 ⬜ 未实现
 
-- **智能文件浏览**：ls + grep 组合，支持自然语言过滤（"找到最近修改的日志文件"）
-- **文件内容操作**：读取、编辑、搜索替换（支持大文件分块）
-- **压缩/解压**：zip/tar/7z 操作
-- **跨设备文件传输**：SCP/Rsync/SMB 集成
+- ⬜ **智能文件浏览**：ls + grep 组合，支持自然语言过滤（"找到最近修改的日志文件"）
+- ⬜ **文件内容操作**：读取、编辑、搜索替换（支持大文件分块）
+- ⬜ **压缩/解压**：zip/tar/7z 操作
+- ⬜ **跨设备文件传输**：SCP/Rsync/SMB 集成
 
-### 2.5 工作流录制与回放
+### 2.5 工作流录制与回放 ⬜ 未实现
 
-- **动作录制**：记录用户的鼠标/键盘/命令序列
-- **参数化回放**：将录制的动作转换为带变量的可复用脚本
-- **异常处理**：回放失败时的自动重试、跳过、人工介入
+- ⬜ **动作录制**：记录用户的鼠标/键盘/命令序列
+- ⬜ **参数化回放**：将录制的动作转换为带变量的可复用脚本
+- ⬜ **异常处理**：回放失败时的自动重试、跳过、人工介入
 
 ---
 
 ## 三、认知层（Cognition）— 从"执行命令"到"解决问题"
 
-### 3.1 目标分解引擎
+### 3.1 目标分解引擎 ✅ 已实现
 
 当前 Agent 主要靠单次 LLM 调用决策。复杂任务需要显式的规划层：
 
@@ -107,29 +114,29 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
   7. 失败时回滚
 ```
 
-- **任务依赖图**：有向无环图（DAG）表示子任务依赖关系
-- **条件分支**：根据中间结果动态调整后续步骤
-- **并行执行**：无依赖的子任务并发执行（如同时检查多个服务器）
+- ✅ **任务依赖图**：有向无环图（DAG）表示子任务依赖关系 — `src/planner/dag.rs`
+- ✅ **条件分支**：根据中间结果动态调整后续步骤 — `TaskExecutor` 支持失败分支与回滚
+- ✅ **并行执行**：无依赖的子任务并发执行（如同时检查多个服务器）— `DagScheduler::next_ready()` + `max_concurrency`
 
-### 3.2 工具使用推理
+### 3.2 工具使用推理 ⬜ 未实现
 
 当前工具是静态注册的。Agent 需要动态发现和组合工具：
 
-- **工具链推理**："要部署代码 → 需要 SSH → SSH 需要密钥 → 检查 ~/.ssh/ 是否存在"
-- **工具合成**：将多个原子工具组合为复合工具（如 "git clone + install deps + build"）
-- **工具学习**：从失败中学习，记住"上次用 xdotool click 失败了，这次改用 ydotool"
+- ⬜ **工具链推理**："要部署代码 → 需要 SSH → SSH 需要密钥 → 检查 ~/.ssh/ 是否存在"
+- ⬜ **工具合成**：将多个原子工具组合为复合工具（如 "git clone + install deps + build"）
+- ⬜ **工具学习**：从失败中学习，记住"上次用 xdotool click 失败了，这次改用 ydotool"
 
 ### 3.3 反思与自纠正
 
-- **动作验证**：执行后主动验证结果是否符合预期（而非盲目执行下一步）
-- **错误诊断**：解析错误信息，定位根因，生成修复策略
-- **经验积累**：将成功案例的解决路径存入向量记忆，供未来复用
+- ✅ **动作验证**：执行后主动验证结果是否符合预期（而非盲目执行下一步）— `VerificationEngine`（`src/computer/verification.rs`）
+- ⬜ **错误诊断**：解析错误信息，定位根因，生成修复策略 — 尚未实现自动错误分析层
+- 🔄 **经验积累**：将成功案例的解决路径存入向量记忆，供未来复用 — 向量记忆（`src/memory/`）已就绪，但未与 Planner 自动关联
 
 ### 3.4 长时程任务管理
 
-- **持久化任务队列**：系统重启后恢复未完成的任务
-- **定时/周期任务**：Cron 的 Agent 化（"每天早上 9 点检查邮件并总结"）
-- **中断与恢复**：用户随时打断，Agent 记住上下文，稍后继续
+- ⬜ **持久化任务队列**：系统重启后恢复未完成的任务 — `src/planner/state.rs` 尚未创建
+- ⬜ **定时/周期任务**：Cron 的 Agent 化（"每天早上 9 点检查邮件并总结"）
+- ✅ **中断与恢复**：用户随时打断，Agent 记住上下文，稍后继续 — `ExecutionController` 已集成到 `ComputerUseLoop` 与 `TaskExecutor`
 
 ---
 
@@ -139,30 +146,30 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 
 当前已有审批系统（human-in-the-loop），但缺少事前限制：
 
-- **路径白名单**：Agent 只能读写指定目录（如 ~/Projects/），禁止访问 ~/.ssh/、/etc/
-- **网络沙箱**：限制可访问的域名/IP 范围，禁止访问内网敏感服务
-- **命令黑名单**：禁止 rm -rf /、format、fdisk 等危险命令
-- **资源配额**：限制 CPU/内存/磁盘使用量，防止 runaway agent
+- ✅ **路径白名单**：Agent 只能读写指定目录（如 ~/Projects/），禁止访问 ~/.ssh/、/etc/ — `SandboxInterceptor::path_allowlist`（`src/tools/sandbox_interceptor.rs`）
+- 🔄 **网络沙箱**：限制可访问的域名/IP 范围，禁止访问内网敏感服务 — `domain_allowlist` 已实现，缺 IP 段限制
+- ✅ **命令黑名单**：禁止 rm -rf /、format、fdisk 等危险命令 — `SandboxInterceptor::command_blacklist`
+- ⬜ **资源配额**：限制 CPU/内存/磁盘使用量，防止 runaway agent
 
 ### 4.2 自动回滚
 
-- **系统快照**：在执行高风险操作前创建还原点
-  - 文件层面：备份原文件再修改
-  - 系统层面：利用 APFS snapshot（macOS）、System Restore（Windows）、Btrfs snapshot（Linux）
-- **失败检测**：超时、非零退出码、异常截图变化 → 触发回滚
-- **逐步提交**：将多步操作设计为可逆的，支持单步 undo
+- 🔄 **系统快照**：在执行高风险操作前创建还原点
+  - 文件层面：备份原文件再修改 — `RollbackManager::snapshot_file()` 已实现（`src/computer/rollback.rs`）
+  - 系统层面：利用 APFS snapshot（macOS）、System Restore（Windows）、Btrfs snapshot（Linux）— ⬜ 尚未实现
+- 🔄 **失败检测**：超时、非零退出码、异常截图变化 → 触发回滚 — `VerificationEngine` 与 `TaskExecutor` 已支持验证失败触发回滚
+- ⬜ **逐步提交**：将多步操作设计为可逆的，支持单步 undo
 
 ### 4.3 敏感操作自动识别
 
-- **模式匹配**：检测到密码输入框、支付页面、删除确认对话框时自动暂停
-- **内容审查**：截图中检测到身份证号、银行卡、API Key 时打码/告警
-- **操作审计**：所有动作记录不可篡改日志（含截图、命令、时间戳）
+- ⬜ **模式匹配**：检测到密码输入框、支付页面、删除确认对话框时自动暂停
+- ⬜ **内容审查**：截图中检测到身份证号、银行卡、API Key 时打码/告警
+- ⬜ **操作审计**：所有动作记录不可篡改日志（含截图、命令、时间戳）
 
 ---
 
 ## 五、Physical AI 核心抽象（跨平台统一层）
 
-### 5.1 统一桌面抽象
+### 5.1 统一桌面抽象 ✅ 已实现
 
 Agent 不应关心底层是 X11 还是 Wayland 还是 Windows。
 
@@ -176,7 +183,10 @@ desktop.read_ui_tree()     // 统一返回控件树结构
 
 实现方式：在 CapabilitySet 之上再封装一层 `PhysicalAiAdapter`，将各平台差异隐藏。
 
-### 5.2 Computer-Use 标准 API
+- ✅ `ComputerAdapter` trait（`src/computer/mod.rs`）— 跨平台统一接口，含 screenshot / click / type / read_ui_tree / execute / wait_for
+- ✅ `create_adapter()` 工厂函数 — 自动检测平台并创建对应适配器
+
+### 5.2 Computer-Use 标准 API ✅ 已实现
 
 对齐 Anthropic Computer Use 的交互范式：
 
@@ -189,59 +199,60 @@ while not task_done:
     result = desktop.verify(action)          # 验证
 ```
 
-- **坐标系统统一**：不同平台 DPI、缩放比例不同，Agent 使用逻辑坐标
-- **截图编码优化**：根据网络状况自动调整分辨率/质量（本地运行时原图，远程运行时压缩）
-- **延迟补偿**：操作后自动等待动画完成，避免在过渡态截图
+- ✅ **标准化循环** — `ComputerUseLoop`（`src/computer/use_loop.rs`）：screenshot → decide → execute → verify
+- 🔄 **坐标系统统一**：不同平台 DPI、缩放比例不同，Agent 使用逻辑坐标 — 基础类型已统一（`Point`, `Rect`），DPI 自动转换待完善
+- ⬜ **截图编码优化**：根据网络状况自动调整分辨率/质量（本地运行时原图，远程运行时压缩）
+- ✅ **延迟补偿**：操作后自动等待动画完成，避免在过渡态截图 — `LoopConfig::settle_delay_ms` + 自适应延时（连续失败时自动加倍）
 
-### 5.3 无头模式（Headless）
+### 5.3 无头模式（Headless） ✅ 已实现
 
-- **虚拟显示器**：Linux（Xvfb）、macOS（ Quartz 虚拟屏）、Windows（RDP 会话）
-- **CI/CD 集成**：在 GitHub Actions 等无 GUI 环境中运行桌面自动化测试
-- **远程控制**：VNC/RDP 网关，通过网络控制远程物理机
+- ✅ **虚拟显示器**：Linux（Xvfb）、macOS（ Quartz 虚拟屏）、Windows（RDP 会话）— `HeadlessComputerAdapter` 已支持 Xvfb（Linux），其他平台 fallback 到无 GUI 模式
+- ✅ **CI/CD 集成**：在 GitHub Actions 等无 GUI 环境中运行桌面自动化测试
+- ⬜ **远程控制**：VNC/RDP 网关，通过网络控制远程物理机
 
 ---
 
 ## 六、扩展层 — 从"电脑"到"物理世界"
 
-### 6.1 移动端桥接
+### 6.1 移动端桥接 ⬜ 未实现
 
-| 平台 | 连接方式 | 能力 |
-|------|---------|------|
-| Android | ADB / Appium | 屏幕镜像、点击、输入、应用管理 |
-| iOS | instruments / WebDriverAgent | 真机/模拟器控制、XCUITest |
+| 平台 | 连接方式 | 能力 | 状态 |
+|------|---------|------|------|
+| Android | ADB / Appium | 屏幕镜像、点击、输入、应用管理 | ⬜ |
+| iOS | instruments / WebDriverAgent | 真机/模拟器控制、XCUITest | ⬜ |
 
-### 6.2 嵌入式与物联网
+### 6.2 嵌入式与物联网 ⬜ 未实现
 
-- **树莓派 / Jetson**：GPIO 控制、摄像头输入、传感器读取
-- **Home Assistant 集成**：控制智能家居设备
-- **串口/USB 设备**：与 Arduino、PLC、示波器等硬件通信
+- ⬜ **树莓派 / Jetson**：GPIO 控制、摄像头输入、传感器读取
+- ⬜ **Home Assistant 集成**：控制智能家居设备
+- ⬜ **串口/USB 设备**：与 Arduino、PLC、示波器等硬件通信
 
-### 6.3 机器人接口
+### 6.3 机器人接口 ⬜ 未实现
 
-- **ROS2 桥接**：接收激光雷达/摄像头数据，输出移动/抓取指令
-- **机械臂控制**：通过 SDK 发送关节角度/末端位姿
+- ⬜ **ROS2 桥接**：接收激光雷达/摄像头数据，输出移动/抓取指令
+- ⬜ **机械臂控制**：通过 SDK 发送关节角度/末端位姿
 
 ---
 
 ## 七、演进优先级
 
 ### Phase 1：基础可用（1-2 个月）
-1. **Accessibility API 集成** — macOS AXUIElement、Windows UIAutomation
-2. **统一桌面抽象层** — 隐藏平台差异的 `PhysicalAiAdapter`
-3. **浏览器自动化** — Playwright 集成（覆盖 80% 现代应用）
-4. **动作验证循环** — 执行后自动验证结果，失败重试
+1. ✅ **Accessibility API 集成** — macOS AXUIElement、Windows UIAutomation、Linux AT-SPI2
+2. ✅ **统一桌面抽象层** — 隐藏平台差异的 `ComputerAdapter`
+3. ✅ **浏览器自动化** — CDP (chromiumoxide) 集成，覆盖导航/点击/输入/截图/标签管理/Cookie/下载
+4. ✅ **动作验证循环** — 执行后自动验证结果，失败重试 — `VerificationEngine` + `ComputerUseLoop`
 
 ### Phase 2：生产就绪（2-4 个月）
-5. **路径/网络沙箱** — 事前限制，降低审批频率
-6. **自动回滚** — 文件备份 + 系统快照
-7. **长时程任务管理** — 持久化队列、中断恢复
-8. **目标分解引擎** — 复杂任务自动拆解为 DAG
+5. 🔄 **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单已完成，缺 IP 段限制 + 资源配额
+6. 🔄 **自动回滚** — 文件备份 + 系统快照 — 文件级 `RollbackManager` 已完成，缺系统级快照
+7. 🔄 **长时程任务管理** — 持久化队列、中断恢复 — 中断/恢复已完成，缺持久化队列 + 定时任务
+8. ✅ **目标分解引擎** — 复杂任务自动拆解为 DAG — `GoalPlanner` + `DagScheduler` + `TaskExecutor`
 
 ### Phase 3：生态扩展（4-6 个月）
-9. **移动端桥接** — Android/iOS 控制
-10. **无头模式** — CI/CD、远程服务器自动化
-11. **工作流录制回放** — 用户示范 → Agent 学习
-12. **VLM 微调** — 针对桌面 UI 场景优化的小模型
+9. ⬜ **移动端桥接** — Android/iOS 控制
+10. ✅ **无头模式** — CI/CD、远程服务器自动化 — `HeadlessComputerAdapter` + Xvfb
+11. ⬜ **工作流录制回放** — 用户示范 → Agent 学习
+12. ✅ **VLM 微调** — 针对桌面 UI 场景优化的小模型 — OmniParser ONNX 已集成（`vision` feature）
 
 ---
 
@@ -252,12 +263,13 @@ while not task_done:
 │  Agent 层（已有）                                         │
 │  - 多 Agent 协作、向量记忆、MCP、审批系统                   │
 ├─────────────────────────────────────────────────────────┤
-│  规划层（待实现）                                         │
-│  - 目标分解引擎、任务 DAG、长时程管理                       │
+│  规划层（✅ 已实现）                                       │
+│  - 目标分解引擎（GoalPlanner）、任务 DAG、长时程管理         │
+│  - 持久化任务队列（⬜ 待实现）                              │
 ├─────────────────────────────────────────────────────────┤
-│  抽象层（待实现）←── 本路线图核心                          │
-│  - PhysicalAiAdapter（跨平台统一桌面接口）                  │
-│  - ComputerUseAPI（截图-决策-执行-验证循环）                │
+│  抽象层（✅ 已实现）←── 本路线图核心                        │
+│  - ComputerAdapter（跨平台统一桌面接口）                    │
+│  - ComputerUseLoop（截图-决策-执行-验证循环）               │
 ├─────────────────────────────────────────────────────────┤
 │  能力层（已实现）                                         │
 │  - CapabilitySet：X11 / Wayland / Windows / macOS / Linux  │
@@ -285,19 +297,20 @@ while not task_done:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 4: Agent / Planner（新增）                            │
+│  Layer 4: Agent / Planner（✅ 已实现）                        │
 │  - GoalPlanner: 目标分解、DAG 调度、长时程任务                │
 │  - ComputerUseLoop: 截图→决策→执行→验证 循环                │
+│  - 持久化任务队列（⬜ 待实现）                                 │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 3: PhysicalAiAdapter（新增）                          │
+│  Layer 3: ComputerAdapter（✅ 已实现）                        │
 │  - 跨平台统一接口：screenshot / click / type / read_ui_tree  │
 │  - 隐藏 X11/Wayland/Windows/macOS 差异                       │
 │  - 坐标系统统一（逻辑坐标，自动处理 DPI 缩放）                │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: CapabilitySet + ToolRegistry（已有，扩展）          │
-│  - 新增各平台 Accessibility Tool                             │
-│  - 新增 BrowserAutomation Tool                             │
-│  - 新增 ApplicationLifecycle Tool                          │
+│  - ✅ 各平台 Accessibility Tool                              │
+│  - ⬜ BrowserAutomation Tool                                │
+│  - 🔄 ApplicationLifecycle Tool（LaunchApp/KillProcess 已有）│
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 1: 平台原生实现（已有，扩展）                          │
 │  - macOS: AXUIElement（已有 AppleScript 基础）                │
@@ -451,9 +464,9 @@ impl PhysicalAiAdapter for MacosPhysicalAdapter {
 
 ---
 
-#### 1.2 Accessibility API 补齐（除 macOS 外）
+#### 1.2 Accessibility API 补齐 ✅ 已实现
 
-**现状**：macOS 已有 `AccessibilityTool`（AppleScript）。Windows、Linux X11、Linux Wayland 缺少结构化 UI 树获取能力。
+**现状**：macOS/Windows/Linux X11/Linux Wayland 均已实现结构化 UI 树获取能力。
 
 ##### Windows — `src/capabilities/windows/accessibility.rs`
 
@@ -505,15 +518,15 @@ src/capabilities/linux_desktop_wayland/accessibility.rs  # 新增（有限支持
 
 ---
 
-#### 1.3 动作验证循环 — `VerificationEngine`
+#### 1.3 动作验证循环 — `VerificationEngine` ✅ 已实现
 
 **目标**：执行动作后自动验证结果，失败时重试或回滚。
 
-**新增模块**：
+**模块位置**：
 
 ```
-src/physical_ai/
-└── verification.rs
+src/computer/
+└── verification.rs      # VerificationEngine + VerificationCriteria
 ```
 
 ```rust
@@ -619,24 +632,19 @@ pub enum BrowserAction {
 
 ### 9.3 Phase 2: 生产就绪（安全 + 规划，2-4 个月）
 
-#### 2.1 路径/网络/命令沙箱强化
+#### 2.1 路径/网络/命令沙箱强化 🔄 部分实现
 
-**现状**：`ToolContext` 已有 `workspace_only`、`allowed_paths`、`allowed_commands`、`sandboxed` 字段，但沙箱规则的实际执行在各 Tool 中分散实现。
-
-**改进**：在 `ToolRegistry::execute()` 中统一拦截。
+**现状**：`SandboxInterceptor`（`src/tools/sandbox_interceptor.rs`）已实现统一拦截，在 `ToolRegistry::execute()` 的 policy hook 中执行。
 
 ```rust
-// src/tools/sandbox.rs — 已有 SandboxedTool，扩展为统一拦截层
+// src/tools/sandbox_interceptor.rs
 
 pub struct SandboxInterceptor {
-    // 命令黑名单
-    command_blacklist: HashSet<String>,
-    // 路径黑名单（正则匹配）
-    path_blacklist: Vec<Regex>,
-    // 网络域名白名单
-    domain_allowlist: Vec<String>,
-    // 敏感操作检测器
-    sensitive_detector: SensitiveOperationDetector,
+    command_blacklist: Vec<Regex>,      // ✅ 已实现
+    path_blacklist: Vec<Regex>,         // ✅ 已实现
+    path_allowlist: Vec<PathBuf>,       // ✅ 已实现（2026-06-08）
+    domain_allowlist: Vec<String>,      // ✅ 已实现
+    // sensitive_detector: ...           // ⬜ 待实现（PII / API Key 检测）
 }
 
 impl SandboxInterceptor {
@@ -673,13 +681,13 @@ impl SandboxInterceptor {
 
 ---
 
-#### 2.2 自动回滚 — `RollbackManager`
+#### 2.2 自动回滚 — `RollbackManager` 🔄 部分实现
 
-**新增模块**：
+**模块位置**：
 
 ```
-src/physical_ai/
-└── rollback.rs
+src/computer/
+└── rollback.rs          # 文件级 RollbackManager（文件备份 + 恢复）
 ```
 
 ```rust
@@ -728,18 +736,18 @@ impl RollbackManager {
 
 ---
 
-#### 2.3 目标分解引擎 — `GoalPlanner`
+#### 2.3 目标分解引擎 — `GoalPlanner` ✅ 已实现
 
-**新增模块**：
+**模块位置**：
 
 ```
 src/planner/
-├── mod.rs
-├── dag.rs          # 有向无环图任务调度
-├── decomposer.rs   # LLM-based 目标分解
-├── executor.rs     # 任务执行引擎
-├── state.rs        # 任务状态持久化
-└── verifier.rs     # 子任务完成验证
+├── mod.rs          # ✅ Plan, Task, GoalPlanner
+├── dag.rs          # ✅ DagScheduler — 有向无环图任务调度与拓扑排序
+├── decomposer.rs   # ✅ LLM-based 目标分解
+├── executor.rs     # ✅ TaskExecutor — 任务执行引擎（并发 + 回滚 + ExecutionController）
+├── state.rs        # ⬜ 任务状态持久化（尚未创建）
+└── verifier.rs     # ✅ 子任务完成验证（已融入 verification.rs）
 ```
 
 **核心设计**：
@@ -911,9 +919,9 @@ pub enum TaskStatus {
 
 ### 9.4 Phase 3: 生态扩展（4-6 个月）
 
-#### 3.1 无头模式 — `HeadlessPhysicalAdapter`
+#### 3.1 无头模式 — `HeadlessComputerAdapter` ✅ 已实现
 
-**代码位置**：`src/physical_ai/platform/headless.rs`
+**代码位置**：`src/computer/headless.rs`
 
 ```rust
 /// 无 GUI 环境的适配器（服务器、CI/CD）
@@ -1050,7 +1058,7 @@ src/capabilities/
 | W5-6 | Windows AccessibilityTool | `src/capabilities/windows/accessibility.rs` | WindowsSet 新增工具 |
 | W7-8 | Linux X11 AccessibilityTool | `src/capabilities/linux_desktop_x11/accessibility.rs` | X11Set 新增工具 |
 | W9-10 | `VerificationEngine` | `src/physical_ai/verification.rs` | 新增，供 adapter 使用 |
-| W11-12 | BrowserAutomation 扩展 | 扩展 `src/tools/browser.rs` | 可能新增依赖（playwright） |
+| W11-12 | BrowserAutomation 扩展 ✅ | `src/tools/browser.rs` + `src/browser/` | 基于 chromiumoxide CDP，已完整实现 |
 | W13-16 | `GoalPlanner` + DAG 执行器 | `src/planner/` | 纯新增，上层模块 |
 | W17-18 | SandboxInterceptor 强化 | 扩展 `src/tools/sandbox.rs` | 修改 ToolRegistry::execute |
 | W19-20 | `RollbackManager` | `src/physical_ai/rollback.rs` | 新增，高风险工具集成 |
@@ -1072,11 +1080,20 @@ src/capabilities/
 
 ### 9.8 总结
 
-当前 `CapabilitySet + ToolRegistry` 架构已经非常接近目标态。核心工作是：
+当前 `CapabilitySet + ToolRegistry` 架构已经非常接近目标态。已实现的核心能力：
 
-1. **在 Layer 1 补齐 Accessibility**（Windows UIAutomation、Linux AT-SPI2）
-2. **在 Layer 2 扩展原子工具**（浏览器自动化、应用生命周期）
-3. **在 Layer 3 构建 PhysicalAiAdapter**（跨平台统一抽象，包装现有 Tool）
-4. **在 Layer 4 构建 GoalPlanner**（目标分解 + DAG 执行 + 状态持久化）
+1. ✅ **Layer 1 平台层**：各平台 Accessibility API（macOS/Windows/Linux）已补齐
+2. ✅ **Layer 3 统一抽象**：`ComputerAdapter` trait + 各平台适配器 + `ComputerUseLoop`
+3. ✅ **Layer 4 规划层**：`GoalPlanner` + `DagScheduler` + `TaskExecutor` + `VerificationEngine`
+4. ✅ **安全层**：`SandboxInterceptor`（路径白名单/黑名单、命令黑名单、域名白名单）+ `RollbackManager`（文件级）
+
+剩余重点工作（按优先级排序）：
+
+1. **Layer 2 原子工具扩展**：鼠标拖拽 / 滚轮 / 右键菜单、软件安装（brew/apt/winget）、智能文件浏览
+2. **敏感内容检测**（PII / API Key / 密码框识别）— 安全层最后缺口
+3. **持久化任务队列**（`src/planner/state.rs`）— 系统重启恢复、定时/周期任务
+4. **系统级快照**（APFS / Btrfs / System Restore）— 回滚能力补完
+5. **截图编码优化** — 根据网络状况自动调整分辨率/质量
+6. **扩展层**：移动端桥接（Android/iOS）、物联网（GPIO/Home Assistant）、机器人接口（ROS2）
 
 现有代码中 `ToolContext` 的沙箱能力、`ToolRegistry` 的审批/熔断/缓存机制、`CapabilityRegistry` 的平台检测逻辑，都为上层建设提供了坚实基础，无需推倒重来。
