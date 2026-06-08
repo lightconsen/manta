@@ -37,15 +37,15 @@
 
 - ✅ **OCR**：从截图中提取不可选中的文本（图片中的文字、游戏 UI）— `src/computer/vision/ocr_rapid.rs`（RapidOCR ONNX，需 `vision` feature）
 - ✅ **UI 元素检测**：训练小模型识别按钮、输入框、下拉菜单的位置（作为 Accessibility API 的 fallback）— `src/computer/vision/ui_onnx.rs`（OmniParser ONNX，需 `vision` feature）
-- ⬜ **屏幕录制/视频流**：理解动画、加载状态、过渡效果（视频理解模型）
-- ⬜ **音频捕获**：系统音频分析（错误提示音）、麦克风语音指令输入
+- ✅ **屏幕录制/视频流**：FFmpeg 跨平台捕获 + 环形缓冲区 + 场景稳定性检测 — `ScreenRecorder` 已实现（`src/computer/screen_recorder.rs`）
+- ✅ **音频捕获**：麦克风输入（cpal）+ VAD + 音频事件分类（错误提示音/通知/语音）— `AudioCapture` 已实现（`src/computer/audio.rs`）
 
 ### 1.3 系统状态感知
 
 - ✅ **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏 — `SystemMonitor` + `ProcessMonitor`（实时轮询、阈值告警、冷却去重）已实现（`src/computer/system.rs`）
 - ✅ **文件系统监控**：watch 关键目录变化，自动响应配置文件修改 — `src/computer/fs_watch.rs`（基于 `notify`  crate）
 - ✅ **网络状态**：端口占用、网络连通性、防火墙规则 — `src/computer/network.rs`（`NetworkInspector`：跨平台端口扫描、ICMP ping、TCP 连通性测试、防火墙规则读取）
-- ⬜ **日志聚合**：实时 tail syslog/journald/Event Viewer，异常自动告警
+- ✅ **日志聚合**：实时 tail syslog/journald/Event Viewer/macOS unified log + 告警规则引擎 — `LogAggregator` 已实现（`src/computer/log_aggregator.rs`）
 
 ---
 

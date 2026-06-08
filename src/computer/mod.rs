@@ -28,6 +28,9 @@ pub mod rollback;
 pub mod headless;
 pub mod fs_watch;
 pub mod network;
+pub mod log_aggregator;
+pub mod audio;
+pub mod screen_recorder;
 #[cfg(feature = "vision")]
 pub mod vision;
 
@@ -46,6 +49,9 @@ pub use rollback::{RollbackManager, Snapshot};
 pub use headless::{HeadlessComputerAdapter, VirtualDisplay};
 pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher};
 pub use network::{FirewallRule, NetworkInspector, PingResult, PortEntry, TcpConnectResult};
+pub use log_aggregator::{AlertAction, AlertEvent, LogAggregator, LogAlertRule, LogEntry, LogLevel, LogSource};
+pub use audio::{AudioCapture, AudioSegment, AudioSource, DetectedAudioEvent};
+pub use screen_recorder::{RecorderConfig, Rect as RecorderRect, ScreenRecorder, VideoFrame};
 
 /// Unified error type for computer operations.
 #[derive(Debug, thiserror::Error)]

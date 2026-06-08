@@ -119,6 +119,9 @@ flate2 = "1.1.9"
 zip = "2"
 tar = "0.4"
 
+# Audio capture (cross-platform I/O)
+cpal = "0.15"
+
 # Embed frontend assets into binary for single-file distribution
 rust-embed = "8"
 
