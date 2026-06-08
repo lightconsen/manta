@@ -6,16 +6,22 @@
 
 use crate::computer::{ComputerAdapter, DesktopAction, VerificationCriteria};
 use crate::computer::VerificationEngine;
+use crate::memory::MemoryStore;
+use crate::providers::Provider;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub mod dag;
+pub mod decomposer;
 pub mod executor;
+pub mod state;
 pub mod workflow;
 
 pub use dag::DagScheduler;
+pub use decomposer::{GoalDecomposer, SubTask};
 pub use executor::TaskExecutor;
+pub use state::TaskStateStore;
 pub use workflow::{FailureStrategy, RecordedStep, StepResult, Workflow, WorkflowAction, WorkflowPlayer, WorkflowRecorder};
 
 /// Unique identifier for a task.
@@ -196,17 +202,103 @@ pub struct GoalPlanner {
     #[allow(dead_code)]
     verifier: VerificationEngine,
     executor: TaskExecutor,
+    decomposer: GoalDecomposer,
+    #[allow(dead_code)]
+    memory: Option<Arc<dyn MemoryStore>>,
+    state_store: Option<TaskStateStore>,
 }
 
 impl GoalPlanner {
+    /// Create a new planner with only the adapter (no LLM decomposition).
     pub fn new(adapter: Arc<dyn ComputerAdapter>) -> Self {
         let verifier = VerificationEngine::new(adapter.clone());
         let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
+        // Dummy decomposer — will error if used.
+        let decomposer = GoalDecomposer::new(Arc::new(DummyProvider));
         Self {
             adapter,
             verifier,
             executor,
+            decomposer,
+            memory: None,
+            state_store: None,
         }
+    }
+
+    /// Create a planner backed by an LLM provider for automatic goal decomposition.
+    pub fn with_provider(adapter: Arc<dyn ComputerAdapter>, provider: Arc<dyn Provider>) -> Self {
+        let verifier = VerificationEngine::new(adapter.clone());
+        let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
+        let decomposer = GoalDecomposer::new(provider);
+        Self {
+            adapter,
+            verifier,
+            executor,
+            decomposer,
+            memory: None,
+            state_store: None,
+        }
+    }
+
+    /// Attach a memory store for retrieval-augmented planning.
+    pub fn with_memory(mut self, memory: Arc<dyn MemoryStore>) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+
+    /// Attach a persistent state store for crash recovery.
+    pub fn with_state_store(mut self, store: TaskStateStore) -> Self {
+        self.state_store = Some(store);
+        self
+    }
+
+    /// Decompose a high-level goal into an executable [`Plan`].
+    ///
+    /// The LLM is given the list of available tool names (taken from the
+    /// registry if one is available) and returns a DAG of [`SubTask`]s which
+    /// are converted into [`Task`]s.
+    pub async fn decompose(&self, goal: &str, available_tools: &[String]) -> crate::Result<Plan> {
+        let subtasks = self.decomposer.decompose(goal, available_tools).await?;
+        let mut plan = Plan::new(goal);
+        for st in subtasks {
+            plan.add_task(st.into_task());
+        }
+        Ok(plan)
+    }
+
+    /// End-to-end goal achievement: decompose, execute, verify.
+    ///
+    /// 1. Decompose the goal into a [`Plan`].
+    /// 2. Persist the plan if a [`TaskStateStore`] is configured.
+    /// 3. Execute the plan via [`TaskExecutor`].
+    /// 4. Mark the plan completed in the state store.
+    /// 5. Return the [`PlanResult`].
+    pub async fn achieve(
+        &self,
+        goal: &str,
+        available_tools: &[String],
+    ) -> crate::Result<PlanResult> {
+        let mut plan = self.decompose(goal, available_tools).await?;
+
+        let plan_id = format!("plan_{}", uuid::Uuid::new_v4());
+
+        if let Some(ref store) = self.state_store {
+            store.save_plan(&plan_id, &plan).await?;
+        }
+
+        // Execute and update persisted state after each task change.
+        let result = if let Some(ref store) = self.state_store {
+            self.execute_plan_with_persistence(&mut plan, &plan_id, store)
+                .await?
+        } else {
+            self.executor.execute(&mut plan).await?
+        };
+
+        if let Some(ref store) = self.state_store {
+            store.complete_plan(&plan_id, result.success).await?;
+        }
+
+        Ok(result)
     }
 
     /// Execute a pre-built plan.
@@ -225,6 +317,93 @@ impl GoalPlanner {
             plan.add_task(task);
         }
         self.execute_plan(&mut plan).await
+    }
+
+    /// Resume an incomplete plan from the state store.
+    pub async fn resume_plan(&self, plan_id: &str) -> crate::Result<Option<PlanResult>> {
+        let store = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| crate::error::SyscityError::Validation(
+                "No state store configured".to_string(),
+            ))?;
+
+        let mut plan = match store.load_plan(plan_id).await? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        if plan.is_complete() {
+            return Ok(Some(PlanResult {
+                success: !plan.has_failures(),
+                goal: plan.goal.clone(),
+                tasks_completed: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::Completed)).count(),
+                tasks_failed: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::Failed)).count(),
+                tasks_rolled_back: plan.tasks.values().filter(|t| matches!(t.status, TaskStatus::RolledBack)).count(),
+                message: "Plan already complete".to_string(),
+            }));
+        }
+
+        let result = self.execute_plan_with_persistence(&mut plan, plan_id, store).await?;
+        store.complete_plan(plan_id, result.success).await?;
+        Ok(Some(result))
+    }
+
+    /// Internal: execute a plan while persisting task state updates.
+    async fn execute_plan_with_persistence(
+        &self,
+        plan: &mut Plan,
+        plan_id: &str,
+        store: &TaskStateStore,
+    ) -> crate::Result<PlanResult> {
+        // We wrap the standard executor but hook into state updates.
+        // For now we re-use the executor and persist the final state.
+        // A future enhancement could wrap the adapter to intercept every
+        // task completion / failure in real time.
+        let result = self.executor.execute(plan).await?;
+
+        // Persist final task states.
+        for task in plan.tasks.values() {
+            store
+                .save_task(plan_id, task)
+                .await?;
+        }
+
+        Ok(result)
+    }
+}
+
+/// Minimal dummy provider so that `GoalPlanner::new()` compiles without requiring
+/// a real LLM provider.  Calls to `decompose` will fail gracefully.
+#[derive(Debug)]
+struct DummyProvider;
+
+#[async_trait::async_trait]
+impl Provider for DummyProvider {
+    fn name(&self) -> &str {
+        "dummy"
+    }
+    fn default_model(&self) -> &str {
+        "dummy"
+    }
+    fn supports_tools(&self) -> bool {
+        false
+    }
+    fn max_context(&self) -> usize {
+        0
+    }
+    async fn complete(&self, _request: crate::providers::CompletionRequest) -> crate::Result<crate::providers::CompletionResponse> {
+        Err(crate::error::SyscityError::Validation(
+            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition.".to_string(),
+        ))
+    }
+    async fn stream(&self, _request: crate::providers::CompletionRequest) -> crate::Result<crate::providers::CompletionStream> {
+        Err(crate::error::SyscityError::Validation(
+            "No LLM provider configured. Use GoalPlanner::with_provider() to enable decomposition.".to_string(),
+        ))
+    }
+    async fn health_check(&self) -> crate::Result<bool> {
+        Ok(false)
     }
 }
 

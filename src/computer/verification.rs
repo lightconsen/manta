@@ -7,11 +7,13 @@
 use crate::computer::{
     ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
 };
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Criteria used to verify that an action produced the expected outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum VerificationCriteria {
     /// UI tree must contain an element with the given role (and optionally label).
     UiTreeContains { role: String, label: Option<String> },
