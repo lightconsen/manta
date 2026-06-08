@@ -83,7 +83,20 @@ impl GoalDecomposer {
         goal: &str,
         available_tools: &[String],
     ) -> crate::Result<Vec<SubTask>> {
-        let prompt = build_decomposition_prompt(goal, available_tools);
+        self.decompose_with_context(goal, available_tools, "").await
+    }
+
+    /// Decompose a goal with additional context (e.g., past experiences).
+    ///
+    /// The `extra_context` string is appended to the user prompt so the LLM
+    /// can learn from previous similar plans.
+    pub async fn decompose_with_context(
+        &self,
+        goal: &str,
+        available_tools: &[String],
+        extra_context: &str,
+    ) -> crate::Result<Vec<SubTask>> {
+        let prompt = build_decomposition_prompt(goal, available_tools, extra_context);
         let request = CompletionRequest {
             messages: vec![
                 Message::system(DECOMPOSITION_SYSTEM_PROMPT),
@@ -203,17 +216,24 @@ Example output:
   }
 ]"#;
 
-fn build_decomposition_prompt(goal: &str, available_tools: &[String]) -> String {
+fn build_decomposition_prompt(goal: &str, available_tools: &[String], extra_context: &str) -> String {
     let tools_str = if available_tools.is_empty() {
         "No specific tool list provided.".to_string()
     } else {
         format!("Available tools:\n{}", available_tools.join(", "))
     };
 
-    format!(
-        "Goal: {}\n\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON array.",
-        goal, tools_str
-    )
+    if extra_context.is_empty() {
+        format!(
+            "Goal: {}\n\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON array.",
+            goal, tools_str
+        )
+    } else {
+        format!(
+            "Goal: {}\n\n{}\n{}\n\nPlease decompose the goal into subtasks and output ONLY the JSON array.",
+            goal, tools_str, extra_context
+        )
+    }
 }
 
 fn strip_code_fences(text: &str) -> &str {

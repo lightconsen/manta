@@ -7,18 +7,22 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```rust
 //! use syscity::tools::sandbox_interceptor::SandboxInterceptor;
-//! use syscity::tools::ToolRegistry;
 //!
+//! # async fn demo() {
 //! let interceptor = SandboxInterceptor::default();
-//! let registry = ToolRegistry::new().with_policy_hook(interceptor.as_policy_hook());
+//! let hook = interceptor.as_policy_hook();
+//! let decision = hook("shell", &serde_json::json!({"command": "echo hello"})).await;
+//! assert!(decision.is_allow());
+//! # }
 //! ```
 
 use super::hooks::ToolPolicyDecision;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,6 +35,8 @@ pub enum SandboxError {
     PathBlocked { path: String, pattern: String },
     /// A network request to a non-allowlisted domain was attempted.
     NetworkBlocked { domain: String, reason: String },
+    /// A network request to a blocked IP address or CIDR range was attempted.
+    IpBlocked { ip: String, reason: String },
     /// Sensitive content was detected (does not block, flags for review).
     SensitiveDetected { kind: String, detail: String },
 }
@@ -46,6 +52,9 @@ impl std::fmt::Display for SandboxError {
             }
             SandboxError::NetworkBlocked { domain, reason } => {
                 write!(f, "Network domain '{}' blocked: {}", domain, reason)
+            }
+            SandboxError::IpBlocked { ip, reason } => {
+                write!(f, "IP address '{}' blocked: {}", ip, reason)
             }
             SandboxError::SensitiveDetected { kind, detail } => {
                 write!(f, "Sensitive content detected ({}): {}", kind, detail)
@@ -68,6 +77,12 @@ pub struct SandboxInterceptor {
     path_blacklist: Vec<Regex>,
     /// If non-empty, only these domains may be accessed by network tools.
     domain_allowlist: Vec<String>,
+    /// If non-empty, only IP addresses in these CIDR ranges may be accessed.
+    /// Example: ["127.0.0.0/8", "10.0.0.0/8"]. When empty, no IP restriction.
+    ip_allowlist: Vec<String>,
+    /// IP addresses or CIDR ranges that are unconditionally blocked.
+    /// Example: ["192.168.1.0/24", "10.0.0.5"].
+    ip_blocklist: Vec<String>,
     /// If non-empty, only paths under these prefixes are permitted.
     /// When both `path_allowlist` and `path_blacklist` are configured,
     /// the allowlist is checked first (path must match at least one
@@ -133,6 +148,8 @@ impl SandboxInterceptor {
             command_blacklist,
             path_blacklist,
             domain_allowlist: vec![],
+            ip_allowlist: vec![],
+            ip_blocklist: vec![],
             path_allowlist: vec![],
             flag_sensitive_for_approval: true,
         }
@@ -155,6 +172,21 @@ impl SandboxInterceptor {
     /// Restrict network access to the given domains only.
     pub fn allow_domains(mut self, domains: Vec<String>) -> Self {
         self.domain_allowlist = domains;
+        self
+    }
+
+    /// Restrict network access to the given IP ranges (CIDR notation) only.
+    ///
+    /// When non-empty, any IP address in tool arguments must fall within
+    /// at least one of the listed CIDR ranges.
+    pub fn allow_ip_ranges(mut self, ranges: Vec<String>) -> Self {
+        self.ip_allowlist = ranges;
+        self
+    }
+
+    /// Block specific IP addresses or CIDR ranges unconditionally.
+    pub fn block_ip_ranges(mut self, ranges: Vec<String>) -> Self {
+        self.ip_blocklist = ranges;
         self
     }
 
@@ -233,7 +265,36 @@ impl SandboxInterceptor {
             }
         }
 
-        // 5. Sensitive content detection (does not block, just flags)
+        // 5. IP range allowlist / blocklist
+        if let Some(ip) = extract_ip(args) {
+            // Blocklist checked first (deny always wins)
+            for blocked in &self.ip_blocklist {
+                if ip_in_range(&ip, blocked) {
+                    return Err(SandboxError::IpBlocked {
+                        ip: ip.clone(),
+                        reason: format!("matches blocklist entry '{}'", blocked),
+                    });
+                }
+            }
+            // Allowlist checked second
+            if !self.ip_allowlist.is_empty() {
+                let allowed = self
+                    .ip_allowlist
+                    .iter()
+                    .any(|range| ip_in_range(&ip, range));
+                if !allowed {
+                    return Err(SandboxError::IpBlocked {
+                        ip: ip.clone(),
+                        reason: format!(
+                            "not in allowlist: {:?}",
+                            self.ip_allowlist
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 6. Sensitive content detection (does not block, just flags)
         if let Some(detection) = detect_sensitive_content(name, args) {
             return Err(detection);
         }
@@ -282,6 +343,14 @@ impl SandboxInterceptor {
                     reason: format!(
                         "Sandbox: network domain '{}' is blocked — {}",
                         domain, reason
+                    ),
+                }
+            }
+            Err(SandboxError::IpBlocked { ip, reason }) => {
+                ToolPolicyDecision::Deny {
+                    reason: format!(
+                        "Sandbox: IP address '{}' is blocked — {}",
+                        ip, reason
                     ),
                 }
             }
@@ -393,6 +462,101 @@ fn extract_host(s: &str) -> String {
     let without_path = s.split('/').next().unwrap_or(s);
     let host = without_path.split(':').next().unwrap_or(without_path);
     host.to_lowercase()
+}
+
+/// Try to extract an IP address from tool arguments.
+fn extract_ip(args: &Value) -> Option<String> {
+    for field in ["url", "endpoint", "host", "ip", "address", "target"] {
+        if let Some(s) = args.get(field).and_then(|v| v.as_str()) {
+            if let Some(ip) = parse_ip(s) {
+                return Some(ip);
+            }
+        }
+    }
+    None
+}
+
+/// Parse an IP address from a URL or plain string.
+fn parse_ip(s: &str) -> Option<String> {
+    // Handle URLs with scheme
+    let without_scheme = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+        .or_else(|| s.strip_prefix("ftp://"))
+        .or_else(|| s.strip_prefix("ssh://"))
+        .unwrap_or(s);
+    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+    let host = if host_port.starts_with('[') {
+        // IPv6 bracket notation: [::1]:8080 or [::1]
+        host_port
+            .split(']')
+            .next()
+            .unwrap_or(host_port)
+            .strip_prefix('[')
+            .unwrap_or(host_port)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+
+    // Try to parse as IP
+    if host.parse::<IpAddr>().is_ok() {
+        return Some(host.to_string());
+    }
+    None
+}
+
+/// Check if an IP address is within a CIDR range or matches exactly.
+fn ip_in_range(ip: &str, range: &str) -> bool {
+    let ip_addr = match ip.parse::<IpAddr>() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+
+    // Exact match
+    if ip == range {
+        return true;
+    }
+
+    // CIDR notation
+    let (network, prefix_len) = match range.split_once('/') {
+        Some((net, prefix)) => {
+            let len = match prefix.parse::<u8>() {
+                Ok(n) => n,
+                Err(_) => return false,
+            };
+            (net, len)
+        }
+        None => return false,
+    };
+
+    let network_addr = match network.parse::<IpAddr>() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+
+    match (ip_addr, network_addr) {
+        (IpAddr::V4(ip), IpAddr::V4(network)) => {
+            let ip_u32 = u32::from(ip);
+            let net_u32 = u32::from(network);
+            let mask = if prefix_len == 0 {
+                0u32
+            } else {
+                (!0u32) << (32 - prefix_len)
+            };
+            (ip_u32 & mask) == (net_u32 & mask)
+        }
+        (IpAddr::V6(ip), IpAddr::V6(network)) => {
+            let ip_u128 = u128::from(ip);
+            let net_u128 = u128::from(network);
+            let mask = if prefix_len == 0 {
+                0u128
+            } else {
+                (!0u128) << (128 - prefix_len)
+            };
+            (ip_u128 & mask) == (net_u128 & mask)
+        }
+        _ => false,
+    }
 }
 
 /// Detect sensitive content in tool arguments.
@@ -570,5 +734,86 @@ mod tests {
         let args = json!({"command": "echo hello"});
         let decision = hook("shell", &args).await;
         assert!(decision.is_allow());
+    }
+
+    #[test]
+    fn test_ip_blocklist_blocks_exact() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .block_ip_ranges(vec!["192.168.1.5".to_string()]);
+        let args = json!({"url": "http://192.168.1.5/api"});
+        let err = interceptor.check("web_fetch", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "192.168.1.5"));
+    }
+
+    #[test]
+    fn test_ip_blocklist_blocks_cidr() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .block_ip_ranges(vec!["10.0.0.0/8".to_string()]);
+        let args = json!({"host": "10.50.100.1"});
+        let err = interceptor.check("shell", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "10.50.100.1"));
+    }
+
+    #[test]
+    fn test_ip_allowlist_blocks_unknown() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_ip_ranges(vec!["127.0.0.0/8".to_string()]);
+        let args = json!({"endpoint": "192.168.1.1"});
+        let err = interceptor.check("web_fetch", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "192.168.1.1"));
+    }
+
+    #[test]
+    fn test_ip_allowlist_allows_in_range() {
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_ip_ranges(vec!["127.0.0.0/8".to_string(), "10.0.0.0/8".to_string()]);
+        let args = json!({"url": "http://10.0.0.1:8080/path"});
+        assert!(interceptor.check("web_fetch", &args).is_ok());
+    }
+
+    #[test]
+    fn test_ip_blocklist_wins_over_allowlist() {
+        // Blocklist is checked first, so a blocked IP in the allowlist range is still denied
+        let interceptor = SandboxInterceptor::with_defaults()
+            .allow_ip_ranges(vec!["10.0.0.0/8".to_string()])
+            .block_ip_ranges(vec!["10.1.0.0/16".to_string()]);
+        let args = json!({"host": "10.1.50.1"});
+        let err = interceptor.check("web_fetch", &args).unwrap_err();
+        assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "10.1.50.1"));
+    }
+
+    #[test]
+    fn test_ip_check_allows_when_no_ip_restrictions() {
+        let interceptor = SandboxInterceptor::with_defaults();
+        let args = json!({"url": "http://192.168.1.1"});
+        assert!(interceptor.check("web_fetch", &args).is_ok());
+    }
+
+    #[test]
+    fn test_parse_ip_from_url() {
+        assert_eq!(parse_ip("https://1.2.3.4/path"), Some("1.2.3.4".to_string()));
+        assert_eq!(parse_ip("http://[::1]:8080"), Some("::1".to_string()));
+        assert_eq!(parse_ip("example.com"), None);
+    }
+
+    #[test]
+    fn test_ip_in_range_ipv4_cidr() {
+        assert!(ip_in_range("192.168.1.5", "192.168.1.0/24"));
+        assert!(!ip_in_range("192.168.2.5", "192.168.1.0/24"));
+        assert!(ip_in_range("10.0.0.1", "10.0.0.0/8"));
+        assert!(ip_in_range("10.255.255.255", "10.0.0.0/8"));
+        assert!(!ip_in_range("11.0.0.1", "10.0.0.0/8"));
+    }
+
+    #[test]
+    fn test_ip_in_range_exact_match() {
+        assert!(ip_in_range("192.168.1.1", "192.168.1.1"));
+        assert!(!ip_in_range("192.168.1.2", "192.168.1.1"));
+    }
+
+    #[test]
+    fn test_ip_in_range_ipv6_cidr() {
+        assert!(ip_in_range("2001:db8::1", "2001:db8::/32"));
+        assert!(!ip_in_range("2001:db9::1", "2001:db8::/32"));
     }
 }

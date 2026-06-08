@@ -6,6 +6,7 @@
 
 use crate::computer::types::{DiskStatus, NetworkStatus, ProcessEntry, SystemStatus};
 use crate::computer::{ComputerError, Result};
+use std::time::Duration;
 use sysinfo::{Disks, Networks, ProcessRefreshKind, RefreshKind, Signal, System};
 
 /// Lightweight system monitor backed by `sysinfo::System`.
@@ -153,6 +154,144 @@ impl SystemMonitor {
         entries
     }
 
+    /// Restart a process by PID or name.
+    ///
+    /// Kills the process (with optional force), then attempts to
+    /// re-launch it using the original command line when available.
+    /// Returns the new PID if restart succeeds.
+    pub fn restart_process(
+        &mut self,
+        pid: Option<u32>,
+        name: Option<&str>,
+        force: bool,
+    ) -> Result<u32> {
+        let target_pid = self.resolve_pid(pid, name)?;
+
+        // Try to capture the original command line before killing.
+        let sys_pid = sysinfo::Pid::from(target_pid as usize);
+        let original_cmd = self
+            .system
+            .process(sys_pid)
+            .and_then(|p| p.cmd().first().map(|s| s.to_string()));
+
+        // Kill the process.
+        self.kill_process(Some(target_pid), None, force)?;
+
+        // Wait briefly for the process to exit.
+        std::thread::sleep(Duration::from_millis(500));
+
+        // Restart if we captured the command.
+        if let Some(cmd) = original_cmd {
+            match std::process::Command::new(&cmd).spawn() {
+                Ok(child) => Ok(child.id()),
+                Err(e) => Err(ComputerError::ToolFailed(format!(
+                    "Failed to restart '{}': {}",
+                    cmd, e
+                ))),
+            }
+        } else {
+            Err(ComputerError::Other(
+                "Could not determine command to restart process".to_string(),
+            ))
+        }
+    }
+
+    /// Set the scheduling priority of a process.
+    ///
+    /// On Unix-like systems this adjusts the `nice` value via `renice`.
+    /// On Windows this sets the priority class via `wmic`.
+    ///
+    /// `priority` interpretation:
+    /// - Unix: nice value (-20 highest to 19 lowest).
+    /// - Windows: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High, 5=Realtime.
+    pub fn set_process_priority(
+        &mut self,
+        pid: Option<u32>,
+        name: Option<&str>,
+        priority: i32,
+    ) -> Result<u32> {
+        let target_pid = self.resolve_pid(pid, name)?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let class = match priority {
+                0 => "idle",
+                1 => "below normal",
+                2 => "normal",
+                3 => "above normal",
+                4 => "high priority",
+                5 => "realtime",
+                _ => "normal",
+            };
+            let script = format!(
+                r#"wmic process where ProcessId={} CALL setpriority \"{}\""#,
+                target_pid, class
+            );
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", &script])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => Ok(target_pid),
+                Ok(o) => Err(ComputerError::ToolFailed(format!(
+                    "wmic setpriority failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                ))),
+                Err(e) => Err(ComputerError::ToolFailed(format!(
+                    "Failed to run wmic: {}",
+                    e
+                ))),
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let nice = priority.clamp(-20, 19);
+            let output = std::process::Command::new("renice")
+                .args([&nice.to_string(), "-p", &target_pid.to_string()])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => Ok(target_pid),
+                Ok(o) => Err(ComputerError::ToolFailed(format!(
+                    "renice failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                ))),
+                Err(e) => Err(ComputerError::ToolFailed(format!(
+                    "Failed to run renice: {}",
+                    e
+                ))),
+            }
+        }
+    }
+
+    /// Resolve a PID from either an explicit PID or a process name.
+    fn resolve_pid(&mut self, pid: Option<u32>, name: Option<&str>) -> Result<u32> {
+        self.system
+            .refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
+
+        if let Some(p) = pid {
+            return Ok(p);
+        }
+
+        if let Some(n) = name {
+            return self
+                .system
+                .processes()
+                .values()
+                .find(|p| p.name().to_lowercase().contains(&n.to_lowercase()))
+                .map(|p| p.pid().as_u32())
+                .ok_or_else(|| {
+                    ComputerError::ProcessNotFound(format!(
+                        "No process matching '{}' found",
+                        n
+                    ))
+                });
+        }
+
+        Err(ComputerError::ProcessNotFound(
+            "Either pid or name must be provided".to_string(),
+        ))
+    }
+
     /// Kill a process by PID or name.
     ///
     /// If both `pid` and `name` are provided, PID takes precedence.
@@ -166,28 +305,7 @@ impl SystemMonitor {
         name: Option<&str>,
         force: bool,
     ) -> Result<u32> {
-        self.system
-            .refresh_processes_specifics(ProcessRefreshKind::new().with_cpu());
-
-        let target_pid = if let Some(p) = pid {
-            p
-        } else if let Some(n) = name {
-            self.system
-                .processes()
-                .values()
-                .find(|p| p.name().to_lowercase().contains(&n.to_lowercase()))
-                .map(|p| p.pid().as_u32())
-                .ok_or_else(|| {
-                    ComputerError::ProcessNotFound(format!(
-                        "No process matching '{}' found",
-                        n
-                    ))
-                })?
-        } else {
-            return Err(ComputerError::ProcessNotFound(
-                "Either pid or name must be provided".to_string(),
-            ));
-        };
+        let target_pid = self.resolve_pid(pid, name)?;
 
         let sys_pid = sysinfo::Pid::from(target_pid as usize);
         let process = self
@@ -209,6 +327,136 @@ impl SystemMonitor {
                 "Signal {:?} not supported on this platform",
                 signal
             ))),
+        }
+    }
+}
+
+/// Alert triggered when a process exceeds configured thresholds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessAlert {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub memory_mb: u64,
+    pub message: String,
+}
+
+/// Configuration for continuous process monitoring.
+#[derive(Debug, Clone)]
+pub struct ProcessMonitorConfig {
+    /// Poll interval (default: 5 seconds).
+    pub poll_interval: Duration,
+    /// CPU usage threshold in percent (0 = disabled).
+    pub cpu_threshold: f32,
+    /// Memory threshold in MB (0 = disabled).
+    pub memory_threshold_mb: u64,
+    /// Only monitor processes matching these names (empty = all).
+    pub filter_names: Vec<String>,
+    /// Cooldown between alerts for the same PID (default: 60s).
+    pub alert_cooldown: Duration,
+}
+
+impl Default for ProcessMonitorConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(5),
+            cpu_threshold: 80.0,
+            memory_threshold_mb: 1024,
+            filter_names: vec![],
+            alert_cooldown: Duration::from_secs(60),
+        }
+    }
+}
+
+/// Continuous process monitor that polls and emits alerts.
+pub struct ProcessMonitor {
+    config: ProcessMonitorConfig,
+    last_alert: std::collections::HashMap<u32, std::time::Instant>,
+}
+
+impl ProcessMonitor {
+    pub fn new(config: ProcessMonitorConfig) -> Self {
+        Self {
+            config,
+            last_alert: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Poll once and return any alerts for processes exceeding thresholds.
+    pub fn poll(&mut self,
+    ) -> Vec<ProcessAlert> {
+        let mut monitor = SystemMonitor::new();
+        let procs = monitor.list_processes(None, None);
+        let mut alerts = Vec::new();
+        let now = std::time::Instant::now();
+
+        for p in procs {
+            // Filter by name if configured
+            if !self.config.filter_names.is_empty() {
+                let matches = self
+                    .config
+                    .filter_names
+                    .iter()
+                    .any(|f| p.name.to_lowercase().contains(&f.to_lowercase()));
+                if !matches {
+                    continue;
+                }
+            }
+
+            let mut triggered = false;
+            let mut reasons = Vec::new();
+
+            if self.config.cpu_threshold > 0.0
+                && p.cpu_percent >= self.config.cpu_threshold
+            {
+                triggered = true;
+                reasons.push(format!("CPU {:.1}%", p.cpu_percent));
+            }
+
+            if self.config.memory_threshold_mb > 0
+                && p.memory_mb >= self.config.memory_threshold_mb
+            {
+                triggered = true;
+                reasons.push(format!("memory {} MB", p.memory_mb));
+            }
+
+            if triggered {
+                // Check cooldown
+                if let Some(last) = self.last_alert.get(&p.pid) {
+                    if now.duration_since(*last) < self.config.alert_cooldown {
+                        continue;
+                    }
+                }
+                self.last_alert.insert(p.pid, now);
+                let name = p.name.clone();
+                alerts.push(ProcessAlert {
+                    pid: p.pid,
+                    name,
+                    cpu_percent: p.cpu_percent,
+                    memory_mb: p.memory_mb,
+                    message: format!(
+                        "Process {} (PID {}) exceeded thresholds: {}",
+                        p.name,
+                        p.pid,
+                        reasons.join(", ")
+                    ),
+                });
+            }
+        }
+
+        alerts
+    }
+
+    /// Run a single monitoring cycle and log alerts via `tracing`.
+    pub fn check_and_log(&mut self,
+    ) {
+        for alert in self.poll() {
+            tracing::warn!(
+                "Process alert: {} (CPU {:.1}%, Memory {} MB)",
+                alert.message,
+                alert.cpu_percent,
+                alert.memory_mb
+            );
         }
     }
 }
@@ -307,5 +555,56 @@ mod tests {
             child.wait(),
         )
         .await;
+    }
+
+    #[test]
+    fn test_process_monitor_config_default() {
+        let cfg = ProcessMonitorConfig::default();
+        assert_eq!(cfg.poll_interval, Duration::from_secs(5));
+        assert_eq!(cfg.cpu_threshold, 80.0);
+        assert_eq!(cfg.memory_threshold_mb, 1024);
+        assert!(cfg.filter_names.is_empty());
+    }
+
+    #[test]
+    fn test_process_monitor_poll_no_alerts_when_idle() {
+        // Use very high thresholds so nothing triggers
+        let cfg = ProcessMonitorConfig {
+            poll_interval: Duration::from_secs(1),
+            cpu_threshold: 999.0,
+            memory_threshold_mb: 999_999,
+            filter_names: vec![],
+            alert_cooldown: Duration::from_secs(0),
+        };
+        let mut monitor = ProcessMonitor::new(cfg);
+        let alerts = monitor.poll();
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn test_process_monitor_filter_by_name() {
+        let cfg = ProcessMonitorConfig {
+            poll_interval: Duration::from_secs(1),
+            cpu_threshold: 0.0, // disabled
+            memory_threshold_mb: 0, // disabled
+            filter_names: vec!["xyzzy_nonexistent_99999".to_string()],
+            alert_cooldown: Duration::from_secs(0),
+        };
+        let mut monitor = ProcessMonitor::new(cfg);
+        let alerts = monitor.poll();
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn test_process_alert_display() {
+        let alert = ProcessAlert {
+            pid: 1234,
+            name: "test".to_string(),
+            cpu_percent: 95.5,
+            memory_mb: 2048,
+            message: "test alert".to_string(),
+        };
+        assert!(alert.message.contains("test alert"));
+        assert_eq!(alert.pid, 1234);
     }
 }

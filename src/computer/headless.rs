@@ -401,7 +401,20 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     })?;
                 drop(child);
                 if wait_for_ready {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let ready = self
+                        .wait_for(
+                            WaitCondition::ProcessRunning {
+                                name: name.clone(),
+                            },
+                            Duration::from_secs(10),
+                        )
+                        .await?;
+                    if !ready {
+                        return Ok(ActionResult::error(format!(
+                            "Launched {} but it did not appear within 10s",
+                            name
+                        )));
+                    }
                 }
                 Ok(ActionResult::success(format!("Launched {}", name)))
             }
@@ -532,6 +545,36 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     .with_data(serde_json::to_value(&rules).unwrap_or_default())),
                     Err(e) => Err(ComputerError::Other(e.to_string())),
                 }
+            }
+            DesktopAction::RestartProcess { pid, name, force } => {
+                let new_pid = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.restart_process(pid, name.as_deref(), force)
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("Restart failed: {}", e)))??;
+                Ok(ActionResult::success(format!(
+                    "Process restarted, new PID: {}",
+                    new_pid
+                )))
+            }
+            DesktopAction::SetProcessPriority {
+                pid,
+                name,
+                priority,
+            } => {
+                let updated_pid = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.set_process_priority(pid, name.as_deref(), priority)
+                })
+                .await
+                .map_err(|e| {
+                    ComputerError::Other(format!("Priority change failed: {}", e))
+                })??;
+                Ok(ActionResult::success(format!(
+                    "Priority set for PID {}",
+                    updated_pid
+                )))
             }
             _ => Err(ComputerError::Other(
                 "Action not available in headless mode".to_string(),

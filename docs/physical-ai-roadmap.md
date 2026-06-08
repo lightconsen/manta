@@ -42,7 +42,7 @@
 
 ### 1.3 系统状态感知
 
-- 🔄 **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏 — `SystemMonitor` 已有基础查询，缺实时连续监控与告警
+- ✅ **进程监控**：CPU/内存/磁盘/网络实时数据，检测应用崩溃、资源泄漏 — `SystemMonitor` + `ProcessMonitor`（实时轮询、阈值告警、冷却去重）已实现（`src/computer/system.rs`）
 - ✅ **文件系统监控**：watch 关键目录变化，自动响应配置文件修改 — `src/computer/fs_watch.rs`（基于 `notify`  crate）
 - ✅ **网络状态**：端口占用、网络连通性、防火墙规则 — `src/computer/network.rs`（`NetworkInspector`：跨平台端口扫描、ICMP ping、TCP 连通性测试、防火墙规则读取）
 - ⬜ **日志聚合**：实时 tail syslog/journald/Event Viewer，异常自动告警
@@ -64,9 +64,9 @@
 
 Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软件"。
 
-- 🔄 **启动应用**：支持各种启动方式（双击、命令行、Spotlight/Start Menu）— `LaunchApp` 已存在，但 `wait_for_ready` 仅为固定 sleep
+- ✅ **启动应用**：支持各种启动方式（双击、命令行、Spotlight/Start Menu）— `LaunchApp` 已实现，`wait_for_ready` 通过 `wait_for(ProcessRunning, 10s)` 实际检测进程就绪（替代固定 sleep）
 - ⬜ **等待就绪**：检测窗口出现、加载完成（而非固定 sleep）
-- 🔄 **进程管理**：kill 卡死进程、重启服务、设置进程优先级 — `KillProcess`/`ListProcesses` 已实现，缺重启与优先级调整
+- ✅ **进程管理**：kill 卡死进程、重启服务、设置进程优先级 — `KillProcess`/`ListProcesses`/`RestartProcess`/`SetProcessPriority` 均已实现（`src/computer/system.rs` + 各平台适配器）
 - ⬜ **软件安装**：包管理器调用（brew/apt/winget），静默安装，等待完成
 
 ### 2.3 浏览器自动化 ✅ 已实现
@@ -130,7 +130,7 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 
 - ✅ **动作验证**：执行后主动验证结果是否符合预期（而非盲目执行下一步）— `VerificationEngine`（`src/computer/verification.rs`）
 - ⬜ **错误诊断**：解析错误信息，定位根因，生成修复策略 — 尚未实现自动错误分析层
-- 🔄 **经验积累**：将成功案例的解决路径存入向量记忆，供未来复用 — 向量记忆（`src/memory/`）已就绪，但未与 Planner 自动关联
+- ✅ **经验积累**：将成功案例的解决路径存入向量记忆，供未来复用 — `GoalPlanner::decompose` 自动检索历史经验注入 LLM 提示，`achieve` 执行后将结果存入记忆（`src/planner/mod.rs` + `src/memory/`）
 
 ### 3.4 长时程任务管理
 
@@ -147,7 +147,7 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 当前已有审批系统（human-in-the-loop），但缺少事前限制：
 
 - ✅ **路径白名单**：Agent 只能读写指定目录（如 ~/Projects/），禁止访问 ~/.ssh/、/etc/ — `SandboxInterceptor::path_allowlist`（`src/tools/sandbox_interceptor.rs`）
-- 🔄 **网络沙箱**：限制可访问的域名/IP 范围，禁止访问内网敏感服务 — `domain_allowlist` 已实现，缺 IP 段限制
+- ✅ **网络沙箱**：限制可访问的域名/IP 范围，禁止访问内网敏感服务 — `domain_allowlist` + `ip_allowlist`/`ip_blocklist`（CIDR IPv4/IPv6 支持）已实现（`src/tools/sandbox_interceptor.rs`）
 - ✅ **命令黑名单**：禁止 rm -rf /、format、fdisk 等危险命令 — `SandboxInterceptor::command_blacklist`
 - ⬜ **资源配额**：限制 CPU/内存/磁盘使用量，防止 runaway agent
 
@@ -200,7 +200,7 @@ while not task_done:
 ```
 
 - ✅ **标准化循环** — `ComputerUseLoop`（`src/computer/use_loop.rs`）：screenshot → decide → execute → verify
-- 🔄 **坐标系统统一**：不同平台 DPI、缩放比例不同，Agent 使用逻辑坐标 — 基础类型已统一（`Point`, `Rect`），DPI 自动转换待完善
+- ✅ **坐标系统统一**：不同平台 DPI、缩放比例不同，Agent 使用逻辑坐标 — `Point`/`Rect` 已统一，`DpiScale::detect()` 支持 macOS（`system_profiler`）/Windows（PowerShell）/Linux（`xdpyinfo`/`gsettings`），`to_physical`/`to_logical` 转换已就绪（`src/computer/types.rs`）
 - ⬜ **截图编码优化**：根据网络状况自动调整分辨率/质量（本地运行时原图，远程运行时压缩）
 - ✅ **延迟补偿**：操作后自动等待动画完成，避免在过渡态截图 — `LoopConfig::settle_delay_ms` + 自适应延时（连续失败时自动加倍）
 
@@ -243,7 +243,7 @@ while not task_done:
 4. ✅ **动作验证循环** — 执行后自动验证结果，失败重试 — `VerificationEngine` + `ComputerUseLoop`
 
 ### Phase 2：生产就绪（2-4 个月）
-5. 🔄 **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单已完成，缺 IP 段限制 + 资源配额
+5. ✅ **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单 + IP 段限制（CIDR）已完成，缺资源配额
 6. 🔄 **自动回滚** — 文件备份 + 系统快照 — 文件级 `RollbackManager` 已完成，缺系统级快照
 7. 🔄 **长时程任务管理** — 持久化队列、中断恢复 — 中断/恢复已完成，缺持久化队列 + 定时任务
 8. ✅ **目标分解引擎** — 复杂任务自动拆解为 DAG — `GoalPlanner` + `DagScheduler` + `TaskExecutor`

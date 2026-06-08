@@ -259,8 +259,33 @@ impl GoalPlanner {
     /// The LLM is given the list of available tool names (taken from the
     /// registry if one is available) and returns a DAG of [`SubTask`]s which
     /// are converted into [`Task`]s.
+    ///
+    /// If a memory store is attached, past successful experiences for similar
+    /// goals are retrieved and included in the decomposition prompt.
     pub async fn decompose(&self, goal: &str, available_tools: &[String]) -> crate::Result<Plan> {
-        let subtasks = self.decomposer.decompose(goal, available_tools).await?;
+        let mut context = String::new();
+
+        // Retrieve relevant past experiences from memory.
+        if let Some(ref memory) = self.memory {
+            let query = crate::memory::MemoryQuery::new()
+                .of_type("experience")
+                .with_content(goal)
+                .limit(3);
+            match memory.search(query).await {
+                Ok(experiences) if !experiences.is_empty() => {
+                    context.push_str("\n\nRelevant past experiences:\n");
+                    for (i, exp) in experiences.iter().enumerate() {
+                        context.push_str(&format!("{}. {}\n", i + 1, exp.content));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let subtasks = self
+            .decomposer
+            .decompose_with_context(goal, available_tools, &context)
+            .await?;
         let mut plan = Plan::new(goal);
         for st in subtasks {
             plan.add_task(st.into_task());
@@ -298,6 +323,25 @@ impl GoalPlanner {
 
         if let Some(ref store) = self.state_store {
             store.complete_plan(&plan_id, result.success).await?;
+        }
+
+        // Store experience in memory for future retrieval.
+        if let Some(ref memory) = self.memory {
+            let experience = format!(
+                "Goal: {}\nSuccess: {}\nTasks: {} completed, {} failed, {} rolled back\nMessage: {}",
+                goal,
+                result.success,
+                result.tasks_completed,
+                result.tasks_failed,
+                result.tasks_rolled_back,
+                result.message
+            );
+            let mem = crate::memory::Memory::new("agent", experience, "experience")
+                .with_importance_score(if result.success { 0.8 } else { 0.5 })
+                .with_source("planner");
+            if let Err(e) = memory.store(mem).await {
+                tracing::warn!("Failed to store plan experience in memory: {}", e);
+            }
         }
 
         Ok(result)

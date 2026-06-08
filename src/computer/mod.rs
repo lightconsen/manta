@@ -223,6 +223,36 @@ pub trait ComputerAdapter: Send + Sync {
     async fn list_firewall_rules(&self) -> Result<ActionResult> {
         self.execute(DesktopAction::ListFirewallRules).await
     }
+
+    /// Convenience: restart a process by PID or name.
+    async fn restart_process(
+        &self,
+        pid: Option<u32>,
+        name: Option<&str>,
+        force: bool,
+    ) -> Result<ActionResult> {
+        self.execute(DesktopAction::RestartProcess {
+            pid,
+            name: name.map(String::from),
+            force,
+        })
+        .await
+    }
+
+    /// Convenience: set process priority.
+    async fn set_process_priority(
+        &self,
+        pid: Option<u32>,
+        name: Option<&str>,
+        priority: i32,
+    ) -> Result<ActionResult> {
+        self.execute(DesktopAction::SetProcessPriority {
+            pid,
+            name: name.map(String::from),
+            priority,
+        })
+        .await
+    }
 }
 
 /// Create the appropriate adapter for the current platform.

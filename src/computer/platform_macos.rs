@@ -238,8 +238,20 @@ end tell"#,
                     .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
 
                 if wait_for_ready {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    let _ = self.read_ui_tree(Some(&name)).await?;
+                    let ready = self
+                        .wait_for(
+                            WaitCondition::ProcessRunning {
+                                name: name.clone(),
+                            },
+                            Duration::from_secs(10),
+                        )
+                        .await?;
+                    if !ready {
+                        return Ok(ActionResult::error(format!(
+                            "Launched {} but it did not appear within 10s",
+                            name
+                        )));
+                    }
                 }
                 Ok(ActionResult::success(format!("Launched {}", name)))
             }
@@ -293,6 +305,36 @@ end tell"#,
                 .await
                 .map_err(|e| ComputerError::Other(format!("Kill failed: {}", e)))??;
                 Ok(ActionResult::success(format!("Killed process {}", killed_pid)))
+            }
+            DesktopAction::RestartProcess { pid, name, force } => {
+                let new_pid = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.restart_process(pid, name.as_deref(), force)
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("Restart failed: {}", e)))??;
+                Ok(ActionResult::success(format!(
+                    "Process restarted, new PID: {}",
+                    new_pid
+                )))
+            }
+            DesktopAction::SetProcessPriority {
+                pid,
+                name,
+                priority,
+            } => {
+                let updated_pid = tokio::task::spawn_blocking(move || {
+                    let mut monitor = crate::computer::system::SystemMonitor::new();
+                    monitor.set_process_priority(pid, name.as_deref(), priority)
+                })
+                .await
+                .map_err(|e| {
+                    ComputerError::Other(format!("Priority change failed: {}", e))
+                })??;
+                Ok(ActionResult::success(format!(
+                    "Priority set for PID {}",
+                    updated_pid
+                )))
             }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on macOS".to_string(),

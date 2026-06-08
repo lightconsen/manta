@@ -16,6 +16,198 @@ impl Point {
     pub fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
+
+    /// Scale this point by the given DPI factor (logical → physical).
+    pub fn to_physical(&self, dpi_scale: f32) -> Self {
+        Self {
+            x: (self.x as f32 * dpi_scale).round() as i32,
+            y: (self.y as f32 * dpi_scale).round() as i32,
+        }
+    }
+
+    /// Scale this point by the given DPI factor (physical → logical).
+    pub fn to_logical(&self, dpi_scale: f32) -> Self {
+        Self {
+            x: (self.x as f32 / dpi_scale).round() as i32,
+            y: (self.y as f32 / dpi_scale).round() as i32,
+        }
+    }
+}
+
+/// Platform DPI scale factor for converting between logical and physical
+/// coordinates.
+///
+/// Logical coordinates are what the Agent reasons about (e.g., "click at
+/// 960, 540" on a 1920x1080 logical canvas). Physical coordinates are the
+/// actual pixels on screen, which differ on HiDPI / Retina displays.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DpiScale {
+    /// Scale factor: physical = logical × scale.
+    /// 1.0 = standard DPI (96 on Windows, 72 on macOS).
+    /// 2.0 = Retina / HiDPI.
+    pub scale: f32,
+}
+
+impl DpiScale {
+    /// Standard 1:1 scale (no HiDPI).
+    pub const STANDARD: Self = Self { scale: 1.0 };
+
+    pub fn new(scale: f32) -> Self {
+        Self { scale }
+    }
+
+    /// Detect the current platform's DPI scale at runtime.
+    ///
+    /// Returns a best-effort estimate. On some platforms this may
+    /// require display-server queries (X11, Wayland, macOS, Windows).
+    pub fn detect() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: try via CoreGraphics display scale
+            Self::detect_macos()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Self::detect_windows()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::detect_linux()
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            Self::STANDARD
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn detect_macos() -> Self {
+        // macOS Retina: typically 2.0, can be 1.0 on external displays.
+        // Without linking CoreGraphics, we shell out to `system_profiler`.
+        if let Ok(output) = std::process::Command::new("system_profiler")
+            .args(["SPDisplaysDataType", "-json"])
+            .output()
+        {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Some(displays) = json
+                    .get("SPDisplaysDataType")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("spdisplays_ndrvs"))
+                    .and_then(|v| v.as_array())
+                {
+                    if let Some(first) = displays.first() {
+                        if let Some(res) = first.get("_spdisplays_resolution") {
+                            if let Some(res_str) = res.as_str() {
+                                // "Retina" in the resolution string indicates HiDPI
+                                if res_str.contains("Retina") {
+                                    return Self { scale: 2.0 };
+                                }
+                            }
+                        }
+                        if let Some(pixels) = first.get("_spdisplays_pixels") {
+                            if let Some(px_str) = pixels.as_str() {
+                                // e.g. "3840 x 2160" vs "1920 x 1080"
+                                let parts: Vec<&str> = px_str.split(" x ").collect();
+                                if parts.len() == 2 {
+                                    if let (Ok(px_w), Ok(px_h)) = (
+                                        parts[0].trim().parse::<u32>(),
+                                        parts[1].trim().parse::<u32>(),
+                                    ) {
+                                        // Rough heuristic: if pixel dimensions are
+                                        // double common logical sizes, assume 2x
+                                        if (px_w >= 3840 && px_h >= 2160)
+                                            || (px_w >= 2880 && px_h >= 1800)
+                                        {
+                                            return Self { scale: 2.0 };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Self::STANDARD
+    }
+
+    #[cfg(target_os = "windows")]
+    fn detect_windows() -> Self {
+        // Windows: try via PowerShell Get-CimInstance
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args([
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.DeviceDpi",
+            ])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Ok(dpi) = text.trim().parse::<f32>() {
+                if dpi > 0.0 {
+                    return Self {
+                        scale: dpi / 96.0,
+                    };
+                }
+            }
+        }
+        Self::STANDARD
+    }
+
+    #[cfg(target_os = "linux")]
+    fn detect_linux() -> Self {
+        // Try X11 via xdpyinfo
+        if let Ok(output) = std::process::Command::new("xdpyinfo").output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut screen_w_mm = 0f32;
+            let mut screen_w_px = 0f32;
+            let mut found = false;
+            for line in text.lines() {
+                if line.contains("dimensions:") {
+                    // "  dimensions:    3840x2160 pixels (1016x572 millimeters)"
+                    if let Some(px_part) = line.split("pixels").next() {
+                        if let Some(x) = px_part.split('x').next() {
+                            if let Ok(w) = x.trim().split_whitespace().last().unwrap_or("0").parse::<f32>() {
+                                screen_w_px = w;
+                            }
+                        }
+                    }
+                    if let Some(mm_part) = line.split('(').nth(1) {
+                        if let Some(x) = mm_part.split('x').next() {
+                            if let Ok(w) = x.trim().parse::<f32>() {
+                                screen_w_mm = w;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if found && screen_w_mm > 0.0 {
+                // DPI = pixels / inches, inches = mm / 25.4
+                let dpi = (screen_w_px / (screen_w_mm / 25.4)).round();
+                if dpi > 96.0 {
+                    return Self {
+                        scale: (dpi / 96.0).max(1.0).min(4.0),
+                    };
+                }
+            }
+        }
+
+        // Try Wayland via gsettings (GNOME)
+        if let Ok(output) = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "scaling-factor"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Ok(scale) = text.trim().replace("uint32 ", "").parse::<f32>() {
+                if scale >= 1.0 {
+                    return Self { scale };
+                }
+            }
+        }
+
+        Self::STANDARD
+    }
 }
 
 /// A rectangle on screen in logical coordinates.
@@ -34,6 +226,26 @@ impl Rect {
             y,
             width,
             height,
+        }
+    }
+
+    /// Scale this rect by the given DPI factor (logical → physical).
+    pub fn to_physical(&self, dpi_scale: f32) -> Self {
+        Self {
+            x: (self.x as f32 * dpi_scale).round() as i32,
+            y: (self.y as f32 * dpi_scale).round() as i32,
+            width: (self.width as f32 * dpi_scale).round() as u32,
+            height: (self.height as f32 * dpi_scale).round() as u32,
+        }
+    }
+
+    /// Scale this rect by the given DPI factor (physical → logical).
+    pub fn to_logical(&self, dpi_scale: f32) -> Self {
+        Self {
+            x: (self.x as f32 / dpi_scale).round() as i32,
+            y: (self.y as f32 / dpi_scale).round() as i32,
+            width: (self.width as f32 / dpi_scale).round() as u32,
+            height: (self.height as f32 / dpi_scale).round() as u32,
         }
     }
 }
@@ -297,6 +509,20 @@ pub enum DesktopAction {
     },
     /// List firewall rules.
     ListFirewallRules,
+    /// Restart a process by PID or name.
+    RestartProcess {
+        pid: Option<u32>,
+        name: Option<String>,
+        force: bool,
+    },
+    /// Set process priority (nice value on Unix, priority class on Windows).
+    SetProcessPriority {
+        pid: Option<u32>,
+        name: Option<String>,
+        /// Unix nice value: -20 (highest) to 19 (lowest).
+        /// Windows priority class: 0=Idle, 1=BelowNormal, 2=Normal, 3=AboveNormal, 4=High, 5=Realtime.
+        priority: i32,
+    },
 }
 
 /// Result of executing a desktop action.

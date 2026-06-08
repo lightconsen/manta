@@ -314,6 +314,27 @@ impl ToolContext {
 
     /// Check if a path is allowed
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
+        // ── allowlist check ────────────────────────────────────────────────
+        if !self.allowed_paths.is_empty() {
+            let path_canon = path.canonicalize().ok();
+            let path_raw = path.to_path_buf();
+            let in_allowlist = self.allowed_paths.iter().any(|allowed| {
+                // Try canonical comparison first (handles symlinks)
+                if let Ok(ref ac) = allowed.canonicalize() {
+                    if let Some(ref pc) = path_canon {
+                        if pc.starts_with(ac) {
+                            return true;
+                        }
+                    }
+                }
+                // Fallback to raw path comparison for non-existent paths
+                path_raw.starts_with(allowed)
+            });
+            // When an allowlist is present it acts as a whitelist:
+            // paths inside the allowlist are permitted, everything else is denied.
+            return in_allowlist;
+        }
+
         // ── workspace boundary check (OpenClaw-style) ──────────────────────
         if self.workspace_only {
             let resolved = self.resolve_path(path);
@@ -331,24 +352,7 @@ impl ToolContext {
             }
         }
 
-        // ── allowlist check ────────────────────────────────────────────────
-        if self.allowed_paths.is_empty() {
-            return true;
-        }
-        let path_canon = path.canonicalize().ok();
-        let path_raw = path.to_path_buf();
-        self.allowed_paths.iter().any(|allowed| {
-            // Try canonical comparison first (handles symlinks)
-            if let Ok(ref ac) = allowed.canonicalize() {
-                if let Some(ref pc) = path_canon {
-                    if pc.starts_with(ac) {
-                        return true;
-                    }
-                }
-            }
-            // Fallback to raw path comparison for non-existent paths
-            path_raw.starts_with(allowed)
-        })
+        true
     }
 
     /// Resolve a path relative to the workspace root.
