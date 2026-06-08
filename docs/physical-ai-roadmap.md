@@ -307,8 +307,8 @@ while not task_done:
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: CapabilitySet + ToolRegistry（已有，扩展）          │
 │  - ✅ 各平台 Accessibility Tool                              │
-│  - ⬜ BrowserAutomation Tool                                │
-│  - 🔄 ApplicationLifecycle Tool（LaunchApp/KillProcess 已有）│
+│  - ✅ BrowserAutomation Tool（chromiumoxide CDP）           │
+│  - ✅ ApplicationLifecycle Tool（LaunchApp/KillProcess/RestartProcess/SetProcessPriority）│
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 1: 平台原生实现（已有，扩展）                          │
 │  - macOS: AXUIElement（已有 AppleScript 基础）                │
@@ -320,9 +320,11 @@ while not task_done:
 
 ---
 
+> **注**：本节中提出的 `PhysicalAiAdapter` 设计已在 `src/computer/` 中实现为 [`ComputerAdapter`](src/computer/mod.rs) trait，包含 `screenshot` / `click` / `type` / `read_ui_tree` / `execute` / `wait_for` 等方法，以及 `DesktopAction` 统一动作枚举、`Point`/`Rect` 逻辑坐标和 `DpiScale` DPI 检测。以下代码为原始设计参考，实际实现路径为 `src/computer/`。
+
 ### 9.2 Phase 1: 基础可用（核心骨架，1-2 个月）
 
-#### 1.1 跨平台统一桌面抽象 — `PhysicalAiAdapter`
+#### 1.1 跨平台统一桌面抽象 — `PhysicalAiAdapter`（已实现为 `ComputerAdapter`）
 
 **目标**：Agent 代码中不再出现 `linux_x11_desktop_control`、`windows_desktop_control` 等平台差异。
 
@@ -744,7 +746,7 @@ src/planner/
 ├── dag.rs          # ✅ DagScheduler — 有向无环图任务调度与拓扑排序
 ├── decomposer.rs   # ✅ LLM-based 目标分解
 ├── executor.rs     # ✅ TaskExecutor — 任务执行引擎（并发 + 回滚 + ExecutionController）
-├── state.rs        # ⬜ 任务状态持久化（尚未创建）
+├── state.rs        # ✅ TaskStateStore — SQLite 持久化、崩溃恢复、进度统计
 └── verifier.rs     # ✅ 子任务完成验证（已融入 verification.rs）
 ```
 
@@ -983,8 +985,8 @@ impl CapabilitySet for AndroidSet {
 **新增模块**：
 
 ```
-src/physical_ai/
-└── workflow.rs
+src/planner/
+└── workflow.rs      # ✅ WorkflowRecorder + WorkflowPlayer + FailureStrategy
 ```
 
 ```rust
@@ -1029,12 +1031,12 @@ impl WorkflowRecorder {
 
 ```
 src/planner/
-  ├── 依赖 src/physical_ai/（执行桌面动作）
+  ├── 依赖 src/computer/（执行桌面动作）
   ├── 依赖 src/tools/（调用原子工具）
   ├── 依赖 src/providers/（LLM 调用）
   └── 依赖 src/memory/（经验存储）
 
-src/physical_ai/
+src/computer/
   ├── 依赖 src/capabilities/（平台能力集）
   ├── 依赖 src/tools/（ToolRegistry 执行）
   └── 不依赖 src/planner/（单向依赖）
@@ -1051,16 +1053,20 @@ src/capabilities/
 
 | 周次 | 任务 | 产出 | 影响范围 |
 |------|------|------|----------|
-| W1-2 | `PhysicalAiAdapter` trait + types | `src/physical_ai/` 骨架 | 纯新增，不影响现有代码 |
-| W3-4 | macOS/Windows/X11 `PhysicalAiAdapter` 实现 | 3 个 platform adapter | 包装现有 Tool，无破坏性变更 |
-| W5-6 | Windows AccessibilityTool | `src/capabilities/windows/accessibility.rs` | WindowsSet 新增工具 |
-| W7-8 | Linux X11 AccessibilityTool | `src/capabilities/linux_desktop_x11/accessibility.rs` | X11Set 新增工具 |
-| W9-10 | `VerificationEngine` | `src/physical_ai/verification.rs` | 新增，供 adapter 使用 |
-| W11-12 | BrowserAutomation 扩展 ✅ | `src/tools/browser.rs` + `src/browser/` | 基于 chromiumoxide CDP，已完整实现 |
-| W13-16 | `GoalPlanner` + DAG 执行器 | `src/planner/` | 纯新增，上层模块 |
-| W17-18 | SandboxInterceptor 强化 | 扩展 `src/tools/sandbox.rs` | 修改 ToolRegistry::execute |
-| W19-20 | `RollbackManager` | `src/physical_ai/rollback.rs` | 新增，高风险工具集成 |
-| W21-24 | TaskStateManager + 持久化 | `src/planner/state.rs` | 新增 SQLite 表 |
+| 周次 | 任务 | 产出 | 状态 |
+|------|------|------|------|
+| W1-2 | `ComputerAdapter` trait + types | `src/computer/mod.rs` + `src/computer/types.rs` | ✅ 已实现（原设计为 `PhysicalAiAdapter`） |
+| W3-4 | macOS/Windows/X11 `ComputerAdapter` 实现 | `src/computer/platform_*.rs` | ✅ 已实现 |
+| W5-6 | Windows AccessibilityTool | `src/capabilities/windows/accessibility.rs` | ✅ 已实现 |
+| W7-8 | Linux X11 AccessibilityTool | `src/capabilities/linux_desktop_x11/accessibility.rs` | ✅ 已实现 |
+| W9-10 | `VerificationEngine` | `src/computer/verification.rs` | ✅ 已实现 |
+| W11-12 | BrowserAutomation 扩展 | `src/tools/browser.rs` + `src/browser/` | ✅ 已完整实现（chromiumoxide CDP） |
+| W13-16 | `GoalPlanner` + DAG 执行器 | `src/planner/` | ✅ 已实现 |
+| W17-18 | SandboxInterceptor 强化 | `src/tools/sandbox_interceptor.rs` | ✅ 已实现（路径/网络/命令） |
+| W19-20 | `RollbackManager` | `src/computer/rollback.rs` | ✅ 文件级已实现，系统级待实现 |
+| W21-24 | TaskStateStore + 持久化队列 | `src/planner/state.rs` + `src/planner/persistent_queue.rs` | ✅ 已实现（SQLite） |
+| W25-26 | 工具链推理 + 工具合成 + 工具学习 | `src/planner/tool_chain.rs` + `composite_tool.rs` + `tool_learning.rs` | ✅ 已实现 |
+| W27-28 | 错误诊断 + 定时任务 | `src/planner/error_diagnosis.rs` + `src/planner/scheduled_tasks.rs` | ✅ 已实现 |
 
 ---
 
@@ -1072,7 +1078,7 @@ src/capabilities/
 | Wayland 安全限制过严 | Linux Wayland 体验差 | 文档明确说明限制；推荐 X11 或 xdg-desktop-portal |
 | Playwright 依赖大（~100MB） | 安装包膨胀 | 可选依赖，首次使用时自动下载；无头环境使用轻量方案 |
 | LLM 分解目标 hallucination | 执行错误任务 | DAG 执行前人工确认；高权限操作强制审批 |
-| 坐标系统跨平台不一致 | 点击位置偏移 | PhysicalAiAdapter 内部统一为逻辑坐标，平台适配器处理 DPI 转换 |
+| 坐标系统跨平台不一致 | 点击位置偏移 | `ComputerAdapter` 内部统一为逻辑坐标，`DpiScale::detect()` 处理 DPI 转换 |
 
 ---
 
