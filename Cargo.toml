@@ -146,6 +146,11 @@ wasmtime-wasi = { version = "45.0", optional = true }
 # Hot reload - file watching
 notify-debouncer-full = { version = "0.3", optional = true }
 
+# Vision (OCR + UI element detection via ONNX)
+ort = { version = "2.0.0-rc.12", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
+ndarray = { version = "0.17", optional = true }
+
 # Channels (optional)
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }
@@ -169,6 +174,7 @@ vector-db = []
 local-embeddings = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]
 hot-reload = ["notify-debouncer-full"]
+vision = ["ort", "image", "ndarray"]
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations

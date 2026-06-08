@@ -24,6 +24,8 @@ pub mod verification;
 pub mod use_loop;
 pub mod rollback;
 pub mod headless;
+#[cfg(feature = "vision")]
+pub mod vision;
 
 // Platform adapters
 #[cfg(target_os = "macos")]
