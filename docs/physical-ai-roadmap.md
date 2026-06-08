@@ -80,7 +80,7 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 - ✅ **ARIA Snapshot**：LLM 友好的可访问树快照 + ref 标记交互 — `src/browser/aria_snapshot.rs`
 - ✅ **浏览器会话池**：持久化实例缓存、空闲驱逐、多配置 — `BrowserPool`（`src/browser/pool.rs`）
 
-### 2.4 文件系统代理 ⬜ 未实现
+### 2.4 文件系统代理 ✅ 已实现
 
 - ✅ **智能文件浏览**：ls + 元数据过滤，支持自然语言排序/过滤 — `DesktopAction::BrowseFiles { path, filter_description, max_results }` 已实现
 - ✅ **文件内容操作**：大文件分块读取 + 搜索替换 — `DesktopAction::ReadFileChunked` / `EditFile` 已实现
@@ -251,7 +251,7 @@ while not task_done:
 ### Phase 3：生态扩展（4-6 个月）
 9. ⬜ **移动端桥接** — Android/iOS 控制
 10. ✅ **无头模式** — CI/CD、远程服务器自动化 — `HeadlessComputerAdapter` + Xvfb
-11. ⬜ **工作流录制回放** — 用户示范 → Agent 学习
+11. ✅ **工作流录制回放** — 用户示范 → Agent 学习 — `WorkflowRecorder` + `WorkflowPlayer` + `FailureStrategy` 已实现
 12. ✅ **VLM 微调** — 针对桌面 UI 场景优化的小模型 — OmniParser ONNX 已集成（`vision` feature）
 
 ---
@@ -1089,11 +1089,10 @@ src/capabilities/
 
 剩余重点工作（按优先级排序）：
 
-1. **Layer 2 原子工具扩展**：鼠标拖拽 / 滚轮 / 右键菜单、软件安装（brew/apt/winget）、智能文件浏览
-2. **敏感内容检测**（PII / API Key / 密码框识别）— 安全层最后缺口
-3. **持久化任务队列**（`src/planner/state.rs`）— 系统重启恢复、定时/周期任务
-4. **系统级快照**（APFS / Btrfs / System Restore）— 回滚能力补完
-5. **截图编码优化** — 根据网络状况自动调整分辨率/质量
-6. **扩展层**：移动端桥接（Android/iOS）、物联网（GPIO/Home Assistant）、机器人接口（ROS2）
+1. **敏感内容检测**（PII / API Key / 密码框识别）— 安全层最后缺口
+2. **持久化任务队列**（`src/planner/state.rs`）— 系统重启恢复、定时/周期任务
+3. **系统级快照**（APFS / Btrfs / System Restore）— 回滚能力补完
+4. **截图编码优化** — 根据网络状况自动调整分辨率/质量
+5. **扩展层**：移动端桥接（Android/iOS）、物联网（GPIO/Home Assistant）、机器人接口（ROS2）
 
 现有代码中 `ToolContext` 的沙箱能力、`ToolRegistry` 的审批/熔断/缓存机制、`CapabilityRegistry` 的平台检测逻辑，都为上层建设提供了坚实基础，无需推倒重来。
