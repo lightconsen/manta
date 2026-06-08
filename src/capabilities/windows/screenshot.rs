@@ -116,17 +116,27 @@ $bmp.Dispose()
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
-                let bytes = tokio::fs::read(&temp_path).await.map_err(|e| {
+                let encoded_path = crate::computer::screenshot_encoder::maybe_encode_screenshot(&temp_path).await;
+                let format = if encoded_path.extension().map(|e| e == "jpg").unwrap_or(false) {
+                    "jpeg"
+                } else {
+                    "png"
+                };
+
+                let bytes = tokio::fs::read(&encoded_path).await.map_err(|e| {
                     crate::error::SyscityError::Storage {
-                        context: format!("Failed to read screenshot: {}", temp_path.display()),
+                        context: format!("Failed to read screenshot: {}", encoded_path.display()),
                         details: e.to_string(),
                     }
                 })?;
 
                 let _ = tokio::fs::remove_file(&temp_path).await;
+                if encoded_path != temp_path {
+                    let _ = tokio::fs::remove_file(&encoded_path).await;
+                }
 
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let data_url = format!("data:image/png;base64, {}", b64);
+                let data_url = format!("data:image/{};base64,{}", format, b64);
 
                 Ok(ToolExecutionResult::success(format!(
                     "Screenshot captured ({} bytes, base64: {}...)",
@@ -136,7 +146,7 @@ $bmp.Dispose()
                 .with_data(serde_json::json!({
                     "image_base64": b64,
                     "data_url": data_url,
-                    "format": "png",
+                    "format": format,
                     "size": bytes.len()
                 })))
             }

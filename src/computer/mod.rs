@@ -31,6 +31,9 @@ pub mod network;
 pub mod log_aggregator;
 pub mod audio;
 pub mod screen_recorder;
+pub mod screenshot_encoder;
+pub mod sensitive_ui;
+pub mod remote_control;
 #[cfg(feature = "vision")]
 pub mod vision;
 
@@ -42,6 +45,7 @@ pub mod platform_windows;
 #[cfg(target_os = "linux")]
 pub mod platform_linux;
 
+pub use remote_control::{RemoteControlAdapter, RemoteControlConfig, RemoteProtocol};
 pub use types::*;
 pub use verification::{VerificationConfig, VerificationCriteria, VerificationEngine};
 pub use use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopResult, LoopState, StepRecord};

@@ -650,6 +650,10 @@ pub struct ToolRegistry {
     /// Approval queue for human-in-the-loop tool execution.
     /// When set, high-risk tool calls can be suspended pending human approval.
     approval_queue: Option<Arc<ApprovalQueue>>,
+    /// Content filter for scanning tool outputs for PII and secrets.
+    content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
+    /// Audit logger for recording tool invocations and security events.
+    audit_log: Option<Arc<dyn crate::security::runtime_audit::AuditLogger>>,
 }
 
 impl Default for ToolRegistry {
@@ -685,6 +689,8 @@ impl ToolRegistry {
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
             hooks: ToolHooks::new(),
             approval_queue: None,
+            content_filter: None,
+            audit_log: None,
         }
     }
 
@@ -701,6 +707,8 @@ impl ToolRegistry {
             privileged_tools: std::sync::RwLock::new(HashSet::new()),
             hooks: ToolHooks::new(),
             approval_queue: None,
+            content_filter: None,
+            audit_log: None,
         }
     }
 
@@ -887,6 +895,24 @@ impl ToolRegistry {
     /// Get a reference to the approval queue if set.
     pub fn approval_queue(&self) -> Option<&Arc<ApprovalQueue>> {
         self.approval_queue.as_ref()
+    }
+
+    /// Set the content filter for scanning tool outputs.
+    pub fn with_content_filter(
+        mut self,
+        filter: Arc<crate::security::content_filter::ContentFilter>,
+    ) -> Self {
+        self.content_filter = Some(filter);
+        self
+    }
+
+    /// Set the audit logger for recording security events.
+    pub fn with_audit_log(
+        mut self,
+        audit_log: Arc<dyn crate::security::runtime_audit::AuditLogger>,
+    ) -> Self {
+        self.audit_log = Some(audit_log);
+        self
     }
 
     /// Register a tool
@@ -1133,7 +1159,7 @@ impl ToolRegistry {
             if let Ok(ref exec_result) = result {
                 self.hooks.run_after(name, &args, exec_result).await;
             }
-            return Some(result);
+            return self.filter_and_audit(name, context, Some(result)).await;
         }
 
         // Execute the tool — clone args so the original remains for after-hooks
@@ -1174,7 +1200,90 @@ impl ToolRegistry {
             self.hooks.run_after(name, &args, exec_result).await;
         }
 
-        execution_result
+        self.filter_and_audit(name, context, execution_result).await
+    }
+
+    /// Apply content filtering and audit logging to a tool execution result.
+    async fn filter_and_audit(
+        &self,
+        name: &str,
+        context: &ToolContext,
+        result: Option<crate::Result<ToolExecutionResult>>,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        // ── Audit: tool invocation ─────────────────────────────────────────
+        if let Some(ref audit) = self.audit_log {
+            let allowed = matches!(result, Some(Ok(_)));
+            audit
+                .log_entry(
+                    crate::security::runtime_audit::AuditEventType::ToolInvocation,
+                    context.user_id.clone(),
+                    name.to_string(),
+                    allowed,
+                    format!("Tool '{}' executed", name),
+                    None,
+                )
+                .await;
+        }
+
+        // ── Content filtering ──────────────────────────────────────────────
+        let result = match result {
+            Some(Ok(exec_result)) => {
+                if let Some(ref filter) = self.content_filter {
+                    let outcome = filter.filter_result(&exec_result);
+
+                    // Audit: content filter action
+                    if let Some(ref audit) = self.audit_log {
+                        if outcome.action
+                            != crate::security::content_filter::FilterAction::Pass
+                        {
+                            let details = serde_json::json!({
+                                "action": format!("{:?}", outcome.action),
+                                "pii_findings": outcome.pii_findings.len(),
+                                "secret_findings": outcome.secret_findings.len(),
+                                "summary": outcome.summary,
+                            });
+                            audit
+                                .log_entry(
+                                    crate::security::runtime_audit::AuditEventType::ContentFilter,
+                                    context.user_id.clone(),
+                                    name.to_string(),
+                                    outcome.action
+                                        != crate::security::content_filter::FilterAction::Blocked,
+                                    outcome.summary.clone(),
+                                    Some(details),
+                                )
+                                .await;
+                        }
+                    }
+
+                    let filtered = crate::tools::ToolExecutionResult {
+                        success: if outcome.action
+                            == crate::security::content_filter::FilterAction::Blocked
+                        {
+                            false
+                        } else {
+                            outcome.success
+                        },
+                        output: outcome.output,
+                        error: if outcome.action
+                            == crate::security::content_filter::FilterAction::Blocked
+                        {
+                            Some(outcome.summary)
+                        } else {
+                            exec_result.error
+                        },
+                        data: outcome.data,
+                        execution_time: exec_result.execution_time,
+                    };
+                    Some(Ok(filtered))
+                } else {
+                    Some(Ok(exec_result))
+                }
+            }
+            other => other,
+        };
+
+        result
     }
 
     /// Execute a tool by name without caching

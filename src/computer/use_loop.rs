@@ -14,7 +14,7 @@
 //! ```
 
 use crate::computer::{
-    ActionResult, ComputerAdapter, DesktopAction, Result, Screenshot,
+    ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
     VerificationConfig, VerificationCriteria, VerificationEngine,
 };
 use std::sync::Arc;
@@ -67,6 +67,8 @@ pub struct StepRecord {
     pub verified: bool,
     pub screenshot_before: Option<Screenshot>,
     pub screenshot_after: Option<Screenshot>,
+    /// Number of snapshots taken before this step (for undo / rollback).
+    pub snapshots_taken: usize,
 }
 
 /// Current state exposed to the decision maker.
@@ -105,6 +107,14 @@ pub struct ComputerUseLoop {
     config: LoopConfig,
     /// Optional execution controller for pause / resume / step / cancel.
     execution_controller: Option<Arc<crate::acp::ExecutionController>>,
+    /// Optional rollback manager for auto-rollback and step-by-step undo.
+    rollback_manager: Option<Arc<tokio::sync::Mutex<crate::computer::RollbackManager>>>,
+    /// Paths to snapshot before each action (workspace dirs, config files, etc.).
+    snapshot_paths: Vec<String>,
+    /// Consecutive-failure threshold that triggers auto-rollback.
+    auto_rollback_threshold: usize,
+    /// Tracks how many snapshots were taken for each step (index = step number).
+    step_snapshot_counts: Arc<tokio::sync::Mutex<Vec<usize>>>,
 }
 
 impl ComputerUseLoop {
@@ -116,6 +126,10 @@ impl ComputerUseLoop {
             verifier,
             config: LoopConfig::default(),
             execution_controller: None,
+            rollback_manager: None,
+            snapshot_paths: Vec::new(),
+            auto_rollback_threshold: 3,
+            step_snapshot_counts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -133,6 +147,59 @@ impl ComputerUseLoop {
     ) -> Self {
         self.execution_controller = Some(controller);
         self
+    }
+
+    /// Attach a rollback manager for auto-rollback and step-by-step undo.
+    pub fn with_rollback_manager(
+        mut self,
+        manager: Arc<tokio::sync::Mutex<crate::computer::RollbackManager>>,
+    ) -> Self {
+        self.rollback_manager = Some(manager);
+        self
+    }
+
+    /// Paths to snapshot before each action (directories or files).
+    pub fn with_snapshot_paths(mut self, paths: Vec<String>) -> Self {
+        self.snapshot_paths = paths;
+        self
+    }
+
+    /// Set the consecutive-failure threshold for auto-rollback.
+    /// Default is 3.
+    pub fn with_auto_rollback_threshold(mut self, threshold: usize) -> Self {
+        self.auto_rollback_threshold = threshold;
+        self
+    }
+
+    /// Undo the last `n` steps by rolling back their snapshots.
+    ///
+    /// Returns the number of steps actually undone.
+    pub async fn undo_steps(&self, n: usize) -> Result<usize> {
+        let counts = self.step_snapshot_counts.lock().await;
+        let n = n.min(counts.len());
+        if n == 0 {
+            return Ok(0);
+        }
+        let total_snapshots: usize = counts[counts.len().saturating_sub(n)..].iter().sum();
+        drop(counts);
+
+        if let Some(ref mgr) = self.rollback_manager {
+            let mut mgr = mgr.lock().await;
+            mgr.rollback_last(total_snapshots).await.map_err(|e| {
+                ComputerError::Other(format!("Rollback failed: {}", e))
+            })?;
+        }
+
+        let mut counts = self.step_snapshot_counts.lock().await;
+        let new_len = counts.len().saturating_sub(n);
+        counts.truncate(new_len);
+
+        Ok(n)
+    }
+
+    /// Undo the most recent step.
+    pub async fn undo_last_step(&self) -> Result<bool> {
+        self.undo_steps(1).await.map(|n| n > 0)
     }
 
     /// Run the Computer Use loop.
@@ -154,6 +221,9 @@ impl ComputerUseLoop {
         let mut consecutive_failures: usize = 0;
         let mut current_settle_delay_ms = self.config.settle_delay_ms;
 
+        // Reset per-run snapshot tracking.
+        self.step_snapshot_counts.lock().await.clear();
+
         for step in 0..self.config.max_steps {
             // Check execution controller for pause / resume / step / cancel.
             if let Some(ref ctrl) = self.execution_controller {
@@ -174,6 +244,22 @@ impl ComputerUseLoop {
                         final_screenshot,
                         message: reason.to_string(),
                     });
+                }
+            }
+
+            // Auto-rollback: trigger exactly once when threshold is reached.
+            if consecutive_failures == self.auto_rollback_threshold {
+                tracing::warn!(
+                    "Auto-rollback triggered after {} consecutive failures",
+                    consecutive_failures
+                );
+                if let Some(ref mgr) = self.rollback_manager {
+                    let mut mgr = mgr.lock().await;
+                    if let Err(e) = mgr.rollback().await {
+                        tracing::error!("Auto-rollback failed: {}", e);
+                    } else {
+                        tracing::info!("Auto-rollback completed successfully");
+                    }
                 }
             }
 
@@ -229,13 +315,47 @@ impl ComputerUseLoop {
                     });
                 }
                 LoopDecision::Action(action) => {
-                    // 3. Act — execute the action.
+                    // 3. Snapshot configured paths before acting.
+                    let mut snapshots_taken = 0;
+                    if !self.snapshot_paths.is_empty() {
+                        if let Some(ref mgr) = self.rollback_manager {
+                            let mut mgr = mgr.lock().await;
+                            for path_str in &self.snapshot_paths {
+                                let path = std::path::Path::new(path_str);
+                                let snap_result = if tokio::fs::metadata(path)
+                                    .await
+                                    .map(|m| m.is_dir())
+                                    .unwrap_or(false)
+                                {
+                                    mgr.snapshot_directory(path).await
+                                } else {
+                                    mgr.snapshot_file(path).await
+                                };
+                                if let Err(e) = snap_result {
+                                    tracing::warn!(
+                                        "Failed to snapshot '{}' before step {}: {}",
+                                        path_str,
+                                        step,
+                                        e
+                                    );
+                                } else {
+                                    snapshots_taken += 1;
+                                }
+                            }
+                        }
+                    }
+                    self.step_snapshot_counts
+                        .lock()
+                        .await
+                        .push(snapshots_taken);
+
+                    // 4. Act — execute the action.
                     let screenshot_before = Some(screenshot);
                     let result = self.adapter.execute(action.clone()).await;
 
                     match result {
                         Ok(result) => {
-                            // 4. Validate — verify the outcome.
+                            // 5. Validate — verify the outcome.
                             tokio::time::sleep(Duration::from_millis(current_settle_delay_ms))
                                 .await;
 
@@ -269,6 +389,7 @@ impl ComputerUseLoop {
                                 verified,
                                 screenshot_before,
                                 screenshot_after,
+                                snapshots_taken,
                             });
                         }
                         Err(e) => {
@@ -305,6 +426,7 @@ impl ComputerUseLoop {
                                 verified: false,
                                 screenshot_before,
                                 screenshot_after: None,
+                                snapshots_taken,
                             });
                         }
                     }
@@ -475,5 +597,99 @@ mod tests {
         assert!(!result.success);
         assert_eq!(result.steps_taken, 0);
         assert!(result.message.contains("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn test_undo_steps_with_rollback_manager() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("workspace.txt");
+        tokio::fs::write(&file, "original")
+            .await
+            .unwrap();
+
+        let mgr = Arc::new(tokio::sync::Mutex::new(
+            crate::computer::RollbackManager::with_backup_dir(
+                tmp.path().join("backups"),
+            ),
+        ));
+
+        let loop_ = ComputerUseLoop::new(Arc::new(
+            crate::computer::headless::HeadlessComputerAdapter::new(
+                Arc::new(crate::tools::ToolRegistry::new()),
+            ),
+        ))
+        .with_rollback_manager(mgr.clone())
+        .with_snapshot_paths(vec![file.to_string_lossy().to_string()]);
+
+        // Create real snapshots in the manager (simulating what run() would do).
+        {
+            let mut m = mgr.lock().await;
+            m.snapshot_file(&file).await.unwrap();
+        }
+        tokio::fs::write(&file, "after-step-0").await.unwrap();
+
+        {
+            let mut m = mgr.lock().await;
+            m.snapshot_file(&file).await.unwrap();
+        }
+        tokio::fs::write(&file, "after-step-1").await.unwrap();
+
+        // Simulate two steps, each taking one snapshot.
+        {
+            let mut counts = loop_.step_snapshot_counts.lock().await;
+            counts.push(1); // step 0: 1 snapshot
+            counts.push(1); // step 1: 1 snapshot
+        }
+
+        let undone = loop_.undo_steps(1).await.unwrap();
+        assert_eq!(undone, 1);
+
+        // Only the last snapshot should have been restored
+        let content = tokio::fs::read_to_string(&file)
+            .await
+            .unwrap();
+        assert_eq!(content, "after-step-0");
+
+        // Undo the remaining step
+        let undone = loop_.undo_steps(1).await.unwrap();
+        assert_eq!(undone, 1);
+
+        let content = tokio::fs::read_to_string(&file)
+            .await
+            .unwrap();
+        assert_eq!(content, "original");
+    }
+
+    #[tokio::test]
+    async fn test_undo_last_step_no_manager_returns_false() {
+        let loop_ = ComputerUseLoop::new(Arc::new(
+            crate::computer::headless::HeadlessComputerAdapter::new(
+                Arc::new(crate::tools::ToolRegistry::new()),
+            ),
+        ));
+
+        let undone = loop_.undo_last_step().await.unwrap();
+        assert!(!undone);
+    }
+
+    #[test]
+    fn test_computer_use_loop_builder_methods() {
+        let adapter = Arc::new(crate::computer::headless::HeadlessComputerAdapter::new(
+            Arc::new(crate::tools::ToolRegistry::new()),
+        ));
+        let mgr = Arc::new(tokio::sync::Mutex::new(
+            crate::computer::RollbackManager::with_backup_dir(
+                std::env::temp_dir().join("test"),
+            ),
+        ));
+
+        let loop_ = ComputerUseLoop::new(adapter)
+            .with_rollback_manager(mgr)
+            .with_snapshot_paths(vec!["/tmp/workspace".to_string()])
+            .with_auto_rollback_threshold(5);
+
+        assert_eq!(loop_.snapshot_paths.len(), 1);
+        assert_eq!(loop_.auto_rollback_threshold, 5);
+        assert!(loop_.rollback_manager.is_some());
     }
 }

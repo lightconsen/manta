@@ -180,8 +180,52 @@ print(json.dumps(result))
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
 
-        // Note: Memory limits via libc::setrlimit removed - requires unsafe block
-        // and libc crate. Consider using cgroups or ulimit wrapper for production.
+        // Apply resource limits via pre_exec (Unix only)
+        #[cfg(unix)]
+        {
+            let max_memory_mb = self.config.max_memory_mb;
+
+            #[allow(unsafe_code)]
+            unsafe {
+                cmd.pre_exec(move || {
+                    // Memory limit (RLIMIT_AS)
+                    let mem_bytes = max_memory_mb * 1024 * 1024;
+                    let limit = libc::rlimit {
+                        rlim_cur: mem_bytes as libc::rlim_t,
+                        rlim_max: mem_bytes as libc::rlim_t,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_AS, &limit);
+
+                    // CPU limit
+                    let limit = libc::rlimit {
+                        rlim_cur: timeout_secs as libc::rlim_t,
+                        rlim_max: timeout_secs as libc::rlim_t,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_CPU, &limit);
+
+                    // File descriptor limit
+                    let limit = libc::rlimit {
+                        rlim_cur: 256,
+                        rlim_max: 256,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+
+                    // Process limit (prevent fork bombs).
+                    // Skip on macOS: RLIMIT_NPROC is per-user and interferes with
+                    // pyenv and other multi-process toolchains.
+                    #[cfg(target_os = "linux")]
+                    {
+                        let limit = libc::rlimit {
+                            rlim_cur: 64,
+                            rlim_max: 64,
+                        };
+                        let _ = libc::setrlimit(libc::RLIMIT_NPROC, &limit);
+                    }
+
+                    Ok(())
+                });
+            }
+        }
 
         let mut child = cmd.spawn().map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to spawn Python: {}", e))

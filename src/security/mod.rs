@@ -1205,6 +1205,9 @@ pub mod allowlist;
 /// PII detection and content filtering
 pub mod pii;
 
+/// Content filter for tool outputs
+pub mod content_filter;
+
 // Re-export SecurityValidator and validation types from tools module for use in security tests
 pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
 
@@ -1212,3 +1215,9 @@ pub use crate::tools::{SecurityValidator, ToolValidationError, ToolValidator};
 pub use pii::{
     DataClassification, DetectedPii, FilterResult, PiiDetector, PiiPattern,
 };
+
+// Re-export content filter types
+pub use content_filter::{ContentFilter, ContentFilterOutcome, FilterAction};
+
+// Re-export audit logger trait
+pub use runtime_audit::AuditLogger;

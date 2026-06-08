@@ -404,6 +404,7 @@ async fn tail_journald(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 async fn tail_journald(
     _unit: Option<&str>,
     _source_name: &str,
@@ -497,6 +498,7 @@ async fn tail_windows_event(
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 async fn tail_windows_event(
     _channel: &str,
     _source_name: &str,
@@ -517,7 +519,7 @@ async fn tail_windows_event(
 /// - Simple `level: message` or `[level] message` patterns
 fn parse_generic_log_line(line: &str, source_name: &str) -> Option<LogEntry> {
     // Try to extract timestamp.
-    let ts = extract_timestamp(line).unwrap_or_else(|| Utc::now());
+    let ts = extract_timestamp(line).unwrap_or_else(Utc::now);
 
     // Strip the timestamp prefix so level extraction works on the rest.
     let after_ts = strip_timestamp_prefix(line);
@@ -569,6 +571,7 @@ fn parse_journald_line(line: &str, source_name: &str) -> Option<LogEntry> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 fn parse_journald_line(_line: &str, _source_name: &str) -> Option<LogEntry> {
     None
 }
@@ -632,6 +635,7 @@ fn parse_windows_event_line(line: &str, source_name: &str) -> Option<LogEntry> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn parse_windows_event_line(_line: &str, _source_name: &str) -> Option<LogEntry> {
     None
 }

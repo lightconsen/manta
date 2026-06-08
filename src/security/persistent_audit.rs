@@ -8,7 +8,7 @@
 //! - Compliance reporting
 //! - Long-term retention
 
-use crate::security::runtime_audit::{AuditEntry, AuditEventType};
+use crate::security::runtime_audit::{AuditEntry, AuditEventType, AuditLogger};
 use sqlx::Row;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -259,6 +259,22 @@ impl PersistentAuditLog {
     pub async fn export_json(&self) -> Result<String, serde_json::Error> {
         let mem = self.memory.read().await;
         serde_json::to_string_pretty(&*mem)
+    }
+}
+
+#[async_trait::async_trait]
+impl AuditLogger for PersistentAuditLog {
+    async fn log_entry(
+        &self,
+        event_type: AuditEventType,
+        actor: String,
+        target: String,
+        allowed: bool,
+        description: String,
+        details: Option<serde_json::Value>,
+    ) {
+        self.log(event_type, actor, target, allowed, description, details)
+            .await;
     }
 }
 

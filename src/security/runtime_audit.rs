@@ -40,6 +40,8 @@ pub enum AuditEventType {
     AcpTerminate,
     /// ACP message sent
     AcpMessage,
+    /// Content filter action (PII/secrets detected, redacted, or blocked)
+    ContentFilter,
 }
 
 /// A single audit log entry.
@@ -150,6 +152,37 @@ impl RuntimeAuditLog {
     /// Clear all entries.
     pub async fn clear(&self) {
         self.entries.write().await.clear();
+    }
+}
+
+/// Trait for audit loggers (in-memory, persistent, or composite).
+#[async_trait::async_trait]
+pub trait AuditLogger: Send + Sync + std::fmt::Debug {
+    /// Log a single audit entry.
+    async fn log_entry(
+        &self,
+        event_type: AuditEventType,
+        actor: String,
+        target: String,
+        allowed: bool,
+        description: String,
+        details: Option<serde_json::Value>,
+    );
+}
+
+#[async_trait::async_trait]
+impl AuditLogger for RuntimeAuditLog {
+    async fn log_entry(
+        &self,
+        event_type: AuditEventType,
+        actor: String,
+        target: String,
+        allowed: bool,
+        description: String,
+        details: Option<serde_json::Value>,
+    ) {
+        self.log(event_type, actor, target, allowed, description, details)
+            .await;
     }
 }
 

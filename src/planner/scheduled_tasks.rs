@@ -486,7 +486,7 @@ fn next_cron_occurrence(fields: &CronFields, after: DateTime<Utc>) -> Option<Dat
         {
             return Some(candidate);
         }
-        candidate = candidate + chrono::Duration::minutes(1);
+        candidate += chrono::Duration::minutes(1);
     }
     None
 }
