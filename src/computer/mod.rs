@@ -27,6 +27,7 @@ pub mod use_loop;
 pub mod rollback;
 pub mod headless;
 pub mod fs_watch;
+pub mod network;
 #[cfg(feature = "vision")]
 pub mod vision;
 
@@ -44,6 +45,7 @@ pub use use_loop::{ComputerUseLoop, LoopConfig, LoopDecision, LoopResult, LoopSt
 pub use rollback::{RollbackManager, Snapshot};
 pub use headless::{HeadlessComputerAdapter, VirtualDisplay};
 pub use fs_watch::{FileChangeEvent, FileChangeKind, FileWatchResult, FileWatcher};
+pub use network::{FirewallRule, NetworkInspector, PingResult, PortEntry, TcpConnectResult};
 
 /// Unified error type for computer operations.
 #[derive(Debug, thiserror::Error)]
@@ -178,6 +180,48 @@ pub trait ComputerAdapter: Send + Sync {
             path: path.to_string(),
         })
         .await
+    }
+
+    /// Convenience: list network sockets.
+    async fn list_ports(
+        &self,
+        filter_protocol: Option<&str>,
+        filter_state: Option<&str>,
+    ) -> Result<ActionResult> {
+        self.execute(DesktopAction::ListPorts {
+            filter_protocol: filter_protocol.map(String::from),
+            filter_state: filter_state.map(String::from),
+        })
+        .await
+    }
+
+    /// Convenience: test ICMP ping to a host.
+    async fn test_ping(&self, target: &str, count: Option<u32>) -> Result<ActionResult> {
+        self.execute(DesktopAction::TestPing {
+            target: target.to_string(),
+            count,
+        })
+        .await
+    }
+
+    /// Convenience: test TCP connectivity to a host:port.
+    async fn test_tcp_connect(
+        &self,
+        target: &str,
+        port: u16,
+        timeout_ms: Option<u64>,
+    ) -> Result<ActionResult> {
+        self.execute(DesktopAction::TestTcpConnect {
+            target: target.to_string(),
+            port,
+            timeout_ms,
+        })
+        .await
+    }
+
+    /// Convenience: list firewall rules.
+    async fn list_firewall_rules(&self) -> Result<ActionResult> {
+        self.execute(DesktopAction::ListFirewallRules).await
     }
 }
 

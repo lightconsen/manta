@@ -469,6 +469,70 @@ impl ComputerAdapter for HeadlessComputerAdapter {
                     path
                 )))
             }
+            DesktopAction::ListPorts {
+                filter_protocol,
+                filter_state,
+            } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let protocol_ref = filter_protocol.as_deref();
+                let state_ref = filter_state.as_deref();
+                match inspector.list_ports(protocol_ref, state_ref) {
+                    Ok(entries) => Ok(ActionResult::success(format!(
+                        "Found {} socket entries",
+                        entries.len()
+                    ))
+                    .with_data(serde_json::to_value(&entries).unwrap_or_default())),
+                    Err(e) => Err(ComputerError::Other(e.to_string())),
+                }
+            }
+            DesktopAction::TestPing { target, count } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let result = inspector.test_ping(&target, count).await;
+                let success = result.success;
+                let message = result.message.clone();
+                let mut ar = ActionResult {
+                    success,
+                    message,
+                    screenshot_after: None,
+                    data: Some(serde_json::to_value(&result).unwrap_or_default()),
+                };
+                if !success {
+                    ar.success = false;
+                }
+                Ok(ar)
+            }
+            DesktopAction::TestTcpConnect {
+                target,
+                port,
+                timeout_ms,
+            } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let timeout = timeout_ms.map(std::time::Duration::from_millis);
+                let result = inspector.test_tcp_connect(&target, port, timeout).await;
+                let success = result.success;
+                let message = result.message.clone();
+                let mut ar = ActionResult {
+                    success,
+                    message,
+                    screenshot_after: None,
+                    data: Some(serde_json::to_value(&result).unwrap_or_default()),
+                };
+                if !success {
+                    ar.success = false;
+                }
+                Ok(ar)
+            }
+            DesktopAction::ListFirewallRules => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                match inspector.list_firewall_rules().await {
+                    Ok(rules) => Ok(ActionResult::success(format!(
+                        "Found {} firewall rules",
+                        rules.len()
+                    ))
+                    .with_data(serde_json::to_value(&rules).unwrap_or_default())),
+                    Err(e) => Err(ComputerError::Other(e.to_string())),
+                }
+            }
             _ => Err(ComputerError::Other(
                 "Action not available in headless mode".to_string(),
             )),

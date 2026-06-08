@@ -279,6 +279,24 @@ pub enum DesktopAction {
     UnwatchFile {
         path: String,
     },
+    /// List network sockets (ports) with optional filters.
+    ListPorts {
+        filter_protocol: Option<String>,
+        filter_state: Option<String>,
+    },
+    /// Test ICMP connectivity to a host.
+    TestPing {
+        target: String,
+        count: Option<u32>,
+    },
+    /// Test TCP connectivity to a host:port.
+    TestTcpConnect {
+        target: String,
+        port: u16,
+        timeout_ms: Option<u64>,
+    },
+    /// List firewall rules.
+    ListFirewallRules,
 }
 
 /// Result of executing a desktop action.
