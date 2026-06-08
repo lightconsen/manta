@@ -7,6 +7,7 @@
 use crate::computer::{
     ActionResult, ComputerAdapter, ComputerError, DesktopAction, Result, Screenshot,
 };
+use crate::computer::reflection::{FailureAnalysis, ReflectionEngine};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,6 +64,7 @@ impl Default for VerificationConfig {
 pub struct VerificationEngine {
     adapter: Arc<dyn ComputerAdapter>,
     config: VerificationConfig,
+    reflection: Option<ReflectionEngine>,
 }
 
 impl VerificationEngine {
@@ -70,11 +72,18 @@ impl VerificationEngine {
         Self {
             adapter,
             config: VerificationConfig::default(),
+            reflection: None,
         }
     }
 
     pub fn with_config(mut self, config: VerificationConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Attach a reflection engine for root-cause analysis and adaptive retry.
+    pub fn with_reflection(mut self, reflection: ReflectionEngine) -> Self {
+        self.reflection = Some(reflection);
         self
     }
 
@@ -85,6 +94,10 @@ impl VerificationEngine {
     /// 3. Wait a short settle time.
     /// 4. Verify against criteria.
     /// 5. Retry up to `max_retries` if verification fails.
+    ///
+    /// When a [`ReflectionEngine`] is attached, each failure is analysed to
+    /// determine the root cause, past experiences are queried, and the retry
+    /// delay is adapted before the next attempt.
     pub async fn execute_with_verification(
         &self,
         action: DesktopAction,
@@ -102,34 +115,118 @@ impl VerificationEngine {
             baseline = Some(self.adapter.screenshot(None).await?);
         }
 
-        for attempt in 0..=self.config.max_retries {
+        let mut current_config = self.config;
+        let mut last_analysis: Option<FailureAnalysis> = None;
+
+        for attempt in 0..=current_config.max_retries {
             let result = self.adapter.execute(action.clone()).await?;
 
             // Wait for UI to settle before verifying.
-            tokio::time::sleep(Duration::from_millis(self.config.retry_delay_ms)).await;
+            tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms)).await;
 
             match self.verify(&criteria, &result, baseline.as_ref()).await {
-                Ok(true) => return Ok(result),
+                Ok(true) => {
+                    // Success — record experience if reflection is enabled.
+                    if let Some(ref reflection) = self.reflection {
+                        if let Some(ref analysis) = last_analysis {
+                            reflection
+                                .record_experience(
+                                    analysis,
+                                    &action,
+                                    self.config.retry_delay_ms,
+                                    current_config.retry_delay_ms,
+                                    true,
+                                )
+                                .await;
+                        }
+                    }
+                    return Ok(result);
+                }
                 Ok(false) => {
-                    if attempt < self.config.max_retries {
-                        tracing::warn!(
-                            "Verification failed (attempt {}/{}), retrying...",
-                            attempt + 1,
-                            self.config.max_retries + 1
-                        );
-                        tokio::time::sleep(Duration::from_millis(self.config.retry_delay_ms)).await;
+                    if attempt < current_config.max_retries {
+                        if let Some(ref reflection) = self.reflection {
+                            let analysis = reflection.analyze_failure(
+                                &criteria,
+                                &action,
+                                &result,
+                                attempt,
+                            );
+                            tracing::warn!(
+                                "Verification failed (attempt {}/{}): {} — adapting retry strategy",
+                                attempt + 1,
+                                current_config.max_retries + 1,
+                                analysis.details
+                            );
+                            let experiences = reflection
+                                .query_past_experience(&analysis, &action)
+                                .await;
+                            current_config = reflection.adapt_retry_config(
+                                current_config,
+                                &analysis,
+                                &experiences,
+                            );
+                            last_analysis = Some(analysis);
+                        } else {
+                            tracing::warn!(
+                                "Verification failed (attempt {}/{}), retrying...",
+                                attempt + 1,
+                                current_config.max_retries + 1
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms)).await;
+                    } else {
+                        // Final attempt failed — record failure experience.
+                        if let Some(ref reflection) = self.reflection {
+                            let analysis = last_analysis.clone().unwrap_or_else(|| {
+                                reflection.analyze_failure(&criteria, &action, &result, attempt)
+                            });
+                            reflection
+                                .record_experience(
+                                    &analysis,
+                                    &action,
+                                    self.config.retry_delay_ms,
+                                    current_config.retry_delay_ms,
+                                    false,
+                                )
+                                .await;
+                        }
                     }
                 }
                 Err(e) => {
                     // Verification itself errored — abort unless we can retry.
-                    if attempt < self.config.max_retries {
-                        tracing::warn!(
-                            "Verification error (attempt {}/{}): {}, retrying...",
-                            attempt + 1,
-                            self.config.max_retries + 1,
-                            e
-                        );
-                        tokio::time::sleep(Duration::from_millis(self.config.retry_delay_ms)).await;
+                    if attempt < current_config.max_retries {
+                        if let Some(ref reflection) = self.reflection {
+                            let analysis = reflection.analyze_failure(
+                                &criteria,
+                                &action,
+                                &ActionResult::error(e.to_string()),
+                                attempt,
+                            );
+                            tracing::warn!(
+                                "Verification error (attempt {}/{}): {} — {} — retrying...",
+                                attempt + 1,
+                                current_config.max_retries + 1,
+                                e,
+                                analysis.details
+                            );
+                            let experiences = reflection
+                                .query_past_experience(&analysis, &action)
+                                .await;
+                            current_config = reflection.adapt_retry_config(
+                                current_config,
+                                &analysis,
+                                &experiences,
+                            );
+                            last_analysis = Some(analysis);
+                        } else {
+                            tracing::warn!(
+                                "Verification error (attempt {}/{}): {}, retrying...",
+                                attempt + 1,
+                                current_config.max_retries + 1,
+                                e
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(current_config.retry_delay_ms)).await;
                     } else {
                         return Err(e);
                     }
@@ -139,7 +236,7 @@ impl VerificationEngine {
 
         Err(ComputerError::Other(format!(
             "Verification failed after {} attempts",
-            self.config.max_retries + 1
+            current_config.max_retries + 1
         )))
     }
 

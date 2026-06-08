@@ -84,6 +84,8 @@ pub struct LoopState {
     pub last_verified: Option<bool>,
     /// Error message from the previous step, if any.
     pub last_error: Option<String>,
+    /// Number of consecutive failed steps.
+    pub consecutive_failures: usize,
 }
 
 /// Outcome of running the loop.
@@ -137,8 +139,26 @@ impl ComputerUseLoop {
         let mut history = Vec::new();
         let mut last_verified: Option<bool> = None;
         let mut last_error: Option<String> = None;
+        let mut consecutive_failures: usize = 0;
+        let mut current_settle_delay_ms = self.config.settle_delay_ms;
 
         for step in 0..self.config.max_steps {
+            // Auto-escalation: too many consecutive failures.
+            if consecutive_failures >= 5 {
+                let final_screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
+                return Ok(LoopResult {
+                    success: false,
+                    steps_taken: step,
+                    history,
+                    final_screenshot,
+                    message: format!(
+                        "Stuck after {} consecutive failures. Last error: {}",
+                        consecutive_failures,
+                        last_error.as_deref().unwrap_or("unknown")
+                    ),
+                });
+            }
+
             // 1. Perceive — capture screenshot.
             let screenshot = self.adapter.screenshot(self.config.screenshot_region).await?;
 
@@ -150,6 +170,7 @@ impl ComputerUseLoop {
                 history: history.clone(),
                 last_verified,
                 last_error: last_error.clone(),
+                consecutive_failures,
             };
 
             let decision = decide(state).await?;
@@ -181,7 +202,7 @@ impl ComputerUseLoop {
                     match result {
                         Ok(result) => {
                             // 4. Validate — verify the outcome.
-                            tokio::time::sleep(Duration::from_millis(self.config.settle_delay_ms))
+                            tokio::time::sleep(Duration::from_millis(current_settle_delay_ms))
                                 .await;
 
                             let verified = if self.config.verify_after_each {
@@ -196,8 +217,16 @@ impl ComputerUseLoop {
                                 .await
                                 .ok();
 
+                            if verified {
+                                // Success — reset failure counters and settle delay.
+                                consecutive_failures = 0;
+                                current_settle_delay_ms = self.config.settle_delay_ms;
+                            } else {
+                                consecutive_failures += 1;
+                            }
+
                             last_verified = Some(verified);
-                            last_error = None;
+                            last_error = if verified { None } else { Some("Verification failed".to_string()) };
 
                             history.push(StepRecord {
                                 step,
@@ -209,8 +238,31 @@ impl ComputerUseLoop {
                             });
                         }
                         Err(e) => {
+                            consecutive_failures += 1;
                             last_verified = Some(false);
                             last_error = Some(e.to_string());
+
+                            // Adaptive settle delay: if multiple consecutive failures look
+                            // like timing issues, wait longer before next action.
+                            if consecutive_failures >= 3 {
+                                let err_lower = e.to_string().to_lowercase();
+                                let is_timing = err_lower.contains("timeout")
+                                    || err_lower.contains("not ready")
+                                    || err_lower.contains("not found")
+                                    || err_lower.contains("empty");
+                                if is_timing {
+                                    let new_delay = current_settle_delay_ms.saturating_mul(2).min(5000);
+                                    if new_delay > current_settle_delay_ms {
+                                        tracing::warn!(
+                                            "Increasing settle delay from {}ms to {}ms after {} consecutive timing failures",
+                                            current_settle_delay_ms,
+                                            new_delay,
+                                            consecutive_failures
+                                        );
+                                        current_settle_delay_ms = new_delay;
+                                    }
+                                }
+                            }
 
                             history.push(StepRecord {
                                 step,
@@ -352,8 +404,10 @@ mod tests {
             history: vec![],
             last_verified: None,
             last_error: None,
+            consecutive_failures: 0,
         };
         assert_eq!(state.step, 0);
         assert!(state.history.is_empty());
+        assert_eq!(state.consecutive_failures, 0);
     }
 }
