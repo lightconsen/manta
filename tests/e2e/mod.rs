@@ -12,7 +12,7 @@ pub use syscity::gateway::protocol::AuthMode;
 pub use syscity::gateway::{Gateway, GatewayConfig};
 pub use syscity::model_router::{ModelAlias, ProviderConfig, ProviderType};
 pub use syscity::providers::{
-    mock::MockProvider, FunctionCall, Message as ProviderMessage, ToolCall,
+    mock::MockProvider, FunctionCall, Message as ProviderMessage, Role, ToolCall,
 };
 pub use tokio::time::timeout;
 pub use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -243,6 +243,77 @@ pub async fn start_test_gateway_with_mock(port: u16, mock: MockProvider) {
         }
     }
     panic!("Gateway did not start within 10 seconds");
+}
+
+// ── Mock Provider Builders ───────────────────────────────────────────────────
+
+/// Build a MockProvider that drives a two-turn tool conversation.
+///
+/// First turn emits a `ToolCall` for `expected_tool` (arguments `{}`).
+/// Second turn returns a final answer after seeing the tool result.
+/// Handles NOCACHE cache-check prompts automatically.
+pub fn tool_mock_provider(expected_tool: &str) -> MockProvider {
+    let tool = expected_tool.to_string();
+    MockProvider::new().with_callback(move |messages| {
+        if messages.len() == 1 && messages[0].content.contains("NOCACHE") {
+            return ProviderMessage::assistant("NOCACHE");
+        }
+        let has_tool_result = messages.iter().any(|m| m.role == Role::Tool);
+        if has_tool_result {
+            return ProviderMessage::assistant("Done! I've completed the task.");
+        }
+        ProviderMessage::assistant("I'll help with that.").with_tool_calls(vec![ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: tool.clone(),
+                arguments: "{}".to_string(),
+            },
+            index: None,
+            result: None,
+        }])
+    })
+}
+
+/// Build a MockProvider for simple LLM streaming tests.
+///
+/// Returns a fixed response for normal prompts.
+/// Handles NOCACHE cache-check prompts automatically.
+pub fn llm_mock_provider_for_streaming() -> MockProvider {
+    MockProvider::new().with_callback(|messages| {
+        if messages.len() == 1 && messages[0].content.contains("NOCACHE") {
+            return ProviderMessage::assistant("NOCACHE");
+        }
+        ProviderMessage::assistant("pong-from-llm")
+    })
+}
+
+/// Build a MockProvider for LLM tool-invocation tests.
+///
+/// First turn emits a `ToolCall` for the given tool name.
+/// Second turn returns a final answer after seeing the tool result.
+/// Handles NOCACHE cache-check prompts automatically.
+pub fn llm_mock_provider_for_tool(tool_name: &str) -> MockProvider {
+    let tool = tool_name.to_string();
+    MockProvider::new().with_callback(move |messages| {
+        if messages.len() == 1 && messages[0].content.contains("NOCACHE") {
+            return ProviderMessage::assistant("NOCACHE");
+        }
+        let has_tool_result = messages.iter().any(|m| m.role == Role::Tool);
+        if has_tool_result {
+            return ProviderMessage::assistant("Done!");
+        }
+        ProviderMessage::assistant("Let me check that.").with_tool_calls(vec![ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: tool.clone(),
+                arguments: "{}".to_string(),
+            },
+            index: None,
+            result: None,
+        }])
+    })
 }
 
 // ── Frontend Simulator ────────────────────────────────────────────────────────
@@ -485,7 +556,11 @@ pub async fn run_tool_chat_test(
     prompt: &str,
     expected_tool: &str,
 ) -> Vec<serde_json::Value> {
-    start_test_gateway(port, true).await;
+    if pick_test_provider().is_some() {
+        start_test_gateway(port, true).await;
+    } else {
+        start_test_gateway_with_mock(port, tool_mock_provider(expected_tool)).await;
+    }
     let mut client = FrontendSimulator::connect(port).await;
 
     let sid = client.create_session().await;

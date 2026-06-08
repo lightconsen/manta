@@ -43,12 +43,6 @@ fn skip_if_no_chrome() {
 #[serial]
 #[cfg(feature = "browser")]
 async fn tool_browser_navigate_invoked_via_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     skip_if_no_chrome();
     if !chrome_available() {
         return;
@@ -65,12 +59,6 @@ async fn tool_browser_navigate_invoked_via_chat() {
 #[serial]
 #[cfg(feature = "browser")]
 async fn tool_browser_snapshot_invoked_via_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     skip_if_no_chrome();
     if !chrome_available() {
         return;
@@ -87,12 +75,6 @@ async fn tool_browser_snapshot_invoked_via_chat() {
 #[serial]
 #[cfg(feature = "browser")]
 async fn tool_browser_screenshot_invoked_via_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     skip_if_no_chrome();
     if !chrome_available() {
         return;
@@ -109,12 +91,6 @@ async fn tool_browser_screenshot_invoked_via_chat() {
 #[serial]
 #[cfg(feature = "browser")]
 async fn tool_browser_pdf_invoked_via_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     skip_if_no_chrome();
     if !chrome_available() {
         return;
@@ -131,12 +107,6 @@ async fn tool_browser_pdf_invoked_via_chat() {
 #[serial]
 #[cfg(feature = "browser")]
 async fn tool_browser_click_and_type_invoked_via_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     skip_if_no_chrome();
     if !chrome_available() {
         return;

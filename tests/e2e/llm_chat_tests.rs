@@ -3,14 +3,12 @@ use super::*;
 #[tokio::test]
 #[serial]
 async fn llm_chat_streaming_journey() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     let port = 40040;
-    start_test_gateway(port, true).await;
+    if pick_test_provider().is_some() {
+        start_test_gateway(port, true).await;
+    } else {
+        start_test_gateway_with_mock(port, llm_mock_provider_for_streaming()).await;
+    }
     let mut client = FrontendSimulator::connect(port).await;
 
     let sid = client.create_session().await;
@@ -61,14 +59,12 @@ async fn llm_chat_streaming_journey() {
 #[tokio::test]
 #[serial]
 async fn llm_tool_invocation_journey() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     let port = 40041;
-    start_test_gateway(port, true).await;
+    if pick_test_provider().is_some() {
+        start_test_gateway(port, true).await;
+    } else {
+        start_test_gateway_with_mock(port, llm_mock_provider_for_tool("time")).await;
+    }
     let mut client = FrontendSimulator::connect(port).await;
 
     let sid = client.create_session().await;
@@ -136,14 +132,12 @@ async fn llm_tool_invocation_journey() {
 #[tokio::test]
 #[serial]
 async fn session_created_event_on_first_chat() {
-    if pick_test_provider().is_none() {
-        panic!(
-            "LLM tests require an API key. Either set SYSCITY_TEST_PROVIDER_KEY + SYSCITY_TEST_PROVIDER env vars, \
-             or ensure start-local-qwen.sh / start-local-kimi.sh exist in the project root with valid keys."
-        );
-    }
     let port = 40042;
-    start_test_gateway(port, true).await;
+    if pick_test_provider().is_some() {
+        start_test_gateway(port, true).await;
+    } else {
+        start_test_gateway_with_mock(port, llm_mock_provider_for_streaming()).await;
+    }
     let mut client = FrontendSimulator::connect(port).await;
 
     client
