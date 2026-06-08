@@ -118,24 +118,22 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 - ✅ **条件分支**：根据中间结果动态调整后续步骤 — `TaskExecutor` 支持失败分支与回滚
 - ✅ **并行执行**：无依赖的子任务并发执行（如同时检查多个服务器）— `DagScheduler::next_ready()` + `max_concurrency`
 
-### 3.2 工具使用推理 ⬜ 未实现
+### 3.2 工具使用推理 ✅ 已实现
 
-当前工具是静态注册的。Agent 需要动态发现和组合工具：
-
-- ⬜ **工具链推理**："要部署代码 → 需要 SSH → SSH 需要密钥 → 检查 ~/.ssh/ 是否存在"
-- ⬜ **工具合成**：将多个原子工具组合为复合工具（如 "git clone + install deps + build"）
-- ⬜ **工具学习**：从失败中学习，记住"上次用 xdotool click 失败了，这次改用 ydotool"
+- ✅ **工具链推理**：`ToolChainReasoner` — 启发式规则引擎 + LLM fallback，推断先决条件链 (`src/planner/tool_chain.rs`)
+- ✅ **工具合成**：`CompositeTool` / `CompositeToolRegistry` — 参数化多步复合工具，内置 git-clone-build / deploy-ssh / install-and-verify (`src/planner/composite_tool.rs`)
+- ✅ **工具学习**：`ToolLearningEngine` — 记录工具执行成败，基于上下文相似度推荐替代方案 (`src/planner/tool_learning.rs`)
 
 ### 3.3 反思与自纠正
 
 - ✅ **动作验证**：执行后主动验证结果是否符合预期（而非盲目执行下一步）— `VerificationEngine`（`src/computer/verification.rs`）
-- ⬜ **错误诊断**：解析错误信息，定位根因，生成修复策略 — 尚未实现自动错误分析层
+- ✅ **错误诊断**：`ErrorDiagnosisEngine` — 启发式规则匹配 + LLM fallback，诊断权限/网络/依赖/资源等错误并生成修复策略 (`src/planner/error_diagnosis.rs`)
 - ✅ **经验积累**：将成功案例的解决路径存入向量记忆，供未来复用 — `GoalPlanner::decompose` 自动检索历史经验注入 LLM 提示，`achieve` 执行后将结果存入记忆（`src/planner/mod.rs` + `src/memory/`）
 
 ### 3.4 长时程任务管理
 
-- ⬜ **持久化任务队列**：系统重启后恢复未完成的任务 — `src/planner/state.rs` 尚未创建
-- ⬜ **定时/周期任务**：Cron 的 Agent 化（"每天早上 9 点检查邮件并总结"）
+- ✅ **持久化任务队列**：`TaskStateStore` (SQLite) + `PersistentTaskManager` — 系统重启后自动恢复未完成任务，运行中任务重置为 Pending (`src/planner/state.rs` + `src/planner/persistent_queue.rs`)
+- ✅ **定时/周期任务**：`TaskScheduler` + `Schedule` (Once / Interval / Cron) — Cron 的 Agent 化，支持导入导出 (`src/planner/scheduled_tasks.rs`)
 - ✅ **中断与恢复**：用户随时打断，Agent 记住上下文，稍后继续 — `ExecutionController` 已集成到 `ComputerUseLoop` 与 `TaskExecutor`
 
 ---
@@ -245,7 +243,7 @@ while not task_done:
 ### Phase 2：生产就绪（2-4 个月）
 5. ✅ **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单 + IP 段限制（CIDR）已完成，缺资源配额
 6. 🔄 **自动回滚** — 文件备份 + 系统快照 — 文件级 `RollbackManager` 已完成，缺系统级快照
-7. 🔄 **长时程任务管理** — 持久化队列、中断恢复 — 中断/恢复已完成，缺持久化队列 + 定时任务
+7. ✅ **长时程任务管理** — 持久化队列、中断恢复 — `TaskStateStore` + `PersistentTaskManager` + `TaskScheduler` 已完成
 8. ✅ **目标分解引擎** — 复杂任务自动拆解为 DAG — `GoalPlanner` + `DagScheduler` + `TaskExecutor`
 
 ### Phase 3：生态扩展（4-6 个月）
@@ -265,7 +263,7 @@ while not task_done:
 ├─────────────────────────────────────────────────────────┤
 │  规划层（✅ 已实现）                                       │
 │  - 目标分解引擎（GoalPlanner）、任务 DAG、长时程管理         │
-│  - 持久化任务队列（⬜ 待实现）                              │
+│  - 持久化任务队列（TaskStateStore + PersistentTaskManager）  │
 ├─────────────────────────────────────────────────────────┤
 │  抽象层（✅ 已实现）←── 本路线图核心                        │
 │  - ComputerAdapter（跨平台统一桌面接口）                    │
@@ -300,7 +298,7 @@ while not task_done:
 │  Layer 4: Agent / Planner（✅ 已实现）                        │
 │  - GoalPlanner: 目标分解、DAG 调度、长时程任务                │
 │  - ComputerUseLoop: 截图→决策→执行→验证 循环                │
-│  - 持久化任务队列（⬜ 待实现）                                 │
+│  - 持久化任务队列（TaskScheduler / Schedule）                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 3: ComputerAdapter（✅ 已实现）                        │
 │  - 跨平台统一接口：screenshot / click / type / read_ui_tree  │
@@ -1090,7 +1088,7 @@ src/capabilities/
 剩余重点工作（按优先级排序）：
 
 1. **敏感内容检测**（PII / API Key / 密码框识别）— 安全层最后缺口
-2. **持久化任务队列**（`src/planner/state.rs`）— 系统重启恢复、定时/周期任务
+2. ~~持久化任务队列~~ ✅ 已完成 — `TaskStateStore` + `PersistentTaskManager` + `TaskScheduler`
 3. **系统级快照**（APFS / Btrfs / System Restore）— 回滚能力补完
 4. **截图编码优化** — 根据网络状况自动调整分辨率/质量
 5. **扩展层**：移动端桥接（Android/iOS）、物联网（GPIO/Home Assistant）、机器人接口（ROS2）

@@ -12,18 +12,30 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod composite_tool;
 pub mod dag;
 pub mod decomposer;
+pub mod error_diagnosis;
 pub mod executor;
+pub mod persistent_queue;
 pub mod recovery;
+pub mod scheduled_tasks;
 pub mod state;
+pub mod tool_chain;
+pub mod tool_learning;
 pub mod workflow;
 
+pub use composite_tool::{CompositeTool, CompositeToolRegistry, ToolStep};
 pub use dag::DagScheduler;
 pub use decomposer::{GoalDecomposer, SubTask};
+pub use error_diagnosis::{Diagnosis, ErrorCategory, ErrorDiagnosisEngine, RemediationStep, RootCause, Severity};
 pub use executor::TaskExecutor;
+pub use persistent_queue::{PersistentTaskManager, QueueHealth, QueueStatus};
 pub use recovery::{check_startup_recovery, RecoveryOutcome};
+pub use scheduled_tasks::{Schedule, ScheduledTask, TaskScheduler};
 pub use state::TaskStateStore;
+pub use tool_chain::{ChainAnalysis, ChainLink, ToolChainReasoner};
+pub use tool_learning::{ExperienceContext, ToolExperience, ToolLearningEngine, ToolSuggestion};
 pub use workflow::{FailureStrategy, RecordedStep, StepResult, Workflow, WorkflowAction, WorkflowPlayer, WorkflowRecorder};
 
 /// Unique identifier for a task.
