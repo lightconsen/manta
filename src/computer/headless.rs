@@ -10,6 +10,7 @@
 //!                                     └── click/type (xdotool via DISPLAY)
 //! ```
 
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
 use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
     Rect, Result, ScrollDirection, Screenshot, UiElement, WaitCondition,
@@ -141,9 +142,21 @@ impl VirtualDisplay for XvfbDisplay {
 
         match import_cmd.output().await {
             Ok(output) if output.status.success() => {
+                let bytes = output.stdout;
+                // Write to temp file and apply ScreenshotEncoder
+                let temp_path = std::env::temp_dir()
+                    .join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+                let _ = tokio::fs::write(&temp_path, &bytes).await;
+                let encoded = maybe_encode_screenshot(&temp_path).await;
+                let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
+                // Cleanup temps
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                if encoded != temp_path {
+                    let _ = tokio::fs::remove_file(&encoded).await;
+                }
                 let base64 = base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
-                    &output.stdout,
+                    &final_bytes,
                 );
                 return Ok(Screenshot {
                     base64,
@@ -204,9 +217,22 @@ impl VirtualDisplay for XvfbDisplay {
             ));
         }
 
+        let bytes = convert_output.stdout;
+        // Write to temp file and apply ScreenshotEncoder
+        let temp_path = std::env::temp_dir()
+            .join(format!("syscity_xvfb_{}.png", uuid::Uuid::new_v4()));
+        let _ = tokio::fs::write(&temp_path, &bytes).await;
+        let encoded = maybe_encode_screenshot(&temp_path).await;
+        let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(bytes);
+        // Cleanup temps
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        if encoded != temp_path {
+            let _ = tokio::fs::remove_file(&encoded).await;
+        }
+
         let base64 = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
-            &convert_output.stdout,
+            &final_bytes,
         );
 
         Ok(Screenshot {

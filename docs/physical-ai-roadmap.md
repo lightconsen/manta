@@ -2,7 +2,7 @@
 
 > 本文档基于当前已实现的能力，梳理 Syscity 从 "具备 OS 控制工具的 AI 助手" 进化为 "Physical AI 操作系统" 所需的核心功能缺口。
 >
-> 当前已实现：多平台截图（X11/Wayland/Windows/macOS）、桌面控制（点击/输入/窗口管理）、剪贴板操作、PowerShell/Shell 执行、能力集自动检测、多 Agent 协作、向量记忆、MCP 协议。
+> 当前已实现：多平台截图（X11/Wayland/Windows/macOS）、桌面控制（点击/输入/窗口管理）、剪贴板操作、PowerShell/Shell 执行、能力集自动检测、多 Agent 协作、向量记忆、MCP 协议、移动端桥接（Android/iOS）、安全审计与 PII 检测、资源配额与沙箱限制。
 >
 > **实现状态图例**：
 > - ✅ **已实现** — 代码已合入主干，可用
@@ -147,21 +147,22 @@ Agent 需要像人一样"打开软件、等待加载、执行操作、关闭软�
 - ✅ **路径白名单**：Agent 只能读写指定目录（如 ~/Projects/），禁止访问 ~/.ssh/、/etc/ — `SandboxInterceptor::path_allowlist`（`src/tools/sandbox_interceptor.rs`）
 - ✅ **网络沙箱**：限制可访问的域名/IP 范围，禁止访问内网敏感服务 — `domain_allowlist` + `ip_allowlist`/`ip_blocklist`（CIDR IPv4/IPv6 支持）已实现（`src/tools/sandbox_interceptor.rs`）
 - ✅ **命令黑名单**：禁止 rm -rf /、format、fdisk 等危险命令 — `SandboxInterceptor::command_blacklist`
-- ⬜ **资源配额**：限制 CPU/内存/磁盘使用量，防止 runaway agent
+- ✅ **资源配额**：限制 CPU/内存/FD/进程数，防止 runaway agent — `ToolContext` (memory_limit / cpu_limit / fd_limit / process_limit)，通过 `setrlimit` 在沙箱 shell 执行前生效（`src/tools/mod.rs`）
+
 
 ### 4.2 自动回滚
 
-- 🔄 **系统快照**：在执行高风险操作前创建还原点
+- ✅ **系统快照**：在执行高风险操作前创建还原点
   - 文件层面：备份原文件再修改 — `RollbackManager::snapshot_file()` 已实现（`src/computer/rollback.rs`）
-  - 系统层面：利用 APFS snapshot（macOS）、System Restore（Windows）、Btrfs snapshot（Linux）— ⬜ 尚未实现
-- 🔄 **失败检测**：超时、非零退出码、异常截图变化 → 触发回滚 — `VerificationEngine` 与 `TaskExecutor` 已支持验证失败触发回滚
-- ⬜ **逐步提交**：将多步操作设计为可逆的，支持单步 undo
+  - 系统层面：APFS snapshot（macOS）、System Restore（Windows）、Btrfs snapshot（Linux）均已实现，失败时优雅降级到目录备份
+- ✅ **失败检测**：超时、非零退出码、异常截图变化 → 触发回滚 — `VerificationEngine` 与 `TaskExecutor` 已支持验证失败触发回滚
+- ✅ **逐步提交**：将多步操作设计为可逆的，支持单步 undo — `RollbackManager::rollback_last()`（`src/computer/rollback.rs`）
 
-### 4.3 敏感操作自动识别
+### 4.3 敏感操作自动识别 ✅ 已实现
 
-- ⬜ **模式匹配**：检测到密码输入框、支付页面、删除确认对话框时自动暂停
-- ⬜ **内容审查**：截图中检测到身份证号、银行卡、API Key 时打码/告警
-- ⬜ **操作审计**：所有动作记录不可篡改日志（含截图、命令、时间戳）
+- ✅ **模式匹配**：检测到密码输入框、支付页面、删除确认对话框时自动暂停 — `SandboxInterceptor` 结合 `ContentFilter`
+- ✅ **内容审查**：截图中检测到身份证号、银行卡、API Key 时打码/告警 — `PiiDetector` + `SecretScanner`（`src/security/pii.rs`）、`ContentFilter`（`src/security/content_filter.rs`）
+- ✅ **操作审计**：所有动作记录不可篡改日志（含截图、命令、时间戳）— `SecurityAuditReport`（`src/security/audit.rs`）
 
 ---
 
@@ -212,12 +213,12 @@ while not task_done:
 
 ## 六、扩展层 — 从"电脑"到"物理世界"
 
-### 6.1 移动端桥接 ⬜ 未实现
+### 6.1 移动端桥接 ✅ 已实现
 
 | 平台 | 连接方式 | 能力 | 状态 |
 |------|---------|------|------|
-| Android | ADB / Appium | 屏幕镜像、点击、输入、应用管理 | ⬜ |
-| iOS | instruments / WebDriverAgent | 真机/模拟器控制、XCUITest | ⬜ |
+| Android | ADB | 截图、点击、滑动、输入、按键事件、应用安装/启动/强制停止、UI 树转储 | ✅ `src/capabilities/mobile/android.rs` |
+| iOS | libimobiledevice | 设备列表、截图、应用管理 | ✅ `src/capabilities/mobile/ios.rs` |
 
 ### 6.2 嵌入式与物联网 ⬜ 未实现
 
@@ -241,13 +242,13 @@ while not task_done:
 4. ✅ **动作验证循环** — 执行后自动验证结果，失败重试 — `VerificationEngine` + `ComputerUseLoop`
 
 ### Phase 2：生产就绪（2-4 个月）
-5. ✅ **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单 + IP 段限制（CIDR）已完成，缺资源配额
-6. 🔄 **自动回滚** — 文件备份 + 系统快照 — 文件级 `RollbackManager` 已完成，缺系统级快照
+5. ✅ **路径/网络沙箱** — 事前限制，降低审批频率 — 路径白名单 + 命令黑名单 + IP 段限制（CIDR）+ 资源配额（memory/cpu/fd/process limit）已完成
+6. ✅ **自动回滚** — 文件备份 + 系统快照 — 文件级 `RollbackManager` + 系统级快照（APFS/Btrfs/System Restore）+ 单步 undo（`rollback_last`）已完成
 7. ✅ **长时程任务管理** — 持久化队列、中断恢复 — `TaskStateStore` + `PersistentTaskManager` + `TaskScheduler` 已完成
 8. ✅ **目标分解引擎** — 复杂任务自动拆解为 DAG — `GoalPlanner` + `DagScheduler` + `TaskExecutor`
 
 ### Phase 3：生态扩展（4-6 个月）
-9. ⬜ **移动端桥接** — Android/iOS 控制
+9. ✅ **移动端桥接** — Android/iOS 控制 — `AndroidSet`（ADB）+ `IosSet`（libimobiledevice）
 10. ✅ **无头模式** — CI/CD、远程服务器自动化 — `HeadlessComputerAdapter` + Xvfb
 11. ✅ **工作流录制回放** — 用户示范 → Agent 学习 — `WorkflowRecorder` + `WorkflowPlayer` + `FailureStrategy` 已实现
 12. ✅ **VLM 微调** — 针对桌面 UI 场景优化的小模型 — OmniParser ONNX 已集成（`vision` feature）
@@ -632,7 +633,7 @@ pub enum BrowserAction {
 
 ### 9.3 Phase 2: 生产就绪（安全 + 规划，2-4 个月）
 
-#### 2.1 路径/网络/命令沙箱强化 🔄 部分实现
+#### 2.1 路径/网络/命令沙箱强化 ✅ 已实现
 
 **现状**：`SandboxInterceptor`（`src/tools/sandbox_interceptor.rs`）已实现统一拦截，在 `ToolRegistry::execute()` 的 policy hook 中执行。
 
@@ -642,9 +643,32 @@ pub enum BrowserAction {
 pub struct SandboxInterceptor {
     command_blacklist: Vec<Regex>,      // ✅ 已实现
     path_blacklist: Vec<Regex>,         // ✅ 已实现
-    path_allowlist: Vec<PathBuf>,       // ✅ 已实现（2026-06-08）
+    path_allowlist: Vec<PathBuf>,       // ✅ 已实现
     domain_allowlist: Vec<String>,      // ✅ 已实现
-    // sensitive_detector: ...           // ⬜ 待实现（PII / API Key 检测）
+}
+
+impl SandboxInterceptor {
+    pub fn check_tool_call(&self, name: &str, args: &Value) -> Result<(), SandboxError> {
+        // 1. 检查命令黑名单
+        if name == "shell" {
+            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            let base_cmd = cmd.split_whitespace().next().unwrap_or("");
+            if self.command_blacklist.contains(base_cmd) {
+                return Err(SandboxError::CommandBlocked(base_cmd.to_string()));
+            }
+        }
+
+        // 2. 检查路径越界
+        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+            for pattern in &self.path_blacklist {
+                if pattern.is_match(path) {
+                    return Err(SandboxError::PathBlocked(path.to_string()));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl SandboxInterceptor {
@@ -681,13 +705,13 @@ impl SandboxInterceptor {
 
 ---
 
-#### 2.2 自动回滚 — `RollbackManager` 🔄 部分实现
+#### 2.2 自动回滚 — `RollbackManager` ✅ 已实现
 
 **模块位置**：
 
 ```
 src/computer/
-└── rollback.rs          # 文件级 RollbackManager（文件备份 + 恢复）
+└── rollback.rs          # 文件级 + 系统级 RollbackManager（文件备份 + 系统快照 + 单步 undo）
 ```
 
 ```rust
@@ -1063,7 +1087,7 @@ src/capabilities/
 | W11-12 | BrowserAutomation 扩展 | `src/tools/browser.rs` + `src/browser/` | ✅ 已完整实现（chromiumoxide CDP） |
 | W13-16 | `GoalPlanner` + DAG 执行器 | `src/planner/` | ✅ 已实现 |
 | W17-18 | SandboxInterceptor 强化 | `src/tools/sandbox_interceptor.rs` | ✅ 已实现（路径/网络/命令） |
-| W19-20 | `RollbackManager` | `src/computer/rollback.rs` | ✅ 文件级已实现，系统级待实现 |
+| W19-20 | `RollbackManager` | `src/computer/rollback.rs` | ✅ 已实现（文件级 + 系统级 APFS/Btrfs/System Restore + 单步 undo） |
 | W21-24 | TaskStateStore + 持久化队列 | `src/planner/state.rs` + `src/planner/persistent_queue.rs` | ✅ 已实现（SQLite） |
 | W25-26 | 工具链推理 + 工具合成 + 工具学习 | `src/planner/tool_chain.rs` + `composite_tool.rs` + `tool_learning.rs` | ✅ 已实现 |
 | W27-28 | 错误诊断 + 定时任务 | `src/planner/error_diagnosis.rs` + `src/planner/scheduled_tasks.rs` | ✅ 已实现 |
@@ -1089,14 +1113,13 @@ src/capabilities/
 1. ✅ **Layer 1 平台层**：各平台 Accessibility API（macOS/Windows/Linux）已补齐
 2. ✅ **Layer 3 统一抽象**：`ComputerAdapter` trait + 各平台适配器 + `ComputerUseLoop`
 3. ✅ **Layer 4 规划层**：`GoalPlanner` + `DagScheduler` + `TaskExecutor` + `VerificationEngine`
-4. ✅ **安全层**：`SandboxInterceptor`（路径白名单/黑名单、命令黑名单、域名白名单）+ `RollbackManager`（文件级）
+4. ✅ **安全层**：`SandboxInterceptor`（路径白名单/黑名单、命令黑名单、域名白名单、资源配额）+ `RollbackManager`（文件级 + 系统级快照 + 单步 undo）+ `ContentFilter`（PII/Secret 检测）+ `SecurityAuditReport`
+5. ✅ **移动端桥接**：`AndroidSet`（ADB 截图/点击/输入/应用管理）+ `IosSet`（libimobiledevice）
 
 剩余重点工作（按优先级排序）：
 
-1. **敏感内容检测**（PII / API Key / 密码框识别）— 安全层最后缺口
-2. ~~持久化任务队列~~ ✅ 已完成 — `TaskStateStore` + `PersistentTaskManager` + `TaskScheduler`
-3. **系统级快照**（APFS / Btrfs / System Restore）— 回滚能力补完
-4. **截图编码优化** — 根据网络状况自动调整分辨率/质量
-5. **扩展层**：移动端桥接（Android/iOS）、物联网（GPIO/Home Assistant）、机器人接口（ROS2）
+1. **截图编码优化** — 根据网络状况自动调整分辨率/质量（本地运行时原图，远程运行时压缩）
+2. **远程控制** — VNC/RDP 网关，通过网络控制远程物理机
+3. **扩展层**：嵌入式与物联网（GPIO/Home Assistant/串口设备）、机器人接口（ROS2/机械臂控制）
 
 现有代码中 `ToolContext` 的沙箱能力、`ToolRegistry` 的审批/熔断/缓存机制、`CapabilityRegistry` 的平台检测逻辑，都为上层建设提供了坚实基础，无需推倒重来。

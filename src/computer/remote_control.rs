@@ -1,9 +1,12 @@
-//! Remote control adapter — control remote physical machines via SSH/VNC/RDP.
+//! Remote control adapter — control remote physical machines via SSH.
 //!
 //! This adapter implements [`ComputerAdapter`] for remote hosts, allowing the
 //! agent to run the same `ComputerUseLoop` against a machine across the
-//! network.  The primary transport is SSH (shell commands); VNC and RDP
-//! configurations are provided for future frame-buffer-based implementations.
+//! network.  The primary transport is SSH (shell commands over `ssh`); VNC
+//! and RDP protocol variants are declared in [`RemoteProtocol`] but fall
+//! through to SSH commands for all operations.  A native VNC/RDP frame-buffer
+//! implementation would be a significant addition (requires external crates
+//! and protocol-level work) and is not currently planned.
 //!
 //! # Usage
 //!
@@ -27,6 +30,7 @@
 //! # }
 //! ```
 
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
 use crate::computer::{
     ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
     Point, Rect, Result, Screenshot, UiElement, WaitCondition,
@@ -51,18 +55,18 @@ pub enum RemoteProtocol {
         /// Path to private key (None = use agent / default keys).
         key_path: Option<String>,
     },
-    /// VNC remote framebuffer (frame capture + input injection).
+    /// VNC remote framebuffer (declared for future use).
     ///
-    /// Not yet fully implemented — falls back to SSH for UI tree and
-    /// advanced actions.
+    /// Falls through to SSH-based commands for all operations.
+    /// A native frame-buffer implementation is not currently planned.
     Vnc {
         /// VNC password (None = no auth).
         password: Option<String>,
     },
-    /// Microsoft Remote Desktop Protocol.
+    /// Microsoft Remote Desktop Protocol (declared for future use).
     ///
-    /// Not yet fully implemented — falls back to SSH for UI tree and
-    /// advanced actions.
+    /// Falls through to SSH-based commands for all operations.
+    /// A native RDP implementation is not currently planned.
     Rdp {
         /// RDP password (None = use NLA / smart card).
         password: Option<String>,
@@ -312,12 +316,24 @@ impl RemoteControlAdapter {
             })?;
 
             if output.status.success() && !output.stdout.is_empty() {
+                let raw_bytes = output.stdout;
+                // Apply ScreenshotEncoder to reduce payload size over SSH.
+                let temp_path = std::env::temp_dir()
+                    .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+                let _ = tokio::fs::write(&temp_path, &raw_bytes).await;
+                let encoded = maybe_encode_screenshot(&temp_path).await;
+                let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(raw_bytes);
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                if encoded != temp_path {
+                    let _ = tokio::fs::remove_file(&encoded).await;
+                }
+
                 let base64 = base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
-                    &output.stdout,
+                    &final_bytes,
                 );
                 #[cfg(feature = "image")]
-                let (width, height) = if let Ok(img) = image::load_from_memory(&output.stdout) {
+                let (width, height) = if let Ok(img) = image::load_from_memory(&final_bytes) {
                     (img.width(), img.height())
                 } else {
                     (0, 0)
@@ -361,12 +377,24 @@ impl RemoteControlAdapter {
             )));
         }
 
+        let raw_bytes = output.stdout;
+        // Apply ScreenshotEncoder to reduce payload size over SSH.
+        let temp_path = std::env::temp_dir()
+            .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+        let _ = tokio::fs::write(&temp_path, &raw_bytes).await;
+        let encoded = maybe_encode_screenshot(&temp_path).await;
+        let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(raw_bytes);
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        if encoded != temp_path {
+            let _ = tokio::fs::remove_file(&encoded).await;
+        }
+
         let base64 = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
-            &output.stdout,
+            &final_bytes,
         );
         #[cfg(feature = "image")]
-        let (width, height) = if let Ok(img) = image::load_from_memory(&output.stdout) {
+        let (width, height) = if let Ok(img) = image::load_from_memory(&final_bytes) {
             (img.width(), img.height())
         } else {
             (0, 0)
@@ -413,17 +441,39 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         let b64 = String::from_utf8_lossy(&output.stdout);
         let b64 = b64.trim();
 
+        // Decode → apply ScreenshotEncoder → re-encode (reduces payload over SSH).
+        let final_b64 = if let Ok(decoded) = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            b64,
+        ) {
+            let temp_path = std::env::temp_dir()
+                .join(format!("syscity_remote_{}.png", uuid::Uuid::new_v4()));
+            let _ = tokio::fs::write(&temp_path, &decoded).await;
+            let encoded = maybe_encode_screenshot(&temp_path).await;
+            let final_bytes = tokio::fs::read(&encoded).await.unwrap_or(decoded.clone());
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            if encoded != temp_path {
+                let _ = tokio::fs::remove_file(&encoded).await;
+            }
+            base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &final_bytes,
+            )
+        } else {
+            b64.to_string()
+        };
+
         #[cfg(feature = "image")]
         let (width, height) = {
-            let bytes = base64::Engine::decode(
+            if let Ok(bytes) = base64::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
-                b64,
-            )
-            .map_err(|e| {
-                ComputerError::ScreenshotFailed(format!("Invalid base64 from remote: {}", e))
-            })?;
-            if let Ok(img) = image::load_from_memory(&bytes) {
-                (img.width(), img.height())
+                &final_b64,
+            ) {
+                if let Ok(img) = image::load_from_memory(&bytes) {
+                    (img.width(), img.height())
+                } else {
+                    (0, 0)
+                }
             } else {
                 (0, 0)
             }
@@ -432,7 +482,7 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         let (width, height) = (0, 0);
 
         Ok(Screenshot {
-            base64: b64.to_string(),
+            base64: final_b64,
             width,
             height,
         })
@@ -530,7 +580,186 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
         }
         Ok(ActionResult::success("key pressed"))
     }
+
+    // ── Remote UI tree helpers ────────────────────────────────────────────
+
+    /// Read the UI tree of the remote Linux host via pyatspi (primary) or
+    /// wmctrl (fallback).
+    async fn read_ui_tree_linux(&self, _app: Option<&str>) -> Result<Vec<UiElement>> {
+        // Strategy 1: Use python3 with pyatspi for a rich accessibility tree.
+        let py_script = r#"
+import sys
+try:
+    import pyatspi
+    desktop = pyatspi.Registry.getDesktop(0)
+    def dump(obj, depth=0):
+        if depth > 5:
+            return
+        name = obj.name or ''
+        role = obj.getRoleName() or ''
+        try:
+            ext = obj.queryComponent().getExtents(0)
+            x, y, w, h = ext.x, ext.y, ext.width, ext.height
+        except:
+            x, y, w, h = 0, 0, 0, 0
+        enabled = obj.getState().contains(pyatspi.STATE_ENABLED)
+        print(f'{x} {y} {w} {h}|{role}|{name}|{1 if enabled else 0}')
+        for i in range(obj.childCount):
+            dump(obj[i], depth + 1)
+    dump(desktop)
+except Exception as e:
+    print(f'PYATSPI_ERROR:{e}', file=sys.stderr)
+"#;
+        let output = self.run_remote("python3", &["-c", py_script]).await;
+        if let Ok(out) = output {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let mut elements = Vec::new();
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.splitn(2, '|').collect();
+                    if parts.len() == 2 {
+                        let coords: Vec<i32> = parts[0]
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        let meta: Vec<&str> = parts[1].split('|').collect();
+                        if coords.len() == 4 && meta.len() == 3 {
+                            elements.push(UiElement {
+                                id: String::new(),
+                                role: meta[0].trim().to_string(),
+                                label: {
+                                    let l = meta[1].trim().to_string();
+                                    if l.is_empty() { None } else { Some(l) }
+                                },
+                                value: None,
+                                bounds: Rect::new(
+                                    coords[0], coords[1],
+                                    coords[2] as u32, coords[3] as u32,
+                                ),
+                                enabled: meta[2].trim() == "1",
+                                focused: false,
+                                children: vec![],
+                            });
+                        }
+                    }
+                }
+                if !elements.is_empty() {
+                    return Ok(elements);
+                }
+            }
+        }
+
+        // Strategy 2 (fallback): wmctrl for window-level info.
+        if let Ok(windows) = self.run_remote_text("wmctrl", &["-l"]).await {
+            let mut elements = Vec::new();
+            for line in windows.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = line.splitn(4, ' ').collect();
+                if parts.len() >= 4 {
+                    let title = parts[3].trim();
+                    elements.push(UiElement {
+                        id: parts[0].to_string(),
+                        role: "window".to_string(),
+                        label: if title.is_empty() { None } else { Some(title.to_string()) },
+                        value: None,
+                        bounds: Rect::new(0, 0, 0, 0),
+                        enabled: true,
+                        focused: false,
+                        children: vec![],
+                    });
+                }
+            }
+            if !elements.is_empty() {
+                return Ok(elements);
+            }
+        }
+
+        warn!("No accessible UI tree tools found on remote Linux (try installing python3-pyatspi)");
+        Ok(Vec::new())
+    }
+
+    /// Read the UI tree of the remote Windows host via PowerShell UIAutomation.
+    async fn read_ui_tree_windows(&self, _app: Option<&str>) -> Result<Vec<UiElement>> {
+        let ps_script = r#"
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$desktop = [System.Windows.Automation.AutomationElement]::RootElement
+function Dump-Tree($element, $depth) {
+    if ($depth -gt 5) { return }
+    $name = $element.Current.Name
+    $role = $element.Current.LocalizedControlType
+    $rect = $element.Current.BoundingRectangle
+    $enabled = $element.Current.IsEnabled
+    if ($rect -ne $null) {
+        $x = [int]$rect.X; $y = [int]$rect.Y
+        $w = [int]$rect.Width; $h = [int]$rect.Height
+        Write-Output "$x $y $w $h |$role|$name|$enabled"
+    }
+    $walker = New-Object System.Windows.Automation.TreeWalker(
+        [System.Windows.Automation.Condition]::TrueCondition)
+    $child = $walker.GetFirstChild($element)
+    while ($child -ne $null) {
+        Dump-Tree $child ($depth + 1)
+        $child = $walker.GetNextSibling($child)
+    }
 }
+Dump-Tree $desktop 0
+"#;
+        if let Ok(output) = self.run_remote("powershell", &["-NoProfile", "-Command", ps_script]).await {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut elements = Vec::new();
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.splitn(2, '|').collect();
+                    if parts.len() == 2 {
+                        let coords: Vec<i32> = parts[0]
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        let meta: Vec<&str> = parts[1].split('|').collect();
+                        if coords.len() == 4 && meta.len() == 3 {
+                            elements.push(UiElement {
+                                id: String::new(),
+                                role: meta[0].trim().to_string(),
+                                label: {
+                                    let l = meta[1].trim().to_string();
+                                    if l.is_empty() { None } else { Some(l) }
+                                },
+                                value: None,
+                                bounds: Rect::new(
+                                    coords[0], coords[1],
+                                    coords[2] as u32, coords[3] as u32,
+                                ),
+                                enabled: meta[2].trim() == "True",
+                                focused: false,
+                                children: vec![],
+                            });
+                        }
+                    }
+                }
+                if !elements.is_empty() {
+                    return Ok(elements);
+                }
+            }
+        }
+
+        warn!("PowerShell UIAutomation failed on remote Windows (may require .NET Framework)");
+        Ok(Vec::new())
+    }
+}
+
+// ── ComputerAdapter impl ───────────────────────────────────────────────────
 
 // ── ComputerAdapter impl ───────────────────────────────────────────────────
 
@@ -548,12 +777,20 @@ impl ComputerAdapter for RemoteControlAdapter {
         }
     }
 
-    async fn read_ui_tree(&self, _app: Option<&str>) -> Result<Vec<UiElement>> {
-        // Remote UI tree access is limited.  On Linux we could try at-spi2,
-        // on macOS AXUIElement via SSH is not practical.
-        // Return an empty tree so the loop can still function.
-        warn!("read_ui_tree not yet implemented for remote control");
-        Ok(Vec::new())
+    async fn read_ui_tree(&self, app: Option<&str>) -> Result<Vec<UiElement>> {
+        match self.remote_os {
+            RemoteOs::Linux => self.read_ui_tree_linux(app).await,
+            RemoteOs::Windows => self.read_ui_tree_windows(app).await,
+            RemoteOs::Macos => {
+                // macOS AXUIElement accessibility via SSH is impractical.
+                warn!("read_ui_tree not supported for remote macOS");
+                Ok(Vec::new())
+            }
+            _ => {
+                warn!("read_ui_tree not supported for remote OS {:?}", self.remote_os);
+                Ok(Vec::new())
+            }
+        }
     }
 
     async fn execute(&self, action: DesktopAction) -> Result<ActionResult> {
@@ -695,6 +932,22 @@ impl ComputerAdapter for RemoteControlAdapter {
                 self.run_remote_text("sed", &["-i", &sed_expr, &path]).await?;
                 Ok(ActionResult::success("file edited"))
             }
+            DesktopAction::Compress { sources, destination, format: _ } => {
+                // Archive files/directories over SSH using zip.
+                let sources_str = sources.join(" ");
+                self.run_remote_text("zip", &["-r", &destination, &sources_str]).await?;
+                Ok(ActionResult::success("compressed"))
+            }
+            DesktopAction::Decompress { archive, destination } => {
+                // Extract archives over SSH based on extension.
+                self.run_remote_text("mkdir", &["-p", &destination]).await?;
+                if archive.ends_with(".zip") {
+                    self.run_remote_text("unzip", &[&archive, "-d", &destination]).await?;
+                } else {
+                    self.run_remote_text("tar", &["-xvf", &archive, "-C", &destination]).await?;
+                }
+                Ok(ActionResult::success("decompressed"))
+            }
             _ => {
                 warn!("Remote adapter received unsupported action: {:?}", action);
                 Err(ComputerError::UnsupportedPlatform(
@@ -721,6 +974,16 @@ impl ComputerAdapter for RemoteControlAdapter {
                 WaitCondition::FileExists { path } => {
                     let output = self.run_remote("test", &["-f", path]).await;
                     output.map(|o| o.status.success()).unwrap_or(false)
+                }
+                WaitCondition::WindowTitleContains { pattern } => {
+                    // Use xdotool on Linux to search for a window matching the pattern.
+                    if self.remote_os == RemoteOs::Linux {
+                        let output = self.run_remote("xdotool", &["search", "--name", pattern]).await;
+                        output.map(|o| o.status.success()).unwrap_or(false)
+                    } else {
+                        warn!("WindowTitleContains wait not supported on remote {:?}", self.remote_os);
+                        false
+                    }
                 }
                 _ => {
                     warn!("wait_for condition {:?} not supported remotely", condition);

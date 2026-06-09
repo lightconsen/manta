@@ -1,5 +1,6 @@
 //! macOS screenshot tool using `screencapture`.
 
+use crate::computer::screenshot_encoder::maybe_encode_screenshot;
 use crate::tools::{create_schema, Tool, ToolContext, ToolExecutionResult};
 use async_trait::async_trait;
 use base64::Engine;
@@ -78,45 +79,31 @@ impl Tool for ScreenshotTool {
 
         match result {
             Ok(Ok(output)) if output.status.success() => {
-                // Compress the screenshot so the base64 payload stays small.
-                let compressed_path = temp_path.with_extension("compressed.jpg");
-                let compress_result = Command::new("sips")
-                    .arg("-Z")
-                    .arg("1280")
-                    .arg("-s")
-                    .arg("format")
-                    .arg("jpeg")
-                    .arg("-s")
-                    .arg("formatOptions")
-                    .arg("80")
-                    .arg(&temp_path)
-                    .arg("--out")
-                    .arg(&compressed_path)
-                    .output()
-                    .await;
-
-                let (read_path, format) = match compress_result {
-                    Ok(out) if out.status.success() => {
-                        let _ = tokio::fs::remove_file(&temp_path).await;
-                        (compressed_path.clone(), "jpeg")
-                    }
-                    _ => {
-                        warn!("sips compression failed, using original PNG");
-                        (temp_path.clone(), "png")
-                    }
+                // Compress the screenshot using the cross-platform ScreenshotEncoder.
+                // This replaces the old hardcoded sips call with automatic
+                // network-condition-aware compression.
+                let encoded_path = maybe_encode_screenshot(&temp_path).await;
+                let format = if encoded_path
+                    .extension()
+                    .map(|e| e == "jpg" || e == "jpeg")
+                    .unwrap_or(false)
+                {
+                    "jpeg"
+                } else {
+                    "png"
                 };
 
-                let bytes = tokio::fs::read(&read_path).await.map_err(|e| {
+                let bytes = tokio::fs::read(&encoded_path).await.map_err(|e| {
                     crate::error::SyscityError::Storage {
-                        context: format!("Failed to read screenshot: {}", read_path.display()),
+                        context: format!("Failed to read screenshot: {}", encoded_path.display()),
                         details: e.to_string(),
                     }
                 })?;
 
                 // Clean up temp file(s)
-                let _ = tokio::fs::remove_file(&read_path).await;
-                if compressed_path.exists() && read_path != compressed_path {
-                    let _ = tokio::fs::remove_file(&compressed_path).await;
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                if encoded_path != temp_path {
+                    let _ = tokio::fs::remove_file(&encoded_path).await;
                 }
 
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

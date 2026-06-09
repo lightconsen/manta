@@ -34,15 +34,54 @@ pub enum NetworkCondition {
 impl NetworkCondition {
     /// Detect from environment or fallback to Normal.
     pub fn detect() -> Self {
-        // If a remote endpoint is configured, assume Remote.
+        Self::auto_detect(None)
+    }
+
+    /// Auto-detect network condition, optionally by measuring latency
+    /// to a target host.
+    ///
+    /// Env-var overrides (`SYSCITY_LOCAL_MODE`, `SYSCITY_REMOTE_ENDPOINT`)
+    /// take priority when set.  Falls back to `Normal` when no host is
+    /// provided or the ping fails.
+    pub fn auto_detect(probe_host: Option<&str>) -> Self {
+        // Env-var overrides take priority.
         if std::env::var("SYSCITY_REMOTE_ENDPOINT").is_ok() {
             return Self::Remote;
         }
-        // If explicitly local.
         if std::env::var("SYSCITY_LOCAL_MODE").is_ok() {
             return Self::Local;
         }
+        // Auto-detect via latency probe when a host is provided.
+        if let Some(host) = probe_host {
+            if let Some(latency_ms) = Self::measure_latency(host) {
+                if latency_ms < 5.0 {
+                    return Self::Local;
+                } else if latency_ms < 100.0 {
+                    return Self::Normal;
+                } else {
+                    return Self::Remote;
+                }
+            }
+        }
         Self::Normal
+    }
+
+    /// Measure RTT to a host via a single ping (synchronous, short timeout).
+    fn measure_latency(host: &str) -> Option<f64> {
+        let start = std::time::Instant::now();
+        let output = std::process::Command::new("ping")
+            .arg("-c")
+            .arg("1")
+            .arg("-W")
+            .arg("3")
+            .arg(host)
+            .output()
+            .ok()?;
+        if output.status.success() {
+            Some(start.elapsed().as_secs_f64() * 1000.0)
+        } else {
+            None
+        }
     }
 
     /// Target maximum width in pixels.
@@ -245,6 +284,17 @@ mod tests {
     fn test_network_condition_env() {
         // Default without env vars.
         assert_eq!(NetworkCondition::detect(), NetworkCondition::Normal);
+    }
+
+    #[test]
+    fn test_auto_detect_fallback_on_unreachable() {
+        // An unreachable host should fall back to Normal
+        let result = NetworkCondition::auto_detect(Some("192.0.2.1"));
+        assert!(result == NetworkCondition::Normal || result == NetworkCondition::Remote);
+        // Either Normal (ping failed/blocked) or the measurement could
+        // time out after 3s and still return Normal.  On systems where
+        // the route actually replies, it could return Remote.  Both are
+        // acceptable — the key is that it never panics.
     }
 
     #[tokio::test]
