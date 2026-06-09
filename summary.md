@@ -1460,3 +1460,39 @@ src/extension-sdk/
 | **建议** | 骨架对齐完成后，再功能追平 | 先骨架，再功能 |
 
 > **建议执行顺序**：先完成本计划的 MVP Skeleton（6–8 周），再进入 Phase 0–3 的功能追平。骨架不稳，功能越多债务越重。
+
+---
+
+## TODO：2026-06-09 代码审查结果
+
+### 确认未实现（claims 正确）
+
+- [ ] **Channel inbound 缺失** — Slack/QQ/Lark/WhatsApp 的 `start()` 只验证 token，未订阅事件流，bot 无法接收消息（`slack.rs:315`, `whatsapp.rs:508`, `qq.rs:431`, `lark.rs:449`）
+- [ ] **MemorySearchTool 降级为 LIKE** — `src/memory/db.rs:645` 使用 `content LIKE ?`，`hybrid.rs` 存在但未被调用
+- [ ] **Gateway 单文件 10,423 行** — `src/gateway/mod.rs` 未拆分
+- [ ] **Session 路由硬编码到 default agent** — 无 `resolve_agent_for_session` 函数，所有消息走 default
+- [ ] **inbound/outbound 模块未接入 channels** — 模块存在但 channel 仍直接发 `message_tx`，绕过了管道
+- [ ] **Web UI 无实时事件消费者** — SSE handler 已实现但 Web UI 前端未消费事件（无 scope guard、慢消费者保护）
+- [ ] **Canvas 无 HTTP host** — 只有类型定义 + WebSocket，无独立 serve 服务
+- [ ] **Trajectory / Dreaming / Wiki sync / LanceDB / ACPX / Standing orders / Lobster flow** — 完全缺失
+- [ ] **23 条 dead-code 警告** — 未清理
+
+### 已修复或 claims 错误
+
+- [x] ~~SlidingWindow `Default` 无限递归~~ — `src/security/sliding_window.rs:266` 调用 `new()`，无递归
+- [x] ~~Webhook 签名 `==` 比较、fail-open~~ — `src/gateway/webhooks.rs:807` 使用 `subtle::ConstantTimeEq`，缺失签名时返回 401（fail-closed）
+- [x] ~~WhatsApp 验签用 `access_token` 代替 `app_secret`~~ — `webhooks.rs:138` 读取 `app_secret`，使用原始 `Bytes` body
+- [x] ~~SSE 是 placeholder~~ — `gateway/mod.rs:9625` 已完整实现 `web_terminal_events_handler`
+- [x] ~~TTS 缺失~~ — `src/tools/tts.rs` 已实现
+- [x] ~~Web UI 缺失~~ — `web/` 目录存在，Gateway 已 serve 静态文件
+- [x] ~~Azure/Ollama/Custom provider 返回 `InvalidValue`~~ — 均路由到 `OpenAiProvider::with_base_url()`，可用
+
+### 部分正确
+
+- [ ] **SecretScanner::contains_secrets 逻辑不一致** — `security/mod.rs:1063`（方法版 `self.scan(text).is_empty()`）逻辑反了；`line 1109`（自由函数版 `!scanner.scan(text).is_empty()`）正确。API 不一致
+- [ ] **Provider 类型只有 2 个** — `ProviderType` enum 仅声明 Anthropic/OpenAi，但 Azure/Ollama/Custom 复用 `OpenAiProvider`，实际可用但不规范
+- [ ] **Canvas 半实现** — 类型 + WebSocket handler 有，但无 standalone HTTP host
+
+### 结论
+
+summary.md 的**高层面差距判断基本准确**（channel inbound、missing features、gateway monolith、memory LIKE 降级），但**4 个安全 bug 的 claim 已过时/不成立**（已修复或从未存在）。建议将此文件归档，不再作为 bug 清单使用，后续规划改用 GitHub Issues 或 Roadmap 文档。
