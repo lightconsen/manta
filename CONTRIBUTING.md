@@ -40,7 +40,7 @@ This project and everyone participating in it is governed by our commitment to:
 
 ```bash
 # Clone the repository
-git clone https://github.com/anthropics/syscity
+git clone https://github.com/lightconsen/syscity
 cd syscity
 
 # Build in development mode
