@@ -1472,7 +1472,6 @@ src/extension-sdk/
 - [x] ~~**Gateway 单文件 10,423 行**~~ — 已拆分：24 个 handler 子模块（`src/gateway/handlers/*.rs`），mod.rs 从 ~10,400 行减至 ~5,200 行
 - [ ] **Session 路由硬编码到 default agent** — 无 `resolve_agent_for_session` 函数，所有消息走 default
 - [ ] **inbound/outbound 模块未接入 channels** — 模块存在但 channel 仍直接发 `message_tx`，绕过了管道
-- [ ] **Canvas 无 HTTP host** — 只有类型定义 + WebSocket，无独立 serve 服务
 - [ ] **Trajectory / Dreaming / Wiki sync / LanceDB / ACPX / Standing orders / Lobster flow** — 完全缺失
 - [x] ~~**23 条 dead-code 警告**~~ — 已清理：移除了未使用的 imports、字段、enum variants（`FileToolMode::Symlink`、`ChannelType::Sms`、`ConfigPath::Default`）
 
@@ -1486,11 +1485,9 @@ src/extension-sdk/
 - [x] ~~Web UI 缺失~~ — `web/` 目录存在，Gateway 已 serve 静态文件
 - [x] ~~Azure/Ollama/Custom provider 返回 `InvalidValue`~~ — 均路由到 `OpenAiProvider::with_base_url()`，可用
 - [x] ~~**SecretScanner::contains_secrets 逻辑不一致**~~ — 已修复：`src/security/mod.rs:1063` 方法版改为 `!self.scan(text).is_empty()`，与自由函数版一致
-
 ### 部分正确
 
 - [ ] **Provider 类型只有 2 个** — `ProviderType` enum 仅声明 Anthropic/OpenAi，但 Azure/Ollama/Custom 复用 `OpenAiProvider`，实际可用但不规范
-- [ ] **Canvas 半实现** — 类型 + WebSocket handler 有，但无 standalone HTTP host
 
 ### 结论
 
