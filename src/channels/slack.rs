@@ -4,14 +4,17 @@
 
 use crate::channels::{
     Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
-    OutgoingMessage,
+    MentionState, MessageMetadata, OutgoingMessage, UserId,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+#[cfg(feature = "slack")]
+use futures_util::{SinkExt, StreamExt};
 
 /// Slack channel configuration
 #[derive(Debug, Clone)]
@@ -72,6 +75,8 @@ pub struct SlackChannel {
     dm_policy: Arc<RwLock<DmPolicy>>,
     /// Allowlist for users (used with Allowlist policy)
     allow_from: Arc<RwLock<Vec<String>>>,
+    /// Background Socket Mode task handle
+    socket_mode_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl std::fmt::Debug for SlackChannel {
@@ -95,6 +100,7 @@ impl SlackChannel {
             pairing_store: Arc::new(RwLock::new(None)),
             dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
             allow_from: Arc::new(RwLock::new(Vec::new())),
+            socket_mode_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -283,6 +289,7 @@ impl SlackChannel {
 
         result
     }
+
 }
 
 #[async_trait]
@@ -336,8 +343,83 @@ impl Channel for SlackChannel {
                 )));
             }
 
+            let auth_json: serde_json::Value = resp.json().await.unwrap_or_default();
+            let bot_user_id = auth_json["user_id"].as_str().map(|s| s.to_string());
+            info!(
+                "Slack auth.test OK — bot_user_id={:?}",
+                bot_user_id.as_deref().unwrap_or("unknown")
+            );
+
             self.running
                 .store(true, std::sync::atomic::Ordering::SeqCst);
+
+            // Start Socket Mode listener if app_token is provided
+            if self.config.app_token.is_some() {
+                let running = self.running.clone();
+                let app_token = self.config.app_token.clone().unwrap();
+                let bot_token = self.config.bot_token.clone();
+                let message_tx = self.config.message_tx.clone();
+                let dm_policy = self.dm_policy.clone();
+                let allow_from = self.allow_from.clone();
+                let pairing_store = self.pairing_store.clone();
+
+                let handle = tokio::spawn(async move {
+                    let mut backoff_secs = 1u64;
+                    const MAX_BACKOFF: u64 = 30;
+
+                    while running.load(std::sync::atomic::Ordering::SeqCst) {
+                        info!("Slack Socket Mode: opening connection...");
+
+                        match open_socket_mode_url(&app_token).await {
+                            Ok(ws_url) => {
+                                backoff_secs = 1; // Reset backoff on successful open
+
+                                match connect_and_listen(
+                                    &ws_url,
+                                    &bot_token,
+                                    bot_user_id.as_deref(),
+                                    message_tx.as_ref(),
+                                    &running,
+                                    dm_policy.clone(),
+                                    allow_from.clone(),
+                                    pairing_store.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(()) => {
+                                        info!("Slack Socket Mode: connection closed gracefully");
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Slack Socket Mode: connection error: {}. Reconnecting in {}s...",
+                                            e, backoff_secs
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Slack Socket Mode: failed to open connection: {}. Retrying in {}s...",
+                                    e, backoff_secs
+                                );
+                            }
+                        }
+
+                        if !running.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+
+                        tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
+                    }
+
+                    info!("Slack Socket Mode: listener stopped");
+                });
+
+                let mut task_guard = self.socket_mode_task.write().await;
+                *task_guard = Some(handle);
+            }
+
             info!("Slack channel started");
             Ok(())
         }
@@ -351,6 +433,13 @@ impl Channel for SlackChannel {
     async fn stop(&self) -> crate::Result<()> {
         self.running
             .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let mut task_guard = self.socket_mode_task.write().await;
+        if let Some(handle) = task_guard.take() {
+            handle.abort();
+            info!("Slack Socket Mode task aborted");
+        }
+
         info!("Slack channel stopped");
         Ok(())
     }
@@ -551,6 +640,350 @@ impl Channel for SlackChannel {
         {
             Ok(false)
         }
+    }
+}
+
+/// Open a Slack Socket Mode connection and return the WebSocket URL.
+#[cfg(feature = "slack")]
+async fn open_socket_mode_url(app_token: &str) -> crate::Result<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://slack.com/api/apps.connections.open")
+        .header("Authorization", format!("Bearer {}", app_token))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .send()
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Slack apps.connections.open request failed: {}",
+                e
+            ))
+        })?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+
+    if !status.is_success() || !body["ok"].as_bool().unwrap_or(false) {
+        return Err(crate::error::SyscityError::Internal(format!(
+            "Slack apps.connections.open failed: {} — {}",
+            status,
+            body["error"].as_str().unwrap_or("unknown")
+        )));
+    }
+
+    let url = body["url"]
+        .as_str()
+        .ok_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "Slack apps.connections.open response missing 'url' field".to_string(),
+            )
+        })?
+        .to_string();
+
+    Ok(url)
+}
+
+/// Connect to the Socket Mode WebSocket and listen for events.
+#[cfg(feature = "slack")]
+#[allow(clippy::too_many_arguments)]
+async fn connect_and_listen(
+    ws_url: &str,
+    bot_token: &str,
+    bot_user_id: Option<&str>,
+    message_tx: Option<&mpsc::UnboundedSender<IncomingMessage>>,
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    allow_from: Arc<RwLock<Vec<String>>>,
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+) -> crate::Result<()> {
+    use tokio_tungstenite::connect_async;
+
+    let (ws_stream, _) = connect_async(ws_url)
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Slack Socket Mode WebSocket connection failed: {}",
+                e
+            ))
+        })?;
+
+    info!("Slack Socket Mode: WebSocket connected");
+
+    let (mut write, mut read) = ws_stream.split();
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::select! {
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(tokio_tungstenite::tungstenite::protocol::Message::Text(text))) => {
+                        debug!("Slack Socket Mode: received text: {}", text);
+                        handle_socket_mode_message(
+                            &text,
+                            bot_token,
+                            bot_user_id,
+                            message_tx,
+                            &mut write,
+                            dm_policy.clone(),
+                            allow_from.clone(),
+                            pairing_store.clone(),
+                        )
+                        .await;
+                    }
+                    Some(Ok(tokio_tungstenite::tungstenite::protocol::Message::Close(_))) => {
+                        info!("Slack Socket Mode: received close frame");
+                        break;
+                    }
+                    Some(Ok(_)) => {
+                        // Ignore other message types (binary, ping, pong)
+                    }
+                    Some(Err(e)) => {
+                        warn!("Slack Socket Mode: WebSocket error: {}", e);
+                        return Err(crate::error::SyscityError::Internal(format!(
+                            "WebSocket error: {}",
+                            e
+                        )));
+                    }
+                    None => {
+                        info!("Slack Socket Mode: WebSocket stream ended");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Close the WebSocket gracefully
+    let _ = write
+        .send(tokio_tungstenite::tungstenite::protocol::Message::Close(None))
+        .await;
+
+    Ok(())
+}
+
+/// Handle a single Socket Mode message.
+#[cfg(feature = "slack")]
+#[allow(clippy::too_many_arguments)]
+async fn handle_socket_mode_message(
+    text: &str,
+    bot_token: &str,
+    bot_user_id: Option<&str>,
+    message_tx: Option<&mpsc::UnboundedSender<IncomingMessage>>,
+    write: &mut (impl SinkExt<
+        tokio_tungstenite::tungstenite::protocol::Message,
+        Error = tokio_tungstenite::tungstenite::Error,
+    > + Unpin),
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    allow_from: Arc<RwLock<Vec<String>>>,
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+) {
+    let payload: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Slack Socket Mode: failed to parse message: {}", e);
+            return;
+        }
+    };
+
+    let envelope_id = payload["envelope_id"].as_str();
+
+    // ACK every message that has an envelope_id
+    if let Some(eid) = envelope_id {
+        let ack = serde_json::json!({ "envelope_id": eid });
+        if let Err(e) = write
+            .send(tokio_tungstenite::tungstenite::protocol::Message::Text(
+                ack.to_string(),
+            ))
+            .await
+        {
+            warn!("Slack Socket Mode: failed to send ACK: {}", e);
+            return;
+        }
+        debug!("Slack Socket Mode: ACK sent for envelope_id={}", eid);
+    }
+
+    let msg_type = payload["type"].as_str().unwrap_or("");
+
+    match msg_type {
+        "hello" => {
+            info!("Slack Socket Mode: received hello");
+        }
+        "events_api" => {
+            if let Some(event) = payload["payload"]["event"].as_object() {
+                let event_type = event["type"].as_str().unwrap_or("");
+                match event_type {
+                    "message" | "app_mention" => {
+                        handle_event_message(
+                            event,
+                            bot_user_id,
+                            message_tx,
+                            bot_token,
+                            dm_policy.clone(),
+                            allow_from.clone(),
+                            pairing_store.clone(),
+                        )
+                        .await;
+                    }
+                    _ => {
+                        debug!("Slack Socket Mode: ignoring event type: {}", event_type);
+                    }
+                }
+            }
+        }
+        "disconnect" => {
+            info!("Slack Socket Mode: received disconnect");
+        }
+        _ => {
+            debug!("Slack Socket Mode: unhandled type: {}", msg_type);
+        }
+    }
+}
+
+/// Check access for a Slack user using the provided policy state.
+#[cfg(feature = "slack")]
+async fn check_access_inline(
+    user_id: &str,
+    dm_policy: &DmPolicy,
+    allow_from: &[String],
+    pairing_store: &Option<Arc<PairingStore>>,
+) -> (bool, Option<String>) {
+    match dm_policy {
+        DmPolicy::Open => (true, None),
+        DmPolicy::Allowlist => {
+            if allow_from.contains(&user_id.to_string()) {
+                (true, None)
+            } else {
+                (false, Some("You are not authorized to use this bot.".to_string()))
+            }
+        }
+        DmPolicy::Pairing => {
+            if let Some(store) = pairing_store {
+                match store.request_access("slack", user_id, None).await {
+                    Ok(RequestAccessResult::AlreadyAuthorized) => (true, None),
+                    Ok(RequestAccessResult::AlreadyPending { code, .. }) => (
+                        false,
+                        Some(format!(
+                            "Your access request is pending admin approval. Your pairing code: `{}`",
+                            code
+                        )),
+                    ),
+                    Ok(RequestAccessResult::NewRequest { code }) => (
+                        false,
+                        Some(format!(
+                            "Access requested. An admin will approve your request.\nYour pairing code: `{}`",
+                            code
+                        )),
+                    ),
+                    Ok(RequestAccessResult::RateLimited { .. }) => (
+                        false,
+                        Some("Too many requests. Please try again later.".to_string()),
+                    ),
+                    Err(_) => (
+                        false,
+                        Some("An error occurred processing your request.".to_string()),
+                    ),
+                }
+            } else {
+                (false, Some("Access control is not configured.".to_string()))
+            }
+        }
+    }
+}
+
+/// Handle a Slack message or app_mention event.
+#[cfg(feature = "slack")]
+async fn handle_event_message(
+    event: &serde_json::Map<String, serde_json::Value>,
+    bot_user_id: Option<&str>,
+    message_tx: Option<&mpsc::UnboundedSender<IncomingMessage>>,
+    bot_token: &str,
+    dm_policy: Arc<RwLock<DmPolicy>>,
+    allow_from: Arc<RwLock<Vec<String>>>,
+    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+) {
+    // Ignore messages with subtypes (edits, deletions, bot messages, etc.)
+    if event.contains_key("subtype") {
+        let subtype = event["subtype"].as_str().unwrap_or("");
+        if !subtype.is_empty() {
+            debug!("Slack Socket Mode: ignoring message with subtype: {}", subtype);
+            return;
+        }
+    }
+
+    let event_user_id = event["user"].as_str().unwrap_or("");
+    let event_channel = event["channel"].as_str().unwrap_or("");
+    let event_text = event["text"].as_str().unwrap_or("").to_string();
+
+    if event_user_id.is_empty() || event_channel.is_empty() {
+        debug!("Slack Socket Mode: missing user or channel in event");
+        return;
+    }
+
+    // Filter out messages from the bot itself
+    if let Some(bid) = bot_user_id {
+        if event_user_id == bid {
+            debug!("Slack Socket Mode: ignoring bot's own message");
+            return;
+        }
+    }
+
+    // Determine if DM
+    let is_dm = event_channel.starts_with('D');
+
+    // Check access control
+    let policy = *dm_policy.read().await;
+    let allow_list = allow_from.read().await.clone();
+    let store = pairing_store.read().await.clone();
+    let (authorized, reply) = check_access_inline(event_user_id, &policy, &allow_list, &store).await;
+
+    if !authorized {
+        if let Some(reply_text) = reply {
+            // Send access-denied reply back via Slack API
+            let client = reqwest::Client::new();
+            let _ = client
+                .post("https://slack.com/api/chat.postMessage")
+                .header("Authorization", format!("Bearer {}", bot_token))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "channel": event_channel,
+                    "text": reply_text,
+                }))
+                .send()
+                .await;
+        }
+        return;
+    }
+
+    let mention = if is_dm {
+        MentionState::DirectMessage
+    } else {
+        MentionState::Mentioned
+    };
+
+    let incoming = IncomingMessage {
+        id: Id::new(),
+        user_id: UserId::new(event_user_id),
+        conversation_id: ConversationId::new(event_channel),
+        content: event_text,
+        attachments: vec![],
+        metadata: MessageMetadata::new(),
+        provenance: crate::channels::InputProvenance::ExternalUser {
+            channel: "slack".to_string(),
+            is_direct: is_dm,
+        },
+        mention,
+    };
+
+    if let Some(tx) = message_tx {
+        if let Err(e) = tx.send(incoming) {
+            warn!("Slack Socket Mode: failed to route message: {}", e);
+        } else {
+            debug!(
+                "Slack Socket Mode: routed message from user={} channel={}",
+                event_user_id, event_channel
+            );
+        }
+    } else {
+        warn!("Slack Socket Mode: no message_tx configured — message dropped");
     }
 }
 
