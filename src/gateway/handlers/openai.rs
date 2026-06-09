@@ -1,0 +1,272 @@
+#![allow(unused_imports)]
+
+use axum::{
+    extract::{Path, Query, State, WebSocketUpgrade},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Json},
+    routing::{delete, get, post},
+    Router,
+};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
+use tokio::net::TcpListener;
+use tokio::sync::{broadcast, mpsc, RwLock};
+use tower_http::cors::CorsLayer;
+use tracing::{debug, error, info, warn};
+
+use crate::acp::AcpControlPlane;
+use crate::agent::{Agent, AgentConfig};
+use crate::canvas::{CanvasEvent, CanvasManager};
+use crate::channels::{Channel, ChannelExtension, ChannelType};
+use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::inbound::*;
+use crate::memory::vector::{
+    ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
+    MemoryVectorStore, VectorMemoryService,
+};
+use crate::model_router::ModelRouter;
+use crate::plugins::PluginManager;
+use crate::security::pairing::DmPolicy;
+use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
+use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
+use crate::tools::ToolRegistry;
+use crate::gateway::GatewayState;
+use crate::gateway::*;
+
+/// Helper: build a JSON-RPC error response as an Axum Response.
+pub(crate) fn json_rpc_error_response(
+    id: Option<&serde_json::Value>,
+    code: i32,
+    message: &str,
+) -> axum::response::Response {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    });
+    axum::response::Response::builder()
+        .status(200)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+}
+
+/// `POST /v1/chat/completions`
+///
+/// OpenAI-compatible chat completions endpoint. Routes the last user message
+/// through the default Syscity agent and returns the result in OpenAI wire
+/// format. Supports both streaming (`stream: true` → SSE) and non-streaming.
+#[allow(unused_assignments)]
+pub async fn openai_chat_completions_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(query): Query<ModelOverrideQuery>,
+    headers: axum::http::HeaderMap,
+    Json(mut req): Json<OpenAiChatRequest>,
+) -> axum::response::Response {
+    use axum::response::sse::{Event as SseEvt, KeepAlive, Sse};
+
+    // Request-level model override: header X-Model takes precedence,
+    // then query param ?model=..., then JSON body model field.
+    if let Some(header_model) = headers.get("x-model").and_then(|v| v.to_str().ok()) {
+        req.model = header_model.to_string();
+    } else if let Some(query_model) = query.model {
+        req.model = query_model;
+    }
+
+    // Extract the last user message.
+    let user_message = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    if user_message.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "No user message provided",
+                    "type": "invalid_request_error"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    // Grab the default agent handle.
+    let handle = {
+        let agents = state.agents.read().await;
+        match agents.get("default").cloned() {
+            Some(h) => h,
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": {"message": "No agent available", "type": "server_error"}
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    // Subscribe to events before sending the command to avoid a race.
+    let mut event_rx = state.event_tx.subscribe();
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    let cmd = AgentCommand::ProcessMessage {
+        session_id: session_id.clone(),
+        message: user_message,
+        user_id: "openai_api".to_string(),
+        channel: "api".to_string(),
+        model_override: Some(req.model.clone()),
+    };
+
+    if let Err(e) = handle.tx.send(cmd).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {"message": format!("Agent error: {}", e), "type": "server_error"}
+            })),
+        )
+            .into_response();
+    }
+
+    if req.stream {
+        // ── Streaming SSE response ──────────────────────────────────────────
+        let model = req.model.clone();
+        let (tx, rx) = mpsc::channel::<Result<SseEvt, std::convert::Infallible>>(64);
+
+        tokio::spawn(async move {
+            let completion_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+            let created = chrono::Utc::now().timestamp();
+            let timeout_dur = tokio::time::Duration::from_secs(120);
+            let start = tokio::time::Instant::now();
+
+            // Wait for the full agent response.
+            let response_content = loop {
+                if start.elapsed() > timeout_dur {
+                    break String::new();
+                }
+                match tokio::time::timeout(tokio::time::Duration::from_millis(100), event_rx.recv())
+                    .await
+                {
+                    Ok(Ok(GatewayEvent::AgentResponse { session_id: sid, content, .. })) => {
+                        if sid == session_id {
+                            break content;
+                        }
+                    }
+                    Ok(Err(_)) | Err(_) => {}
+                    _ => {}
+                }
+            };
+
+            // Stream the response word-by-word.
+            for word in response_content.split_inclusive(|c: char| c.is_whitespace()) {
+                let chunk = serde_json::json!({
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"content": word}, "finish_reason": null}]
+                });
+                let _ = tx.send(Ok(SseEvt::default().data(chunk.to_string()))).await;
+            }
+
+            // Final chunk with finish_reason = "stop".
+            let final_chunk = serde_json::json!({
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+            });
+            let _ = tx
+                .send(Ok(SseEvt::default().data(final_chunk.to_string())))
+                .await;
+            let _ = tx.send(Ok(SseEvt::default().data("[DONE]"))).await;
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response()
+    } else {
+        // ── Non-streaming JSON response ─────────────────────────────────────
+        let timeout_dur = tokio::time::Duration::from_secs(120);
+        let start = tokio::time::Instant::now();
+        let mut response_content: Option<String> = None;
+        let mut prompt_tokens = 0u32;
+        let mut completion_tokens = 0u32;
+        let mut total_tokens = 0u32;
+
+        loop {
+            if start.elapsed() > timeout_dur {
+                return (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(serde_json::json!({
+                        "error": {"message": "Request timed out", "type": "server_error"}
+                    })),
+                )
+                    .into_response();
+            }
+
+            match tokio::time::timeout(tokio::time::Duration::from_millis(100), event_rx.recv())
+                .await
+            {
+                Ok(Ok(GatewayEvent::AgentResponse {
+                    session_id: sid,
+                    content,
+                    usage,
+                    ..
+                })) => {
+                    if sid == session_id {
+                        response_content = Some(content);
+                        if let Some(ref u) = usage {
+                            prompt_tokens = u.prompt_tokens;
+                            completion_tokens = u.completion_tokens;
+                            total_tokens = u.total_tokens;
+                        }
+                        break;
+                    }
+                }
+                Ok(Err(_)) | Err(_) => {}
+                _ => {}
+            }
+        }
+
+        let resp = OpenAiChatResponse {
+            id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+            object: "chat.completion".to_string(),
+            created: chrono::Utc::now().timestamp(),
+            model: req.model.clone(),
+            choices: vec![OpenAiChoice {
+                index: 0,
+                message: OpenAiResponseMessage {
+                    role: "assistant".to_string(),
+                    content: response_content.unwrap_or_default(),
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: OpenAiUsage {
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+            },
+        };
+
+        Json(resp).into_response()
+    }
+}
+
