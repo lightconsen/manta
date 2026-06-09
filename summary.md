@@ -1488,8 +1488,6 @@ src/extension-sdk/
 
 ### 部分正确
 
-- [ ] **Provider 类型只有 2 个** — `ProviderType` enum 仅声明 Anthropic/OpenAi，但 Azure/Ollama/Custom 复用 `OpenAiProvider`，实际可用但不规范
-
 ### 结论
 
 summary.md 中列出的 **7 个差距项已全部解决**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner）。剩余的 **Trajectory/Dreaming/Wiki sync/LanceDB/ACPX/Standing orders/Lobster flow** 和 **ProviderType 规范化** 是产品功能缺失，非代码审查发现的问题。
