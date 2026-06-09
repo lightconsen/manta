@@ -1485,10 +1485,11 @@ src/extension-sdk/
 - [x] ~~Web UI 缺失~~ — `web/` 目录存在，Gateway 已 serve 静态文件
 - [x] ~~Azure/Ollama/Custom provider 返回 `InvalidValue`~~ — 均路由到 `OpenAiProvider::with_base_url()`，可用
 - [x] ~~**SecretScanner::contains_secrets 逻辑不一致**~~ — 已修复：`src/security/mod.rs:1063` 方法版改为 `!self.scan(text).is_empty()`，与自由函数版一致
+
 ### 部分正确
 
 - [ ] **Provider 类型只有 2 个** — `ProviderType` enum 仅声明 Anthropic/OpenAi，但 Azure/Ollama/Custom 复用 `OpenAiProvider`，实际可用但不规范
 
 ### 结论
 
-summary.md 的**高层面差距判断基本准确**（channel inbound、missing features、gateway monolith、memory LIKE 降级），但**4 个安全 bug 的 claim 已过时/不成立**（已修复或从未存在）。建议将此文件归档，不再作为 bug 清单使用，后续规划改用 GitHub Issues 或 Roadmap 文档。
+summary.md 中列出的 **7 个差距项已全部解决**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner）。剩余的 **Trajectory/Dreaming/Wiki sync/LanceDB/ACPX/Standing orders/Lobster flow** 和 **ProviderType 规范化** 是产品功能缺失，非代码审查发现的问题。
