@@ -356,10 +356,10 @@ Memories are automatically searched and relevant ones injected into new conversa
 #[derive(Debug, Clone)]
 pub struct MemorySearchTool {
     storage: Arc<SqliteMemoryStore>,
-    /// Optional memory manager for hybrid (vector + FTS5) search.
-    /// When present, `search` uses `MemoryManager::retrieve()` which runs
-    /// `hybrid_search()` instead of the SQLite `LIKE` fallback.
-    memory_manager: Option<Arc<MemoryManager>>,
+    /// Shared holder for the memory manager.  Populated after vector/FTS5
+    /// services finish starting, so the tool sees hybrid search as soon as
+    /// it becomes available without requiring a mutable registry.
+    memory_manager: Arc<tokio::sync::RwLock<Option<Arc<MemoryManager>>>>,
 }
 
 impl MemorySearchTool {
@@ -370,7 +370,7 @@ impl MemorySearchTool {
         let storage = Arc::new(SqliteMemoryStore::new(&db_url).await?);
         Ok(Self {
             storage,
-            memory_manager: None,
+            memory_manager: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -378,13 +378,16 @@ impl MemorySearchTool {
     pub fn with_store(storage: Arc<SqliteMemoryStore>) -> Self {
         Self {
             storage,
-            memory_manager: None,
+            memory_manager: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
-    /// Attach a `MemoryManager` to enable hybrid search.
-    pub fn with_manager(mut self, manager: Arc<MemoryManager>) -> Self {
-        self.memory_manager = Some(manager);
+    /// Attach a shared `MemoryManager` holder to enable lazy hybrid search.
+    pub fn with_manager_holder(
+        mut self,
+        holder: Arc<tokio::sync::RwLock<Option<Arc<MemoryManager>>>>,
+    ) -> Self {
+        self.memory_manager = holder;
         self
     }
 }
@@ -456,7 +459,8 @@ Actions:
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(6);
                 let category = args["category"].as_str();
 
-                let results = if let Some(ref mm) = self.memory_manager {
+                let mm_guard = self.memory_manager.read().await;
+                let results = if let Some(ref mm) = *mm_guard {
                     // Hybrid path: vector + FTS5 via MemoryManager
                     mm.retrieve(
                         &context.user_id,

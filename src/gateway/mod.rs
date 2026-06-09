@@ -582,8 +582,9 @@ pub struct GatewayState {
     pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
     /// Session search for FTS5 conversation indexing (RwLock for late initialization)
     pub session_search: RwLock<Option<Arc<crate::memory::SessionSearch>>>,
-    /// Memory manager — unified orchestrator with hybrid search (RwLock for late init)
-    pub memory_manager: RwLock<Option<Arc<crate::memory::MemoryManager>>>,
+    /// Memory manager — unified orchestrator with hybrid search (Arc<RwLock> so tools
+    /// and handlers can share late-initialized access without &mut GatewayState)
+    pub memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
     /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
     /// Cron scheduler for scheduled jobs (RwLock for late initialization)
@@ -1260,6 +1261,12 @@ impl Gateway {
         // Create shared approval queue for human-in-the-loop tool policy enforcement
         let approval_queue = Arc::new(ApprovalQueue::new());
 
+        // Shared holder for MemoryManager — populated after vector/FTS5 services start.
+        // Wrapped in Arc so MemorySearchTool can observe the late-init value.
+        let memory_manager_holder: Arc<
+            tokio::sync::RwLock<Option<Arc<crate::memory::MemoryManager>>>,
+        > = Arc::new(tokio::sync::RwLock::new(None));
+
         // Create tool registry with built-in tools (including ACP tools if enabled)
         let tool_registry = Arc::new(
             create_default_tool_registry(
@@ -1267,6 +1274,7 @@ impl Gateway {
                 mcp_manager.clone(),
                 approval_queue.clone(),
                 session_store.clone(),
+                memory_manager_holder.clone(),
             )
             .await?,
         );
@@ -1557,7 +1565,7 @@ impl Gateway {
             acp,
             vector_memory: RwLock::new(None),
             session_search: RwLock::new(None),
-            memory_manager: RwLock::new(None),
+            memory_manager: memory_manager_holder.clone(),
             hot_reload: RwLock::new(None),
             cron_scheduler: RwLock::new(None),
             heartbeat_wake_tx: RwLock::new(None),
@@ -4345,6 +4353,9 @@ async fn create_default_tool_registry(
     mcp_manager: Arc<McpManager>,
     approval_queue: Arc<ApprovalQueue>,
     session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
+    memory_manager: Arc<
+        tokio::sync::RwLock<Option<Arc<crate::memory::MemoryManager>>>,
+    >,
 ) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
@@ -4420,6 +4431,7 @@ async fn create_default_tool_registry(
     // Register semantic/hybrid memory search tool
     match MemorySearchTool::new().await {
         Ok(tool) => {
+            let tool = tool.with_manager_holder(memory_manager);
             registry.register(Box::new(tool));
             info!("MemorySearchTool registered successfully");
         }
