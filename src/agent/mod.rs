@@ -243,9 +243,9 @@ fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAct
         if coords.len() >= 2 {
             let button = if lower.contains("right") {
                 MouseButton::Right
-            } else if lower.contains("double") {
-                MouseButton::Left // DesktopAction click doesn't have double; simulate via repeat
             } else {
+                // "double" also falls through to Left; DesktopAction click
+                // doesn't have double-click so we simulate via repeat
                 MouseButton::Left
             };
             return Ok(DesktopAction::Click {
@@ -277,7 +277,7 @@ fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAct
     // Key press
     if lower.contains("press") || lower.contains("key") {
         let keys: Vec<String> = text
-            .split(|c: char| c == '[' || c == ']' || c == ',' || c == '"')
+            .split(['[', ']', ',', '"'])
             .map(|s| s.trim().to_lowercase())
             .filter(|s| {
                 !s.is_empty()
@@ -323,10 +323,10 @@ fn parse_desktop_action(text: &str) -> crate::Result<crate::computer::DesktopAct
     }
 
     // Clipboard
-    if lower.contains("clipboard") || lower.contains("copy") {
-        if lower.contains("get") || lower.contains("read") || lower.contains("paste") {
-            return Ok(DesktopAction::ClipboardGet);
-        }
+    if (lower.contains("clipboard") || lower.contains("copy"))
+        && (lower.contains("get") || lower.contains("read") || lower.contains("paste"))
+    {
+        return Ok(DesktopAction::ClipboardGet);
     }
 
     Err(crate::error::SyscityError::Validation(format!(

@@ -85,6 +85,7 @@ pub async fn run_assistant_process(_config_path: &PathBuf) -> Result<()> {
 }
 
 /// Start the daemon
+#[allow(clippy::too_many_arguments)]
 pub async fn run_start_daemon(
     host: &str,
     port: u16,
