@@ -126,6 +126,9 @@ pub struct GatewayConfig {
     #[cfg(feature = "browser")]
     #[serde(default)]
     pub browser: crate::config::BrowserConfig,
+    /// Computer / desktop automation configuration
+    #[serde(default)]
+    pub computer: crate::config::ComputerConfig,
 }
 
 fn default_model() -> String {
@@ -469,6 +472,7 @@ impl Default for GatewayConfig {
             workspace_only: false,
             #[cfg(feature = "browser")]
             browser: crate::config::BrowserConfig::default(),
+            computer: crate::config::ComputerConfig::default(),
         }
     }
 }
@@ -666,6 +670,8 @@ pub struct GatewayState {
     /// Browser bridge server (started when browser.bridge_enabled is true)
     #[cfg(feature = "browser")]
     pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
+    /// Computer / desktop automation adapter (optional)
+    pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
     /// Log line broadcast channel for real-time log streaming to WebSocket clients
     pub log_tx: broadcast::Sender<String>,
 }
@@ -1265,6 +1271,23 @@ impl Gateway {
             .await?,
         );
 
+        // Initialize computer adapter if enabled and display is available
+        let computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>> =
+            if config.computer.enabled && crate::computer::has_display_server() {
+                match crate::computer::create_adapter(tool_registry.clone()).await {
+                    Ok(adapter) => {
+                        info!("Computer adapter initialized for desktop automation");
+                        Some(Arc::from(adapter))
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize computer adapter: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
         let plugin_manager = {
@@ -1561,6 +1584,7 @@ impl Gateway {
             group_session_manager: Arc::new(RwLock::new(crate::agent::GroupSessionManager::new())),
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
+            computer_adapter: tokio::sync::RwLock::new(computer_adapter),
         });
 
         // Attach SessionStore to SessionManager for unified session model
@@ -2204,6 +2228,10 @@ impl Gateway {
             .route("/mcp", post(syscity_as_mcp_server_handler))
             // Admin redirect -- management UI moved to CLI
             .route("/admin", get(admin_redirect_handler))
+            // Computer / desktop automation API
+            .route("/api/v1/computer/screenshot", get(computer_screenshot_handler))
+            .route("/api/v1/computer/execute", post(computer_execute_handler))
+            .route("/api/v1/computer/status", get(computer_status_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);
@@ -2330,35 +2358,55 @@ async fn spawn_agent_inner(
     // shared cost guard, and session management stores.
     let memory_manager = state.memory_manager.read().await.clone();
     let cost_guard = Arc::clone(&state.cost_guard);
+
+    // Read computer config for the agent
+    let computer_config = {
+        let cfg = state.config.read().await;
+        crate::computer::LoopConfig {
+            max_steps: cfg.computer.max_steps,
+            settle_delay_ms: cfg.computer.settle_delay_ms,
+            ..Default::default()
+        }
+    };
+    let computer_adapter = state.computer_adapter.read().await.clone();
+
     let agent = if let Some(ref mm) = memory_manager {
         let chat_history = mm.chat_history();
-        Arc::new(
-            Agent::new(config.clone(), provider, tools)
-                .with_model(model.clone())
-                .with_memory_manager(mm.clone())
-                .with_chat_history(chat_history)
-                .with_cost_guard(cost_guard)
-                .with_transcript_store(Arc::clone(&state.transcript_store))
-                .with_artifact_store(Arc::clone(&state.artifact_store))
-                .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                .with_model_router(Arc::clone(&state.model_router))
-                .with_skill_manager(Arc::clone(&state.skills_manager))
-                .with_model_alias(model.clone()),
-        )
+        let mut builder = Agent::new(config.clone(), provider, tools)
+            .with_model(model.clone())
+            .with_memory_manager(mm.clone())
+            .with_chat_history(chat_history)
+            .with_cost_guard(cost_guard)
+            .with_transcript_store(Arc::clone(&state.transcript_store))
+            .with_artifact_store(Arc::clone(&state.artifact_store))
+            .with_disk_budget(Arc::clone(&state.disk_budget))
+            .with_session_file_manager(Arc::clone(&state.session_file_manager))
+            .with_model_router(Arc::clone(&state.model_router))
+            .with_skill_manager(Arc::clone(&state.skills_manager))
+            .with_model_alias(model.clone());
+        if let Some(adapter) = computer_adapter.clone() {
+            builder = builder
+                .with_computer_adapter(adapter)
+                .with_computer_config(computer_config);
+        }
+        Arc::new(builder)
     } else {
-        Arc::new(
-            Agent::new(config.clone(), provider, tools)
-                .with_model(model.clone())
-                .with_cost_guard(cost_guard)
-                .with_skill_manager(Arc::clone(&state.skills_manager))
-                .with_transcript_store(Arc::clone(&state.transcript_store))
-                .with_artifact_store(Arc::clone(&state.artifact_store))
-                .with_disk_budget(Arc::clone(&state.disk_budget))
-                .with_session_file_manager(Arc::clone(&state.session_file_manager))
-                .with_model_router(Arc::clone(&state.model_router))
-                .with_model_alias(model.clone()),
-        )
+        let mut builder = Agent::new(config.clone(), provider, tools)
+            .with_model(model.clone())
+            .with_cost_guard(cost_guard)
+            .with_skill_manager(Arc::clone(&state.skills_manager))
+            .with_transcript_store(Arc::clone(&state.transcript_store))
+            .with_artifact_store(Arc::clone(&state.artifact_store))
+            .with_disk_budget(Arc::clone(&state.disk_budget))
+            .with_session_file_manager(Arc::clone(&state.session_file_manager))
+            .with_model_router(Arc::clone(&state.model_router))
+            .with_model_alias(model.clone());
+        if let Some(adapter) = computer_adapter.clone() {
+            builder = builder
+                .with_computer_adapter(adapter)
+                .with_computer_config(computer_config);
+        }
+        Arc::new(builder)
     };
 
     // Wire the new agent into the cron scheduler so routine (agent-target)
@@ -4807,6 +4855,119 @@ async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
 
     lines.push(String::new());
     lines.join("\n")
+}
+
+// ── Computer / Desktop Automation Handlers ─────────────────────────────────
+
+/// Request body for executing a desktop action.
+#[derive(Debug, Clone, Deserialize)]
+struct ComputerExecuteRequest {
+    action: crate::computer::DesktopAction,
+}
+
+/// Take a screenshot of the desktop.
+async fn computer_screenshot_handler(
+    State(state): State<Arc<GatewayState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let adapter_guard = state.computer_adapter.read().await;
+    let adapter = match adapter_guard.as_ref() {
+        Some(a) => a.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Computer adapter not available"
+                })),
+            )
+                .into_response();
+        }
+    };
+    drop(adapter_guard);
+
+    let region = match (params.get("x"), params.get("y"), params.get("w"), params.get("h")) {
+        (Some(xs), Some(ys), Some(ws), Some(hs)) => {
+            match (xs.parse(), ys.parse(), ws.parse(), hs.parse()) {
+                (Ok(x), Ok(y), Ok(w), Ok(h)) => {
+                    Some(crate::computer::Rect::new(x, y, w, h))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    match adapter.screenshot(region).await {
+        Ok(screenshot) => {
+            let response = serde_json::json!({
+                "success": true,
+                "width": screenshot.width,
+                "height": screenshot.height,
+                "base64": screenshot.base64,
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(response)).into_response()
+        }
+    }
+}
+
+/// Execute a desktop action.
+async fn computer_execute_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<ComputerExecuteRequest>,
+) -> impl IntoResponse {
+    let adapter_guard = state.computer_adapter.read().await;
+    let adapter = match adapter_guard.as_ref() {
+        Some(a) => a.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Computer adapter not available"
+                })),
+            );
+        }
+    };
+    drop(adapter_guard);
+
+    match adapter.execute(body.action).await {
+        Ok(result) => (StatusCode::OK, Json(serde_json::to_value(result).unwrap_or_default())),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            })),
+        ),
+    }
+}
+
+/// Get computer adapter status.
+async fn computer_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let adapter_guard = state.computer_adapter.read().await;
+    let available = adapter_guard.is_some();
+    drop(adapter_guard);
+
+    let config = state.config.read().await;
+    let computer_enabled = config.computer.enabled;
+    let max_steps = config.computer.max_steps;
+    let settle_delay_ms = config.computer.settle_delay_ms;
+    let has_display = crate::computer::has_display_server();
+    drop(config);
+
+    Json(serde_json::json!({
+        "available": available,
+        "enabled": computer_enabled,
+        "has_display_server": has_display,
+        "max_steps": max_steps,
+        "settle_delay_ms": settle_delay_ms,
+    }))
 }
 
 /// Build a comprehensive health report covering all subsystems.

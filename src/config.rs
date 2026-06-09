@@ -63,6 +63,10 @@ pub struct Config {
     #[serde(default)]
     pub heartbeat: crate::heartbeat::HeartbeatConfig,
 
+    /// Computer / desktop automation configuration
+    #[serde(default)]
+    pub computer: ComputerConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -476,6 +480,150 @@ impl Default for RetryConfig {
     }
 }
 
+/// Computer / desktop automation configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputerConfig {
+    /// Remote control configuration for external machines
+    #[serde(default)]
+    pub remote_control: RemoteControlConfig,
+    /// Headless display configuration for CI/CD environments
+    #[serde(default)]
+    pub headless: HeadlessConfig,
+    /// Enable computer use loop in agent responses
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Maximum steps per computer use session
+    #[serde(default = "default_max_computer_steps")]
+    pub max_steps: usize,
+    /// Settle delay after actions (milliseconds)
+    #[serde(default = "default_settle_delay_ms")]
+    pub settle_delay_ms: u64,
+}
+
+/// Remote control configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteControlConfig {
+    /// Target host (IP or hostname)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// SSH username
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// Port (22 for SSH, 5900 for VNC, 3389 for RDP)
+    #[serde(default = "default_remote_port")]
+    pub port: u16,
+    /// Protocol: ssh, vnc, rdp
+    #[serde(default = "default_remote_protocol")]
+    pub protocol: String,
+    /// Path to SSH private key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+    /// Remote display for Linux X11 apps (e.g. ":0")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    /// Extra SSH arguments
+    #[serde(default)]
+    pub ssh_extra_args: Vec<String>,
+    /// Connection timeout in seconds
+    #[serde(default = "default_remote_timeout")]
+    pub timeout_secs: u64,
+}
+
+/// Headless display configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeadlessConfig {
+    /// Enable headless mode (Xvfb/virtual display)
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// Display identifier (e.g. ":99")
+    #[serde(default = "default_headless_display")]
+    pub display: String,
+    /// Screen resolution width
+    #[serde(default = "default_headless_width")]
+    pub width: u32,
+    /// Screen resolution height
+    #[serde(default = "default_headless_height")]
+    pub height: u32,
+    /// Color depth
+    #[serde(default = "default_headless_depth")]
+    pub depth: u8,
+}
+
+fn default_max_computer_steps() -> usize {
+    30
+}
+
+fn default_settle_delay_ms() -> u64 {
+    500
+}
+
+fn default_remote_port() -> u16 {
+    22
+}
+
+fn default_remote_protocol() -> String {
+    "ssh".to_string()
+}
+
+fn default_remote_timeout() -> u64 {
+    10
+}
+
+fn default_headless_display() -> String {
+    ":99".to_string()
+}
+
+fn default_headless_width() -> u32 {
+    1920
+}
+
+fn default_headless_height() -> u32 {
+    1080
+}
+
+fn default_headless_depth() -> u8 {
+    24
+}
+
+impl Default for ComputerConfig {
+    fn default() -> Self {
+        Self {
+            remote_control: RemoteControlConfig::default(),
+            headless: HeadlessConfig::default(),
+            enabled: true,
+            max_steps: default_max_computer_steps(),
+            settle_delay_ms: default_settle_delay_ms(),
+        }
+    }
+}
+
+impl Default for RemoteControlConfig {
+    fn default() -> Self {
+        Self {
+            host: None,
+            user: None,
+            port: default_remote_port(),
+            protocol: default_remote_protocol(),
+            key_path: None,
+            display: Some(":0".to_string()),
+            ssh_extra_args: Vec::new(),
+            timeout_secs: default_remote_timeout(),
+        }
+    }
+}
+
+impl Default for HeadlessConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            display: default_headless_display(),
+            width: default_headless_width(),
+            height: default_headless_height(),
+            depth: default_headless_depth(),
+        }
+    }
+}
+
 /// Browser automation configuration
 #[cfg(feature = "browser")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -527,6 +675,7 @@ impl Default for Config {
             browser: BrowserConfig::default(),
             memory: MemoryConfig::default(),
             heartbeat: crate::heartbeat::HeartbeatConfig::default(),
+            computer: ComputerConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }
@@ -729,6 +878,44 @@ impl Config {
                 })?;
         }
 
+        // Computer config from env
+        if let Ok(val) = std::env::var(format!("{}_COMPUTER_ENABLED", ENV_PREFIX)) {
+            self.computer.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "computer.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_HOST", ENV_PREFIX)) {
+            self.computer.remote_control.host = Some(val);
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_USER", ENV_PREFIX)) {
+            self.computer.remote_control.user = Some(val);
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_PORT", ENV_PREFIX)) {
+            self.computer.remote_control.port = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "computer.remote_control.port".to_string(),
+                message: format!("Invalid port number: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_PROTOCOL", ENV_PREFIX)) {
+            self.computer.remote_control.protocol = val;
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_KEY_PATH", ENV_PREFIX)) {
+            self.computer.remote_control.key_path = Some(val);
+        }
+        if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_DISPLAY", ENV_PREFIX)) {
+            self.computer.remote_control.display = Some(val);
+        }
+        if let Ok(val) = std::env::var(format!("{}_HEADLESS_ENABLED", ENV_PREFIX)) {
+            self.computer.headless.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
+                key: "computer.headless.enabled".to_string(),
+                message: format!("Invalid boolean: {}", e),
+            })?;
+        }
+        if let Ok(val) = std::env::var(format!("{}_HEADLESS_DISPLAY", ENV_PREFIX)) {
+            self.computer.headless.display = val;
+        }
+
         Ok(())
     }
 
@@ -779,6 +966,26 @@ impl Config {
             return Err(ConfigError::InvalidValue {
                 key: "browser.bridge_port".to_string(),
                 message: "Bridge port cannot be 0".to_string(),
+            }
+            .into());
+        }
+
+        // Validate computer config
+        let valid_protocols = ["ssh", "vnc", "rdp"];
+        if !valid_protocols.contains(&self.computer.remote_control.protocol.as_str()) {
+            return Err(ConfigError::InvalidValue {
+                key: "computer.remote_control.protocol".to_string(),
+                message: format!(
+                    "Invalid protocol: {}. Must be one of: ssh, vnc, rdp",
+                    self.computer.remote_control.protocol
+                ),
+            }
+            .into());
+        }
+        if self.computer.remote_control.port == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "computer.remote_control.port".to_string(),
+                message: "Remote control port cannot be 0".to_string(),
             }
             .into());
         }
@@ -1588,5 +1795,67 @@ viewport_height = 1080
 
         config.browser.bridge_port = 18800;
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_computer_config_default() {
+        let config = Config::default();
+        assert!(config.computer.enabled);
+        assert_eq!(config.computer.max_steps, 30);
+        assert_eq!(config.computer.settle_delay_ms, 500);
+        assert!(!config.computer.headless.enabled);
+        assert_eq!(config.computer.headless.display, ":99");
+        assert_eq!(config.computer.remote_control.port, 22);
+        assert_eq!(config.computer.remote_control.protocol, "ssh");
+    }
+
+    #[test]
+    fn test_computer_config_from_toml() {
+        let toml_str = r#"
+[computer]
+enabled = true
+max_steps = 50
+
+[computer.remote_control]
+host = "192.168.1.100"
+user = "admin"
+port = 2222
+protocol = "ssh"
+key_path = "~/.ssh/id_rsa"
+display = ":1"
+
+[computer.headless]
+enabled = true
+display = ":99"
+width = 1280
+height = 720
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.computer.enabled);
+        assert_eq!(config.computer.max_steps, 50);
+        assert_eq!(config.computer.remote_control.host, Some("192.168.1.100".to_string()));
+        assert_eq!(config.computer.remote_control.user, Some("admin".to_string()));
+        assert_eq!(config.computer.remote_control.port, 2222);
+        assert_eq!(config.computer.remote_control.protocol, "ssh");
+        assert_eq!(config.computer.remote_control.key_path, Some("~/.ssh/id_rsa".to_string()));
+        assert_eq!(config.computer.remote_control.display, Some(":1".to_string()));
+        assert!(config.computer.headless.enabled);
+        assert_eq!(config.computer.headless.display, ":99");
+        assert_eq!(config.computer.headless.width, 1280);
+        assert_eq!(config.computer.headless.height, 720);
+    }
+
+    #[test]
+    fn test_computer_config_invalid_protocol() {
+        let mut config = Config::default();
+        config.computer.remote_control.protocol = "invalid".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_computer_config_invalid_port() {
+        let mut config = Config::default();
+        config.computer.remote_control.port = 0;
+        assert!(config.validate().is_err());
     }
 }

@@ -15,6 +15,20 @@ pub struct DaemonConfig {
     pub port: u16,
     /// Path to PID file
     pub pid_file: PathBuf,
+    /// Remote control target host (CLI override)
+    pub remote_control_host: Option<String>,
+    /// Remote control username (CLI override)
+    pub remote_control_user: Option<String>,
+    /// Remote control port (CLI override)
+    pub remote_control_port: u16,
+    /// Remote control protocol (CLI override)
+    pub remote_control_protocol: String,
+    /// Remote control SSH key path (CLI override)
+    pub remote_control_key: Option<String>,
+    /// Enable headless mode (CLI override)
+    pub headless: bool,
+    /// Headless display identifier (CLI override)
+    pub headless_display: String,
 }
 
 /// Daemon manager
@@ -258,6 +272,27 @@ workspace_only = true
             println!("🎛️  ACP disabled via environment");
         } else {
             println!("🎛️  ACP enabled");
+        }
+
+        // Apply CLI overrides for computer / remote control config
+        if let Some(ref host) = self.config.remote_control_host {
+            gateway_config.computer.remote_control.host = Some(host.clone());
+            println!("🖥️  Remote control host: {}", host);
+        }
+        if let Some(ref user) = self.config.remote_control_user {
+            gateway_config.computer.remote_control.user = Some(user.clone());
+        }
+        if self.config.remote_control_port != 22 {
+            gateway_config.computer.remote_control.port = self.config.remote_control_port;
+        }
+        gateway_config.computer.remote_control.protocol = self.config.remote_control_protocol.clone();
+        if let Some(ref key) = self.config.remote_control_key {
+            gateway_config.computer.remote_control.key_path = Some(key.clone());
+        }
+        if self.config.headless {
+            gateway_config.computer.headless.enabled = true;
+            gateway_config.computer.headless.display = self.config.headless_display.clone();
+            println!("🖥️  Headless mode enabled on display {}", self.config.headless_display);
         }
 
         // Configure LLM Provider from environment variables (legacy support)
@@ -647,6 +682,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file: PathBuf::from("/tmp/syscity.pid"),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
@@ -659,6 +701,13 @@ mod tests {
             host: "0.0.0.0".to_string(),
             port: 3000,
             pid_file: PathBuf::from("/tmp/syscity-test.pid"),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config.clone());
         assert!(manager.is_ok());
@@ -676,6 +725,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file: pid_file.clone(),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -697,6 +753,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file,
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -715,6 +778,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file,
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -731,6 +801,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file: pid_file.clone(),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -747,6 +824,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file: PathBuf::from("/tmp/syscity.pid"),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -760,6 +844,13 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             pid_file: PathBuf::from("/tmp/syscity.pid"),
+            remote_control_host: None,
+            remote_control_user: None,
+            remote_control_port: 22,
+            remote_control_protocol: "ssh".to_string(),
+            remote_control_key: None,
+            headless: false,
+            headless_display: ":99".to_string(),
         };
         let manager = DaemonManager::new(config).unwrap();
 

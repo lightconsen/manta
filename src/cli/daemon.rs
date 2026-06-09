@@ -17,6 +17,13 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
         host: "127.0.0.1".to_string(),
         port: 18080,
         pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+        remote_control_host: None,
+        remote_control_user: None,
+        remote_control_port: 0,
+        remote_control_protocol: "ssh".to_string(),
+        remote_control_key: None,
+        headless: false,
+        headless_display: String::new(),
     };
     let daemon = DaemonManager::new(daemon_config)?;
     daemon.status().await?;
@@ -83,11 +90,25 @@ pub async fn run_start_daemon(
     port: u16,
     foreground: bool,
     _config: &crate::config::Config,
+    remote_control_host: Option<String>,
+    remote_control_user: Option<String>,
+    remote_control_port: u16,
+    remote_control_protocol: String,
+    remote_control_key: Option<String>,
+    headless: bool,
+    headless_display: String,
 ) -> Result<()> {
     let daemon_config = DaemonConfig {
         host: host.to_string(),
         port,
         pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+        remote_control_host,
+        remote_control_user,
+        remote_control_port,
+        remote_control_protocol,
+        remote_control_key,
+        headless,
+        headless_display,
     };
 
     let daemon = DaemonManager::new(daemon_config)?;
@@ -107,6 +128,13 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
         host: "127.0.0.1".to_string(),
         port: 18080,
         pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+        remote_control_host: None,
+        remote_control_user: None,
+        remote_control_port: 0,
+        remote_control_protocol: "ssh".to_string(),
+        remote_control_key: None,
+        headless: false,
+        headless_display: String::new(),
     };
 
     let daemon = DaemonManager::new(daemon_config)?;
@@ -124,6 +152,13 @@ pub async fn run_daemon_status() -> Result<()> {
         host: "127.0.0.1".to_string(),
         port: 18080,
         pid_file: crate::dirs::syscity_dir().join("syscity.pid"),
+        remote_control_host: None,
+        remote_control_user: None,
+        remote_control_port: 0,
+        remote_control_protocol: "ssh".to_string(),
+        remote_control_key: None,
+        headless: false,
+        headless_display: String::new(),
     };
 
     let daemon = DaemonManager::new(daemon_config)?;

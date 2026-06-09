@@ -163,6 +163,27 @@ pub enum Commands {
         /// Run in foreground (don't detach)
         #[arg(long)]
         foreground: bool,
+        /// Remote control target host
+        #[arg(long)]
+        remote_control_host: Option<String>,
+        /// Remote control username
+        #[arg(long)]
+        remote_control_user: Option<String>,
+        /// Remote control port
+        #[arg(long, default_value = "22")]
+        remote_control_port: u16,
+        /// Remote control protocol (ssh, vnc, rdp)
+        #[arg(long, default_value = "ssh")]
+        remote_control_protocol: String,
+        /// Path to SSH private key for remote control
+        #[arg(long)]
+        remote_control_key: Option<String>,
+        /// Enable headless display mode
+        #[arg(long)]
+        headless: bool,
+        /// Headless display identifier (e.g. ":99")
+        #[arg(long, default_value = ":99")]
+        headless_display: String,
     },
     /// Stop the Syscity daemon
     Stop {
@@ -349,8 +370,32 @@ impl Cli {
             Commands::Team { command } => team::run_team_command(command).await,
             Commands::Channel { command } => channel::run_channel_command(command).await,
             Commands::Plugin { command } => plugin::run_plugin_command(command).await,
-            Commands::Start { host, port, foreground } => {
-                daemon::run_start_daemon(host, *port, *foreground, config).await
+            Commands::Start {
+                host,
+                port,
+                foreground,
+                remote_control_host,
+                remote_control_user,
+                remote_control_port,
+                remote_control_protocol,
+                remote_control_key,
+                headless,
+                headless_display,
+            } => {
+                daemon::run_start_daemon(
+                    host,
+                    *port,
+                    *foreground,
+                    config,
+                    remote_control_host.clone(),
+                    remote_control_user.clone(),
+                    *remote_control_port,
+                    remote_control_protocol.clone(),
+                    remote_control_key.clone(),
+                    *headless,
+                    headless_display.clone(),
+                )
+                .await
             }
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Status => daemon::run_daemon_status().await,
