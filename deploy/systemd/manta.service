@@ -1,6 +1,6 @@
 [Unit]
 Description=Syscity AI Assistant
-Documentation=https://github.com/anthropics/syscity
+Documentation=https://github.com/lightconsen/syscity
 After=network-online.target
 Wants=network-online.target
 
