@@ -3588,7 +3588,6 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{CompletionResponse, CompletionStream};
     use std::path::PathBuf;
 
     // ── is_obviously_time_sensitive ───────────────────────────────────────────

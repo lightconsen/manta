@@ -506,7 +506,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recorder_buffer_management() {
-        let mut recorder = ScreenRecorder::new(RecorderConfig {
+        let recorder = ScreenRecorder::new(RecorderConfig {
             fps: 10,
             max_buffer_secs: 1,
             output_width: 10,

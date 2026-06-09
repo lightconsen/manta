@@ -1060,7 +1060,7 @@ pub mod secrets {
 
         /// Check if text contains any secrets
         pub fn contains_secrets(&self, text: &str) -> bool {
-            self.scan(text).is_empty()
+            !self.scan(text).is_empty()
         }
 
         /// Get all patterns

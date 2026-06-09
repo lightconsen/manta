@@ -12,11 +12,15 @@ use std::time::Duration;
 
 pub struct X11ComputerAdapter {
     registry: Arc<ToolRegistry>,
+    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl X11ComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            file_watcher: tokio::sync::Mutex::new(None),
+        }
     }
 }
 
@@ -444,6 +448,62 @@ impl ComputerAdapter for X11ComputerAdapter {
             } => {
                 decompress_archive_linux(&archive, &destination).await
             }
+            DesktopAction::WatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_directory(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch directory: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching directory: {}", path)))
+            }
+            DesktopAction::UnwatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_directory(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch directory: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
+            }
+            DesktopAction::WatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_file(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching file: {}", path)))
+            }
+            DesktopAction::UnwatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_file(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch file: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
+            }
+            DesktopAction::EditFile { path, search, replace } => {
+                edit_file(&path, &search, &replace).await
+            }
+            DesktopAction::TransferFile {
+                source,
+                destination,
+                method,
+            } => {
+                transfer_file_linux(&source, &destination, method).await
+            }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on X11".to_string(),
             )),
@@ -465,11 +525,15 @@ impl ComputerAdapter for X11ComputerAdapter {
 
 pub struct WaylandComputerAdapter {
     registry: Arc<ToolRegistry>,
+    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl WaylandComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            file_watcher: tokio::sync::Mutex::new(None),
+        }
     }
 }
 
@@ -832,6 +896,62 @@ impl ComputerAdapter for WaylandComputerAdapter {
             } => {
                 decompress_archive_linux(&archive, &destination).await
             }
+            DesktopAction::WatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_directory(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch directory: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching directory: {}", path)))
+            }
+            DesktopAction::UnwatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_directory(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch directory: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
+            }
+            DesktopAction::WatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_file(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching file: {}", path)))
+            }
+            DesktopAction::UnwatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_file(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch file: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
+            }
+            DesktopAction::EditFile { path, search, replace } => {
+                edit_file(&path, &search, &replace).await
+            }
+            DesktopAction::TransferFile {
+                source,
+                destination,
+                method,
+            } => {
+                transfer_file_linux(&source, &destination, method).await
+            }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on Wayland".to_string(),
             )),
@@ -1076,6 +1196,52 @@ async fn decompress_archive_linux(archive: &str, destination: &str) -> Result<Ac
     Ok(ActionResult::success(format!(
         "Extracted {} to {}",
         archive, destination
+    )))
+}
+
+async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
+    let new_content = content.replace(search, replace);
+    tokio::fs::write(path, new_content)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to write {}: {}", path, e)))?;
+    Ok(ActionResult::success(format!("Edited {}", path)))
+}
+
+async fn transfer_file_linux(
+    source: &str,
+    destination: &str,
+    method: crate::computer::TransferMethod,
+) -> Result<ActionResult> {
+    let (cmd, args): (&str, Vec<&str>) = match method {
+        crate::computer::TransferMethod::Scp => ("scp", vec![source, destination]),
+        crate::computer::TransferMethod::Rsync => ("rsync", vec!["-avz", source, destination]),
+        crate::computer::TransferMethod::Smb => {
+            return Err(ComputerError::UnsupportedPlatform(
+                "SMB transfer not yet implemented on Linux".to_string(),
+            ))
+        }
+    };
+
+    let output = tokio::process::Command::new(cmd)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
+
+    if !output.status.success() {
+        return Ok(ActionResult::error(format!(
+            "{} failed: {}",
+            cmd,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    Ok(ActionResult::success(format!(
+        "Transferred {} to {} via {}",
+        source, destination, cmd
     )))
 }
 

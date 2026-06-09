@@ -12,11 +12,15 @@ use std::time::Duration;
 /// `windows_clipboard`, and `windows_powershell` tools.
 pub struct WindowsComputerAdapter {
     registry: Arc<ToolRegistry>,
+    file_watcher: tokio::sync::Mutex<Option<crate::computer::FileWatcher>>,
 }
 
 impl WindowsComputerAdapter {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            file_watcher: tokio::sync::Mutex::new(None),
+        }
     }
 }
 
