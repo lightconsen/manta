@@ -2,7 +2,7 @@
   <img src="syscity.png" alt="Syscity" width="120" />
 </p>
 <h1 align="center">Syscity</h1>
-<p align="center"><strong>The Operating System for Physical AI</strong></p>
+<p align="center"><strong>OS for Physical AI</strong></p>
 
 <p align="center">
   <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
@@ -10,7 +10,7 @@
   </a>
 </p>
 
-Syscity is an **operating system for physical AI** — a runtime that lets AI agents perceive and act on your computer. Unlike chatbots that only read and write text, Syscity agents can **see your screen**, **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
+Syscity is an **os for physical AI** — a runtime that lets AI agents perceive and act on your computer. Unlike chatbots that only read and write text, Syscity agents can **see your screen**, **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
 
 Traditional AI lives inside a browser tab. Syscity lives inside your machine.
 
