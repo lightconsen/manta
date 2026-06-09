@@ -25,6 +25,7 @@ pub mod soul;
 pub mod sqlite;
 pub mod tier;
 pub mod tiered_store;
+pub mod lancedb;
 pub mod vector;
 pub mod workspace_state;
 
@@ -81,6 +82,7 @@ pub use vector::{
     SqliteVectorStore, TextChunker, VectorBackend, VectorMemoryService, VectorStore,
     VectorStoreStats,
 };
+pub use lancedb::LanceDbVectorStore;
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Unique identifier for a memory entry

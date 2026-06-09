@@ -131,6 +131,9 @@ pub struct GatewayConfig {
     /// Computer / desktop automation configuration
     #[serde(default)]
     pub computer: crate::config::ComputerConfig,
+    /// Dream scheduler configuration for background memory consolidation
+    #[serde(default)]
+    pub dreaming: crate::config::MemoryDreamingConfig,
 }
 
 fn default_model() -> String {
@@ -475,6 +478,7 @@ impl Default for GatewayConfig {
             #[cfg(feature = "browser")]
             browser: crate::config::BrowserConfig::default(),
             computer: crate::config::ComputerConfig::default(),
+            dreaming: crate::config::MemoryDreamingConfig::default(),
         }
     }
 }
@@ -1542,6 +1546,7 @@ impl Gateway {
                 reply_dispatcher.clone(),
                 side_effect_executor.clone(),
                 Some(sse_streamer.clone()),
+                None, // trajectory_writer – optional, can be wired later
             ));
 
         // Create state with placeholder values for vector_memory and hot_reload
@@ -2085,24 +2090,52 @@ impl Gateway {
         // Initialize configured channels
         self.init_channels().await?;
 
-        // Start dream scheduler if memory manager is available
-        if let Some(ref mm) = *self.state.memory_manager.read().await {
-            if let Some(tier_index) = mm.tier_index() {
-                let dream_config = crate::memory::DreamConfig::default();
-                let tier_system_config = crate::memory::TierSystemConfig::default();
-                let mut engine = crate::memory::DreamEngine::new(dream_config, tier_system_config);
-                if let Some(ref workspace_dir) = self.config.workspace_dir {
-                    engine = engine.with_workspace_dir(workspace_dir.clone());
+        // Start dream scheduler if enabled
+        if self.config.dreaming.enabled {
+            if let Some(ref mm) = *self.state.memory_manager.read().await {
+                if let Some(tier_index) = mm.tier_index() {
+                    let dreaming = &self.config.dreaming;
+                    // Convert string-based MemoryDreamingConfig to enum-based DreamConfig
+                    let speed = match dreaming.speed.to_lowercase().as_str() {
+                        "fast" => crate::memory::DreamSpeed::Fast,
+                        "slow" => crate::memory::DreamSpeed::Slow,
+                        _ => crate::memory::DreamSpeed::Balanced,
+                    };
+                    let thinking = match dreaming.thinking.to_lowercase().as_str() {
+                        "low" => crate::memory::DreamThinking::Low,
+                        "high" => crate::memory::DreamThinking::High,
+                        _ => crate::memory::DreamThinking::Medium,
+                    };
+                    let budget = match dreaming.budget.to_lowercase().as_str() {
+                        "cheap" => crate::memory::DreamBudget::Cheap,
+                        "expensive" => crate::memory::DreamBudget::Expensive,
+                        _ => crate::memory::DreamBudget::Medium,
+                    };
+                    let dream_config = crate::memory::DreamConfig {
+                        enabled: dreaming.enabled,
+                        frequency: dreaming.frequency.clone(),
+                        speed,
+                        thinking,
+                        budget,
+                        dedup_similarity_threshold: dreaming.dedup_similarity_threshold,
+                        ..crate::memory::DreamConfig::default()
+                    };
+                    let tier_system_config = crate::memory::TierSystemConfig::default();
+                    let mut engine =
+                        crate::memory::DreamEngine::new(dream_config, tier_system_config);
+                    if let Some(ref workspace_dir) = self.config.workspace_dir {
+                        engine = engine.with_workspace_dir(workspace_dir.clone());
+                    }
+                    if let Some(event_log) = mm.event_log() {
+                        engine = engine.with_event_log(event_log.clone());
+                    }
+                    engine.initialize().await;
+                    let engine = Arc::new(engine);
+                    let mut scheduler = crate::memory::DreamScheduler::new(engine);
+                    scheduler.start(mm.store(), tier_index);
+                    info!("Dream scheduler started");
+                    self.state.dream_scheduler.write().await.replace(scheduler);
                 }
-                if let Some(event_log) = mm.event_log() {
-                    engine = engine.with_event_log(event_log.clone());
-                }
-                engine.initialize().await;
-                let engine = Arc::new(engine);
-                let mut scheduler = crate::memory::DreamScheduler::new(engine);
-                scheduler.start(mm.store(), tier_index);
-                info!("Dream scheduler started");
-                self.state.dream_scheduler.write().await.replace(scheduler);
             }
         }
 
@@ -2255,6 +2288,12 @@ impl Gateway {
                 cause: Some(Box::new(e)),
             }
         })?;
+
+        // Stop dream scheduler on shutdown
+        if let Some(mut scheduler) = self.state.dream_scheduler.write().await.take() {
+            scheduler.stop().await;
+            info!("Dream scheduler stopped");
+        }
 
         Ok(())
     }

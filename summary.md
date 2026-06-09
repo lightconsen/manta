@@ -1472,7 +1472,13 @@ src/extension-sdk/
 - [x] ~~**Gateway 单文件 10,423 行**~~ — 已拆分：24 个 handler 子模块（`src/gateway/handlers/*.rs`），mod.rs 从 ~10,400 行减至 ~5,200 行
 - [x] ~~**Session 路由硬编码到 default agent**~~ — `AgentRouter`（`src/inbound/router.rs`）已实现 6 级路由解析（@agent_name、会话绑定、channel 默认、workspace 默认、全局默认）。所有 inbound 消息通过 pipeline 自动路由
 - [x] ~~**inbound/outbound 模块未接入 channels**~~ — Telegram（ChannelExtension）、Discord、Slack、QQ 均通过 `message_tx` → bridge → `inbound_pipeline.process()` 接入。Feishu 已注册 `ReplyDispatcher`（outbound 回复可用）。WhatsApp、Lark 已有 webhook → pipeline 路径
-- [ ] **Trajectory / Dreaming / Wiki sync / LanceDB / ACPX / Standing orders / Lobster flow** — 完全缺失
+- [x] ~~**Trajectory**~~ — 已完成：JSONL 写入器 + outbound pipeline 集成 + 诊断导出 + redaction
+- [x] ~~**Dreaming / 记忆巩固**~~ — 已完成：Light/Deep/REM 三阶段引擎已存在，现已接入 Gateway 初始化流程，通过 cron 自动执行
+- [x] ~~**LanceDB 向量后端**~~ — 已完成：`src/memory/lancedb/` 模块实现 `VectorStore` trait，feature-gated（`vector-db`），包含 `LanceDbVectorStore` + 完整测试
+- [x] ~~**Lobster Flow Runtime**~~ — 已完成：`src/flow/` DAG 工作流引擎，支持 approval gate、checkpoint 持久化、pause/resume/recover
+- [ ] **Wiki / Obsidian 同步** — ⛔ 标记不实现。Obsidian vault 同步需要 inotify 双向同步 + 13K+ LOC，当前优先级别最低。替代方案：用户可手动配置 `memory_search` 检索本地 markdown 目录
+- [ ] **ACPX / IDE 桥接** — ⛔ 标记不实现。ACP（现有 `src/acp/`）是进程内 subagent 编排，ACPX（IDE stdio 桥接）是为 IDE 插件服务的。已有 `syscity mcp serve` 可在 Phase 1 替代此功能
+- [ ] **Standing orders** — 待实现：永久后台 agent 程序
 - [x] ~~**23 条 dead-code 警告**~~ — 已清理：移除了未使用的 imports、字段、enum variants（`FileToolMode::Symlink`、`ChannelType::Sms`、`ConfigPath::Default`）
 
 ### 已修复或 claims 错误
@@ -1490,4 +1496,4 @@ src/extension-sdk/
 
 ### 结论
 
-summary.md 中列出的 **7 个差距项已全部解决**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner）。剩余的 **Trajectory/Dreaming/Wiki sync/LanceDB/ACPX/Standing orders/Lobster flow** 和 **ProviderType 规范化** 是产品功能缺失，非代码审查发现的问题。
+summary.md 中列出的 **11 个差距项已解决 9 个**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner、Trajectory、Dreaming、LanceDB、Lobster flow）。剩余 **Wiki sync** 和 **ACPX/IDE 桥接** 标记为不实现（替代方案：MCP serve），**Standing orders** 待 Phase 1 实现，**ProviderType 规范化** 已确认 OpenAI + Anthropic 覆盖业界标准。

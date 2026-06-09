@@ -52,6 +52,7 @@ pub mod embed;
 pub mod error;
 pub mod eval;
 pub mod export;
+pub mod flow;
 pub mod gateway;
 pub mod heartbeat;
 pub mod inbound;

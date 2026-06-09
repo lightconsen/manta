@@ -22,7 +22,7 @@ pub mod trajectory;
 pub use reply_dispatcher::{ReplyDispatchConfig, ReplyDispatcher};
 pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEffectRegistry};
 pub use sse::{SseEvent, SseStreamer};
-pub use trajectory::{TrajectoryEntry, TrajectoryLog};
+pub use trajectory::{TrajectoryEntry, TrajectoryLog, TrajectoryWriter};
 
 /// A fully-processed outbound result ready for delivery.
 #[derive(Debug, Clone)]
@@ -68,6 +68,7 @@ pub struct DefaultOutboundPipeline {
     reply_dispatcher: Arc<ReplyDispatcher>,
     side_effects: Arc<SideEffectExecutor>,
     sse: Option<Arc<SseStreamer>>,
+    trajectory_writer: Option<Arc<TrajectoryWriter>>,
 }
 
 impl DefaultOutboundPipeline {
@@ -75,11 +76,13 @@ impl DefaultOutboundPipeline {
         reply_dispatcher: Arc<ReplyDispatcher>,
         side_effects: Arc<SideEffectExecutor>,
         sse: Option<Arc<SseStreamer>>,
+        trajectory_writer: Option<Arc<TrajectoryWriter>>,
     ) -> Self {
         Self {
             reply_dispatcher,
             side_effects,
             sse,
+            trajectory_writer,
         }
     }
 }
@@ -87,8 +90,21 @@ impl DefaultOutboundPipeline {
 #[async_trait::async_trait]
 impl OutboundPipeline for DefaultOutboundPipeline {
     async fn process(&self, ctx: OutboundContext) -> OutboundResult {
-        // Stage 1: Trajectory is already built by the agent; we just forward it.
-        let _trajectory = ctx.trajectory;
+        // Stage 1: Trajectory persistence (fire-and-forget style, but we await)
+        if let Some(ref writer) = self.trajectory_writer {
+            if !ctx.trajectory.entries.is_empty() {
+                if let Err(e) = writer
+                    .append_log(&ctx.session_id, &ctx.trajectory)
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to persist trajectory for session {}: {}",
+                        ctx.session_id,
+                        e
+                    );
+                }
+            }
+        }
 
         // Stage 2: Canvas rendering — detect A2UI components in agent output
         let canvas_update = if let Ok(component) =
