@@ -134,6 +134,9 @@ pub struct GatewayConfig {
     /// Dream scheduler configuration for background memory consolidation
     #[serde(default)]
     pub dreaming: crate::config::MemoryDreamingConfig,
+    /// Standing orders configuration (persistent background agent programs)
+    #[serde(default)]
+    pub standing_orders: crate::standing_orders::config::StandingOrderConfig,
 }
 
 fn default_model() -> String {
@@ -479,6 +482,7 @@ impl Default for GatewayConfig {
             browser: crate::config::BrowserConfig::default(),
             computer: crate::config::ComputerConfig::default(),
             dreaming: crate::config::MemoryDreamingConfig::default(),
+            standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
         }
     }
 }
@@ -602,6 +606,9 @@ pub struct GatewayState {
         RwLock<Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>>,
     /// Dream scheduler for background memory consolidation (RwLock for late initialization)
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
+    /// Standing order manager for persistent background agent programs
+    pub standing_order_manager:
+        RwLock<Option<crate::standing_orders::StandingOrderManager>>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// DM pairing store for access control
@@ -1578,6 +1585,7 @@ impl Gateway {
             heartbeat_wake_tx: RwLock::new(None),
             heartbeat_event_tx: RwLock::new(None),
             dream_scheduler: RwLock::new(None),
+            standing_order_manager: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             device_pairing_store: Arc::new(
@@ -2139,6 +2147,21 @@ impl Gateway {
             }
         }
 
+        // Start standing orders manager if configured
+        if self.config.standing_orders.enabled {
+            let mut manager = crate::standing_orders::StandingOrderManager::new(
+                self.config.standing_orders.clone(),
+                self.state.clone(),
+            );
+            manager.start();
+            info!("Standing orders manager started");
+            self.state
+                .standing_order_manager
+                .write()
+                .await
+                .replace(manager);
+        }
+
         // Start browser bridge server if enabled
         #[cfg(feature = "browser")]
         if self.config.browser.bridge_enabled {
@@ -2293,6 +2316,12 @@ impl Gateway {
         if let Some(mut scheduler) = self.state.dream_scheduler.write().await.take() {
             scheduler.stop().await;
             info!("Dream scheduler stopped");
+        }
+
+        // Stop standing orders manager on shutdown
+        if let Some(mut manager) = self.state.standing_order_manager.write().await.take() {
+            manager.stop().await;
+            info!("Standing orders manager stopped");
         }
 
         Ok(())

@@ -67,6 +67,10 @@ pub struct Config {
     #[serde(default)]
     pub computer: ComputerConfig,
 
+    /// Standing orders configuration (persistent background agent programs)
+    #[serde(default)]
+    pub standing_orders: crate::standing_orders::config::StandingOrderConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -676,6 +680,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             heartbeat: crate::heartbeat::HeartbeatConfig::default(),
             computer: ComputerConfig::default(),
+            standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }
@@ -1857,5 +1862,57 @@ height = 720
         let mut config = Config::default();
         config.computer.remote_control.port = 0;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_standing_orders_config_default() {
+        let config = Config::default();
+        assert!(config.standing_orders.enabled);
+        assert!(config.standing_orders.orders.is_empty());
+    }
+
+    #[test]
+    fn test_standing_orders_config_from_toml() {
+        let toml_str = r#"
+[standing_orders]
+enabled = true
+
+[[standing_orders.orders]]
+name = "daily_summary"
+description = "Send daily summary to team channel"
+agent_id = "assistant"
+schedule = "0 0 9 * * *"
+prompt = "Generate a summary of today's key events and priorities."
+output_channel = "slack_general"
+enabled = true
+
+[[standing_orders.orders]]
+name = "hourly_check"
+agent_id = "monitor"
+schedule = "0 * * * * *"
+prompt = "Check system health and report anomalies."
+enabled = false
+timeout_secs = 30
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let so = &config.standing_orders;
+        assert!(so.enabled);
+        assert_eq!(so.orders.len(), 2);
+
+        let first = &so.orders[0];
+        assert_eq!(first.name, "daily_summary");
+        assert_eq!(first.description.as_deref(), Some("Send daily summary to team channel"));
+        assert_eq!(first.agent_id, "assistant");
+        assert_eq!(first.schedule, "0 0 9 * * *");
+        assert_eq!(first.prompt, "Generate a summary of today's key events and priorities.");
+        assert_eq!(first.output_channel.as_deref(), Some("slack_general"));
+        assert!(first.enabled);
+        assert!(first.timeout_secs.is_none());
+
+        let second = &so.orders[1];
+        assert_eq!(second.name, "hourly_check");
+        assert!(!second.enabled);
+        assert_eq!(second.timeout_secs, Some(30));
     }
 }
