@@ -86,14 +86,9 @@ Syscity provides the **perception layer**, **action layer**, **memory layer**, a
 ```bash
 # macOS / Linux
 curl -sSL https://syscity.net/install.sh | bash
-
-# Or build from source
-git clone https://github.com/lightconsen/syscity.git
-cd syscity
-./scripts/build.sh
 ```
 
-Requires Rust 1.75+ and Node.js 22 (for the web UI).
+See [docs/build.md](docs/build.md) to build from source.
 
 ### Configure
 
@@ -142,16 +137,6 @@ On macOS, Syscity unlocks the full physical AI stack:
 | `applescript` | Control Mail, Calendar, Finder, Music, etc. |
 
 Grant **Screen Recording** and **Accessibility** permissions in System Settings for full capability.
-
-## Desktop App
-
-Build the native desktop app:
-
-```bash
-./scripts/build-desktop.sh
-```
-
-Runs as a menu-bar app with the web UI embedded. macOS deployment target: 10.15+.
 
 ## Configuration
 
