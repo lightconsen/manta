@@ -1480,7 +1480,7 @@ src/extension-sdk/
 - [x] ~~SlidingWindow `Default` 无限递归~~ — `src/security/sliding_window.rs:266` 调用 `new()`，无递归
 - [x] ~~Webhook 签名 `==` 比较、fail-open~~ — `src/gateway/webhooks.rs:807` 使用 `subtle::ConstantTimeEq`，缺失签名时返回 401（fail-closed）
 - [x] ~~WhatsApp 验签用 `access_token` 代替 `app_secret`~~ — `webhooks.rs:138` 读取 `app_secret`，使用原始 `Bytes` body
-- [x] ~~SSE 是 placeholder~~ — `gateway/mod.rs:9625` 已完整实现 `web_terminal_events_handler`
+- [x] ~~SSE 作为 Web UI 事件流~~ — 已删除，SSE handler 未被前端使用（Web UI 通过 WebSocket 通信）
 - [x] ~~TTS 缺失~~ — `src/tools/tts.rs` 已实现
 - [x] ~~Web UI 缺失~~ — `web/` 目录存在，Gateway 已 serve 静态文件
 - [x] ~~Azure/Ollama/Custom provider 返回 `InvalidValue`~~ — 均路由到 `OpenAiProvider::with_base_url()`，可用
