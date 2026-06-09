@@ -4567,6 +4567,9 @@ async fn create_default_tool_registry(
     // Register TTS tool
     registry.register(Box::new(TtsTool::new()));
 
+    // Register STT tool
+    registry.register(Box::new(SttTool::new()));
+
     // Register nodes/Tailscale tool
     registry.register(Box::new(NodesTool::new()));
 

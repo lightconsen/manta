@@ -123,15 +123,15 @@
 | **Grep** | ✅ | ✅ | 平齐 |
 | **Cron** | ✅ | ✅ | 平齐 |
 | **Canvas / A2UI** | ✅ canvas-host（live reload） | ✅ `canvas/mod.rs` | 平齐 |
-| **TTS / STT / Voice** | ✅ 多个 provider + realtime voice | ❌ 无 | 缺失 |
-| **Image generation** | ✅ 多个 provider | ❌ 无 | 缺失 |
+| **TTS / STT / Voice** | ✅ 多个 provider + realtime voice | ⚠️ TTS 有（OpenAI/macos_say/espeak），无 STT | **Syscity 无 STT** |
+| **Image generation** | ✅ 多个 provider | ✅ `ImageTool` + `ImageGenerateTool` | 平齐（provider 较少） |
 | **Video generation** | ✅ 多个 provider | ❌ 无 | 缺失 |
 | **Music generation** | ✅ 多个 provider | ❌ 无 | 缺失 |
-| **Lobster (flow runtime)** | ✅ 可恢复审批工作流 | ❌ 无 | 缺失 |
-| **Trajectory recording** | ✅ 诊断/审计轨迹导出 | ❌ 无 | 缺失 |
-| **Standing orders** | ✅ 永久自主程序 | ❌ 无 | 缺失 |
+| **Lobster (flow runtime)** | ✅ 可恢复审批工作流 | ✅ `flow/mod.rs` + `taskflow/` | 平齐 |
+| **Trajectory recording** | ✅ 诊断/审计轨迹导出 | ✅ `trajectory/` | 平齐 |
+| **Standing orders** | ✅ 永久自主程序 | ✅ `standing_orders/` | 平齐 |
 
-**差距量化**：OpenClaw 的工具生态是 **插件化 + 多后端** 的；Syscity 将许多功能硬编码在 core 中，没有插件注册表。Syscity 的浏览器自动化、代码执行、web 搜索都处于 MVP 级别。Voice、媒体生成、Lobster flow runtime 完全缺失。
+**差距量化**：OpenClaw 的工具生态是 **插件化 + 多后端** 的；Syscity 将许多功能硬编码在 core 中，没有插件注册表。Syscity 的浏览器自动化、代码执行、web 搜索都处于 MVP 级别。Video / Music 生成完全缺失。
 
 ---
 
@@ -1478,7 +1478,7 @@ src/extension-sdk/
 - [x] ~~**Lobster Flow Runtime**~~ — 已完成：`src/flow/` DAG 工作流引擎，支持 approval gate、checkpoint 持久化、pause/resume/recover
 - [ ] **Wiki / Obsidian 同步** — ⛔ 标记不实现。Obsidian vault 同步需要 inotify 双向同步 + 13K+ LOC，当前优先级别最低。替代方案：用户可手动配置 `memory_search` 检索本地 markdown 目录
 - [ ] **ACPX / IDE 桥接** — ⛔ 标记不实现。ACP（现有 `src/acp/`）是进程内 subagent 编排，ACPX（IDE stdio 桥接）是为 IDE 插件服务的。已有 `syscity mcp serve` 可在 Phase 1 替代此功能
-- [ ] **Standing orders** — 待实现：永久后台 agent 程序
+- [x] ~~**Standing orders**~~ — 已完成：`src/standing_orders/` 模块实现 cron 调度 agent 程序，支持 channel 输出，已接入 Gateway 生命周期
 - [x] ~~**23 条 dead-code 警告**~~ — 已清理：移除了未使用的 imports、字段、enum variants（`FileToolMode::Symlink`、`ChannelType::Sms`、`ConfigPath::Default`）
 
 ### 已修复或 claims 错误
@@ -1496,4 +1496,4 @@ src/extension-sdk/
 
 ### 结论
 
-summary.md 中列出的 **11 个差距项已解决 9 个**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner、Trajectory、Dreaming、LanceDB、Lobster flow）。剩余 **Wiki sync** 和 **ACPX/IDE 桥接** 标记为不实现（替代方案：MCP serve），**Standing orders** 待 Phase 1 实现，**ProviderType 规范化** 已确认 OpenAI + Anthropic 覆盖业界标准。
+summary.md 中列出的 **12 个差距项已解决 10 个**（channel inbound、MemorySearchTool、Gateway monolith、Session routing、inbound/outbound pipeline、dead-code、SecretScanner、Trajectory、Dreaming、LanceDB、Lobster flow、Standing orders）。剩余 **Wiki sync** 和 **ACPX/IDE 桥接** 标记为不实现（替代方案：MCP serve），**ProviderType 规范化** 已确认 OpenAI + Anthropic 覆盖业界标准。
