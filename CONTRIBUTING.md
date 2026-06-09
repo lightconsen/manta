@@ -254,8 +254,8 @@ cargo test --features "telegram discord"
 ## Questions?
 
 - Join our [Discord](https://discord.gg/syscity)
-- Open a [GitHub Discussion](https://github.com/anthropics/syscity/discussions)
-- Check existing [Issues](https://github.com/anthropics/syscity/issues)
+- Open a [GitHub Discussion](https://github.com/lightconsen/syscity/discussions)
+- Check existing [Issues](https://github.com/lightconsen/syscity/issues)
 
 ## License
 
