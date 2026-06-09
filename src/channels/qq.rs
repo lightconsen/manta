@@ -4,15 +4,17 @@
 //! Requires: Tencent developer account and bot registration.
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ConversationId, FormattedContent, OutgoingMessage,
+    Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
+    OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 /// QQ Bot API base URL
@@ -36,6 +38,8 @@ pub struct QqConfig {
     pub use_sandbox: bool,
     /// Intents (bitmap)
     pub intents: u32,
+    /// Message handler channel for inbound pipeline
+    pub message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
 }
 
 impl QqConfig {
@@ -52,7 +56,8 @@ impl QqConfig {
             access_token: String::new(),
             allowed_qqs: Vec::new(),
             use_sandbox: false,
-            intents: 0, // Will be set properly
+            intents: (1 << 30) | (1 << 0), // GUILD_MESSAGES (30) | AT_MESSAGES (0)
+            message_tx: None,
         }
     }
 
@@ -143,6 +148,8 @@ pub struct QqChannel {
     dm_policy: Arc<RwLock<DmPolicy>>,
     /// Allowlist for QQ numbers (used with Allowlist policy)
     allow_from: Arc<RwLock<Vec<String>>>,
+    /// Inbound message sender for pipeline integration
+    message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
 }
 
 impl std::fmt::Debug for QqChannel {
@@ -163,6 +170,7 @@ impl QqChannel {
             .expect("Failed to create HTTP client");
 
         let initial_token = config.access_token.clone();
+        let message_tx = config.message_tx.clone();
 
         Self {
             config,
@@ -173,6 +181,7 @@ impl QqChannel {
             pairing_store: Arc::new(RwLock::new(None)),
             dm_policy: Arc::new(RwLock::new(DmPolicy::Open)),
             allow_from: Arc::new(RwLock::new(Vec::new())),
+            message_tx,
         }
     }
 
@@ -448,14 +457,59 @@ impl Channel for QqChannel {
         self.running
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
-        info!("QQ channel started");
-        info!("Note: WebSocket/Webhook configuration required for receiving messages");
+        info!("QQ channel started — connecting to WebSocket gateway");
 
-        // Keep running until stopped
-        while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        // WebSocket gateway reconnect loop (like Slack Socket Mode)
+        let current_token = self.current_token.read().await.clone();
+        let intents = self.config.intents;
+        let message_tx = self.message_tx.clone();
+        let running = self.running.clone();
+
+        let mut backoff_secs = 1u64;
+        const MAX_BACKOFF: u64 = 30;
+
+        while running.load(std::sync::atomic::Ordering::SeqCst) {
+            match qq_get_gateway_url(self.config.base_url(), &current_token).await {
+                Ok(ws_url) => {
+                    backoff_secs = 1;
+
+                    match qq_connect_and_listen(
+                        &ws_url,
+                        &current_token,
+                        intents,
+                        message_tx.as_ref(),
+                        &running,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            info!("QQ WebSocket: connection closed gracefully");
+                        }
+                        Err(e) => {
+                            warn!(
+                                "QQ WebSocket: connection error: {}. Reconnecting in {}s...",
+                                e, backoff_secs
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "QQ WebSocket: failed to get gateway URL: {}. Retrying in {}s...",
+                        e, backoff_secs
+                    );
+                }
+            }
+
+            if !running.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
         }
 
+        info!("QQ WebSocket: listener stopped");
         Ok(())
     }
 
@@ -609,6 +663,270 @@ impl Channel for QqChannel {
             }
         }
     }
+}
+
+// ── QQ Guild Bot WebSocket Gateway ─────────────────────────────────────────────
+
+/// QQ WebSocket opcodes
+#[allow(dead_code)]
+const QQ_OP_DISPATCH: u64 = 0;
+const QQ_OP_HEARTBEAT: u64 = 1;
+const QQ_OP_IDENTIFY: u64 = 2;
+const QQ_OP_HELLO: u64 = 10;
+const QQ_OP_HEARTBEAT_ACK: u64 = 11;
+
+/// Fetch WebSocket gateway URL from QQ Guild Bot API.
+async fn qq_get_gateway_url(base_url: &str, token: &str) -> crate::Result<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/gateway", base_url))
+        .header("Authorization", format!("QQBot {}", token))
+        .send()
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "QQ gateway request failed: {}",
+                e
+            ))
+        })?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(crate::error::SyscityError::Internal(format!(
+            "QQ gateway request failed: {} — {}",
+            status,
+            body["message"].as_str().unwrap_or("unknown")
+        )));
+    }
+
+    let url = body["url"]
+        .as_str()
+        .ok_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "QQ gateway response missing 'url' field".to_string(),
+            )
+        })?
+        .to_string();
+
+    Ok(url)
+}
+
+/// Connect to the QQ Guild Bot WebSocket gateway and listen for events.
+#[allow(clippy::too_many_arguments)]
+async fn qq_connect_and_listen(
+    ws_url: &str,
+    token: &str,
+    intents: u32,
+    message_tx: Option<&mpsc::UnboundedSender<crate::channels::IncomingMessage>>,
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> crate::Result<()> {
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (ws_stream, _) = connect_async(ws_url)
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "QQ WebSocket connection failed: {}",
+                e
+            ))
+        })?;
+
+    info!("QQ WebSocket: connected to gateway");
+
+    let (mut write, mut read) = ws_stream.split();
+
+    // ── Step 1: Wait for Hello (op: 10) ─────────────────────────────────
+    let heartbeat_interval = loop {
+        match read.next().await {
+            Some(Ok(Message::Text(text))) => {
+                let msg: serde_json::Value =
+                    serde_json::from_str(&text).unwrap_or_default();
+                if msg["op"].as_u64() == Some(QQ_OP_HELLO) {
+                    let interval = msg["d"]["heartbeat_interval"]
+                        .as_u64()
+                        .unwrap_or(45000);
+                    info!(
+                        "QQ WebSocket: received Hello, heartbeat interval={}ms",
+                        interval
+                    );
+                    break interval;
+                } else {
+                    debug!("QQ WebSocket: received non-Hello message before identify: {}", text);
+                }
+            }
+            Some(Ok(Message::Ping(_))) => {
+                // Auto-pong handled by tungstenite
+            }
+            Some(Ok(Message::Close(frame))) => {
+                warn!("QQ WebSocket: server closed connection before Hello: {:?}", frame);
+                return Ok(());
+            }
+            Some(Err(e)) => {
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "QQ WebSocket error during Hello: {}",
+                    e
+                )));
+            }
+            None => {
+                return Err(crate::error::SyscityError::Internal(
+                    "QQ WebSocket: connection closed before Hello".to_string(),
+                ));
+            }
+            _ => {}
+        }
+    };
+
+    // ── Step 2: Send Identify (op: 2) ────────────────────────────────────
+    let identify = serde_json::json!({
+        "op": QQ_OP_IDENTIFY,
+        "d": {
+            "token": token,
+            "intents": intents,
+            "shard": [0, 1]
+        }
+    });
+
+    write
+        .send(Message::Text(identify.to_string()))
+        .await
+        .map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "QQ WebSocket: failed to send Identify: {}",
+                e
+            ))
+        })?;
+
+    info!("QQ WebSocket: Identify sent");
+
+    // ── Step 3: Heartbeat & event loop ───────────────────────────────────
+    let heartbeat_duration = tokio::time::Duration::from_millis(heartbeat_interval);
+    let mut heartbeat_interval_timer = tokio::time::interval(heartbeat_duration);
+    let mut seq: Option<u64> = None;
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::select! {
+            _ = heartbeat_interval_timer.tick() => {
+                let hb = serde_json::json!({
+                    "op": QQ_OP_HEARTBEAT,
+                    "d": seq
+                });
+                if write.send(Message::Text(hb.to_string())).await.is_err() {
+                    warn!("QQ WebSocket: heartbeat send failed");
+                    break;
+                }
+                debug!("QQ WebSocket: heartbeat sent (seq={:?})", seq);
+            }
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        debug!("QQ WebSocket: received: {}", &text[..text.len().min(200)]);
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&text).unwrap_or_default();
+                        let op = parsed["op"].as_u64().unwrap_or(99);
+
+                        match op {
+                            0 => {
+                                // Dispatch — update sequence and handle event
+                                if let Some(s) = parsed["s"].as_u64() {
+                                    seq = Some(s);
+                                }
+                                let event_type = parsed["t"].as_str().unwrap_or("");
+
+                                match event_type {
+                                    "AT_MESSAGE_CREATE" | "DIRECT_MESSAGE_CREATE" => {
+                                        if let Some(tx) = message_tx {
+                                            if let Some(incoming) = parse_qq_message(&parsed["d"]) {
+                                                let _ = tx.send(incoming);
+                                            }
+                                        }
+                                    }
+                                    "READY" => {
+                                        info!("QQ WebSocket: ready — session_id={}",
+                                            parsed["d"]["session_id"].as_str().unwrap_or("unknown"));
+                                    }
+                                    "RESUMED" => {
+                                        info!("QQ WebSocket: resumed");
+                                    }
+                                    _ => {
+                                        debug!("QQ WebSocket: unhandled dispatch event: {}", event_type);
+                                    }
+                                }
+                            }
+                            7 => {
+                                warn!("QQ WebSocket: server requested reconnect (op: 7)");
+                                break;
+                            }
+                            9 => {
+                                warn!("QQ WebSocket: invalid session (op: 9) — re-identify needed");
+                                // Reconnect will be handled by outer retry loop
+                                break;
+                            }
+                            QQ_OP_HEARTBEAT_ACK => {
+                                // Heartbeat ACK — nothing to do
+                                debug!("QQ WebSocket: heartbeat ACK");
+                            }
+                            _ => {
+                                debug!("QQ WebSocket: unhandled op: {}", op);
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Ping(_))) => {
+                        // Auto-pong handled by tungstenite
+                    }
+                    Some(Ok(Message::Close(frame))) => {
+                        info!("QQ WebSocket: connection closed: {:?}", frame);
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        warn!("QQ WebSocket: read error: {}", e);
+                        break;
+                    }
+                    None => {
+                        info!("QQ WebSocket: read stream ended");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parse a QQ Guild Bot AT_MESSAGE_CREATE or DIRECT_MESSAGE_CREATE event
+/// into an IncomingMessage.
+fn parse_qq_message(
+    data: &serde_json::Value,
+) -> Option<crate::channels::IncomingMessage> {
+    let content = data["content"].as_str()?;
+    let author_id = data["author"]["id"].as_str()?;
+    let _channel_id = data["channel_id"].as_str();
+    let _guild_id = data["guild_id"].as_str();
+
+    // Determine if DM
+    let is_direct = data["guild_id"].is_null();
+
+    Some(crate::channels::IncomingMessage {
+        id: crate::core::models::Id::new(),
+        user_id: crate::channels::UserId(author_id.to_string()),
+        conversation_id: crate::channels::ConversationId(author_id.to_string()),
+        content: content.to_string(),
+        attachments: Vec::new(),
+        metadata: crate::channels::MessageMetadata::default(),
+        provenance: crate::channels::InputProvenance::ExternalUser {
+            channel: "qq".to_string(),
+            is_direct,
+        },
+        mention: if is_direct {
+            crate::channels::MentionState::DirectMessage
+        } else {
+            crate::channels::MentionState::Mentioned
+        },
+    })
 }
 
 #[cfg(test)]

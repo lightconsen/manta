@@ -1467,11 +1467,11 @@ src/extension-sdk/
 
 ### 确认未实现（claims 正确）
 
-- [ ] **Channel inbound 部分实现** — Slack Socket Mode 已接入（`slack.rs` WebSocket + ACK + 重连）。QQ、Lark、WhatsApp 仍只有 webhook，无主动事件订阅
+- [x] ~~**Channel inbound 已全部实现**~~ — Slack Socket Mode（WebSocket + ACK + 重连）；QQ Guild Bot WebSocket 网关（Identify + Heartbeat + 重连，`AT_MESSAGE_CREATE`/`DIRECT_MESSAGE_CREATE` 事件解析）；Lark/WhatsApp 已有 webhook 处理（`webhooks.rs`）
 - [x] ~~**MemorySearchTool 降级为 LIKE**~~ — 已修复：`MemorySearchTool` 通过 `Arc<RwLock<Option<Arc<MemoryManager>>>>` 共享 holder，vector/FTS5 服务就绪后自动启用 hybrid search
 - [x] ~~**Gateway 单文件 10,423 行**~~ — 已拆分：24 个 handler 子模块（`src/gateway/handlers/*.rs`），mod.rs 从 ~10,400 行减至 ~5,200 行
-- [ ] **Session 路由硬编码到 default agent** — 无 `resolve_agent_for_session` 函数，所有消息走 default
-- [ ] **inbound/outbound 模块未接入 channels** — 模块存在但 channel 仍直接发 `message_tx`，绕过了管道
+- [x] ~~**Session 路由硬编码到 default agent**~~ — `AgentRouter`（`src/inbound/router.rs`）已实现 6 级路由解析（@agent_name、会话绑定、channel 默认、workspace 默认、全局默认）。所有 inbound 消息通过 pipeline 自动路由
+- [x] ~~**inbound/outbound 模块未接入 channels**~~ — Telegram（ChannelExtension）、Discord、Slack、QQ 均通过 `message_tx` → bridge → `inbound_pipeline.process()` 接入。Feishu 已注册 `ReplyDispatcher`（outbound 回复可用）。WhatsApp、Lark 已有 webhook → pipeline 路径
 - [ ] **Trajectory / Dreaming / Wiki sync / LanceDB / ACPX / Standing orders / Lobster flow** — 完全缺失
 - [x] ~~**23 条 dead-code 警告**~~ — 已清理：移除了未使用的 imports、字段、enum variants（`FileToolMode::Symlink`、`ChannelType::Sms`、`ConfigPath::Default`）
 

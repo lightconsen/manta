@@ -3037,11 +3037,20 @@ impl Gateway {
                     warn!("QQ feature not enabled, skipping channel '{}'", name);
                 }
             }
-            ChannelType::Feishu | ChannelType::WebTerminal => {
-                // Feishu/Lark and WebTerminal are handled via webhooks/SocketMode
+            ChannelType::Feishu => {
+                #[cfg(feature = "feishu")]
+                {
+                    self.init_feishu_channel(name, config).await?;
+                }
+                #[cfg(not(feature = "feishu"))]
+                {
+                    warn!("Feishu/Lark feature not enabled, skipping channel '{}'", name);
+                }
+            }
+            ChannelType::WebTerminal => {
                 info!(
-                    "Channel '{}' ({:?}) uses webhook/SocketMode, skipping adapter spawn",
-                    name, config.channel_type
+                    "Channel '{}' (WebTerminal) uses Gateway WS/API directly, skipping adapter spawn",
+                    name
                 );
             }
             ChannelType::Websocket => {
@@ -3177,9 +3186,22 @@ impl Gateway {
     #[cfg(feature = "discord")]
     async fn init_discord_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
-            let discord_config = crate::channels::discord::DiscordConfig::new(token);
+            // Create inbound bridge: Discord message_tx -> inbound pipeline
+            let (inbound_tx, mut inbound_rx) =
+                mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+            let mut discord_config = crate::channels::discord::DiscordConfig::new(token);
+            discord_config.message_tx = Some(inbound_tx);
 
             let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
+
+            // Bridge inbound messages into the pipeline
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                while let Some(msg) = inbound_rx.recv().await {
+                    state_clone.inbound_pipeline.process(msg).await;
+                }
+            });
+
             let channel_name = name.to_string();
             let channel_for_task = channel.clone();
             tokio::spawn(async move {
@@ -3207,9 +3229,25 @@ impl Gateway {
     #[cfg(feature = "slack")]
     async fn init_slack_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
-            let slack_config = crate::channels::slack::SlackConfig::new(token);
+            // Create inbound bridge: Slack message_tx (Socket Mode) -> inbound pipeline
+            let (inbound_tx, mut inbound_rx) =
+                mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+            let mut slack_config = crate::channels::slack::SlackConfig::new(token);
+            slack_config.message_tx = Some(inbound_tx);
+            if let Some(app_token) = config.credentials.get("app_token") {
+                slack_config.app_token = Some(app_token.to_string());
+            }
 
             let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
+
+            // Bridge inbound messages into the pipeline
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                while let Some(msg) = inbound_rx.recv().await {
+                    state_clone.inbound_pipeline.process(msg).await;
+                }
+            });
+
             let channel_name = name.to_string();
             let channel_for_task = channel.clone();
             tokio::spawn(async move {
@@ -3270,6 +3308,43 @@ impl Gateway {
         Ok(())
     }
 
+    /// Initialize Feishu/Lark channel (outbound via ReplyDispatcher)
+    #[cfg(feature = "feishu")]
+    async fn init_feishu_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
+        if let (Some(app_id), Some(app_secret)) = (
+            config.credentials.get("app_id"),
+            config.credentials.get("app_secret"),
+        ) {
+            let lark_config =
+                crate::channels::lark::LarkConfig::new(app_id, app_secret);
+
+            let channel = Arc::new(crate::channels::lark::LarkChannel::new(lark_config));
+            let channel_name = name.to_string();
+            let channel_for_task = channel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel_for_task.start().await {
+                    error!("Feishu channel {} failed: {}", channel_name, e);
+                }
+            });
+            self.state
+                .reply_dispatcher
+                .register_channel(name, channel.clone())
+                .await;
+            self.state
+                .channels
+                .write()
+                .await
+                .insert(name.to_string(), channel);
+            info!("✅ Feishu channel '{}' initialized (inbound via webhook)", name);
+        } else {
+            warn!(
+                "Feishu channel '{}' missing 'app_id' or 'app_secret' in credentials",
+                name
+            );
+        }
+        Ok(())
+    }
+
     /// Initialize QQ channel
     #[cfg(feature = "qq")]
     async fn init_qq_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
@@ -3278,9 +3353,22 @@ impl Gateway {
             config.credentials.get("app_secret"),
             config.credentials.get("bot_qq"),
         ) {
-            let qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
+            // Create inbound bridge: QQ WebSocket -> inbound pipeline
+            let (inbound_tx, mut inbound_rx) =
+                mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
+            let mut qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
+            qq_config.message_tx = Some(inbound_tx);
 
             let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
+
+            // Bridge inbound messages into the pipeline
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                while let Some(msg) = inbound_rx.recv().await {
+                    state_clone.inbound_pipeline.process(msg).await;
+                }
+            });
+
             let channel_name = name.to_string();
             let channel_for_task = channel.clone();
             tokio::spawn(async move {
