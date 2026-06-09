@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::memory::{Memory, MemoryId, MemoryQuery, MemoryStore, SqliteMemoryStore};
+use crate::memory::{Memory, MemoryId, MemoryManager, MemoryQuery, MemoryStore, SqliteMemoryStore};
 
 /// Memory tool for storing and retrieving information
 #[derive(Debug, Clone)]
@@ -356,6 +356,10 @@ Memories are automatically searched and relevant ones injected into new conversa
 #[derive(Debug, Clone)]
 pub struct MemorySearchTool {
     storage: Arc<SqliteMemoryStore>,
+    /// Optional memory manager for hybrid (vector + FTS5) search.
+    /// When present, `search` uses `MemoryManager::retrieve()` which runs
+    /// `hybrid_search()` instead of the SQLite `LIKE` fallback.
+    memory_manager: Option<Arc<MemoryManager>>,
 }
 
 impl MemorySearchTool {
@@ -364,12 +368,24 @@ impl MemorySearchTool {
         let db_path = crate::dirs::default_memory_db();
         let db_url = format!("sqlite:///{}", db_path.display());
         let storage = Arc::new(SqliteMemoryStore::new(&db_url).await?);
-        Ok(Self { storage })
+        Ok(Self {
+            storage,
+            memory_manager: None,
+        })
     }
 
     /// Create with an existing store (for sharing with the agent).
     pub fn with_store(storage: Arc<SqliteMemoryStore>) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            memory_manager: None,
+        }
+    }
+
+    /// Attach a `MemoryManager` to enable hybrid search.
+    pub fn with_manager(mut self, manager: Arc<MemoryManager>) -> Self {
+        self.memory_manager = Some(manager);
+        self
     }
 }
 
@@ -440,16 +456,28 @@ Actions:
                 let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(6);
                 let category = args["category"].as_str();
 
-                let mut memory_query = MemoryQuery::new()
-                    .for_user(&context.user_id)
-                    .with_content(query)
-                    .limit(limit);
+                let results = if let Some(ref mm) = self.memory_manager {
+                    // Hybrid path: vector + FTS5 via MemoryManager
+                    mm.retrieve(
+                        &context.user_id,
+                        Some(&context.conversation_id),
+                        query,
+                        Some(limit),
+                    )
+                    .await?
+                } else {
+                    // Fallback: SQLite keyword search
+                    let mut memory_query = MemoryQuery::new()
+                        .for_user(&context.user_id)
+                        .with_content(query)
+                        .limit(limit);
 
-                if let Some(cat) = category {
-                    memory_query = memory_query.of_type(cat);
-                }
+                    if let Some(cat) = category {
+                        memory_query = memory_query.of_type(cat);
+                    }
 
-                let results = self.storage.search(memory_query).await?;
+                    self.storage.search(memory_query).await?
+                };
 
                 if results.is_empty() {
                     return Ok(ToolExecutionResult::success(format!(

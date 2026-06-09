@@ -430,6 +430,62 @@ impl ComputerAdapter for WindowsComputerAdapter {
             } => {
                 decompress_archive_windows(&archive, &destination).await
             }
+            DesktopAction::WatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_directory(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch directory: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching directory: {}", path)))
+            }
+            DesktopAction::UnwatchDirectory { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_directory(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch directory: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching directory: {}", path)))
+            }
+            DesktopAction::WatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if guard.is_none() {
+                    let watcher = crate::computer::FileWatcher::new()
+                        .map_err(|e| ComputerError::Other(format!("Failed to create file watcher: {}", e)))?;
+                    *guard = Some(watcher);
+                }
+                guard
+                    .as_mut()
+                    .unwrap()
+                    .watch_file(&path)
+                    .map_err(|e| ComputerError::Other(format!("Failed to watch file: {}", e)))?;
+                Ok(ActionResult::success(format!("Watching file: {}", path)))
+            }
+            DesktopAction::UnwatchFile { path } => {
+                let mut guard = self.file_watcher.lock().await;
+                if let Some(ref mut watcher) = *guard {
+                    watcher
+                        .unwatch_file(&path)
+                        .map_err(|e| ComputerError::Other(format!("Failed to unwatch file: {}", e)))?;
+                }
+                Ok(ActionResult::success(format!("Stopped watching file: {}", path)))
+            }
+            DesktopAction::EditFile { path, search, replace } => {
+                edit_file(&path, &search, &replace).await
+            }
+            DesktopAction::TransferFile {
+                source,
+                destination,
+                method,
+            } => {
+                transfer_file_windows(&source, &destination, method).await
+            }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on Windows".to_string(),
             )),
@@ -799,6 +855,83 @@ async fn self_registry_execute_powershell(
         .args(["-NoProfile", "-Command", script])
         .output()
         .await
+}
+
+async fn edit_file(path: &str, search: &str, replace: &str) -> Result<ActionResult> {
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
+    let new_content = content.replace(search, replace);
+    tokio::fs::write(path, new_content)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to write {}: {}", path, e)))?;
+    Ok(ActionResult::success(format!("Edited {}", path)))
+}
+
+async fn transfer_file_windows(
+    source: &str,
+    destination: &str,
+    method: crate::computer::TransferMethod,
+) -> Result<ActionResult> {
+    match method {
+        crate::computer::TransferMethod::Scp => {
+            let output = tokio::process::Command::new("scp")
+                .args(&[source, destination])
+                .output()
+                .await
+                .map_err(|e| ComputerError::ToolFailed(format!("scp failed: {}", e)))?;
+            if !output.status.success() {
+                return Ok(ActionResult::error(format!(
+                    "scp failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(ActionResult::success(format!(
+                "Transferred {} to {} via scp",
+                source, destination
+            )))
+        }
+        crate::computer::TransferMethod::Rsync => {
+            let output = tokio::process::Command::new("rsync")
+                .args(&["-avz", source, destination])
+                .output()
+                .await
+                .map_err(|e| ComputerError::ToolFailed(format!("rsync failed: {}", e)))?;
+            if !output.status.success() {
+                return Ok(ActionResult::error(format!(
+                    "rsync failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(ActionResult::success(format!(
+                "Transferred {} to {} via rsync",
+                source, destination
+            )))
+        }
+        crate::computer::TransferMethod::Smb => {
+            // Use PowerShell Copy-Item with UNC path
+            let script = format!(
+                "Copy-Item -Path '{}' -Destination '{}' -Force -Recurse",
+                source.replace('\'', "''"),
+                destination.replace('\'', "''")
+            );
+            let output = tokio::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &script])
+                .output()
+                .await
+                .map_err(|e| ComputerError::ToolFailed(format!("SMB copy failed: {}", e)))?;
+            if !output.status.success() {
+                return Ok(ActionResult::error(format!(
+                    "SMB copy failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(ActionResult::success(format!(
+                "Transferred {} to {} via SMB",
+                source, destination
+            )))
+        }
+    }
 }
 
 /// Factory for Windows.
