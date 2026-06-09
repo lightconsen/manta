@@ -20,7 +20,6 @@ pub mod providers;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
-pub mod web_terminal_events;
 pub mod web_ui;
 
 pub use acp::*;
@@ -45,5 +44,4 @@ pub use providers::*;
 pub use sessions::*;
 pub use settings::*;
 pub use skills::*;
-pub use web_terminal_events::*;
 pub use web_ui::*;

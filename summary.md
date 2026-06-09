@@ -1472,7 +1472,6 @@ src/extension-sdk/
 - [x] ~~**Gateway 单文件 10,423 行**~~ — 已拆分：24 个 handler 子模块（`src/gateway/handlers/*.rs`），mod.rs 从 ~10,400 行减至 ~5,200 行
 - [ ] **Session 路由硬编码到 default agent** — 无 `resolve_agent_for_session` 函数，所有消息走 default
 - [ ] **inbound/outbound 模块未接入 channels** — 模块存在但 channel 仍直接发 `message_tx`，绕过了管道
-- [ ] **Web UI 未消费 SSE 事件流** — 后端已实现 `web_terminal_events_handler`（SSE），但前端实际使用 WebSocket 通信，SSE 端点未被消费（无 scope guard、慢消费者保护）
 - [ ] **Canvas 无 HTTP host** — 只有类型定义 + WebSocket，无独立 serve 服务
 - [ ] **Trajectory / Dreaming / Wiki sync / LanceDB / ACPX / Standing orders / Lobster flow** — 完全缺失
 - [x] ~~**23 条 dead-code 警告**~~ — 已清理：移除了未使用的 imports、字段、enum variants（`FileToolMode::Symlink`、`ChannelType::Sms`、`ConfigPath::Default`）
