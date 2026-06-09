@@ -3,8 +3,8 @@
 //! This module implements the Channel trait for Telegram using teloxide.
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
-    MessageMetadata, OutgoingMessage,
+    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent,
+    IncomingMessage, MessageMetadata, OutgoingMessage,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -303,9 +303,11 @@ impl Channel for TelegramChannel {
             let shutdown_notify = self.shutdown_notify.clone();
             let message_tx = self.get_message_sender().await;
             let session_map = self.session_map.clone();
-            let pairing_store = self.pairing_store.clone();
-            let dm_policy = self.dm_policy.clone();
-            let allow_from = self.allow_from.clone();
+            let policy = ChannelPolicy::new(
+                self.pairing_store.clone(),
+                self.dm_policy.clone(),
+                self.allow_from.clone(),
+            );
 
             running.store(true, std::sync::atomic::Ordering::SeqCst);
 
@@ -319,12 +321,10 @@ impl Channel for TelegramChannel {
                         let tx = message_tx.clone();
                         let allowed = allowed_usernames.clone();
                         let sessions = session_map.clone();
-                        let ps = pairing_store.clone();
-                        let policy = dm_policy.clone();
-                        let af = allow_from.clone();
+                        let pol = policy.clone();
                         async move {
                             handle_message_with_sender(
-                                bot, msg, tx, allowed, sessions, ps, policy, af,
+                                bot, msg, tx, allowed, sessions, pol,
                             )
                             .await
                         }
@@ -743,16 +743,13 @@ impl Channel for TelegramChannel {
 }
 
 #[cfg(feature = "telegram")]
-#[allow(clippy::too_many_arguments)]
 async fn handle_message_with_sender(
     bot: Bot,
     msg: Message,
     message_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
     allowed_usernames: Vec<String>,
     session_map: Arc<RwLock<HashMap<i64, String>>>,
-    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
-    dm_policy: Arc<RwLock<DmPolicy>>,
-    allow_from: Arc<RwLock<Vec<String>>>,
+    policy: ChannelPolicy,
 ) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
         let user = msg.from.as_ref();
@@ -767,15 +764,15 @@ async fn handle_message_with_sender(
             .unwrap_or_default();
 
         // Check DM policy
-        let policy = *dm_policy.read().await;
+        let dm_policy_val = *policy.dm_policy.read().await;
 
-        match policy {
+        match dm_policy_val {
             DmPolicy::Open => {
                 // Allow all - no checks needed
             }
             DmPolicy::Allowlist => {
                 // Check if user is in allowlist
-                let allow_list = allow_from.read().await;
+                let allow_list = policy.allow_from.read().await;
                 let is_allowed = allow_list
                     .iter()
                     .any(|a| a == &user_id || a.eq_ignore_ascii_case(&username));
@@ -792,7 +789,7 @@ async fn handle_message_with_sender(
             }
             DmPolicy::Pairing => {
                 // Check if user is authorized via pairing
-                if let Some(store) = pairing_store.read().await.as_ref() {
+                if let Some(store) = policy.pairing_store.read().await.as_ref() {
                     if !store.is_authorized("telegram", &user_id).await {
                         // Not authorized - check if they already have a pending request
                         match store

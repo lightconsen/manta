@@ -260,12 +260,9 @@ impl Thread {
         super::compaction::should_run_memory_flush(
             total_tokens,
             transcript_bytes,
-            config.reserve_tokens_floor,
-            config.soft_threshold_tokens,
-            self.compaction_state.compaction_count,
-            self.compaction_state.memory_flush_compaction_count,
+            config,
+            &self.compaction_state,
             &context_hash,
-            self.compaction_state.last_flush_context_hash.as_deref(),
         )
     }
 

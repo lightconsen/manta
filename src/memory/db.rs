@@ -26,6 +26,21 @@ pub struct DatabaseStore {
     batch_size: usize,
 }
 
+/// Raw database row values for constructing a `Memory`.
+struct MemoryRow {
+    id: String,
+    user_id: String,
+    conversation_id: Option<String>,
+    content: String,
+    memory_type: String,
+    embedding_bytes: Option<Vec<u8>>,
+    created_at_secs: i64,
+    expires_at_secs: Option<i64>,
+    metadata_str: Option<String>,
+    importance_score: f32,
+    source: String,
+}
+
 impl DatabaseStore {
     /// Create a new optimised database store
     pub async fn new(database_url: &str) -> crate::Result<Self> {
@@ -328,37 +343,24 @@ impl DatabaseStore {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn build_memory(
-        id: String,
-        user_id: String,
-        conversation_id: Option<String>,
-        content: String,
-        memory_type: String,
-        embedding_bytes: Option<Vec<u8>>,
-        created_at_secs: i64,
-        expires_at_secs: Option<i64>,
-        metadata_str: Option<String>,
-        importance_score: f32,
-        source: String,
-    ) -> crate::Result<Memory> {
-        let embedding = embedding_bytes.map(|b| Self::deserialize_embedding(&b));
-        let created_at = Self::secs_to_system_time(created_at_secs).unwrap_or_else(SystemTime::now);
-        let expires_at = expires_at_secs.and_then(Self::secs_to_system_time);
-        let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+    fn build_memory(row: MemoryRow) -> crate::Result<Memory> {
+        let embedding = row.embedding_bytes.map(|b| Self::deserialize_embedding(&b));
+        let created_at = Self::secs_to_system_time(row.created_at_secs).unwrap_or_else(SystemTime::now);
+        let expires_at = row.expires_at_secs.and_then(Self::secs_to_system_time);
+        let metadata = row.metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok(Memory {
-            id: MemoryId::new(id),
-            user_id,
-            conversation_id,
-            content,
-            memory_type,
+            id: MemoryId::new(row.id),
+            user_id: row.user_id,
+            conversation_id: row.conversation_id,
+            content: row.content,
+            memory_type: row.memory_type,
             embedding,
             created_at,
             expires_at,
             metadata,
-            importance_score,
-            source,
+            importance_score: row.importance_score,
+            source: row.source,
         })
     }
 
@@ -516,26 +518,26 @@ impl MemoryStore for DatabaseStore {
                 .execute(&self.pool)
                 .await;
 
-                let memory = Self::build_memory(
-                    row.try_get("id").map_err(|e| col_err("id", e))?,
-                    row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
-                    row.try_get("conversation_id")
+                let memory = Self::build_memory(MemoryRow {
+                    id: row.try_get("id").map_err(|e| col_err("id", e))?,
+                    user_id: row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
+                    conversation_id: row.try_get("conversation_id")
                         .map_err(|e| col_err("conversation_id", e))?,
-                    row.try_get("content").map_err(|e| col_err("content", e))?,
-                    row.try_get("memory_type")
+                    content: row.try_get("content").map_err(|e| col_err("content", e))?,
+                    memory_type: row.try_get("memory_type")
                         .map_err(|e| col_err("memory_type", e))?,
-                    row.try_get("embedding")
+                    embedding_bytes: row.try_get("embedding")
                         .map_err(|e| col_err("embedding", e))?,
-                    row.try_get("created_at")
+                    created_at_secs: row.try_get("created_at")
                         .map_err(|e| col_err("created_at", e))?,
-                    row.try_get("expires_at")
+                    expires_at_secs: row.try_get("expires_at")
                         .map_err(|e| col_err("expires_at", e))?,
-                    row.try_get("metadata")
+                    metadata_str: row.try_get("metadata")
                         .map_err(|e| col_err("metadata", e))?,
-                    row.try_get("importance_score")
+                    importance_score: row.try_get("importance_score")
                         .map_err(|e| col_err("importance_score", e))?,
-                    row.try_get("source").map_err(|e| col_err("source", e))?,
-                )?;
+                    source: row.try_get("source").map_err(|e| col_err("source", e))?,
+                })?;
 
                 if memory.is_expired() {
                     Ok(None)
@@ -686,26 +688,26 @@ impl MemoryStore for DatabaseStore {
 
         let mut memories: Vec<Memory> = Vec::with_capacity(rows.len());
         for row in rows {
-            let memory = Self::build_memory(
-                row.try_get("id").map_err(|e| col_err("id", e))?,
-                row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
-                row.try_get("conversation_id")
+            let memory = Self::build_memory(MemoryRow {
+                id: row.try_get("id").map_err(|e| col_err("id", e))?,
+                user_id: row.try_get("user_id").map_err(|e| col_err("user_id", e))?,
+                conversation_id: row.try_get("conversation_id")
                     .map_err(|e| col_err("conversation_id", e))?,
-                row.try_get("content").map_err(|e| col_err("content", e))?,
-                row.try_get("memory_type")
+                content: row.try_get("content").map_err(|e| col_err("content", e))?,
+                memory_type: row.try_get("memory_type")
                     .map_err(|e| col_err("memory_type", e))?,
-                row.try_get("embedding")
+                embedding_bytes: row.try_get("embedding")
                     .map_err(|e| col_err("embedding", e))?,
-                row.try_get("created_at")
+                created_at_secs: row.try_get("created_at")
                     .map_err(|e| col_err("created_at", e))?,
-                row.try_get("expires_at")
+                expires_at_secs: row.try_get("expires_at")
                     .map_err(|e| col_err("expires_at", e))?,
-                row.try_get("metadata")
+                metadata_str: row.try_get("metadata")
                     .map_err(|e| col_err("metadata", e))?,
-                row.try_get("importance_score")
+                importance_score: row.try_get("importance_score")
                     .map_err(|e| col_err("importance_score", e))?,
-                row.try_get("source").map_err(|e| col_err("source", e))?,
-            )?;
+                source: row.try_get("source").map_err(|e| col_err("source", e))?,
+            })?;
             memories.push(memory);
         }
 

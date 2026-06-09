@@ -1,4 +1,5 @@
 use super::*;
+use syscity::agent::session_store::AppendMessageParams;
 
 #[tokio::test]
 async fn acp_spawn_tool_executes_without_agent_builder() {
@@ -69,11 +70,21 @@ async fn sessions_history_tool_returns_history() {
         syscity::agent::session_store::SessionMetadata::new(session_id, "main", "ws", "anon");
     store.save_session(session_id, &meta, "{}").await.unwrap();
     store
-        .append_message(session_id, "user", "Hello", None, None, None, None, None)
+        .append_message(&AppendMessageParams {
+            session_id,
+            role: "user",
+            content: "Hello",
+            ..Default::default()
+        })
         .await
         .unwrap();
     store
-        .append_message(session_id, "assistant", "Hi there!", None, None, None, None, None)
+        .append_message(&AppendMessageParams {
+            session_id,
+            role: "assistant",
+            content: "Hi there!",
+            ..Default::default()
+        })
         .await
         .unwrap();
 

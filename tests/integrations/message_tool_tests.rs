@@ -149,6 +149,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         approval_queue: Arc::new(syscity::tools::approval::ApprovalQueue::new()),
         repair_state: Arc::new(syscity::gateway::RepairState::new()),
         cost_guard: syscity::agent::CostGuard::new(0, 0),
+        standing_order_manager: RwLock::new(None),
         reply_dispatcher,
         routed_tx,
         inbound_pipeline,

@@ -11,6 +11,7 @@
 //!   6. Client sends method calls (e.g. `chat.send`), server replies `res`
 //!   7. Server pushes events (`chat.delta`, `tool.calling`, etc.) asynchronously
 
+use crate::agent::session_store::AppendMessageParams;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -427,20 +428,20 @@ async fn dispatch_method(
                             if let Some(ref store) = state.session_store {
                                 let _ = store
                                     .append_message(
-                                        session_id, "user", &user_text, None, None, None, None,
-                                        None,
+                                        &AppendMessageParams {
+                                            session_id, role: "user", content: &user_text,
+                                            ..Default::default()
+                                        },
                                     )
                                     .await;
                                 let _ = store
                                     .append_message(
-                                        session_id,
-                                        "assistant",
-                                        &error_text,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
+                                        &AppendMessageParams {
+                                            session_id,
+                                            role: "assistant",
+                                            content: &error_text,
+                                            ..Default::default()
+                                        },
                                     )
                                     .await;
                             }
@@ -796,7 +797,9 @@ async fn handle_chat_send(
     let mut should_name = false;
     if let Some(ref store) = state.session_store {
         if let Err(e) = store
-            .append_message(&session_id, "user", &params.message, None, None, None, None, None)
+            .append_message(&AppendMessageParams {
+            session_id: &session_id, role: "user", content: &params.message, ..Default::default()
+        })
             .await
         {
             tracing::warn!("Failed to save user message to session history: {}", e);

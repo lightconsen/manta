@@ -98,17 +98,19 @@ pub fn compute_context_hash(messages: &[(String, String)]) -> String {
 }
 
 /// Check if flush already ran for current compaction cycle
-#[allow(clippy::too_many_arguments)]
 pub fn should_run_memory_flush(
     total_tokens: usize,
     context_window: usize,
-    reserve_floor: usize,
-    soft_threshold: usize,
-    compaction_count: u64,
-    last_flush_compaction: Option<u64>,
+    config: &MemoryFlushConfig,
+    state: &SessionCompactionState,
     current_hash: &str,
-    last_hash: Option<&str>,
 ) -> bool {
+    let reserve_floor = config.reserve_tokens_floor;
+    let soft_threshold = config.soft_threshold_tokens;
+    let compaction_count = state.compaction_count;
+    let last_flush_compaction = state.memory_flush_compaction_count;
+    let last_hash = state.last_flush_context_hash.as_deref();
+
     // Already flushed this compaction cycle
     if last_flush_compaction == Some(compaction_count) {
         return false;
@@ -163,30 +165,45 @@ mod tests {
         assert_ne!(hash1, hash2, "Different content should produce different hashes");
     }
 
+    fn make_config(soft_threshold: usize, reserve_floor: usize) -> MemoryFlushConfig {
+        MemoryFlushConfig {
+            enabled: true,
+            soft_threshold_tokens: soft_threshold,
+            force_flush_transcript_bytes: 0,
+            prompt: String::new(),
+            system_prompt: String::new(),
+            reserve_tokens_floor: reserve_floor,
+        }
+    }
+
+    fn make_state(
+        compaction_count: u64,
+        last_flush: Option<u64>,
+        last_hash: Option<&str>,
+    ) -> SessionCompactionState {
+        SessionCompactionState {
+            compaction_count,
+            memory_flush_compaction_count: last_flush,
+            last_flush_context_hash: last_hash.map(String::from),
+        }
+    }
+
     #[test]
     fn test_should_run_flush_respects_compaction_count() {
         // Already flushed this cycle
         assert!(!should_run_memory_flush(
-            5000,
-            8000,
-            2000,
-            1000,
-            5,
-            Some(5),
+            5000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(5), Some("xyz789")),
             "abc123",
-            Some("xyz789")
         ));
 
         // Not flushed this cycle yet
         assert!(should_run_memory_flush(
-            5000,
-            8000,
-            2000,
-            1000,
-            5,
-            Some(4),
+            5000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(4), Some("xyz789")),
             "abc123",
-            Some("xyz789")
         ));
     }
 
@@ -194,26 +211,18 @@ mod tests {
     fn test_should_run_flush_respects_context_hash() {
         // Context unchanged since last flush
         assert!(!should_run_memory_flush(
-            5000,
-            8000,
-            2000,
-            1000,
-            5,
-            Some(4),
+            5000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(4), Some("abc123")),
             "abc123",
-            Some("abc123") // Same hash
         ));
 
         // Context changed
         assert!(should_run_memory_flush(
-            5000,
-            8000,
-            2000,
-            1000,
-            5,
-            Some(4),
+            5000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(4), Some("xyz789")),
             "abc123",
-            Some("xyz789") // Different hash
         ));
     }
 
@@ -221,26 +230,18 @@ mod tests {
     fn test_should_run_flush_token_threshold() {
         // Tokens above threshold
         assert!(should_run_memory_flush(
-            6000,  // total_tokens - high enough to exceed threshold
-            8000,  // context_window
-            2000,  // reserve_floor
-            1000,  // soft_threshold
-            0,     // compaction_count
-            None,  // last_flush_compaction
-            "new", // current_hash
-            None   // last_hash
+            6000, 8000,
+            &make_config(1000, 2000),
+            &make_state(0, None, None),
+            "new",
         ));
 
         // Tokens below threshold
         assert!(!should_run_memory_flush(
-            1000,  // total_tokens - too low
-            8000,  // context_window
-            2000,  // reserve_floor
-            1000,  // soft_threshold
-            0,     // compaction_count
-            None,  // last_flush_compaction
-            "new", // current_hash
-            None   // last_hash
+            1000, 8000,
+            &make_config(1000, 2000),
+            &make_state(0, None, None),
+            "new",
         ));
     }
 
@@ -366,14 +367,10 @@ mod tests {
     fn test_should_run_flush_all_dedup_conditions() {
         // Test when all dedup conditions are met (should not flush)
         let result = should_run_memory_flush(
-            10000,           // high tokens
-            8000,            // context_window
-            2000,            // reserve_floor
-            1000,            // soft_threshold
-            5,               // compaction_count
-            Some(5),         // last_flush_compaction - same as current
-            "hash123",       // current_hash
-            Some("hash123"), // last_hash - same as current
+            10000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(5), Some("hash123")),
+            "hash123",
         );
         assert!(!result, "Should not flush when both dedup conditions are met");
     }
@@ -382,14 +379,10 @@ mod tests {
     fn test_should_run_flush_only_compaction_dedup() {
         // Only compaction count dedup (hash is different)
         let result = should_run_memory_flush(
-            10000, // high tokens
-            8000,
-            2000,
-            1000,
-            5,
-            Some(5), // Same compaction count
+            10000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(5), Some("hash456")),
             "hash123",
-            Some("hash456"), // Different hash
         );
         assert!(!result, "Should not flush when compaction count matches");
     }
@@ -398,14 +391,10 @@ mod tests {
     fn test_should_run_flush_only_hash_dedup() {
         // Only hash dedup (compaction count is different)
         let result = should_run_memory_flush(
-            10000, // high tokens
-            8000,
-            2000,
-            1000,
-            5,
-            Some(4), // Different compaction count
+            10000, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(4), Some("hash123")),
             "hash123",
-            Some("hash123"), // Same hash
         );
         assert!(!result, "Should not flush when context hash matches");
     }
@@ -414,14 +403,10 @@ mod tests {
     fn test_should_run_flush_neither_dedup_but_below_threshold() {
         // Neither dedup condition met, but below token threshold
         let result = should_run_memory_flush(
-            100,  // low tokens
-            8000, // context_window
-            2000, // reserve_floor
-            1000, // soft_threshold
-            5,
-            Some(4), // Different compaction count
+            100, 8000,
+            &make_config(1000, 2000),
+            &make_state(5, Some(4), Some("hash456")),
             "hash123",
-            Some("hash456"), // Different hash
         );
         // threshold = 8000 - 2000 - 1000 = 5000
         // 100 < 5000, so should not flush
@@ -433,8 +418,10 @@ mod tests {
         // Exactly at threshold
         let threshold = 8000 - 2000 - 1000; // 5000
         let result = should_run_memory_flush(
-            threshold, // exactly at threshold
-            8000, 2000, 1000, 0, None, "hash123", None,
+            threshold, 8000,
+            &make_config(1000, 2000),
+            &make_state(0, None, None),
+            "hash123",
         );
         assert!(result, "Should flush when exactly at threshold");
     }
@@ -444,14 +431,10 @@ mod tests {
         // One below threshold
         let threshold = 8000 - 2000 - 1000; // 5000
         let result = should_run_memory_flush(
-            threshold - 1, // one below
-            8000,
-            2000,
-            1000,
-            0,
-            None,
+            threshold - 1, 8000,
+            &make_config(1000, 2000),
+            &make_state(0, None, None),
             "hash123",
-            None,
         );
         assert!(!result, "Should not flush when one below threshold");
     }
@@ -462,14 +445,10 @@ mod tests {
         // threshold = 0 - 0 - 1000 = 0 (saturating_sub)
         // With 100 tokens, 100 >= 0, should flush
         let result = should_run_memory_flush(
-            100,       // total_tokens
-            0,         // zero context window
-            0,         // zero reserve_floor
-            1000,      // soft_threshold
-            0,         // compaction_count
-            None,      // last_flush_compaction
-            "hash123", // current_hash
-            None,      // last_hash
+            100, 0,
+            &make_config(1000, 0),
+            &make_state(0, None, None),
+            "hash123",
         );
         assert!(result, "Should flush with zero context window");
     }
@@ -478,10 +457,10 @@ mod tests {
     fn test_should_run_flush_new_session() {
         // Brand new session with no flush history
         let result = should_run_memory_flush(
-            10000, // high tokens
-            8000, 2000, 1000, 0,    // fresh compaction count
-            None, // no flush history
-            "hash123", None, // no hash history
+            10000, 8000,
+            &make_config(1000, 2000),
+            &make_state(0, None, None),
+            "hash123",
         );
         assert!(result, "Should flush for new session when above threshold");
     }

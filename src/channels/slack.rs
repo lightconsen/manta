@@ -3,8 +3,8 @@
 //! This module implements the Channel trait for Slack using the Web API.
 
 use crate::channels::{
-    Channel, ChannelCapabilities, ConversationId, FormattedContent, IncomingMessage,
-    MentionState, MessageMetadata, OutgoingMessage, UserId,
+    Channel, ChannelCapabilities, ChannelPolicy, ConversationId, FormattedContent,
+    IncomingMessage, MentionState, MessageMetadata, OutgoingMessage, UserId,
 };
 use crate::core::models::Id;
 use crate::security::pairing::{DmPolicy, PairingStore, RequestAccessResult};
@@ -359,9 +359,11 @@ impl Channel for SlackChannel {
                 let app_token = self.config.app_token.clone().unwrap();
                 let bot_token = self.config.bot_token.clone();
                 let message_tx = self.config.message_tx.clone();
-                let dm_policy = self.dm_policy.clone();
-                let allow_from = self.allow_from.clone();
-                let pairing_store = self.pairing_store.clone();
+                let policy = ChannelPolicy::new(
+                    self.pairing_store.clone(),
+                    self.dm_policy.clone(),
+                    self.allow_from.clone(),
+                );
 
                 let handle = tokio::spawn(async move {
                     let mut backoff_secs = 1u64;
@@ -380,9 +382,7 @@ impl Channel for SlackChannel {
                                     bot_user_id.as_deref(),
                                     message_tx.as_ref(),
                                     &running,
-                                    dm_policy.clone(),
-                                    allow_from.clone(),
-                                    pairing_store.clone(),
+                                    policy.clone(),
                                 )
                                 .await
                                 {
@@ -685,16 +685,13 @@ async fn open_socket_mode_url(app_token: &str) -> crate::Result<String> {
 
 /// Connect to the Socket Mode WebSocket and listen for events.
 #[cfg(feature = "slack")]
-#[allow(clippy::too_many_arguments)]
 async fn connect_and_listen(
     ws_url: &str,
     bot_token: &str,
     bot_user_id: Option<&str>,
     message_tx: Option<&mpsc::UnboundedSender<IncomingMessage>>,
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-    dm_policy: Arc<RwLock<DmPolicy>>,
-    allow_from: Arc<RwLock<Vec<String>>>,
-    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    policy: ChannelPolicy,
 ) -> crate::Result<()> {
     use tokio_tungstenite::connect_async;
 
@@ -723,9 +720,7 @@ async fn connect_and_listen(
                             bot_user_id,
                             message_tx,
                             &mut write,
-                            dm_policy.clone(),
-                            allow_from.clone(),
-                            pairing_store.clone(),
+                            policy.clone(),
                         )
                         .await;
                     }
@@ -762,7 +757,6 @@ async fn connect_and_listen(
 
 /// Handle a single Socket Mode message.
 #[cfg(feature = "slack")]
-#[allow(clippy::too_many_arguments)]
 async fn handle_socket_mode_message(
     text: &str,
     bot_token: &str,
@@ -772,9 +766,7 @@ async fn handle_socket_mode_message(
         tokio_tungstenite::tungstenite::protocol::Message,
         Error = tokio_tungstenite::tungstenite::Error,
     > + Unpin),
-    dm_policy: Arc<RwLock<DmPolicy>>,
-    allow_from: Arc<RwLock<Vec<String>>>,
-    pairing_store: Arc<RwLock<Option<Arc<PairingStore>>>>,
+    policy: ChannelPolicy,
 ) {
     let payload: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -817,9 +809,9 @@ async fn handle_socket_mode_message(
                             bot_user_id,
                             message_tx,
                             bot_token,
-                            dm_policy.clone(),
-                            allow_from.clone(),
-                            pairing_store.clone(),
+                            policy.dm_policy.clone(),
+                            policy.allow_from.clone(),
+                            policy.pairing_store.clone(),
                         )
                         .await;
                     }

@@ -94,6 +94,32 @@ pub struct SessionStore {
     cache: Arc<RwLock<lru::LruCache<String, DateTime<Utc>>>>,
 }
 
+/// Parameters for [`SessionStore::append_message`].
+#[derive(Default)]
+pub struct AppendMessageParams<'a> {
+    pub session_id: &'a str,
+    pub role: &'a str,
+    pub content: &'a str,
+    pub metadata_json: Option<&'a str>,
+    pub reasoning_content: Option<&'a str>,
+    pub tool_calls_json: Option<&'a str>,
+    pub transcript_id: Option<&'a str>,
+    pub run_id: Option<&'a str>,
+}
+
+/// Parameters for [`SessionStore::save_subagent_run`].
+#[derive(Debug)]
+pub struct SaveSubagentRunParams<'a> {
+    pub run_id: &'a str,
+    pub subagent_id: &'a str,
+    pub session_id: &'a str,
+    pub parent_id: &'a str,
+    pub label: Option<&'a str>,
+    pub task_prompt: Option<&'a str>,
+    pub mode: &'a str,
+    pub thread_id: Option<&'a str>,
+}
+
 impl SessionStore {
     /// Create a new session store from a database URL.
     #[instrument(skip(database_url))]
@@ -663,19 +689,8 @@ impl SessionStore {
     }
 
     /// Append a message to session history. Returns the inserted row id.
-    #[allow(clippy::too_many_arguments)]
-    #[instrument(skip(self, content))]
-    pub async fn append_message(
-        &self,
-        session_id: &str,
-        role: &str,
-        content: &str,
-        metadata_json: Option<&str>,
-        reasoning_content: Option<&str>,
-        tool_calls_json: Option<&str>,
-        transcript_id: Option<&str>,
-        run_id: Option<&str>,
-    ) -> Result<i64> {
+    #[instrument(skip(self, params))]
+    pub async fn append_message(&self, params: &AppendMessageParams<'_>) -> Result<i64> {
         let now = Utc::now().timestamp_millis();
 
         // Auto-create session row if it doesn't exist (foreign key requirement)
@@ -685,7 +700,7 @@ impl SessionStore {
             VALUES (?, '', '', '', ?, ?, 1, '{}', 0)
             "#,
         )
-        .bind(session_id)
+        .bind(params.session_id)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -698,15 +713,15 @@ impl SessionStore {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
-        .bind(session_id)
-        .bind(role)
-        .bind(content)
-        .bind(reasoning_content)
-        .bind(tool_calls_json)
+        .bind(params.session_id)
+        .bind(params.role)
+        .bind(params.content)
+        .bind(params.reasoning_content)
+        .bind(params.tool_calls_json)
         .bind(now)
-        .bind(metadata_json)
-        .bind(transcript_id)
-        .bind(run_id)
+        .bind(params.metadata_json)
+        .bind(params.transcript_id)
+        .bind(params.run_id)
         .execute(&self.pool)
         .await
         .map_err(|e| SyscityError::Storage {
@@ -719,7 +734,7 @@ impl SessionStore {
             "UPDATE sessions SET message_count = message_count + 1, last_activity = ? WHERE id = ?",
         )
         .bind(now)
-        .bind(session_id)
+        .bind(params.session_id)
         .execute(&self.pool)
         .await
         .ok();
@@ -1151,18 +1166,10 @@ pub struct SubagentRunRecord {
 
 impl SessionStore {
     /// Save a subagent run record when it is spawned.
-    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn save_subagent_run(
         &self,
-        run_id: &str,
-        subagent_id: &str,
-        session_id: &str,
-        parent_id: &str,
-        label: Option<&str>,
-        task_prompt: Option<&str>,
-        mode: &str,
-        thread_id: Option<&str>,
+        params: &SaveSubagentRunParams<'_>,
     ) -> Result<()> {
         let now = Utc::now().timestamp_millis();
         let steer_json: Option<String> = Some("[]".to_string());
@@ -1173,14 +1180,14 @@ impl SessionStore {
             VALUES (?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)
             "#,
         )
-        .bind(run_id)
-        .bind(subagent_id)
-        .bind(session_id)
-        .bind(parent_id)
-        .bind(label)
-        .bind(task_prompt)
-        .bind(mode)
-        .bind(thread_id)
+        .bind(params.run_id)
+        .bind(params.subagent_id)
+        .bind(params.session_id)
+        .bind(params.parent_id)
+        .bind(params.label)
+        .bind(params.task_prompt)
+        .bind(params.mode)
+        .bind(params.thread_id)
         .bind(now)
         .bind(steer_json)
         .execute(&self.pool)
@@ -1190,7 +1197,7 @@ impl SessionStore {
             details: e.to_string(),
         })?;
 
-        debug!("Subagent run saved: {} (subagent={})", run_id, subagent_id);
+        debug!("Subagent run saved: {} (subagent={})", params.run_id, params.subagent_id);
         Ok(())
     }
 
@@ -1574,12 +1581,16 @@ mod tests {
 
         // Append messages
         store
-            .append_message("msg-test", "user", "Hello", None, None, None, None, None)
+            .append_message(&AppendMessageParams {
+            session_id: "msg-test", role: "user", content: "Hello", ..Default::default()
+        })
             .await
             .expect("Failed to append message");
 
         store
-            .append_message("msg-test", "assistant", "Hi there!", None, None, None, None, None)
+            .append_message(&AppendMessageParams {
+                session_id: "msg-test", role: "assistant", content: "Hi there!", ..Default::default()
+            })
             .await
             .expect("Failed to append message");
 
@@ -1657,7 +1668,9 @@ mod tests {
         let meta = SessionMetadata::new("stats-test", "main", "cli", "local");
         store.save_session("stats-test", &meta, "{}").await.unwrap();
         store
-            .append_message("stats-test", "user", "hi", None, None, None, None, None)
+            .append_message(&AppendMessageParams {
+                session_id: "stats-test", role: "user", content: "hi", ..Default::default()
+            })
             .await
             .unwrap();
 
@@ -1786,16 +1799,10 @@ mod tests {
 
         for i in 0..5 {
             store
-                .append_message(
-                    "limit-test",
-                    "user",
-                    &format!("msg{}", i),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+                .append_message(&AppendMessageParams {
+                    session_id: "limit-test", role: "user", content: &format!("msg{}", i),
+                    ..Default::default()
+                })
                 .await
                 .unwrap();
         }
@@ -1825,16 +1832,16 @@ mod tests {
 
         // Save a run
         store
-            .save_subagent_run(
-                "run-1",
-                "subagent-1",
-                "session-1",
-                "parent-1",
-                Some("test label"),
-                Some("do something"),
-                "run",
-                Some("thread-1"),
-            )
+            .save_subagent_run(&SaveSubagentRunParams {
+                run_id: "run-1",
+                subagent_id: "subagent-1",
+                session_id: "session-1",
+                parent_id: "parent-1",
+                label: Some("test label"),
+                task_prompt: Some("do something"),
+                mode: "run",
+                thread_id: Some("thread-1"),
+            })
             .await
             .unwrap();
 
@@ -1881,16 +1888,16 @@ mod tests {
         let store = create_test_store().await;
 
         store
-            .save_subagent_run(
-                "run-2",
-                "subagent-2",
-                "session-2",
-                "parent-2",
-                None,
-                None,
-                "session",
-                None,
-            )
+            .save_subagent_run(&SaveSubagentRunParams {
+                run_id: "run-2",
+                subagent_id: "subagent-2",
+                session_id: "session-2",
+                parent_id: "parent-2",
+                label: None,
+                task_prompt: None,
+                mode: "session",
+                thread_id: None,
+            })
             .await
             .unwrap();
 
@@ -1911,16 +1918,16 @@ mod tests {
 
         for i in 0..3 {
             store
-                .save_subagent_run(
-                    &format!("run-{}", i),
-                    &format!("subagent-{}", i),
-                    "session-a",
-                    "parent",
-                    None,
-                    None,
-                    "run",
-                    None,
-                )
+                .save_subagent_run(&SaveSubagentRunParams {
+                    run_id: &format!("run-{}", i),
+                    subagent_id: &format!("subagent-{}", i),
+                    session_id: "session-a",
+                    parent_id: "parent",
+                    label: None,
+                    task_prompt: None,
+                    mode: "run",
+                    thread_id: None,
+                })
                 .await
                 .unwrap();
         }
@@ -1957,16 +1964,10 @@ mod tests {
             let sid = session_id.to_string();
             tasks.push(tokio::spawn(async move {
                 store
-                    .append_message(
-                        &sid,
-                        "user",
-                        &format!("msg-{}", i),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
+                    .append_message(&AppendMessageParams {
+                        session_id: &sid, role: "user", content: &format!("msg-{}", i),
+                        ..Default::default()
+                    })
                     .await
                     .expect("append should succeed");
             }));
@@ -2018,16 +2019,10 @@ mod tests {
                 // Append a few messages
                 for j in 0..5usize {
                     store
-                        .append_message(
-                            &sid,
-                            "user",
-                            &format!("msg-{}", j),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
+                        .append_message(&AppendMessageParams {
+                            session_id: &sid, role: "user", content: &format!("msg-{}", j),
+                            ..Default::default()
+                        })
                         .await
                         .unwrap();
                 }

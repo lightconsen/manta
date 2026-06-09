@@ -382,18 +382,22 @@ impl Cli {
                 headless,
                 headless_display,
             } => {
+                let daemon_config = crate::daemon::DaemonConfig {
+                    host: host.clone(),
+                    port: *port,
+                    pid_file: std::path::PathBuf::new(),
+                    remote_control_host: remote_control_host.clone(),
+                    remote_control_user: remote_control_user.clone(),
+                    remote_control_port: *remote_control_port,
+                    remote_control_protocol: remote_control_protocol.clone(),
+                    remote_control_key: remote_control_key.clone(),
+                    headless: *headless,
+                    headless_display: headless_display.clone(),
+                };
                 daemon::run_start_daemon(
-                    host,
-                    *port,
                     *foreground,
                     config,
-                    remote_control_host.clone(),
-                    remote_control_user.clone(),
-                    *remote_control_port,
-                    remote_control_protocol.clone(),
-                    remote_control_key.clone(),
-                    *headless,
-                    headless_display.clone(),
+                    daemon_config,
                 )
                 .await
             }

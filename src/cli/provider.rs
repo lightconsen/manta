@@ -239,13 +239,16 @@ pub async fn run_provider_command(
             timeout,
             no_browser,
         } => {
+            let oauth = crate::model_router::OAuthConfig {
+                client_id: client_id.clone(),
+                auth_url: auth_url.clone(),
+                token_url: token_url.clone(),
+                scope: scope.clone(),
+                redirect_port: *redirect_port,
+            };
             run_auth_command(
                 id,
-                client_id,
-                auth_url,
-                token_url,
-                scope.as_deref(),
-                *redirect_port,
+                &oauth,
                 *timeout,
                 *no_browser,
             )
@@ -254,29 +257,16 @@ pub async fn run_provider_command(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_auth_command(
     provider_id: &str,
-    client_id: &str,
-    auth_url: &str,
-    token_url: &str,
-    scope: Option<&str>,
-    redirect_port: u16,
+    oauth: &crate::model_router::OAuthConfig,
     timeout_secs: u64,
     no_browser: bool,
 ) -> Result<()> {
-    use crate::model_router::{oauth_callback, OAuthConfig, OAuthFlow};
-
-    let oauth_config = OAuthConfig {
-        client_id: client_id.to_string(),
-        auth_url: auth_url.to_string(),
-        token_url: token_url.to_string(),
-        scope: scope.map(|s| s.to_string()),
-        redirect_port,
-    };
+    use crate::model_router::{oauth_callback, OAuthFlow};
 
     let flow = OAuthFlow::new();
-    let authorization_url = flow.authorization_url(&oauth_config);
+    let authorization_url = flow.authorization_url(oauth);
 
     println!("\n🔐  OAuth Authorization for '{}'\n", provider_id);
     println!("Open this URL in your browser:\n");
@@ -305,11 +295,11 @@ async fn run_auth_command(
 
     println!(
         "Waiting for callback on port {} (timeout: {}s)...\n",
-        redirect_port, timeout_secs
+        oauth.redirect_port, timeout_secs
     );
 
     let (code, returned_state) =
-        oauth_callback::wait_for_callback(redirect_port, timeout_secs).await?;
+        oauth_callback::wait_for_callback(oauth.redirect_port, timeout_secs).await?;
 
     if returned_state != flow.state() {
         return Err(SyscityError::ExternalService {
@@ -320,7 +310,7 @@ async fn run_auth_command(
 
     println!("Exchanging authorization code for tokens...\n");
 
-    let credential = flow.exchange_code(&code, &oauth_config).await?;
+    let credential = flow.exchange_code(&code, oauth).await?;
 
     println!("✅  Authorization successful for '{}'\n", provider_id);
     println!("Credential (add to your config):\n");

@@ -1083,3 +1083,24 @@ pub use health::{ChannelHealth, ChannelHealthMonitor, HealthStatus};
 pub use lifecycle::{ChannelLifecycle, ChannelStatus, LifecycleManager, RestartPolicy};
 pub use metrics::{ChannelMetrics, LatencyWindow, MetricsManager, MetricsSnapshot};
 pub use state::{ChannelState, ChannelStateStore};
+
+/// Shared DM policy state for channel message handlers.
+///
+/// Groups `pairing_store`, `dm_policy`, and `allow_from` into a single
+/// clonable struct so callers pass one argument instead of three.
+#[derive(Clone)]
+pub struct ChannelPolicy {
+    pub pairing_store: std::sync::Arc<tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>>,
+    pub dm_policy: std::sync::Arc<tokio::sync::RwLock<crate::security::pairing::DmPolicy>>,
+    pub allow_from: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
+}
+
+impl ChannelPolicy {
+    pub fn new(
+        pairing_store: std::sync::Arc<tokio::sync::RwLock<Option<std::sync::Arc<crate::security::pairing::PairingStore>>>>,
+        dm_policy: std::sync::Arc<tokio::sync::RwLock<crate::security::pairing::DmPolicy>>,
+        allow_from: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
+    ) -> Self {
+        Self { pairing_store, dm_policy, allow_from }
+    }
+}

@@ -34,6 +34,7 @@ use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info, warn};
 
 use crate::acp::AcpControlPlane;
+use crate::agent::session_store::AppendMessageParams;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
@@ -2747,16 +2748,14 @@ async fn spawn_agent_inner(
                         // Persist assistant response to session history
                         if let Some(ref store) = state.session_store {
                             if let Err(e) = store
-                                .append_message(
-                                    &session_id,
-                                    "assistant",
-                                    &response_content,
-                                    None,
-                                    None,
-                                    None,
-                                    Some(&session_id), // transcript_id defaults to session_id
-                                    Some(&run_id),
-                                )
+                                .append_message(&AppendMessageParams {
+                                    session_id: &session_id,
+                                    role: "assistant",
+                                    content: &response_content,
+                                    transcript_id: Some(&session_id),
+                                    run_id: Some(&run_id),
+                                    ..Default::default()
+                                })
                                 .await
                             {
                                 warn!("Failed to save assistant message to session history: {}", e);
@@ -3956,16 +3955,16 @@ impl Gateway {
                         .as_ref()
                         .map(|calls| serde_json::to_string(calls).unwrap_or_default());
                     if let Err(e) = store
-                        .append_message(
+                        .append_message(&AppendMessageParams {
                             session_id,
-                            "assistant",
-                            &outgoing.content,
-                            None,
-                            reasoning,
-                            tool_calls_json.as_deref(),
-                            Some(session_id), // transcript_id defaults to session_id
-                            Some(&run_id),
-                        )
+                            role: "assistant",
+                            content: &outgoing.content,
+                            reasoning_content: reasoning,
+                            tool_calls_json: tool_calls_json.as_deref(),
+                            transcript_id: Some(session_id),
+                            run_id: Some(&run_id),
+                            ..Default::default()
+                        })
                         .await
                     {
                         warn!("Failed to save assistant message to session history: {}", e);

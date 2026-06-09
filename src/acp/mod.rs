@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::agent::session_store::SaveSubagentRunParams;
 use crate::agent::{Agent, AgentConfig, ProgressCallback};
 use crate::channels::{IncomingMessage, OutgoingMessage};
 
@@ -1333,20 +1334,20 @@ impl AcpControlPlane {
         // Persist subagent run record if store is attached.
         if let Some(ref store) = self.store {
             let _ = store
-                .save_subagent_run(
-                    &subagent_id,
-                    &subagent_id,
-                    &session_id.to_string(),
-                    &parent_id,
-                    None,
-                    config.system_prompt.as_deref(),
-                    if config.mode == SpawnMode::Run {
+                .save_subagent_run(&SaveSubagentRunParams {
+                    run_id: &subagent_id,
+                    subagent_id: &subagent_id,
+                    session_id: &session_id.to_string(),
+                    parent_id: &parent_id,
+                    label: None,
+                    task_prompt: config.system_prompt.as_deref(),
+                    mode: if config.mode == SpawnMode::Run {
                         "run"
                     } else {
                         "session"
                     },
-                    Some(&thread_id),
-                )
+                    thread_id: Some(&thread_id),
+                })
                 .await;
             let _ = store
                 .update_subagent_run_status(&subagent_id, "ready")

@@ -714,7 +714,6 @@ async fn qq_get_gateway_url(base_url: &str, token: &str) -> crate::Result<String
 }
 
 /// Connect to the QQ Guild Bot WebSocket gateway and listen for events.
-#[allow(clippy::too_many_arguments)]
 async fn qq_connect_and_listen(
     ws_url: &str,
     token: &str,
