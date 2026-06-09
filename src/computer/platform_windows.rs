@@ -1,8 +1,8 @@
 //! Windows Computer adapter — wraps Windows CapabilitySet tools.
 
 use crate::computer::{
-    ActionResult, ClickTarget, ComputerAdapter, ComputerError, DesktopAction, MouseButton,
-    Rect, Result, Screenshot, UiElement, WaitCondition,
+    ActionResult, ClickTarget, ComputerAdapter, ComputerError, CompressionFormat, DesktopAction,
+    FileEntry, MouseButton, PackageManager, Rect, Result, Screenshot, UiElement, WaitCondition,
 };
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
@@ -324,6 +324,108 @@ impl ComputerAdapter for WindowsComputerAdapter {
                     updated_pid
                 )))
             }
+            DesktopAction::KeySequence { keys, delays_ms } => {
+                for (i, key) in keys.iter().enumerate() {
+                    let delay_ms = delays_ms.get(i).copied().unwrap_or(0);
+                    if delay_ms > 0 {
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                    let args = serde_json::json!({ "action": "key", "keys": [key] });
+                    self.registry
+                        .execute("windows_desktop_control", args, &crate::tools::ToolContext::default())
+                        .await
+                        .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                        .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                }
+                Ok(ActionResult::success("Key sequence executed"))
+            }
+            DesktopAction::ListPorts {
+                filter_protocol,
+                filter_state,
+            } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let filter_protocol = filter_protocol.clone();
+                let filter_state = filter_state.clone();
+                let ports = tokio::task::spawn_blocking(move || {
+                    inspector.list_ports(filter_protocol.as_deref(), filter_state.as_deref())
+                })
+                .await
+                .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?
+                .map_err(|e| ComputerError::Other(format!("list ports failed: {}", e)))?;
+                Ok(ActionResult::success(format!("Found {} ports", ports.len())).with_data(
+                    serde_json::to_value(&ports).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::TestPing { target, count } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let result = inspector.test_ping(&target, count).await;
+                Ok(ActionResult::success(result.message.clone()).with_data(
+                    serde_json::to_value(&result).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::TestTcpConnect {
+                target,
+                port,
+                timeout_ms,
+            } => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let timeout = timeout_ms.map(Duration::from_millis);
+                let result = inspector.test_tcp_connect(&target, port, timeout).await;
+                Ok(ActionResult::success(result.message.clone()).with_data(
+                    serde_json::to_value(&result).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::ListFirewallRules => {
+                let inspector = crate::computer::network::NetworkInspector::new();
+                let rules = inspector
+                    .list_firewall_rules()
+                    .await
+                    .map_err(|e| ComputerError::Other(e.to_string()))?;
+                Ok(ActionResult::success(format!("Found {} firewall rules", rules.len())).with_data(
+                    serde_json::to_value(&rules).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::BrowseFiles {
+                path,
+                filter_description,
+                max_results,
+            } => {
+                let entries = browse_files(&path, filter_description.as_deref(), max_results)
+                    .await?;
+                Ok(ActionResult::success(format!("Found {} entries", entries.len())).with_data(
+                    serde_json::to_value(&entries).unwrap_or_default(),
+                ))
+            }
+            DesktopAction::ReadFileChunked {
+                path,
+                offset,
+                limit_bytes,
+            } => {
+                let content = read_file_chunked(&path, offset, limit_bytes).await?;
+                Ok(ActionResult::success(format!("Read {} bytes", content.len())).with_data(
+                    serde_json::json!({ "content": content }),
+                ))
+            }
+            DesktopAction::InstallPackage {
+                manager,
+                packages,
+                timeout_secs,
+            } => {
+                install_package_windows(manager, &packages, timeout_secs).await
+            }
+            DesktopAction::Compress {
+                sources,
+                destination,
+                format,
+            } => {
+                compress_files_windows(&sources, &destination, format).await
+            }
+            DesktopAction::Decompress {
+                archive,
+                destination,
+            } => {
+                decompress_archive_windows(&archive, &destination).await
+            }
             _ => Err(ComputerError::Other(
                 "Action not yet implemented on Windows".to_string(),
             )),
@@ -429,6 +531,270 @@ impl WindowsComputerAdapter {
             }
         }
     }
+}
+
+// ── Shared action helpers ──────────────────────────────────────────────────
+
+async fn browse_files(
+    path: &str,
+    filter_description: Option<&str>,
+    max_results: Option<usize>,
+) -> Result<Vec<FileEntry>> {
+    use tokio::fs;
+
+    let mut entries = Vec::new();
+    let mut reader = fs::read_dir(path)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to read directory {}: {}", path, e)))?;
+
+    while let Ok(Some(entry)) = reader.next_entry().await {
+        let meta = entry.metadata().await.ok();
+        let modified = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        entries.push(FileEntry {
+            path: entry.path().to_string_lossy().to_string(),
+            name: entry.file_name().to_string_lossy().to_string(),
+            size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            modified_secs: modified,
+            is_directory: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+        });
+    }
+
+    if let Some(filter) = filter_description {
+        let lower = filter.to_lowercase();
+        if lower.contains("recent") {
+            entries.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+        } else if lower.contains("large") || lower.contains("big") || lower.contains("biggest") {
+            entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        } else if lower.contains("directory") || lower.contains("dir") || lower.contains("folder") {
+            entries.retain(|e| e.is_directory);
+        } else if lower.contains("file") {
+            entries.retain(|e| !e.is_directory);
+        } else {
+            entries.retain(|e| e.name.to_lowercase().contains(&lower));
+        }
+    }
+
+    if let Some(limit) = max_results {
+        entries.truncate(limit);
+    }
+
+    Ok(entries)
+}
+
+async fn read_file_chunked(path: &str, offset: u64, limit_bytes: u64) -> Result<String> {
+    use tokio::fs::File;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let mut file = File::open(path)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to open {}: {}", path, e)))?;
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to seek {}: {}", path, e)))?;
+
+    let mut buf = vec![0u8; limit_bytes.min(10 * 1024 * 1024) as usize];
+    let n = file
+        .read(&mut buf)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to read {}: {}", path, e)))?;
+    buf.truncate(n);
+
+    String::from_utf8(buf).map_err(|e| {
+        ComputerError::Other(format!("File {} contains non-UTF-8 bytes: {}", path, e))
+    })
+}
+
+async fn install_package_windows(
+    manager: PackageManager,
+    packages: &[String],
+    timeout_secs: u64,
+) -> Result<ActionResult> {
+    let (cmd, args): (&str, Vec<String>) = match manager {
+        PackageManager::Winget => {
+            let mut v = vec![
+                "install".to_string(),
+                "--accept-package-agreements".to_string(),
+                "--accept-source-agreements".to_string(),
+                "-e".to_string(),
+            ];
+            v.extend(packages.iter().cloned());
+            ("winget", v)
+        }
+        PackageManager::Choco => {
+            let mut v = vec!["install".to_string(), "-y".to_string()];
+            v.extend(packages.iter().cloned());
+            ("choco", v)
+        }
+        _ => {
+            return Err(ComputerError::UnsupportedPlatform(
+                format!("Package manager {:?} not supported on Windows", manager),
+            ))
+        }
+    };
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        tokio::process::Command::new(cmd).args(&args).output(),
+    )
+    .await
+    .map_err(|_| ComputerError::Timeout)?
+    .map_err(|e| ComputerError::ToolFailed(format!("Failed to run {}: {}", cmd, e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Ok(ActionResult::error(format!("{} install failed: {}", cmd, stderr)));
+    }
+
+    Ok(ActionResult::success(format!(
+        "Installed {} with {}",
+        packages.join(", "),
+        cmd
+    )))
+}
+
+async fn compress_files_windows(
+    sources: &[String],
+    destination: &str,
+    format: CompressionFormat,
+) -> Result<ActionResult> {
+    match format {
+        CompressionFormat::Zip => {
+            let src_list = sources
+                .iter()
+                .map(|s| format!("'{}'", s.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let script = format!(
+                "Compress-Archive -Path {} -DestinationPath '{}' -Force",
+                src_list,
+                destination.replace('\'', "''")
+            );
+            let args = serde_json::json!({ "script": script });
+            let output = self_registry_execute_powershell(args).await?;
+            if !output.status.success() {
+                return Ok(ActionResult::error(format!(
+                    "Compress-Archive failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(ActionResult::success(format!("Created {}", destination)))
+        }
+        CompressionFormat::Tar => {
+            let mut args = vec!["-cvf".to_string(), destination.to_string()];
+            args.extend(sources.iter().cloned());
+            run_tar_windows(&args).await
+        }
+        CompressionFormat::TarGz => {
+            let mut args = vec!["-czvf".to_string(), destination.to_string()];
+            args.extend(sources.iter().cloned());
+            run_tar_windows(&args).await
+        }
+        CompressionFormat::TarBz2 => {
+            let mut args = vec!["-cjvf".to_string(), destination.to_string()];
+            args.extend(sources.iter().cloned());
+            run_tar_windows(&args).await
+        }
+        CompressionFormat::TarXz => {
+            let mut args = vec!["-cJvf".to_string(), destination.to_string()];
+            args.extend(sources.iter().cloned());
+            run_tar_windows(&args).await
+        }
+        _ => Err(ComputerError::UnsupportedPlatform(
+            format!("Compression format {:?} not supported on Windows", format),
+        )),
+    }
+}
+
+async fn run_tar_windows(args: &[String]) -> Result<ActionResult> {
+    let output = tokio::process::Command::new("tar")
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| ComputerError::ToolFailed(format!("Failed to run tar: {}", e)))?;
+    if !output.status.success() {
+        return Ok(ActionResult::error(format!(
+            "tar failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(ActionResult::success("Archive created".to_string()))
+}
+
+async fn decompress_archive_windows(archive: &str, destination: &str) -> Result<ActionResult> {
+    tokio::fs::create_dir_all(destination)
+        .await
+        .map_err(|e| ComputerError::Other(format!("Failed to create {}: {}", destination, e)))?;
+
+    let lower = archive.to_lowercase();
+    if lower.ends_with(".zip") {
+        let script = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+            archive.replace('\'', "''"),
+            destination.replace('\'', "''")
+        );
+        let args = serde_json::json!({ "script": script });
+        let output = self_registry_execute_powershell(args).await?;
+        if !output.status.success() {
+            return Ok(ActionResult::error(format!(
+                "Expand-Archive failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+    } else {
+        let args: Vec<String> = if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+            vec!["-xzvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+        } else if lower.ends_with(".tar.bz2") {
+            vec!["-xjvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+        } else if lower.ends_with(".tar.xz") {
+            vec!["-xJvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+        } else if lower.ends_with(".tar") {
+            vec!["-xvf".to_string(), archive.to_string(), "-C".to_string(), destination.to_string()]
+        } else {
+            return Err(ComputerError::UnsupportedPlatform(
+                format!("Cannot determine archive format for {}", archive),
+            ));
+        };
+        let output = tokio::process::Command::new("tar")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|e| ComputerError::ToolFailed(format!("Failed to run tar: {}", e)))?;
+        if !output.status.success() {
+            return Ok(ActionResult::error(format!(
+                "tar failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+    }
+
+    Ok(ActionResult::success(format!(
+        "Extracted {} to {}",
+        archive, destination
+    )))
+}
+
+/// Invoke the windows_powershell tool via the adapter's registry.
+///
+/// This helper is standalone so compression helpers can call it without
+/// holding `&self`.
+async fn self_registry_execute_powershell(
+    args: serde_json::Value,
+) -> std::io::Result<std::process::Output> {
+    // The tool registry requires `&self`, which we don't have in free functions.
+    // Fallback to invoking `powershell` directly for compress/decompress scripts.
+    let script = args
+        .get("script")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .await
 }
 
 /// Factory for Windows.
