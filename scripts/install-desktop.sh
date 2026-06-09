@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE_DIR="${SCRIPT_DIR}/../desktop/target/release/bundle"
 
 echo "Building Syscity Desktop release..."
-"${SCRIPT_DIR}/build-desktop.sh"
+"${SCRIPT_DIR}/desktop-build.sh"
 
 # Detect platform and install
 if [[ "$OSTYPE" == "darwin"* ]]; then
