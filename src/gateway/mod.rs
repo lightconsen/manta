@@ -1271,9 +1271,64 @@ impl Gateway {
             .await?,
         );
 
-        // Initialize computer adapter if enabled and display is available
-        let computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>> =
-            if config.computer.enabled && crate::computer::has_display_server() {
+        // Initialize computer adapter.
+        // Prefer remote control when configured; otherwise use local platform adapter.
+        let computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>> = if
+            config.computer.enabled
+        {
+            if let Some(ref host) = config.computer.remote_control.host {
+                let rc_config = crate::computer::RemoteControlConfig {
+                    host: host.clone(),
+                    user: config.computer.remote_control.user.clone().unwrap_or_else(|| {
+                        std::env::var("USER").unwrap_or_else(|_| "user".to_string())
+                    }),
+                    port: config.computer.remote_control.port,
+                    protocol: match config.computer.remote_control.protocol.as_str() {
+                        "vnc" => crate::computer::RemoteProtocol::Vnc {
+                            password: None,
+                        },
+                        "rdp" => crate::computer::RemoteProtocol::Rdp {
+                            password: None,
+                            domain: None,
+                        },
+                        _ => crate::computer::RemoteProtocol::Ssh {
+                            key_path: config.computer.remote_control.key_path.clone(),
+                        },
+                    },
+                    display: config.computer.remote_control.display.clone(),
+                    ssh_extra_args: config.computer.remote_control.ssh_extra_args.clone(),
+                    connect_timeout: std::time::Duration::from_secs(
+                        config.computer.remote_control.timeout_secs,
+                    ),
+                };
+                match crate::computer::RemoteControlAdapter::new(rc_config, tool_registry.clone())
+                    .await
+                {
+                    Ok(adapter) => {
+                        info!(
+                            "Remote control adapter connected to {} for desktop automation",
+                            host
+                        );
+                        Some(Arc::new(adapter))
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to connect remote control adapter to {}: {}. Falling back to local adapter.",
+                            host, e
+                        );
+                        match crate::computer::create_adapter(tool_registry.clone()).await {
+                            Ok(adapter) => {
+                                info!("Local computer adapter initialized as fallback");
+                                Some(Arc::from(adapter))
+                            }
+                            Err(e) => {
+                                warn!("Failed to initialize local computer adapter: {}", e);
+                                None
+                            }
+                        }
+                    }
+                }
+            } else if crate::computer::has_display_server() {
                 match crate::computer::create_adapter(tool_registry.clone()).await {
                     Ok(adapter) => {
                         info!("Computer adapter initialized for desktop automation");
@@ -1285,8 +1340,14 @@ impl Gateway {
                     }
                 }
             } else {
+                warn!(
+                    "No display server detected and no remote_control host configured; desktop automation disabled"
+                );
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
