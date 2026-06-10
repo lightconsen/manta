@@ -6,10 +6,12 @@
 //! unit that controls *which* tools are exposed for the current environment.
 
 use crate::tools::Tool;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// OS control permission scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OsControlScope {
     /// Read-only observation (processes, logs, configs).
     ReadOnly = 0,

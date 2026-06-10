@@ -71,6 +71,10 @@ pub struct Config {
     #[serde(default)]
     pub standing_orders: crate::standing_orders::config::StandingOrderConfig,
 
+    /// Capability set configuration (profile, scope, enabled sets)
+    #[serde(default)]
+    pub capabilities: CapabilitiesConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -628,6 +632,42 @@ impl Default for HeadlessConfig {
     }
 }
 
+/// Capability set configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesConfig {
+    /// Capability profile: minimal, observer, server, desktop, full, custom
+    #[serde(default = "default_capability_profile")]
+    pub profile: String,
+    /// Custom set IDs when profile is "custom"
+    #[serde(default)]
+    pub custom_sets: Vec<String>,
+    /// Maximum OsControlScope to allow (read_only, user_space, system, root)
+    #[serde(default = "default_capability_max_scope")]
+    pub max_scope: String,
+    /// Explicitly disable specific set IDs regardless of profile
+    #[serde(default)]
+    pub disabled_sets: Vec<String>,
+}
+
+fn default_capability_profile() -> String {
+    "full".to_string()
+}
+
+fn default_capability_max_scope() -> String {
+    "root".to_string()
+}
+
+impl Default for CapabilitiesConfig {
+    fn default() -> Self {
+        Self {
+            profile: default_capability_profile(),
+            custom_sets: Vec::new(),
+            max_scope: default_capability_max_scope(),
+            disabled_sets: Vec::new(),
+        }
+    }
+}
+
 /// Browser automation configuration
 #[cfg(feature = "browser")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -681,6 +721,7 @@ impl Default for Config {
             heartbeat: crate::heartbeat::HeartbeatConfig::default(),
             computer: ComputerConfig::default(),
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
+            capabilities: CapabilitiesConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }

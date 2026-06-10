@@ -138,6 +138,9 @@ pub struct GatewayConfig {
     /// Standing orders configuration (persistent background agent programs)
     #[serde(default)]
     pub standing_orders: crate::standing_orders::config::StandingOrderConfig,
+    /// Capability set configuration (profile, scope, enabled sets)
+    #[serde(default)]
+    pub capabilities: crate::config::CapabilitiesConfig,
 }
 
 fn default_model() -> String {
@@ -484,6 +487,7 @@ impl Default for GatewayConfig {
             computer: crate::config::ComputerConfig::default(),
             dreaming: crate::config::MemoryDreamingConfig::default(),
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
+            capabilities: crate::config::CapabilitiesConfig::default(),
         }
     }
 }
@@ -1291,6 +1295,7 @@ impl Gateway {
                 approval_queue.clone(),
                 session_store.clone(),
                 memory_manager_holder.clone(),
+                config.capabilities.clone(),
             )
             .await?,
         );
@@ -4511,6 +4516,7 @@ async fn create_default_tool_registry(
     memory_manager: Arc<
         tokio::sync::RwLock<Option<Arc<crate::memory::MemoryManager>>>,
     >,
+    capabilities: crate::config::CapabilitiesConfig,
 ) -> crate::Result<ToolRegistry> {
     use crate::tools::*;
 
@@ -4640,7 +4646,7 @@ async fn create_default_tool_registry(
     // ── Register platform-specific capability sets ──
     {
         use crate::capabilities::{
-            CapabilityProfile, CapabilityRegistry, ToolConflictStrategy,
+            CapabilityProfile, CapabilityRegistry, OsControlScope, ToolConflictStrategy,
         };
 
         let mut cap_reg = CapabilityRegistry::new();
@@ -4657,9 +4663,44 @@ async fn create_default_tool_registry(
             cap_reg.register(Box::new(crate::capabilities::MacosSet::new()));
         }
 
-        // Apply profile (could be loaded from config in the future)
-        let profile = CapabilityProfile::Full;
+        // Load capability profile from config
+        let profile = match capabilities.profile.as_str() {
+            "minimal" => CapabilityProfile::Minimal,
+            "observer" => CapabilityProfile::Observer,
+            "server" => CapabilityProfile::Server,
+            "desktop" => CapabilityProfile::Desktop,
+            "custom" => CapabilityProfile::Custom(capabilities.custom_sets.clone()),
+            _ => CapabilityProfile::Full,
+        };
+        let max_scope = match capabilities.max_scope.as_str() {
+            "read_only" => Some(OsControlScope::ReadOnly),
+            "user_space" => Some(OsControlScope::UserSpace),
+            "system" => Some(OsControlScope::System),
+            "root" => Some(OsControlScope::Root),
+            _ => None,
+        };
+        let disabled_sets: std::collections::HashSet<String> =
+            capabilities.disabled_sets.iter().cloned().collect();
+
         profile.apply(&mut cap_reg);
+
+        // Apply max_scope filter: disable sets whose scope exceeds the limit
+        if let Some(limit) = max_scope {
+            let to_disable: Vec<String> = cap_reg
+                .all_sets()
+                .iter()
+                .filter(|s| s.scope() > limit)
+                .map(|s| s.id().to_string())
+                .collect();
+            for id in to_disable {
+                cap_reg.disable(&id);
+            }
+        }
+
+        // Apply explicit disabled_sets filter
+        for id in &disabled_sets {
+            cap_reg.disable(id);
+        }
 
         // Log detected capabilities before exporting
         let available = cap_reg.available_sets();
