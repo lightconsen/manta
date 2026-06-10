@@ -234,14 +234,18 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "chat.history" | "sessions.list" | "agents.list" | "agents.get" | "agents.registry"
         | "health" | "system.presence" | "commands.list" | "config.get" | "models.list"
         | "models.add" | "models.remove" | "models.set_default" | "cron.list" | "skills.list"
-        | "skills.install" | "logs.subscribe" | "logs.unsubscribe" => Some(SCOPE_READ),
+        | "skills.install" | "logs.subscribe" | "logs.unsubscribe" | "tasks.list" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.reset"
         | "sessions.subscribe"
         | "sessions.unsubscribe"
         | "commands.execute"
-        | "config.set" => Some(SCOPE_WRITE),
+        | "config.set"
+        | "tasks.schedule"
+        | "tasks.delete"
+        | "tasks.enable"
+        | "tasks.disable" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
