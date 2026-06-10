@@ -29,7 +29,7 @@ impl Default for LinuxDesktopWaylandSet {
 
 impl CapabilitySet for LinuxDesktopWaylandSet {
     fn id(&self) -> &str {
-        "linux-desktop-wayland"
+        "wayland"
     }
 
     fn name(&self) -> &str {

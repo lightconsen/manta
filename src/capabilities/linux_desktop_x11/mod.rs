@@ -31,7 +31,7 @@ impl Default for LinuxDesktopX11Set {
 
 impl CapabilitySet for LinuxDesktopX11Set {
     fn id(&self) -> &str {
-        "linux-desktop-x11"
+        "x11"
     }
 
     fn name(&self) -> &str {
