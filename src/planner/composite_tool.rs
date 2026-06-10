@@ -91,6 +91,17 @@ impl CompositeTool {
         self
     }
 
+    /// Convert to tasks using default parameter values (no substitution needed
+    /// for parameters that already have defaults).
+    pub fn to_tasks(&self) -> Vec<Task> {
+        let defaults: HashMap<String, String> = self
+            .parameters
+            .iter()
+            .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+            .collect();
+        self.bind(&defaults)
+    }
+
     /// Bind concrete values to parameters, producing an executable sequence
     /// of [`Task`]s.
     ///
@@ -143,7 +154,7 @@ impl CompositeTool {
 }
 
 /// In-memory registry of named composite tools.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CompositeToolRegistry {
     tools: HashMap<String, CompositeTool>,
 }
@@ -168,6 +179,16 @@ impl CompositeToolRegistry {
     /// List all registered names.
     pub fn list(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
+    }
+
+    /// Find a composite tool whose name or description loosely matches the
+    /// given goal.
+    pub fn match_by_goal(&self, goal: &str) -> Option<&CompositeTool> {
+        let lower = goal.to_lowercase();
+        self.tools.values().find(|t| {
+            lower.contains(&t.name.replace('-', " "))
+                || lower.contains(&t.description.to_lowercase())
+        })
     }
 
     /// Load built-in composite tools for common workflows.

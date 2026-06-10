@@ -1062,16 +1062,31 @@ impl Agent {
     ) -> Self {
         self.computer_adapter = Some(adapter.clone());
         // Auto-create GoalPlanner when adapter + provider are both available.
-        self.goal_planner = Some(crate::planner::GoalPlanner::with_provider(
+        let mut planner = crate::planner::GoalPlanner::with_provider(
             adapter,
             self.provider.clone(),
-        ));
+        );
+        if let Some(ref memory) = self.memory_store {
+            planner = planner.with_memory(memory.clone());
+        }
+        self.goal_planner = Some(planner);
         self
     }
 
     /// Set the configuration for the computer use loop.
     pub fn with_computer_config(mut self, config: crate::computer::LoopConfig) -> Self {
         self.computer_config = Some(config);
+        self
+    }
+
+    /// Attach a persistent state store to the goal planner for crash recovery.
+    pub fn with_planner_state_store(
+        mut self,
+        store: crate::planner::TaskStateStore,
+    ) -> Self {
+        if let Some(ref mut planner) = self.goal_planner {
+            *planner = planner.clone().with_state_store(store);
+        }
         self
     }
 

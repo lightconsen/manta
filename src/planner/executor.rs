@@ -8,6 +8,7 @@ use super::{DagScheduler, Plan, PlanResult, TaskStatus};
 use crate::computer::{
     ComputerAdapter, RollbackManager, VerificationConfig, VerificationEngine,
 };
+use crate::planner::{ErrorDiagnosisEngine, ExperienceContext, ToolLearningEngine};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -40,6 +41,10 @@ pub struct TaskExecutor {
     config: ExecutorConfig,
     /// Optional execution controller for pause / resume / step / cancel.
     execution_controller: Option<Arc<crate::acp::ExecutionController>>,
+    /// Diagnoses failures and suggests remediation steps.
+    diagnosis_engine: ErrorDiagnosisEngine,
+    /// Records tool execution experience for future alternative suggestions.
+    learning_engine: Option<Arc<ToolLearningEngine>>,
 }
 
 impl TaskExecutor {
@@ -52,6 +57,8 @@ impl TaskExecutor {
             verifier,
             config: ExecutorConfig::default(),
             execution_controller: None,
+            diagnosis_engine: ErrorDiagnosisEngine::new(),
+            learning_engine: None,
         }
     }
 
@@ -66,6 +73,18 @@ impl TaskExecutor {
         controller: Arc<crate::acp::ExecutionController>,
     ) -> Self {
         self.execution_controller = Some(controller);
+        self
+    }
+
+    /// Attach an error-diagnosis engine for self-correction on failure.
+    pub fn with_diagnosis_engine(mut self, engine: ErrorDiagnosisEngine) -> Self {
+        self.diagnosis_engine = engine;
+        self
+    }
+
+    /// Attach a learning engine that records experience and suggests alternatives.
+    pub fn with_learning_engine(mut self, engine: Arc<ToolLearningEngine>) -> Self {
+        self.learning_engine = Some(engine);
         self
     }
 
@@ -283,7 +302,23 @@ impl TaskExecutor {
                     };
 
                     if verified {
-                        plan.complete_task(&id, result.message);
+                        plan.complete_task(&id, result.message.clone());
+
+                        // ── Record success experience ────────────────────────────────
+                        if let Some(ref learning) = self.learning_engine {
+                            let ctx = ExperienceContext::current(&plan.goal);
+                            let _ = learning
+                                .record_experience(
+                                    &desktop_action_name(&task.action),
+                                    &task.action,
+                                    true,
+                                    None,
+                                    None,
+                                    &ctx,
+                                )
+                                .await;
+                        }
+
                         return Ok(());
                     } else {
                         plan.fail_task(
@@ -303,12 +338,69 @@ impl TaskExecutor {
                         );
                         tokio::time::sleep(task.retry_delay).await;
                     } else {
-                        plan.fail_task(
-                            &id,
-                            format!("Execution failed: {}", e),
+                        let error_str = e.to_string();
+
+                        // ── Self-correction: diagnose the failure ─────────────────────
+                        let diagnosis = self
+                            .diagnosis_engine
+                            .diagnose(&error_str, &task.description)
+                            .await;
+                        if let Ok(ref d) = diagnosis {
+                            tracing::info!(
+                                "Diagnosis for task '{}': {} (severity: {:?}, confidence: {:.2})",
+                                id, d.root_causes.first().map(|r| r.description.as_str()).unwrap_or("unknown"),
+                                d.severity, d.confidence
+                            );
+                        }
+
+                        // ── Check past experience for known alternatives ──────────────
+                        let mut alternative_suggestion = None;
+                        if let Some(ref learning) = self.learning_engine {
+                            let ctx = ExperienceContext::current(&plan.goal);
+                            match learning
+                                .suggest_alternative(
+                                    &desktop_action_name(&task.action),
+                                    &error_str,
+                                    &ctx,
+                                )
+                                .await
+                            {
+                                Ok(Some(suggestion)) => {
+                                    tracing::info!(
+                                        "ToolLearningEngine suggests alternative for task '{}': {}",
+                                        id, suggestion.alternative
+                                    );
+                                    alternative_suggestion = Some(suggestion.alternative.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        let mut error_msg = format!("Execution failed: {}", e);
+                        if let Some(ref alt) = alternative_suggestion {
+                            error_msg.push_str(&format!("\nSuggested alternative: {}", alt));
+                        }
+                        plan.fail_task(&id,
+                            error_msg.clone(),
                         );
+
+                        // ── Record experience ─────────────────────────────────────────
+                        if let Some(ref learning) = self.learning_engine {
+                            let ctx = ExperienceContext::current(&plan.goal);
+                            let _ = learning
+                                .record_experience(
+                                    &desktop_action_name(&task.action),
+                                    &task.action,
+                                    false,
+                                    Some(&error_str),
+                                    alternative_suggestion.as_deref(),
+                                    &ctx,
+                                )
+                                .await;
+                        }
+
                         return Err(crate::error::SyscityError::ExternalService {
-                            source: format!("Task execution failed: {}", e),
+                            source: error_msg,
                             cause: None,
                         });
                     }
@@ -322,6 +414,48 @@ impl TaskExecutor {
             "Exhausted all retries".to_string(),
         ))
     }
+}
+
+/// Return a short snake_case name for a [`DesktopAction`] variant.
+fn desktop_action_name(action: &crate::computer::DesktopAction) -> String {
+    match action {
+        crate::computer::DesktopAction::Screenshot { .. } => "screenshot",
+        crate::computer::DesktopAction::Click { .. } => "click",
+        crate::computer::DesktopAction::DoubleClick { .. } => "double_click",
+        crate::computer::DesktopAction::Type { .. } => "type",
+        crate::computer::DesktopAction::KeyPress { .. } => "key_press",
+        crate::computer::DesktopAction::Scroll { .. } => "scroll",
+        crate::computer::DesktopAction::Drag { .. } => "drag",
+        crate::computer::DesktopAction::ReadUiTree { .. } => "read_ui_tree",
+        crate::computer::DesktopAction::LaunchApp { .. } => "launch_app",
+        crate::computer::DesktopAction::ActivateWindow { .. } => "activate_window",
+        crate::computer::DesktopAction::CloseWindow { .. } => "close_window",
+        crate::computer::DesktopAction::Wait { .. } => "wait",
+        crate::computer::DesktopAction::ClipboardGet => "clipboard_get",
+        crate::computer::DesktopAction::ClipboardSet { .. } => "clipboard_set",
+        crate::computer::DesktopAction::GetSystemStatus => "get_system_status",
+        crate::computer::DesktopAction::ListProcesses { .. } => "list_processes",
+        crate::computer::DesktopAction::KillProcess { .. } => "kill_process",
+        crate::computer::DesktopAction::WatchDirectory { .. } => "watch_directory",
+        crate::computer::DesktopAction::UnwatchDirectory { .. } => "unwatch_directory",
+        crate::computer::DesktopAction::WatchFile { .. } => "watch_file",
+        crate::computer::DesktopAction::UnwatchFile { .. } => "unwatch_file",
+        crate::computer::DesktopAction::ListPorts { .. } => "list_ports",
+        crate::computer::DesktopAction::TestPing { .. } => "test_ping",
+        crate::computer::DesktopAction::TestTcpConnect { .. } => "test_tcp_connect",
+        crate::computer::DesktopAction::ListFirewallRules => "list_firewall_rules",
+        crate::computer::DesktopAction::RestartProcess { .. } => "restart_process",
+        crate::computer::DesktopAction::SetProcessPriority { .. } => "set_process_priority",
+        crate::computer::DesktopAction::KeySequence { .. } => "key_sequence",
+        crate::computer::DesktopAction::InstallPackage { .. } => "install_package",
+        crate::computer::DesktopAction::BrowseFiles { .. } => "browse_files",
+        crate::computer::DesktopAction::EditFile { .. } => "edit_file",
+        crate::computer::DesktopAction::ReadFileChunked { .. } => "read_file_chunked",
+        crate::computer::DesktopAction::Compress { .. } => "compress",
+        crate::computer::DesktopAction::Decompress { .. } => "decompress",
+        crate::computer::DesktopAction::TransferFile { .. } => "transfer_file",
+    }
+    .to_string()
 }
 
 #[cfg(test)]

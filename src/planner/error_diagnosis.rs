@@ -129,6 +129,7 @@ impl Diagnosis {
 }
 
 /// Engine for diagnosing execution failures.
+#[derive(Clone)]
 pub struct ErrorDiagnosisEngine {
     provider: Option<Arc<dyn Provider>>,
 }

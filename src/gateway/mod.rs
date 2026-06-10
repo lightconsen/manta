@@ -687,6 +687,8 @@ pub struct GatewayState {
     pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
     /// Computer / desktop automation adapter (optional)
     pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
+    /// Task scheduler for recurring / cron-like agent tasks.
+    pub task_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>>,
     /// Log line broadcast channel for real-time log streaming to WebSocket clients
     pub log_tx: broadcast::Sender<String>,
 }
@@ -1670,6 +1672,7 @@ impl Gateway {
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
             computer_adapter: tokio::sync::RwLock::new(computer_adapter),
+            task_scheduler: RwLock::new(None),
         });
 
         // Attach SessionStore to SessionManager for unified session model
@@ -1935,6 +1938,50 @@ impl Gateway {
             crate::tools::CronTool::set_scheduler(cron_scheduler);
         } else {
             info!("Cron scheduler disabled");
+        }
+
+        // ── TaskScheduler (recurring agent tasks) ───────────────────────────
+        {
+            let mut task_scheduler = crate::planner::TaskScheduler::new();
+            let state_for_scheduler = Arc::clone(&state);
+            let handler: crate::planner::scheduled_tasks::TaskHandler = Arc::new(
+                move |task: crate::planner::ScheduledTask| {
+                    let state = Arc::clone(&state_for_scheduler);
+                    Box::pin(async move {
+                        let agents = state.agents.read().await;
+                        if let Some(handle) = agents.values().next() {
+                            let msg = format!(
+                                "[Scheduled] {}: {} - Actions: {}",
+                                task.name,
+                                task.description,
+                                task.actions.len()
+                            );
+                            let incoming = crate::channels::IncomingMessage::new(
+                                "scheduler",
+                                &task.id,
+                                &msg,
+                            );
+                            if let Err(e) = handle.agent.process_message(incoming).await {
+                                warn!("Scheduled task '{}' failed: {}", task.id, e);
+                            } else {
+                                info!("Scheduled task '{}' processed successfully", task.id);
+                            }
+                        } else {
+                            warn!(
+                                "No agent available to run scheduled task '{}'",
+                                task.id
+                            );
+                        }
+                    }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                },
+            );
+            if let Err(e) = task_scheduler.start(handler).await {
+                warn!("TaskScheduler failed to start: {}", e);
+            } else {
+                *state.task_scheduler.write().await =
+                    Some(Arc::new(tokio::sync::Mutex::new(task_scheduler)));
+                info!("TaskScheduler started");
+            }
         }
 
         // Wire side-effect executor with runtime context (memory + cron)
@@ -2528,6 +2575,14 @@ async fn spawn_agent_inner(
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
         }
+        // Attach planner state store for crash recovery if available.
+        let planner_db = crate::dirs::syscity_dir().join("planner.db");
+        if planner_db.exists() {
+            let url = format!("sqlite:/// {}", planner_db.display());
+            if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
+                builder = builder.with_planner_state_store(store);
+            }
+        }
         Arc::new(builder)
     } else {
         let mut builder = Agent::new(config.clone(), provider, tools)
@@ -2544,6 +2599,14 @@ async fn spawn_agent_inner(
             builder = builder
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
+        }
+        // Attach planner state store for crash recovery if available.
+        let planner_db = crate::dirs::syscity_dir().join("planner.db");
+        if planner_db.exists() {
+            let url = format!("sqlite:/// {}", planner_db.display());
+            if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
+                builder = builder.with_planner_state_store(store);
+            }
         }
         Arc::new(builder)
     };

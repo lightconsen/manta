@@ -131,6 +131,7 @@ pub struct ToolSuggestion {
 }
 
 /// Engine that learns from tool execution outcomes.
+#[derive(Clone)]
 pub struct ToolLearningEngine {
     memory: Arc<dyn MemoryStore>,
 }

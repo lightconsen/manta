@@ -113,6 +113,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         memory_manager: Arc::new(RwLock::new(None)),
         hot_reload: RwLock::new(None),
         cron_scheduler: RwLock::new(None),
+        task_scheduler: RwLock::new(None),
         heartbeat_wake_tx: RwLock::new(None),
         heartbeat_event_tx: RwLock::new(None),
         dream_scheduler: RwLock::new(None),

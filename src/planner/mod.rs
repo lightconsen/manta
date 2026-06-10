@@ -221,6 +221,10 @@ pub struct GoalPlanner {
     #[allow(dead_code)]
     memory: Option<Arc<dyn MemoryStore>>,
     state_store: Option<TaskStateStore>,
+    /// Infers prerequisite tool chains for a goal.
+    chain_reasoner: ToolChainReasoner,
+    /// Registry of reusable composite tools.
+    composite_registry: CompositeToolRegistry,
 }
 
 impl GoalPlanner {
@@ -237,6 +241,8 @@ impl GoalPlanner {
             decomposer,
             memory: None,
             state_store: None,
+            chain_reasoner: ToolChainReasoner::new(),
+            composite_registry: CompositeToolRegistry::new(),
         }
     }
 
@@ -244,7 +250,7 @@ impl GoalPlanner {
     pub fn with_provider(adapter: Arc<dyn ComputerAdapter>, provider: Arc<dyn Provider>) -> Self {
         let verifier = VerificationEngine::new(adapter.clone());
         let executor = TaskExecutor::new(adapter.clone(), verifier.clone());
-        let decomposer = GoalDecomposer::new(provider);
+        let decomposer = GoalDecomposer::new(provider.clone());
         Self {
             adapter,
             verifier,
@@ -252,6 +258,8 @@ impl GoalPlanner {
             decomposer,
             memory: None,
             state_store: None,
+            chain_reasoner: ToolChainReasoner::with_provider(provider),
+            composite_registry: CompositeToolRegistry::with_builtins(),
         }
     }
 
@@ -264,6 +272,24 @@ impl GoalPlanner {
     /// Attach a persistent state store for crash recovery.
     pub fn with_state_store(mut self, store: TaskStateStore) -> Self {
         self.state_store = Some(store);
+        self
+    }
+
+    /// Replace the composite-tool registry (e.g. for custom workflows).
+    pub fn with_composite_registry(mut self, registry: CompositeToolRegistry) -> Self {
+        self.composite_registry = registry;
+        self
+    }
+
+    /// Attach an error-diagnosis engine to the task executor.
+    pub fn with_diagnosis_engine(mut self, engine: ErrorDiagnosisEngine) -> Self {
+        self.executor = self.executor.with_diagnosis_engine(engine);
+        self
+    }
+
+    /// Attach a learning engine to the task executor for experience recording.
+    pub fn with_learning_engine(mut self, engine: Arc<ToolLearningEngine>) -> Self {
+        self.executor = self.executor.with_learning_engine(engine);
         self
     }
 
@@ -295,11 +321,32 @@ impl GoalPlanner {
             }
         }
 
+        // 1. Check for a matching composite tool (exact macro match).
+        if let Some(composite) = self.composite_registry.match_by_goal(goal) {
+            let mut plan = Plan::new(goal);
+            for task in composite.to_tasks() {
+                plan.add_task(task);
+            }
+            return Ok(plan);
+        }
+
+        // 2. Analyse prerequisite chain and prepend high-confidence links.
+        let mut prerequisite_tasks = Vec::new();
+        match self.chain_reasoner.analyse(goal).await {
+            Ok(chain) if chain.confidence > 0.7 => {
+                prerequisite_tasks = ToolChainReasoner::links_to_tasks(&chain.prerequisites);
+            }
+            Ok(_) | Err(_) => {}
+        }
+
         let subtasks = self
             .decomposer
             .decompose_with_context(goal, available_tools, &context)
             .await?;
         let mut plan = Plan::new(goal);
+        for task in prerequisite_tasks {
+            plan.add_task(task);
+        }
         for st in subtasks {
             plan.add_task(st.into_task());
         }

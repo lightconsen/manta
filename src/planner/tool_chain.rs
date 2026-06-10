@@ -41,6 +41,7 @@ pub struct ChainAnalysis {
 }
 
 /// Infers prerequisite tool chains for a goal.
+#[derive(Clone)]
 pub struct ToolChainReasoner {
     provider: Option<Arc<dyn Provider>>,
 }
