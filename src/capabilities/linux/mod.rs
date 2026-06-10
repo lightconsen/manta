@@ -1,10 +1,22 @@
 //! Linux capability set — system management tools for Linux.
 
+pub mod cron_manager;
+pub mod firewall_manager;
+pub mod log_analyzer;
+pub mod network_diag;
+pub mod package_manager;
 pub mod service_manager;
 pub mod system_inspect;
+pub mod user_manager;
 
+pub use cron_manager::CronManagerTool;
+pub use firewall_manager::FirewallManagerTool;
+pub use log_analyzer::LogAnalyzerTool;
+pub use network_diag::NetworkDiagTool;
+pub use package_manager::PackageManagerTool;
 pub use service_manager::ServiceManagerTool;
 pub use system_inspect::SystemInspectTool;
+pub use user_manager::UserManagerTool;
 
 use super::{CapabilitySet, OsControlScope, PlatformConstraints};
 use crate::tools::Tool;
@@ -57,6 +69,12 @@ impl CapabilitySet for LinuxSet {
         vec![
             Box::new(SystemInspectTool::new()),
             Box::new(ServiceManagerTool::new()),
+            Box::new(LogAnalyzerTool::new()),
+            Box::new(NetworkDiagTool::new()),
+            Box::new(PackageManagerTool::new()),
+            Box::new(FirewallManagerTool::new()),
+            Box::new(UserManagerTool::new()),
+            Box::new(CronManagerTool::new()),
         ]
     }
 }
