@@ -3,7 +3,7 @@ name = "syscity-plugin-sdk"
 version = "0.1.0"
 edition = "2021"
 description = "High-level Rust SDK for building Syscity WASM plugins"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
