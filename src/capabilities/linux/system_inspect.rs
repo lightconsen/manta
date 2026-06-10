@@ -131,7 +131,7 @@ impl SystemInspectTool {
         }
     }
 
-    async fn collect_overview() -> (String, String, [f64; 3], MemoryInfo, usize) {
+    pub async fn collect_overview() -> (String, String, [f64; 3], MemoryInfo, usize) {
         let hostname_fut = Self::run_cmd("hostname", 5);
         let uptime_fut = Self::run_cmd("uptime -p", 5);
         let load_fut = Self::run_cmd("cat /proc/loadavg", 5);
@@ -178,7 +178,7 @@ impl SystemInspectTool {
         (hostname, uptime, load_avg, memory, cpu_count)
     }
 
-    async fn collect_storage() -> Vec<DiskInfo> {
+    pub async fn collect_storage() -> Vec<DiskInfo> {
         let output = Self::run_cmd("df -hP", 10).await;
         output
             .as_deref()
@@ -186,7 +186,7 @@ impl SystemInspectTool {
             .unwrap_or_default()
     }
 
-    async fn collect_processes(limit: usize) -> Vec<ProcessInfo> {
+    pub async fn collect_processes(limit: usize) -> Vec<ProcessInfo> {
         let cmd = format!("ps aux --sort=-%cpu | head -n {}", limit + 1);
         let output = Self::run_cmd(&cmd, 10).await;
         output
@@ -195,7 +195,7 @@ impl SystemInspectTool {
             .unwrap_or_default()
     }
 
-    async fn collect_services(limit: usize) -> Vec<ServiceInfo> {
+    pub async fn collect_services(limit: usize) -> Vec<ServiceInfo> {
         let cmd = format!(
             "systemctl list-units --type=service --state=running --no-pager --no-legend | head -n {}",
             limit
@@ -207,7 +207,7 @@ impl SystemInspectTool {
             .unwrap_or_default()
     }
 
-    async fn collect_network() -> Vec<PortInfo> {
+    pub async fn collect_network() -> Vec<PortInfo> {
         let output = Self::run_cmd("ss -tulnp --no-header 2>/dev/null || netstat -tulnp 2>/dev/null", 10).await;
         output
             .as_deref()
@@ -215,7 +215,7 @@ impl SystemInspectTool {
             .unwrap_or_default()
     }
 
-    async fn collect_logs(lines: usize, since: &str) -> Vec<LogEntry> {
+    pub async fn collect_logs(lines: usize, since: &str) -> Vec<LogEntry> {
         let cmd = format!(
             "journalctl --no-pager --since '{}' -n {} 2>/dev/null || echo ''",
             shell_escape(since),

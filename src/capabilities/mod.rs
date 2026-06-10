@@ -203,6 +203,7 @@ pub mod linux_desktop_x11;
 pub mod macos;
 pub mod mobile;
 pub mod registry;
+pub mod server_operator;
 pub mod windows;
 
 pub use linux::LinuxSet;
@@ -210,6 +211,7 @@ pub use linux_desktop_wayland::LinuxDesktopWaylandSet;
 pub use linux_desktop_x11::LinuxDesktopX11Set;
 pub use mobile::{AndroidSet, IosSet};
 pub use registry::CapabilityRegistry;
+pub use server_operator::{Diagnosis, ServerOperator, SystemInspector, SystemSnapshot};
 #[cfg(target_os = "macos")]
 pub use macos::MacosSet;
 pub use windows::WindowsSet;

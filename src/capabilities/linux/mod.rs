@@ -5,6 +5,7 @@ pub mod firewall_manager;
 pub mod log_analyzer;
 pub mod network_diag;
 pub mod package_manager;
+pub mod server_operator;
 pub mod service_manager;
 pub mod system_inspect;
 pub mod user_manager;
