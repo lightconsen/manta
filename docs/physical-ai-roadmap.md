@@ -200,14 +200,14 @@ while not task_done:
 
 - ✅ **标准化循环** — `ComputerUseLoop`（`src/computer/use_loop.rs`）：screenshot → decide → execute → verify
 - ✅ **坐标系统统一**：不同平台 DPI、缩放比例不同，Agent 使用逻辑坐标 — `Point`/`Rect` 已统一，`DpiScale::detect()` 支持 macOS（`system_profiler`）/Windows（PowerShell）/Linux（`xdpyinfo`/`gsettings`），`to_physical`/`to_logical` 转换已就绪（`src/computer/types.rs`）
-- ⬜ **截图编码优化**：根据网络状况自动调整分辨率/质量（本地运行时原图，远程运行时压缩）
+- ✅ **截图编码优化**：根据网络状况自动调整分辨率/质量 — `ScreenshotEncoder` + `NetworkCondition::auto_detect()`（ping RTT 自动判断 Local/Normal/Remote），全平台（macOS/Linux/Windows/Headless/Remote）均已接入
 - ✅ **延迟补偿**：操作后自动等待动画完成，避免在过渡态截图 — `LoopConfig::settle_delay_ms` + 自适应延时（连续失败时自动加倍）
 
 ### 5.3 无头模式（Headless） ✅ 已实现
 
 - ✅ **虚拟显示器**：Linux（Xvfb）、macOS（ Quartz 虚拟屏）、Windows（RDP 会话）— `HeadlessComputerAdapter` 已支持 Xvfb（Linux），其他平台 fallback 到无 GUI 模式
 - ✅ **CI/CD 集成**：在 GitHub Actions 等无 GUI 环境中运行桌面自动化测试
-- ⬜ **远程控制**：VNC/RDP 网关，通过网络控制远程物理机
+- ✅ **远程控制**：SSH 远程桌面控制 — `RemoteControlAdapter` 已实现（Linux/macOS/Windows 三平台截图/点击/输入/剪贴板/文件操作），VNC/RDP 帧缓冲协议预留为未来扩展
 
 ---
 

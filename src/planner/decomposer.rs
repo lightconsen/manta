@@ -58,6 +58,7 @@ impl SubTask {
 }
 
 /// Decomposes high-level natural-language goals into executable subtask DAGs.
+#[derive(Clone)]
 pub struct GoalDecomposer {
     provider: Arc<dyn Provider>,
 }

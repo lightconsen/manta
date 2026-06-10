@@ -171,6 +171,18 @@ fn is_desktop_task(message: &str) -> bool {
     false
 }
 
+/// Fast check for complex multi-step tasks that should use GoalPlanner.
+fn is_complex_task(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    const KEYWORDS: &[&str] = &[
+        "deploy", "install", "setup", "configure", "build", "compile",
+        "migrate", "backup", "restore", "pipeline", "orchestrate",
+        "setup environment", "deploy to", "configure ssl", "configure https",
+        "install and", "build and", "clone and", "docker compose",
+    ];
+    KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
 /// Parse an LLM response into a LoopDecision.
 fn parse_loop_decision(text: &str) -> crate::Result<crate::computer::LoopDecision> {
     let trimmed = text.trim();
@@ -811,6 +823,8 @@ pub struct Agent {
     computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>>,
     /// Configuration for the computer use loop.
     computer_config: Option<crate::computer::LoopConfig>,
+    /// Optional goal planner for complex multi-step tasks with DAG scheduling.
+    goal_planner: Option<crate::planner::GoalPlanner>,
 }
 
 impl Agent {
@@ -851,6 +865,7 @@ impl Agent {
             pii_detector: None,
             computer_adapter: None,
             computer_config: None,
+            goal_planner: None,
         }
     }
 
@@ -1040,11 +1055,17 @@ impl Agent {
     ///
     /// When set, the agent can detect desktop-operation tasks and launch
     /// the [`ComputerUseLoop`] to interact with the GUI.
+    /// Also creates a [`GoalPlanner`] for complex multi-step tasks.
     pub fn with_computer_adapter(
         mut self,
         adapter: Arc<dyn crate::computer::ComputerAdapter>,
     ) -> Self {
-        self.computer_adapter = Some(adapter);
+        self.computer_adapter = Some(adapter.clone());
+        // Auto-create GoalPlanner when adapter + provider are both available.
+        self.goal_planner = Some(crate::planner::GoalPlanner::with_provider(
+            adapter,
+            self.provider.clone(),
+        ));
         self
     }
 
@@ -1500,6 +1521,36 @@ Your response:"#,
                     crate::channels::ConversationId(conversation_id),
                     cached.response.clone(),
                 ));
+            }
+        }
+
+        // ── Goal Planner (complex multi-step tasks) ───────────────────────────
+        if let Some(ref planner) = self.goal_planner {
+            if is_complex_task(&content) {
+                let tools = self.tools.list();
+                match planner.achieve(&content, &tools).await {
+                    Ok(result) => {
+                        let msg = format!(
+                            "Goal: {}\nSuccess: {}\nCompleted: {}, Failed: {}, Rolled back: {}\n{}",
+                            result.goal,
+                            if result.success { "Yes" } else { "No" },
+                            result.tasks_completed,
+                            result.tasks_failed,
+                            result.tasks_rolled_back,
+                            result.message
+                        );
+                        return Ok(OutgoingMessage::new(
+                            crate::channels::ConversationId(conversation_id),
+                            msg,
+                        ));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "GoalPlanner failed: {}, falling back to ComputerUseLoop",
+                            e
+                        );
+                    }
+                }
             }
         }
 
@@ -1986,6 +2037,40 @@ Your response:"#,
                     crate::channels::ConversationId(conversation_id),
                     cached.response.clone(),
                 ));
+            }
+        }
+
+        // ── Goal Planner (complex multi-step tasks) ───────────────────────────
+        if let Some(ref planner) = self.goal_planner {
+            if is_complex_task(&content) {
+                let tools = self.tools.list();
+                match planner.achieve(&content, &tools).await {
+                    Ok(result) => {
+                        let msg = format!(
+                            "Goal: {}\nSuccess: {}\nCompleted: {}, Failed: {}, Rolled back: {}\n{}",
+                            result.goal,
+                            if result.success { "Yes" } else { "No" },
+                            result.tasks_completed,
+                            result.tasks_failed,
+                            result.tasks_rolled_back,
+                            result.message
+                        );
+                        (progress_cb)(ProgressEvent::Completed {
+                            response: msg.clone(),
+                        })
+                        .await;
+                        return Ok(OutgoingMessage::new(
+                            crate::channels::ConversationId(conversation_id),
+                            msg,
+                        ));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "GoalPlanner failed: {}, falling back to normal processing",
+                            e
+                        );
+                    }
+                }
             }
         }
 

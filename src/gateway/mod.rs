@@ -2487,7 +2487,6 @@ async fn spawn_agent_inner(
     // Create provider from model router
     let provider: Arc<dyn crate::providers::Provider> =
         state.model_router.create_default_provider().await?;
-
     // Get tool registry from state
     let tools = state.tool_registry.clone();
 

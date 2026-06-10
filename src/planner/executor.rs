@@ -33,6 +33,7 @@ impl Default for ExecutorConfig {
 }
 
 /// Executes tasks from a plan.
+#[derive(Clone)]
 pub struct TaskExecutor {
     adapter: Arc<dyn ComputerAdapter>,
     verifier: VerificationEngine,

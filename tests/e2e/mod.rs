@@ -639,5 +639,6 @@ mod command_tests;
 mod health_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;
+mod planner_tests;
 mod session_tests;
 mod tool_chat_tests;

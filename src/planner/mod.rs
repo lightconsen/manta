@@ -210,6 +210,7 @@ pub struct PlanResult {
 }
 
 /// High-level planner that decomposes goals and executes plans.
+#[derive(Clone)]
 pub struct GoalPlanner {
     #[allow(dead_code)]
     adapter: Arc<dyn ComputerAdapter>,
@@ -529,5 +530,124 @@ mod tests {
         assert!(!plan.has_failures());
         plan.fail_task("a", "oops".to_string());
         assert!(plan.has_failures());
+    }
+
+    // ── GoalPlanner integration tests (MockProvider + HeadlessComputerAdapter) ──
+
+    use crate::providers::{Message, Role};
+    use crate::providers::mock::MockProvider;
+    use crate::computer::headless::HeadlessComputerAdapter;
+    use crate::tools::ToolRegistry;
+
+    /// Return true if the message list is a GoalPlanner decomposition request.
+    fn is_decompose_request(messages: &[Message]) -> bool {
+        messages.iter().any(|m| {
+            m.role == Role::System && m.content.contains("task-decomposition engine")
+        })
+    }
+
+    #[tokio::test]
+    async fn test_goal_planner_decompose_with_mock() {
+        let json = r#"[
+            {"id":"step-a","description":"Step A","dependencies":[],"action":{"wait":{"milliseconds":0}},"max_retries":1},
+            {"id":"step-b","description":"Step B","dependencies":["step-a"],"action":{"wait":{"milliseconds":0}},"max_retries":1}
+        ]"#;
+
+        let mock = MockProvider::new().with_callback(move |messages| {
+            if is_decompose_request(messages) {
+                return Message::assistant(json.to_string());
+            }
+            Message::assistant("ok")
+        });
+
+        let adapter = Arc::new(HeadlessComputerAdapter::new(
+            Arc::new(ToolRegistry::new()),
+        ));
+        let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
+
+        let tools = vec!["shell".to_string()];
+        let plan = planner.decompose("test goal", &tools).await.unwrap();
+
+        assert_eq!(plan.goal, "test goal");
+        assert_eq!(plan.tasks.len(), 2);
+        assert!(plan.tasks.contains_key("step-a"));
+        assert!(plan.tasks.contains_key("step-b"));
+        assert_eq!(plan.tasks["step-b"].dependencies, vec!["step-a"]);
+    }
+
+    #[tokio::test]
+    async fn test_goal_planner_achieve_simple_wait_goal() {
+        let json = r#"[
+            {"id":"noop","description":"No-op wait","dependencies":[],"action":{"wait":{"milliseconds":0}},"max_retries":1}
+        ]"#;
+
+        let mock = MockProvider::new().with_callback(move |messages| {
+            if is_decompose_request(messages) {
+                return Message::assistant(json.to_string());
+            }
+            Message::assistant("done")
+        });
+
+        let adapter = Arc::new(HeadlessComputerAdapter::new(
+            Arc::new(ToolRegistry::new()),
+        ));
+        let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
+
+        let result = planner.achieve("run a no-op", &[]).await.unwrap();
+
+        assert!(result.success, "Plan failed: {}", result.message);
+        assert_eq!(result.tasks_completed, 1);
+        assert_eq!(result.tasks_failed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_goal_planner_achieve_with_dependencies() {
+        let json = r#"[
+            {"id":"first","description":"First","dependencies":[],"action":{"wait":{"milliseconds":0}},"max_retries":1},
+            {"id":"second","description":"Second","dependencies":["first"],"action":{"wait":{"milliseconds":0}},"max_retries":1},
+            {"id":"third","description":"Third","dependencies":["second"],"action":{"wait":{"milliseconds":0}},"max_retries":1}
+        ]"#;
+
+        let mock = MockProvider::new().with_callback(move |messages| {
+            if is_decompose_request(messages) {
+                return Message::assistant(json.to_string());
+            }
+            Message::assistant("done")
+        });
+
+        let adapter = Arc::new(HeadlessComputerAdapter::new(
+            Arc::new(ToolRegistry::new()),
+        ));
+        let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
+
+        let result = planner.achieve("chain of waits", &[]).await.unwrap();
+
+        assert!(result.success, "Plan failed: {}", result.message);
+        assert_eq!(result.tasks_completed, 3);
+        assert_eq!(result.tasks_failed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_goal_planner_rejects_cyclic_deps() {
+        let json = r#"[
+            {"id":"a","description":"A","dependencies":["c"],"max_retries":0},
+            {"id":"b","description":"B","dependencies":["a"],"max_retries":0},
+            {"id":"c","description":"C","dependencies":["b"],"max_retries":0}
+        ]"#;
+
+        let mock = MockProvider::new().with_callback(move |messages| {
+            if is_decompose_request(messages) {
+                return Message::assistant(json.to_string());
+            }
+            Message::assistant("ok")
+        });
+
+        let adapter = Arc::new(HeadlessComputerAdapter::new(
+            Arc::new(ToolRegistry::new()),
+        ));
+        let planner = GoalPlanner::with_provider(adapter, Arc::new(mock));
+
+        let err = planner.decompose("cyclic goal", &[]).await.unwrap_err();
+        assert!(err.to_string().contains("Cycle detected"));
     }
 }
