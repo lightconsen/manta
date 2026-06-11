@@ -320,6 +320,7 @@ impl ContextCompressor {
         Message {
             role: Role::System,
             content,
+            content_blocks: None,
             reasoning_content: None,
             name: Some("summary".to_string()),
             tool_calls: None,
