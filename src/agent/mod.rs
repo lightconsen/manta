@@ -4,7 +4,7 @@
 //! manages context, calls tools, and interacts with LLM providers.
 
 use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::providers::{CompletionRequest, Message, Provider, Role, ToolCall, ToolResult};
+use crate::providers::{CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolRegistry};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1295,12 +1295,22 @@ Your response:"#,
                         }
                     );
 
+                    let msg = Message::user("")
+                        .with_content_blocks(vec![
+                            ContentBlock::text(prompt),
+                            ContentBlock::image_base64(
+                                state.screenshot.base64.clone(),
+                                "image/png",
+                            ),
+                        ]);
+
                     let request = CompletionRequest {
                         model: model.clone(),
-                        messages: vec![Message::user(prompt)],
+                        messages: vec![msg],
                         temperature: Some(0.1),
                         max_tokens: Some(256),
                         stream: false,
+                        requires_vision: true,
                         ..Default::default()
                     };
 
@@ -2628,6 +2638,7 @@ Your response:"#,
             context.add_message(Message {
                 role: Role::Tool,
                 content: result.content,
+                content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
@@ -2645,6 +2656,7 @@ Your response:"#,
                         message: Message {
                             role: Role::Assistant,
                             content: format!("Execution halted: {}", reason),
+                            content_blocks: None,
                             reasoning_content: None,
                             name: None,
                             tool_calls: None,
@@ -2798,6 +2810,7 @@ Your response:"#,
         let final_message = Message {
             role: Role::Assistant,
             content: accumulated_text.clone(),
+            content_blocks: None,
             reasoning_content: if accumulated_reasoning.is_empty() {
                 None
             } else {
@@ -2991,6 +3004,7 @@ Your response:"#,
             context.add_message(Message {
                 role: Role::Tool,
                 content: result.content,
+                content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
@@ -3014,6 +3028,7 @@ Your response:"#,
                         message: Message {
                             role: Role::Assistant,
                             content: format!("Execution halted: {}", reason),
+                            content_blocks: None,
                             reasoning_content: None,
                             name: None,
                             tool_calls: None,

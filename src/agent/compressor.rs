@@ -415,6 +415,7 @@ impl ContextCompressor {
                         mid.len(),
                         summary_text
                     ),
+                    content_blocks: None,
                     reasoning_content: None,
                     name: Some("compaction_summary".to_string()),
                     tool_calls: None,
@@ -492,6 +493,7 @@ mod tests {
             .map(|i| Message {
                 role: if i == 0 { Role::System } else { Role::User },
                 content: format!("Message {} with some content", i),
+                content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
@@ -505,6 +507,7 @@ mod tests {
         Message {
             role,
             content: content.into(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -852,6 +855,7 @@ mod tests {
                 message: Message {
                     role: Role::Assistant,
                     content: self.response.clone().unwrap_or_default(),
+                    content_blocks: None,
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,

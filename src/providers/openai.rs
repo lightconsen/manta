@@ -918,6 +918,7 @@ mod tests {
         let msg = Message {
             role: Role::User,
             content: "Hello".to_string(),
+            content_blocks: None,
             reasoning_content: None,
             name: Some("alice".to_string()),
             tool_calls: None,
@@ -1213,7 +1214,7 @@ mod tests {
             model: "gpt-4".to_string(),
             messages: vec![OpenAiMessage {
                 role: "user".to_string(),
-                content: Some("Hello".to_string()),
+                content: Some(serde_json::json!("Hello")),
                 reasoning_content: None,
                 name: None,
                 tool_calls: None,
