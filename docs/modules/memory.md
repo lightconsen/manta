@@ -88,5 +88,5 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 - **❌ Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
 - **❌ Missing**: Memory export/import for migration between workspaces.
 - **❌ Missing**: Soul/personality file auto-generation from conversation patterns.
-- **❌ Missing**: Dream result human review — summaries and knowledge graph mutations are auto-applied without user confirmation.
+- **✅ Implemented**: Dream result human review — `DreamReviewQueue` with `enqueue()`/`approve()`/`reject()`/`list_pending()` and disk persistence, wired into `DreamEngine` via optional `review_queue`. See `src/memory/dreaming.rs:1093-1150`.
 - **❌ Missing**: Dream observability dashboard — no CPU/memory/LLM token metrics are collected during dream cycles.

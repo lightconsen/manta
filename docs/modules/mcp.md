@@ -79,7 +79,7 @@ pub struct McpServerConfig {
 - **✅ Implemented**: SSE transport — `connect_sse()` with SSE reader task and POST writer task. See `src/tools/mcp.rs:380-496`.
 - **✅ Implemented**: Auto-reconnect with exponential backoff — `McpManager::reconnect_with_backoff()` with `[5, 10, 20, 40, 80]` second sequence. See `src/tools/mcp.rs:925-950`.
 - **📝 Partial**: Server capability negotiation — basic `initialize` request/response exists (`src/tools/mcp.rs:611-639`). Missing: parsing and acting on server-side capability declarations (tools, resources, prompts, sampling).
-- **Missing**: `streamable_http` transport is declared but not implemented.
+- **✅ Implemented**: `streamable_http` transport — `connect_streamable_http()` sends POST requests and handles SSE response bodies, wired into the connection dispatch. See `src/tools/mcp.rs:544-610`.
 - **Missing**: MCP prompts and sampling protocol support.
 - **Missing**: Resource change notifications (`resources/subscribe`).
 - **Missing**: MCP tool result streaming for long-running operations.

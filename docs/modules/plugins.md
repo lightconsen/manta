@@ -91,11 +91,11 @@ pub enum HookType {
 - **Missing**: Granular permission enforcement at runtime — `PluginPermission` enum is fully declared (`src/plugins/manifest.rs:154-170`) but not enforced by `PluginRuntime` host functions.
 - **📝 Partial**: Plugin state persistence across restarts — `PluginState` memory is preserved across `reload_plugin()` in-memory (`src/plugins/runtime.rs:40-64`). Missing: disk persistence (no serde save/load).
 - **Missing**: Plugin metrics and resource usage monitoring.
-- **Missing**: File-system watcher hot reload — `reload_plugin()` exists but no `notify` watcher for `.wasm` or `plugin.json` changes.
+- **✅ Implemented**: File-system watcher hot reload — WASM files are watched via `HotReloadManager::watch_file()` at startup, and a `ConfigFileType::Plugin` handler reloads plugins on change (state-preserving reload with unload+load fallback). See `src/gateway/mod.rs:2042-2067` and `src/gateway/mod.rs:4381-4458`.
 - **Missing**: Plugin registry with SQLite persistence for installed plugin metadata.
 - **Missing**: Activation planner — trigger-based plugin loading (command/provider/channel/route/capability), dependency-ordered activation, diagnostics.
 - **Missing**: Version management — semver compatibility checking (`syscity = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
-- **Missing**: Config hot-reload integration — no `ConfigChangeEvent` handling in plugin code to auto diff/load/unload.
+- **✅ Implemented**: Config hot-reload integration — `ConfigFileType::Plugin` handler responds to WASM/manifest changes with state-preserving reload; `syscity reload` CLI triggers comprehensive reload of plugins + config + providers + MCP + skills via `POST /api/v1/reload`. See `src/gateway/handlers/admin.rs:483-706`.
 - **Missing**: Plugin dependency management — auto-download external resources (binaries, models), `dirs`-based data directory.
 - **Missing**: Migration system — plugin data structure changes with SQLite `schema_version` tracking.
 - **Missing**: Modular SDK crates — workspace-based `syscity-plugin-sdk-core`, `syscity-plugin-sdk-channel`, `syscity-plugin-sdk-memory`, `syscity-plugin-sdk-provider`, `syscity-plugin-sdk-security` to enforce boundary control.
