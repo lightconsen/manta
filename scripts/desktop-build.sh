@@ -15,4 +15,4 @@ cargo tauri build "$@"
 
 echo ""
 echo "Build complete. Bundles are in:"
-echo "  desktop/target/release/bundle/"
+echo "  target/release/bundle/"
