@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-11
+
 ### Added
 
 - Initial release of Syscity AI Assistant
@@ -40,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI/CD workflows
 - Example skills (weather, news, calculator, todo, reminder)
 - Comprehensive documentation
+
+### Changed
+
+- Relicense project from MIT to Apache-2.0
+
+## [0.1.1] - 2026-06-04
+
+### Changed
+
+- Upgrade `sqlx` 0.7 -> 0.8.6 (security fix)
+- Upgrade `wasmtime` 15 -> 45.0.0 (security fix)
+- Remove `rustls-pemfile` and `rsa` from dependency tree
 
 ## [0.1.0] - 2024-01-01
 

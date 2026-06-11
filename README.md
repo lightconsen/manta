@@ -8,6 +8,12 @@
   <a href="https://github.com/lightconsen/syscity/actions/workflows/ci.yml">
     <img src="https://github.com/lightconsen/syscity/actions/workflows/ci.yml/badge.svg" alt="CI" />
   </a>
+  <a href="https://github.com/lightconsen/syscity/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
+  </a>
+  <a href="https://github.com/lightconsen/syscity#requirements">
+    <img src="https://img.shields.io/badge/MSRV-1.75-orange.svg" alt="MSRV" />
+  </a>
 </p>
 
 Syscity is an **os for physical AI** — a runtime that lets AI agents perceive and act on your computer. Unlike chatbots that only read and write text, Syscity agents can **see your screen**, **control your desktop**, **execute code**, **operate your browser**, and **manage your files**.
@@ -161,4 +167,4 @@ export SYSCITY_MODEL="gpt-4o"
 
 ## License
 
-MIT
+Apache-2.0

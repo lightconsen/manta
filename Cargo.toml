@@ -6,7 +6,7 @@ rust-version = "1.75"
 authors = ["Syscity Contributors"]
 description = "Syscity - A Rust application"
 license = "Apache-2.0"
-repository = "https://github.com/example/syscity"
+repository = "https://github.com/lightconsen/syscity"
 
 [workspace]
 members = ["crates/*", "desktop"]
