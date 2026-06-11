@@ -7,6 +7,38 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
+/// A writer that duplicates output to both stdout and a log file.
+///
+/// This is used so that release builds (where stdout is disconnected)
+/// still have a persistent log trail in `~/.syscity/logs/desktop.log`.
+struct DualWriter {
+    stdout: std::io::Stdout,
+    file: Arc<std::sync::Mutex<std::fs::File>>,
+}
+
+impl Clone for DualWriter {
+    fn clone(&self) -> Self {
+        Self {
+            stdout: std::io::stdout(),
+            file: Arc::clone(&self.file),
+        }
+    }
+}
+
+impl std::io::Write for DualWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.stdout.write(buf)?;
+        let _ = self.file.lock().unwrap().write_all(buf);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stdout.flush()?;
+        let _ = self.file.lock().unwrap().flush();
+        Ok(())
+    }
+}
+
 /// Shared application state between Tauri commands.
 pub struct AppState {
     /// Whether the embedded Gateway has finished startup.
@@ -31,11 +63,29 @@ pub fn run() {
     }
 
     // Set up a simple tracing subscriber so Gateway logs are visible.
+    // In release builds stdout is disconnected (windows_subsystem), so we
+    // also duplicate everything to a log file.
+    let log_path = syscity::dirs::logs_dir().join("desktop.log");
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log_file = Arc::new(std::sync::Mutex::new(
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .expect("Failed to open desktop log file"),
+    ));
+
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(move || DualWriter {
+            stdout: std::io::stdout(),
+            file: Arc::clone(&log_file),
+        })
         .try_init();
 
     let app_state = Arc::new(Mutex::new(AppState {
