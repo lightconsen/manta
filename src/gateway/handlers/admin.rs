@@ -465,3 +465,243 @@ pub async fn assign_team_task_handler(
     .into_response()
 }
 
+// ── Comprehensive reload ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ReloadRequest {
+    #[serde(default = "default_reload_scope")]
+    pub scope: String,
+}
+
+fn default_reload_scope() -> String {
+    "all".to_string()
+}
+
+/// Comprehensive reload handler — reloads plugins, config, providers,
+/// MCP servers, and skills without requiring a daemon restart.
+#[allow(dead_code)]
+pub async fn reload_all_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(req): Json<ReloadRequest>,
+) -> impl IntoResponse {
+    let scope = req.scope.to_lowercase();
+    let mut result = serde_json::json!({ "scope": &scope });
+
+    // ── 1. Reload main configuration from disk ────────────────────────────
+    let new_config = if scope == "all" || scope == "config" || scope == "providers" || scope == "mcp" {
+        let config_path = state.config_path.clone()
+            .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
+
+        if config_path.exists() {
+            match tokio::fs::read_to_string(&config_path).await {
+                Ok(content) => match toml::from_str::<crate::gateway::GatewayConfig>(&content) {
+                    Ok(cfg) => {
+                        info!("Reloaded configuration from {:?}", config_path);
+                        Some(cfg)
+                    }
+                    Err(e) => {
+                        error!("Failed to parse syscity.toml: {}", e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to read syscity.toml: {}", e);
+                    None
+                }
+            }
+        } else {
+            warn!("Config file not found at {:?}", config_path);
+            None
+        }
+    } else {
+        None
+    };
+
+    // ── 2. Plugins ────────────────────────────────────────────────────────
+    if scope == "all" || scope == "plugins" {
+        let plugins = state.plugin_manager.list_plugins().await;
+        let ids: Vec<String> = plugins.iter().map(|p| p.id().to_string()).collect();
+        let mut unloaded = 0usize;
+        for id in &ids {
+            match state.plugin_manager.unload_plugin(id).await {
+                Ok(_) => unloaded += 1,
+                Err(e) => warn!("Failed to unload plugin '{}' during reload: {}", id, e),
+            }
+        }
+        let loaded = match state.plugin_manager.initialize().await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to initialize plugins: {}", e);
+                0
+            }
+        };
+        result["plugins"] = serde_json::json!({
+            "unloaded": unloaded,
+            "loaded": loaded,
+        });
+    }
+
+    // ── 3. Config fields (hot-reloadable subset) ──────────────────────────
+    if scope == "all" || scope == "config" {
+        if let Some(ref new_cfg) = new_config {
+            let mut config = state.config.write().await;
+            config.security = new_cfg.security.clone();
+            config.providers = new_cfg.providers.clone();
+            config.mcp = new_cfg.mcp.clone();
+            config.hot_reload = new_cfg.hot_reload.clone();
+            config.cost_guard = new_cfg.cost_guard.clone();
+            config.capabilities = new_cfg.capabilities.clone();
+            config.computer = new_cfg.computer.clone();
+            config.workspace_dir = new_cfg.workspace_dir.clone();
+            config.workspace_only = new_cfg.workspace_only;
+            config.model = new_cfg.model.clone();
+            config.model_provider = new_cfg.model_provider.clone();
+            config.dreaming = new_cfg.dreaming.clone();
+            config.standing_orders = new_cfg.standing_orders.clone();
+            config.cron = new_cfg.cron.clone();
+            config.browser = new_cfg.browser.clone();
+            drop(config);
+            result["config"] = serde_json::json!({ "updated": true });
+            info!("Applied hot-reloadable configuration fields");
+        } else {
+            result["config"] = serde_json::json!({ "updated": false, "reason": "parse or read error" });
+        }
+    }
+
+    // ── 4. Providers sync ─────────────────────────────────────────────────
+    if scope == "all" || scope == "providers" {
+        let (new_providers, current_names) = if let Some(ref new_cfg) = new_config {
+            let new_names: std::collections::HashSet<String> = new_cfg.providers.keys().cloned().collect();
+            let current = state.model_router.list_providers().await;
+            let current_names: std::collections::HashSet<String> = current.iter().map(|p| p.name.clone()).collect();
+            (new_names, current_names)
+        } else {
+            (std::collections::HashSet::new(), std::collections::HashSet::new())
+        };
+
+        let mut added = 0usize;
+        let mut removed = 0usize;
+
+        // Remove providers that no longer exist in config
+        for name in &current_names {
+            if !new_providers.contains(name) {
+                if let Err(e) = state.model_router.remove_provider(name).await {
+                    warn!("Failed to remove provider '{}': {}", name, e);
+                } else {
+                    removed += 1;
+                    info!("Removed provider '{}' (no longer in config)", name);
+                }
+            }
+        }
+
+        // Add or update providers from new config
+        if let Some(ref new_cfg) = new_config {
+            for (name, provider_config) in &new_cfg.providers {
+                if !current_names.contains(name) {
+                    if let Err(e) = state.model_router.add_provider(name, provider_config.clone()).await {
+                        warn!("Failed to add provider '{}': {}", name, e);
+                    } else {
+                        added += 1;
+                        info!("Added provider '{}'", name);
+                    }
+                }
+            }
+        }
+
+        result["providers"] = serde_json::json!({
+            "added": added,
+            "removed": removed,
+        });
+    }
+
+    // ── 5. MCP servers ────────────────────────────────────────────────────
+    if scope == "all" || scope == "mcp" {
+        // Disconnect all existing MCP servers
+        let existing_servers = state.mcp_manager.list_servers().await;
+        for server_id in &existing_servers {
+            // Deregister tools first
+            state.tool_registry.deregister_prefix(&format!("mcp__{}__", server_id));
+            if let Err(e) = state.mcp_manager.disconnect(server_id).await {
+                warn!("Failed to disconnect MCP server '{}': {}", server_id, e);
+            } else {
+                info!("Disconnected MCP server '{}'", server_id);
+            }
+        }
+
+        // Reconnect from new config
+        let mut connected = 0usize;
+        let mut failed = 0usize;
+        if let Some(ref new_cfg) = new_config {
+            for (server_id, server_config) in &new_cfg.mcp.servers {
+                if !server_config.auto_connect {
+                    continue;
+                }
+                match state.mcp_manager.connect(server_id, server_config.clone()).await {
+                    Ok(tools) => {
+                        info!(
+                            "MCP server '{}' connected: {} tool(s)",
+                            server_id,
+                            tools.len()
+                        );
+                        // Register discovered tools
+                        if let Some(client_arc) = state.mcp_manager.get_client(server_id).await {
+                            let max_tools = if server_config.max_tools == 0 {
+                                tools.len()
+                            } else {
+                                server_config.max_tools.min(tools.len())
+                            };
+                            for tool in tools.iter().take(max_tools) {
+                                let wrapper = Arc::new(McpToolWrapper::new(
+                                    client_arc.clone(),
+                                    server_id,
+                                    tool,
+                                ));
+                                state.tool_registry.register_dynamic(wrapper);
+                            }
+                        }
+                        connected += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to connect MCP server '{}': {}", server_id, e);
+                        failed += 1;
+                    }
+                }
+            }
+        }
+
+        result["mcp"] = serde_json::json!({
+            "disconnected": existing_servers.len(),
+            "connected": connected,
+            "failed": failed,
+        });
+    }
+
+    // ── 6. Skills ─────────────────────────────────────────────────────────
+    if scope == "all" || scope == "skills" {
+        let skills_result = {
+            let mut skills_manager = state.skills_manager.write().await;
+            match skills_manager.initialize().await {
+                Ok(count) => {
+                    info!("Reinitialized skills manager with {} skills", count);
+                    serde_json::json!({ "reinitialized": true, "count": count })
+                }
+                Err(e) => {
+                    warn!("Failed to reinitialize skills manager: {}", e);
+                    serde_json::json!({ "reinitialized": false, "error": e.to_string() })
+                }
+            }
+        };
+        result["skills"] = skills_result;
+    }
+
+    // ── 7. Channels (document only — rely on file watcher for live reload) ─
+    if scope == "all" || scope == "channels" {
+        result["channels"] = serde_json::json!({
+            "note": "Channels are hot-reloaded automatically when syscity.toml or channel config files change. Use the file watcher or restart individual channels via API.",
+        });
+    }
+
+    result["success"] = serde_json::json!(true);
+    (StatusCode::OK, Json(result)).into_response()
+}
+

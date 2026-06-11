@@ -106,24 +106,51 @@ pub async fn run_start_daemon(
     }
 }
 
-/// Reload plugins and configuration without restarting daemon
+/// Reload plugins, configuration, providers, MCP servers, and skills
+/// without restarting the daemon.
 pub async fn run_reload_daemon() -> Result<()> {
     const DAEMON_URL: &str = "http://127.0.0.1:18080";
     let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/plugins/reload", DAEMON_URL);
+    let url = format!("{}/api/v1/reload", DAEMON_URL);
 
-    match client.post(&url).send().await {
+    let body = serde_json::json!({ "scope": "all" });
+
+    match client.post(&url).json(&body).send().await {
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             if status.is_success() {
                 println!("Daemon reloaded successfully.");
-                if !text.is_empty() {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let unloaded = json["unloaded"].as_u64().unwrap_or(0);
-                        let loaded = json["loaded"].as_u64().unwrap_or(0);
-                        println!("  Unloaded: {} plugin(s)", unloaded);
-                        println!("  Loaded:   {} plugin(s)", loaded);
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(plugins) = json.get("plugins") {
+                        let unloaded = plugins["unloaded"].as_u64().unwrap_or(0);
+                        let loaded = plugins["loaded"].as_u64().unwrap_or(0);
+                        println!("  Plugins:  unloaded={}, loaded={}", unloaded, loaded);
+                    }
+                    if let Some(cfg) = json.get("config") {
+                        if cfg["updated"].as_bool().unwrap_or(false) {
+                            println!("  Config:   updated");
+                        } else {
+                            println!("  Config:   no change");
+                        }
+                    }
+                    if let Some(providers) = json.get("providers") {
+                        let added = providers["added"].as_u64().unwrap_or(0);
+                        let removed = providers["removed"].as_u64().unwrap_or(0);
+                        println!("  Providers: added={}, removed={}", added, removed);
+                    }
+                    if let Some(mcp) = json.get("mcp") {
+                        let connected = mcp["connected"].as_u64().unwrap_or(0);
+                        let failed = mcp["failed"].as_u64().unwrap_or(0);
+                        println!("  MCP:      connected={}, failed={}", connected, failed);
+                    }
+                    if let Some(skills) = json.get("skills") {
+                        if skills["reinitialized"].as_bool().unwrap_or(false) {
+                            let count = skills["count"].as_u64().unwrap_or(0);
+                            println!("  Skills:   reinitialized ({} skills)", count);
+                        } else {
+                            println!("  Skills:   reinitialization failed");
+                        }
                     }
                 }
                 Ok(())

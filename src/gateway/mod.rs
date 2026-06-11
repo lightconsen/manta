@@ -66,79 +66,79 @@ use handlers::*;
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
-    /// Host to bind to
+ /// Host to bind to
     pub host: String,
-    /// Port for gateway control plane (serves API + WebSocket + SPA)
+ /// Port for gateway control plane (serves API + WebSocket + SPA)
     pub port: u16,
-    /// Enable Tailscale remote access
+ /// Enable Tailscale remote access
     pub tailscale_enabled: bool,
-    /// Tailscale funnel domain (if using)
+ /// Tailscale funnel domain (if using)
     pub tailscale_domain: Option<String>,
-    /// Default agent configuration
+ /// Default agent configuration
     pub default_agent: AgentConfig,
-    /// Channel configurations
+ /// Channel configurations
     pub channels: HashMap<String, ChannelConfig>,
-    /// Vector memory configuration
+ /// Vector memory configuration
     #[serde(default)]
     pub vector_memory: VectorMemoryConfig,
-    /// Plugin system configuration
+ /// Plugin system configuration
     #[serde(default)]
     pub plugins: PluginConfig,
-    /// Hot reload configuration
+ /// Hot reload configuration
     #[serde(default)]
     pub hot_reload: HotReloadConfig,
-    /// ACP (Agent Control Plane) configuration
+ /// ACP (Agent Control Plane) configuration
     #[serde(default)]
     pub acp: AcpConfig,
-    /// Cron scheduler configuration
+ /// Cron scheduler configuration
     #[serde(default)]
     pub cron: CronConfig,
-    /// Heartbeat scheduler configuration
+ /// Heartbeat scheduler configuration
     #[serde(default)]
     pub heartbeat: crate::heartbeat::HeartbeatConfig,
-    /// Security configuration
+ /// Security configuration
     #[serde(default)]
     pub security: SecurityConfig,
-    /// Storage adapter configuration
+ /// Storage adapter configuration
     #[serde(default)]
     pub storage: StorageConfig,
-    /// LLM Provider configurations (provider name -> config)
+ /// LLM Provider configurations (provider name -> config)
     #[serde(default)]
     pub providers: HashMap<String, crate::model_router::ProviderConfig>,
-    /// Default model name (e.g., "claude-3-sonnet-20240229", "qwen3.5-plus")
+ /// Default model name (e.g., "claude-3-sonnet-20240229", "qwen3.5-plus")
     #[serde(default = "default_model")]
     pub model: String,
-    /// Model provider (e.g., "anthropic", "openai")
+ /// Model provider (e.g., "anthropic", "openai")
     #[serde(default = "default_model_provider")]
     pub model_provider: String,
-    /// MCP server configurations (auto-connected on startup)
+ /// MCP server configurations (auto-connected on startup)
     #[serde(default)]
     pub mcp: McpSettings,
-    /// Live spend and action-rate guard for LLM calls.
+ /// Live spend and action-rate guard for LLM calls.
     #[serde(default)]
     pub cost_guard: CostGuardConfig,
-    /// Workspace directory for file operations.
-    /// All relative paths are resolved against this directory.
-    /// When `workspace_only` is true, file operations are restricted to this directory.
+ /// Workspace directory for file operations.
+ /// All relative paths are resolved against this directory.
+ /// When `workspace_only` is true, file operations are restricted to this directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<std::path::PathBuf>,
-    /// When true, restrict file operations to `workspace_dir`.
+ /// When true, restrict file operations to `workspace_dir`.
     #[serde(default)]
     pub workspace_only: bool,
-    /// Browser configuration (bridge, profiles, pool)
+ /// Browser configuration (bridge, profiles, pool)
     #[cfg(feature = "browser")]
     #[serde(default)]
     pub browser: crate::config::BrowserConfig,
-    /// Computer / desktop automation configuration
+ /// Computer / desktop automation configuration
     #[serde(default)]
     pub computer: crate::config::ComputerConfig,
-    /// Dream scheduler configuration for background memory consolidation
+ /// Dream scheduler configuration for background memory consolidation
     #[serde(default)]
     pub dreaming: crate::config::MemoryDreamingConfig,
-    /// Standing orders configuration (persistent background agent programs)
+ /// Standing orders configuration (persistent background agent programs)
     #[serde(default)]
     pub standing_orders: crate::standing_orders::config::StandingOrderConfig,
-    /// Capability set configuration (profile, scope, enabled sets)
+ /// Capability set configuration (profile, scope, enabled sets)
     #[serde(default)]
     pub capabilities: crate::config::CapabilitiesConfig,
 }
@@ -156,29 +156,29 @@ fn default_model_provider() -> String {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum EmbeddingProviderType {
-    /// OpenAI API (requires API key)
+ /// OpenAI API (requires API key)
     #[default]
     OpenAi,
-    /// Local GGUF model (direct loading, no external service)
+ /// Local GGUF model (direct loading, no external service)
     LocalGguf,
 }
 
 /// Vector memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorMemoryConfig {
-    /// Enable vector memory / semantic search
+ /// Enable vector memory / semantic search
     pub enabled: bool,
-    /// Embedding provider type
+ /// Embedding provider type
     pub provider: EmbeddingProviderType,
-    /// Embedding provider API key (e.g., OpenAI)
+ /// Embedding provider API key (e.g., OpenAI)
     pub embedding_api_key: Option<String>,
-    /// Embedding model to use (for API providers)
+ /// Embedding model to use (for API providers)
     pub embedding_model: String,
-    /// Embedding dimension
+ /// Embedding dimension
     pub embedding_dimension: usize,
-    /// API base URL (for Azure, etc.)
+ /// API base URL (for Azure, etc.)
     pub api_base_url: Option<String>,
-    /// Local GGUF model path (for local-embeddings feature)
+ /// Local GGUF model path (for local-embeddings feature)
     pub local_model_path: Option<String>,
 }
 
@@ -201,11 +201,11 @@ impl Default for VectorMemoryConfig {
 /// Plugin system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
-    /// Enable plugin system
+ /// Enable plugin system
     pub enabled: bool,
-    /// Auto-load plugins on startup
+ /// Auto-load plugins on startup
     pub auto_load: bool,
-    /// Plugin directory path (None = default)
+ /// Plugin directory path (None = default)
     pub plugin_dir: Option<String>,
 }
 
@@ -222,15 +222,15 @@ impl Default for PluginConfig {
 /// Hot reload configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotReloadConfig {
-    /// Enable hot reload for configuration
+ /// Enable hot reload for configuration
     pub enabled: bool,
-    /// Watch config files for changes
+ /// Watch config files for changes
     pub watch_config: bool,
-    /// Watch agent files for changes
+ /// Watch agent files for changes
     pub watch_agents: bool,
-    /// Watch plugin files for changes
+ /// Watch plugin files for changes
     pub watch_plugins: bool,
-    /// Debounce duration in seconds
+ /// Debounce duration in seconds
     pub debounce_seconds: u64,
 }
 
@@ -249,13 +249,13 @@ impl Default for HotReloadConfig {
 /// ACP (Agent Control Plane) configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpConfig {
-    /// Enable subagent spawning
+ /// Enable subagent spawning
     pub enabled: bool,
-    /// Maximum concurrent subagents
+ /// Maximum concurrent subagents
     pub max_subagents: usize,
-    /// Default subagent timeout in seconds
+ /// Default subagent timeout in seconds
     pub default_timeout_seconds: u64,
-    /// Maximum iterations per ACP session execution
+ /// Maximum iterations per ACP session execution
     #[serde(default = "default_max_iterations")]
     pub max_iterations: usize,
 }
@@ -278,9 +278,9 @@ impl Default for AcpConfig {
 /// Cron scheduler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronConfig {
-    /// Enable cron scheduler
+ /// Enable cron scheduler
     pub enabled: bool,
-    /// Check interval in seconds
+ /// Check interval in seconds
     pub check_interval_seconds: u64,
 }
 
@@ -296,14 +296,14 @@ impl Default for CronConfig {
 /// Cost guard configuration — live spend and action-rate tracking.
 ///
 /// Set `daily_limit_cents` and/or `hourly_action_limit` to non-zero values to
-/// enable limits.  Zero means unlimited (default).
+/// enable limits. Zero means unlimited (default).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CostGuardConfig {
-    /// Maximum daily LLM spend in cents (0 = unlimited).
-    /// Example: 500 = $5.00/day cap.
+ /// Maximum daily LLM spend in cents (0 = unlimited).
+ /// Example: 500 = $5.00/day cap.
     #[serde(default)]
     pub daily_limit_cents: u64,
-    /// Maximum provider calls per hour across all agents (0 = unlimited).
+ /// Maximum provider calls per hour across all agents (0 = unlimited).
     #[serde(default)]
     pub hourly_action_limit: u64,
 }
@@ -311,32 +311,32 @@ pub struct CostGuardConfig {
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    /// Enable security features (auth, rate limiting, security headers)
+ /// Enable security features (auth, rate limiting, security headers)
     pub enabled: bool,
-    /// Require authentication for API access
+ /// Require authentication for API access
     pub auth_required: bool,
-    /// Require pairing for new users
+ /// Require pairing for new users
     pub pairing_required: bool,
-    /// Authentication mode
+ /// Authentication mode
     #[serde(default)]
     pub auth_mode: crate::gateway::protocol::AuthMode,
-    /// Shared secret token for simple authentication
+ /// Shared secret token for simple authentication
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_token: Option<String>,
-    /// Rate limiting configuration
+ /// Rate limiting configuration
     pub rate_limit: RateLimitConfig,
-    /// Enable security headers
+ /// Enable security headers
     pub security_headers: bool,
-    /// OAuth2 configuration
+ /// OAuth2 configuration
     #[serde(default)]
     pub oauth: crate::gateway::auth::OAuthConfig,
-    /// CORS configuration
+ /// CORS configuration
     #[serde(default)]
     pub cors: crate::gateway::auth::CorsConfig,
-    /// CSP configuration
+ /// CSP configuration
     #[serde(default)]
     pub csp: crate::gateway::auth::CspConfig,
-    /// Mention gating configuration
+ /// Mention gating configuration
     #[serde(default)]
     pub mention_gating: crate::security::mention_gate::MentionGatingConfig,
 }
@@ -344,25 +344,25 @@ pub struct SecurityConfig {
 /// Rate limiting configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
-    /// Enable rate limiting
+ /// Enable rate limiting
     pub enabled: bool,
-    /// Maximum requests per window (legacy token bucket)
+ /// Maximum requests per window (legacy token bucket)
     pub capacity: u32,
-    /// Refill rate (tokens per second) (legacy token bucket)
+ /// Refill rate (tokens per second) (legacy token bucket)
     pub refill_rate: f64,
-    /// Use multi-tier sliding window rate limiting instead of token bucket
+ /// Use multi-tier sliding window rate limiting instead of token bucket
     #[serde(default)]
     pub multi_tier: bool,
-    /// Global tier: overall API rate limit
+ /// Global tier: overall API rate limit
     #[serde(default)]
     pub global: TierConfig,
-    /// Per-authenticated-user rate limit
+ /// Per-authenticated-user rate limit
     #[serde(default)]
     pub per_user: TierConfig,
-    /// Per-IP rate limit (for anonymous requests)
+ /// Per-IP rate limit (for anonymous requests)
     #[serde(default)]
     pub per_ip: TierConfig,
-    /// Per-endpoint rate limit
+ /// Per-endpoint rate limit
     #[serde(default)]
     pub per_endpoint: TierConfig,
 }
@@ -370,11 +370,11 @@ pub struct RateLimitConfig {
 /// Single tier configuration for multi-tier rate limiting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierConfig {
-    /// Enable this tier
+ /// Enable this tier
     pub enabled: bool,
-    /// Maximum requests per window
+ /// Maximum requests per window
     pub capacity: u32,
-    /// Window size in seconds
+ /// Window size in seconds
     pub window_secs: u64,
 }
 
@@ -440,11 +440,11 @@ impl Default for RateLimitConfig {
 /// Storage adapter configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Storage type: "memory", "file", "sqlite"
+ /// Storage type: "memory", "file", "sqlite"
     pub storage_type: String,
-    /// Base path for file/SQLite storage
+ /// Base path for file/SQLite storage
     pub base_path: Option<String>,
-    /// SQLite database URL (if using sqlite)
+ /// SQLite database URL (if using sqlite)
     pub database_url: Option<String>,
 }
 
@@ -495,30 +495,30 @@ impl Default for GatewayConfig {
 /// Channel-specific configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelConfig {
-    /// Channel type
+ /// Channel type
     pub channel_type: ChannelType,
-    /// Whether channel is enabled
+ /// Whether channel is enabled
     pub enabled: bool,
-    /// Channel-specific credentials/tokens
+ /// Channel-specific credentials/tokens
     pub credentials: HashMap<String, String>,
-    /// DM policy: open, pairing, or allowlist
+ /// DM policy: open, pairing, or allowlist
     #[serde(default)]
     pub dm_policy: DmPolicy,
-    /// Require explicit mention in group chats (ignored for DMs)
+ /// Require explicit mention in group chats (ignored for DMs)
     #[serde(default)]
     pub require_mention: bool,
-    /// Allowlist of users/numbers (for allowlist policy)
+ /// Allowlist of users/numbers (for allowlist policy)
     #[serde(default)]
     pub allow_from: Vec<String>,
-    /// Blocklist of users/numbers
+ /// Blocklist of users/numbers
     #[serde(default)]
     pub block_from: Vec<String>,
-    /// Agent ID to route to (None = default)
+ /// Agent ID to route to (None = default)
     pub agent_id: Option<String>,
 }
 
 impl ChannelConfig {
-    /// Create a new channel config with open policy (default).
+ /// Create a new channel config with open policy (default).
     pub fn new(channel_type: ChannelType) -> Self {
         Self {
             channel_type,
@@ -532,24 +532,24 @@ impl ChannelConfig {
         }
     }
 
-    /// Set the DM policy.
+ /// Set the DM policy.
     pub fn with_dm_policy(mut self, policy: DmPolicy) -> Self {
         self.dm_policy = policy;
         self
     }
 
-    /// Set the allowlist.
+ /// Set the allowlist.
     pub fn with_allow_from(mut self, allow_from: Vec<String>) -> Self {
         self.allow_from = allow_from;
         self
     }
 
-    /// Check if a user is in the allowlist.
+ /// Check if a user is in the allowlist.
     pub fn is_in_allowlist(&self, user_id: &str) -> bool {
         self.allow_from.iter().any(|a| a == user_id)
     }
 
-    /// Check if a user is blocked.
+ /// Check if a user is blocked.
     pub fn is_blocked(&self, user_id: &str) -> bool {
         self.block_from.iter().any(|b| b == user_id)
     }
@@ -557,151 +557,151 @@ impl ChannelConfig {
 
 /// Gateway state shared across handlers
 pub struct GatewayState {
-    /// Configuration
+ /// Configuration
     pub config: Arc<RwLock<GatewayConfig>>,
-    /// Gateway startup time for uptime calculations
+ /// Gateway startup time for uptime calculations
     pub start_time: Instant,
-    /// Active channels
+ /// Active channels
     pub channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
-    /// Active agents by ID
+ /// Active agents by ID
     pub agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
-    /// Session routing table: session_id -> agent_id
-    /// DEPRECATED: use `agent_router` instead for new code.
+ /// Session routing table: session_id -> agent_id
+ /// DEPRECATED: use `agent_router` instead for new code.
     pub session_routing: Arc<RwLock<HashMap<String, String>>>,
-    /// Agent router for workspace-aware multi-agent routing.
+ /// Agent router for workspace-aware multi-agent routing.
     pub agent_router: Arc<AgentRouter>,
-    /// Session to channel mapping: session_id -> (channel_name, channel_specific_id)
-    /// Used to route responses back to the correct channel endpoint
+ /// Session to channel mapping: session_id -> (channel_name, channel_specific_id)
+ /// Used to route responses back to the correct channel endpoint
     pub session_channels: Arc<RwLock<HashMap<String, (String, String)>>>,
-    /// Webhook session storage: platform_key -> session_uuid
-    /// Platform key format: "whatsapp:phone_number" or "feishu:user_id"
-    /// Used for UUID-based session management in webhook-based channels
+ /// Webhook session storage: platform_key -> session_uuid
+ /// Platform key format: "whatsapp:phone_number" or "feishu:user_id"
+ /// Used for UUID-based session management in webhook-based channels
     pub webhook_sessions: Arc<RwLock<HashMap<String, String>>>,
-    /// Model router for multi-provider support
+ /// Model router for multi-provider support
     pub model_router: Arc<ModelRouter>,
-    /// Tool registry for all agents
+ /// Tool registry for all agents
     pub tool_registry: Arc<ToolRegistry>,
-    /// Event broadcast channel
+ /// Event broadcast channel
     pub event_tx: broadcast::Sender<GatewayEvent>,
-    /// Event hook registry for intercepting/transforming events
+ /// Event hook registry for intercepting/transforming events
     pub hook_registry: Arc<hooks::EventHookRegistry>,
-    /// Message queue for processing
+ /// Message queue for processing
     pub message_queue: mpsc::Sender<QueuedMessage>,
-    /// Canvas manager for dynamic UI
+ /// Canvas manager for dynamic UI
     pub canvas_manager: Arc<CanvasManager>,
-    /// Plugin manager for extensibility
+ /// Plugin manager for extensibility
     pub plugin_manager: Arc<PluginManager>,
-    /// ACP control plane for subagent spawning
+ /// ACP control plane for subagent spawning
     pub acp: Arc<AcpControlPlane>,
-    /// Vector memory service for semantic search (RwLock for late initialization)
+ /// Vector memory service for semantic search (RwLock for late initialization)
     pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
-    /// Session search for FTS5 conversation indexing (RwLock for late initialization)
+ /// Session search for FTS5 conversation indexing (RwLock for late initialization)
     pub session_search: RwLock<Option<Arc<crate::memory::SessionSearch>>>,
-    /// Memory manager — unified orchestrator with hybrid search (Arc<RwLock> so tools
-    /// and handlers can share late-initialized access without &mut GatewayState)
+ /// Memory manager — unified orchestrator with hybrid search (Arc<RwLock> so tools
+ /// and handlers can share late-initialized access without &mut GatewayState)
     pub memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
-    /// Hot reload manager for config changes (RwLock for late initialization)
+ /// Hot reload manager for config changes (RwLock for late initialization)
     pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
-    /// Cron scheduler for scheduled jobs (RwLock for late initialization)
+ /// Cron scheduler for scheduled jobs (RwLock for late initialization)
     pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
-    /// Heartbeat wake channel sender (for requesting immediate heartbeat)
+ /// Heartbeat wake channel sender (for requesting immediate heartbeat)
     pub heartbeat_wake_tx: RwLock<Option<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>>,
-    /// Heartbeat event broadcast sender (RwLock for late initialization)
+ /// Heartbeat event broadcast sender (RwLock for late initialization)
     pub heartbeat_event_tx:
         RwLock<Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>>,
-    /// Dream scheduler for background memory consolidation (RwLock for late initialization)
+ /// Dream scheduler for background memory consolidation (RwLock for late initialization)
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
-    /// Standing order manager for persistent background agent programs
+ /// Standing order manager for persistent background agent programs
     pub standing_order_manager:
         RwLock<Option<crate::standing_orders::StandingOrderManager>>,
-    /// Auth manager for authentication
+ /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
-    /// DM pairing store for access control
+ /// DM pairing store for access control
     pub pairing_store: Arc<crate::security::pairing::PairingStore>,
-    /// Device pairing store for WebSocket device auth
+ /// Device pairing store for WebSocket device auth
     pub device_pairing_store: Arc<crate::security::device_pairing::DevicePairingStore>,
-    /// Command gate for slash-command permission control
+ /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
-    /// Mention gate for controlling which mentions trigger agent responses
+ /// Mention gate for controlling which mentions trigger agent responses
     pub mention_gate: Arc<crate::security::mention_gate::MentionGate>,
-    /// Persistent audit log for security-relevant events (SQLite-backed)
+ /// Persistent audit log for security-relevant events (SQLite-backed)
     pub audit_log: Arc<crate::security::persistent_audit::PersistentAuditLog>,
-    /// Rate limiter for API protection (legacy token bucket)
+ /// Rate limiter for API protection (legacy token bucket)
     pub rate_limiter: Arc<crate::security::RateLimiter>,
-    /// Multi-tier rate limiter (sliding window per user/ip/endpoint)
+ /// Multi-tier rate limiter (sliding window per user/ip/endpoint)
     pub multi_tier_rate_limiter: Arc<crate::gateway::rate_limit::MultiTierRateLimiter>,
-    /// Storage adapter for persistence
+ /// Storage adapter for persistence
     pub storage: Arc<RwLock<dyn crate::adapters::Storage>>,
-    /// Skills manager for hot-reloadable skills
+ /// Skills manager for hot-reloadable skills
     pub skills_manager: Arc<RwLock<crate::skills::SkillManager>>,
-    /// Agent registry for discovered personalities (OpenClaw-style)
+ /// Agent registry for discovered personalities
     pub agent_registry: Arc<RwLock<crate::agent::AgentRegistry>>,
-    /// Multi-agent session manager (OpenClaw-style)
+ /// Multi-agent session manager
     pub session_manager: Arc<RwLock<crate::agent::SessionManager>>,
-    /// SQLite-backed session store for persistent chat history
+ /// SQLite-backed session store for persistent chat history
     pub session_store: Option<Arc<crate::agent::session_store::SessionStore>>,
-    /// MCP manager for server connections (shared with McpConnectionTool)
+ /// MCP manager for server connections (shared with McpConnectionTool)
     pub mcp_manager: Arc<McpManager>,
-    /// Path to the config file (for runtime persistence)
+ /// Path to the config file (for runtime persistence)
     pub config_path: Option<PathBuf>,
-    /// Runtime settings store — mutable key/value pairs changeable without restart.
+ /// Runtime settings store — mutable key/value pairs changeable without restart.
     pub runtime_settings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    /// Approval queue for human-in-the-loop tool policy enforcement.
+ /// Approval queue for human-in-the-loop tool policy enforcement.
     pub approval_queue: Arc<ApprovalQueue>,
-    /// Self-repair loop state — tracks restart records, exposed via REST.
+ /// Self-repair loop state — tracks restart records, exposed via REST.
     pub repair_state: Arc<RepairState>,
-    /// Shared live cost guard — tracks daily spend and hourly action rate
-    /// across all agents. `Arc` allows every spawned agent to share one guard.
+ /// Shared live cost guard — tracks daily spend and hourly action rate
+ /// across all agents. `Arc` allows every spawned agent to share one guard.
     pub cost_guard: Arc<crate::agent::CostGuard>,
-    /// Reply dispatcher for routing agent responses to channels.
+ /// Reply dispatcher for routing agent responses to channels.
     pub reply_dispatcher: Arc<crate::outbound::ReplyDispatcher>,
-    /// Sender for the inbound pipeline to deliver `RoutedMessage`s.
+ /// Sender for the inbound pipeline to deliver `RoutedMessage`s.
     pub routed_tx: mpsc::Sender<crate::inbound::RoutedMessage>,
-    /// Inbound pipeline for processing incoming messages.
+ /// Inbound pipeline for processing incoming messages.
     pub inbound_pipeline: Arc<dyn crate::inbound::InboundPipeline>,
-    /// Outbound pipeline for processing agent outputs.
+ /// Outbound pipeline for processing agent outputs.
     pub outbound_pipeline: Arc<dyn crate::outbound::OutboundPipeline>,
-    /// Side effect executor for post-response actions.
+ /// Side effect executor for post-response actions.
     pub side_effect_executor: Arc<crate::outbound::SideEffectExecutor>,
-    /// SSE streamer for real-time event streaming.
+ /// SSE streamer for real-time event streaming.
     pub sse_streamer: Arc<crate::outbound::SseStreamer>,
-    /// Channel extension registry for unified channel management.
+ /// Channel extension registry for unified channel management.
     pub channel_extensions: Arc<RwLock<crate::channels::ChannelExtensionRegistry>>,
-    /// Provider SDK for dynamic provider registration and discovery.
+ /// Provider SDK for dynamic provider registration and discovery.
     pub provider_sdk: Arc<RwLock<crate::providers::ProviderSdk>>,
-    /// Tool SDK for dynamic tool pack registration.
+ /// Tool SDK for dynamic tool pack registration.
     pub tool_sdk: Arc<RwLock<crate::tools::ToolSdk>>,
-    /// Session message buffer for FollowUp / Collect queue modes.
-    /// session_id -> buffered messages (content + metadata)
+ /// Session message buffer for FollowUp / Collect queue modes.
+ /// session_id -> buffered messages (content + metadata)
     pub session_message_buffer: Arc<RwLock<HashMap<String, Vec<BufferedMessage>>>>,
-    /// OpenClaw-aligned route resolver with multi-dimensional matching.
+ /// route resolver with multi-dimensional matching.
     pub route_resolver: Arc<crate::agent::RouteResolver>,
-    /// File-based transcript store for session export.
+ /// File-based transcript store for session export.
     pub transcript_store: Arc<crate::agent::TranscriptStore>,
-    /// Artifact store for session-bound code snippets, documents, links.
+ /// Artifact store for session-bound code snippets, documents, links.
     pub artifact_store: Arc<crate::agent::ArtifactStore>,
-    /// Disk budget manager for per-session storage quota enforcement.
+ /// Disk budget manager for per-session storage quota enforcement.
     pub disk_budget: Arc<crate::agent::DiskBudgetManager>,
-    /// Session file manager for isolated per-session file operations.
+ /// Session file manager for isolated per-session file operations.
     pub session_file_manager: Arc<crate::agent::SessionFileManager>,
-    /// Group session manager for multi-member sessions with role awareness.
+ /// Group session manager for multi-member sessions with role awareness.
     pub group_session_manager: Arc<RwLock<crate::agent::GroupSessionManager>>,
-    /// Browser bridge server (started when browser.bridge_enabled is true)
+ /// Browser bridge server (started when browser.bridge_enabled is true)
     #[cfg(feature = "browser")]
     pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
-    /// Computer / desktop automation adapter (optional)
+ /// Computer / desktop automation adapter (optional)
     pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
-    /// Task scheduler for recurring / cron-like agent tasks.
+ /// Task scheduler for recurring / cron-like agent tasks.
     pub task_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>>,
-    /// Log line broadcast channel for real-time log streaming to WebSocket clients
+ /// Log line broadcast channel for real-time log streaming to WebSocket clients
     pub log_tx: broadcast::Sender<String>,
 }
 
 impl GatewayState {
-    /// Centralized access check for incoming messages.
-    ///
-    /// Returns `Ok(())` if the message is allowed, or `Err(reason)` if it
-    /// should be dropped.
+ /// Centralized access check for incoming messages.
+ ///
+ /// Returns `Ok(())` if the message is allowed, or `Err(reason)` if it
+ /// should be dropped.
     pub async fn check_incoming_access(
         &self,
         channel: &str,
@@ -717,7 +717,7 @@ impl GatewayState {
         };
 
         if let Some(ref ch_cfg) = channel_config {
-            // 1. Blocklist check
+ // 1. Blocklist check
             if ch_cfg.is_blocked(user_id) {
                 let reason = format!("User {} is blocked on channel {}", user_id, channel);
                 self.audit_log
@@ -726,13 +726,13 @@ impl GatewayState {
                 return Err(reason);
             }
 
-            // 2. DM Policy check
+ // 2. DM Policy check
             use crate::security::pairing::DmPolicy;
             match ch_cfg.dm_policy {
                 DmPolicy::Open => {}
                 DmPolicy::Pairing => {
                     if !self.pairing_store.is_authorized(channel, user_id).await {
-                        // Create pairing request silently and drop message
+ // Create pairing request silently and drop message
                         let _ = self
                             .pairing_store
                             .request_access(channel, user_id, None)
@@ -775,7 +775,7 @@ impl GatewayState {
                 }
             }
 
-            // 3. Mention gating (require_mention + MentionGate)
+ // 3. Mention gating (require_mention + MentionGate)
             if !mention.should_process(ch_cfg.require_mention) {
                 let reason = format!(
                     "Message from {} on channel {} ignored (mention required in groups)",
@@ -787,7 +787,7 @@ impl GatewayState {
                 return Err(reason);
             }
 
-            // 3b. MentionGate policy check
+ // 3b. MentionGate policy check
             if matches!(mention, crate::channels::MentionState::Mentioned) {
                 let mention_allowed = self.mention_gate.check(channel, "*").await;
                 if !mention_allowed {
@@ -804,7 +804,7 @@ impl GatewayState {
             }
         }
 
-        // 4. Command gate check
+ // 4. Command gate check
         let decision = self.command_gate.check(user_id, content);
         if !decision.is_allowed() {
             let reason = match decision {
@@ -825,7 +825,7 @@ impl GatewayState {
             return Err(msg);
         }
 
-        // Log successful access
+ // Log successful access
         self.audit_log
             .log(AuditEventType::AccessCheck, user_id, channel, true, "Access allowed", None)
             .await;
@@ -845,38 +845,38 @@ pub struct BufferedMessage {
 /// Handle to a running agent
 #[derive(Clone)]
 pub struct AgentHandle {
-    /// Agent ID
+ /// Agent ID
     pub id: String,
-    /// Agent configuration
+ /// Agent configuration
     pub config: AgentConfig,
-    /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig, Shutdown)
+ /// Fire-and-forget command channel (ProcessMessage, Cancel, UpdateConfig, Shutdown)
     pub tx: mpsc::Sender<AgentCommand>,
-    /// Request/response query channel (introspection + skill invocations)
+ /// Request/response query channel (introspection + skill invocations)
     pub query_tx: mpsc::Sender<AgentQuery>,
-    /// Whether agent is currently processing
+ /// Whether agent is currently processing
     pub busy: bool,
-    /// Reference to the agent for ACP orchestration
+ /// Reference to the agent for ACP orchestration
     pub agent: Arc<Agent>,
 }
 
 /// Commands sent to agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentCommand {
-    /// Process a message
+ /// Process a message
     ProcessMessage {
         session_id: String,
         message: String,
         user_id: String,
         channel: String,
-        /// Optional model override (e.g. from OpenAI-compatible API header/query).
+ /// Optional model override (e.g. from OpenAI-compatible API header/query).
         #[serde(skip_serializing_if = "Option::is_none")]
         model_override: Option<String>,
     },
-    /// Cancel current operation
+ /// Cancel current operation
     Cancel,
-    /// Update configuration
+ /// Update configuration
     UpdateConfig(AgentConfig),
-    /// Shutdown agent
+ /// Shutdown agent
     Shutdown,
 }
 
@@ -885,31 +885,31 @@ pub enum AgentCommand {
 /// the Clone/Serialize/Deserialize derives that AgentCommand carries.
 #[allow(clippy::type_complexity)]
 pub enum AgentQuery {
-    /// Return all thread summaries for this agent's session store.
+ /// Return all thread summaries for this agent's session store.
     GetThreadSummaries {
         response_tx: tokio::sync::oneshot::Sender<Vec<(String, String, usize, String)>>,
     },
-    /// Return the turns for a specific conversation/thread.
+ /// Return the turns for a specific conversation/thread.
     GetThreadTurns {
         conv_id: String,
         response_tx: tokio::sync::oneshot::Sender<Option<Vec<(usize, String, String, String)>>>,
     },
-    /// Undo the last turn in a conversation.
+ /// Undo the last turn in a conversation.
     UndoLastTurn {
         conv_id: String,
         response_tx: tokio::sync::oneshot::Sender<bool>,
     },
-    /// Redo the most recently undone turn in a conversation.
+ /// Redo the most recently undone turn in a conversation.
     RedoLastTurn {
         conv_id: String,
         response_tx: tokio::sync::oneshot::Sender<bool>,
     },
-    /// Process a message as a skill invocation (request/response pattern).
+ /// Process a message as a skill invocation (request/response pattern).
     RunSkill {
         session_id: String,
         message: String,
         user_id: String,
-        /// Trust level of the invoking skill — constrains which tools are available.
+ /// Trust level of the invoking skill — constrains which tools are available.
         skill_trust: crate::tools::SkillTrust,
         response_tx:
             tokio::sync::oneshot::Sender<crate::error::Result<crate::channels::OutgoingMessage>>,
@@ -919,39 +919,39 @@ pub enum AgentQuery {
 /// Events broadcast by gateway
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GatewayEvent {
-    /// Message received from channel
+ /// Message received from channel
     MessageReceived {
         channel: String,
         user_id: String,
         content: String,
         timestamp: chrono::DateTime<chrono::Utc>,
     },
-    /// Agent response ready
+ /// Agent response ready
     AgentResponse {
         session_id: String,
         agent_id: String,
         content: String,
         channel: String,
-        /// Channel-specific conversation ID for routing responses
+ /// Channel-specific conversation ID for routing responses
         conversation_id: String,
-        /// Token usage (prompt, completion, total) if available
+ /// Token usage (prompt, completion, total) if available
         usage: Option<crate::providers::Usage>,
     },
-    /// Agent status changed
+ /// Agent status changed
     AgentStatus {
         agent_id: String,
         status: AgentStatus,
     },
-    /// Channel connected/disconnected
+ /// Channel connected/disconnected
     ChannelStatus { channel: String, connected: bool },
-    /// Tool execution started
+ /// Tool execution started
     ToolCalling {
         session_id: String,
         agent_id: String,
         tool_name: String,
         arguments: String,
     },
-    /// Tool execution completed
+ /// Tool execution completed
     ToolResult {
         session_id: String,
         agent_id: String,
@@ -959,7 +959,7 @@ pub enum GatewayEvent {
         result: String,
         data: Option<serde_json::Value>,
     },
-    /// High-risk tool call is waiting for human approval
+ /// High-risk tool call is waiting for human approval
     ApprovalRequired {
         approval_id: String,
         tool_name: String,
@@ -967,53 +967,53 @@ pub enum GatewayEvent {
         risk_level: crate::tools::approval::RiskLevel,
         message: String,
     },
-    /// Device pairing request initiated
+ /// Device pairing request initiated
     DevicePairRequested {
         device_id: String,
         code: String,
         display_name: Option<String>,
     },
-    /// New session auto-created during chat.send
+ /// New session auto-created during chat.send
     SessionCreated {
         session_id: String,
         agent_id: String,
         user_id: String,
     },
-    /// Session display name was auto-generated or updated
+ /// Session display name was auto-generated or updated
     SessionRenamed { session_id: String, name: String },
-    /// Self-repair action taken (agent or channel restarted)
+ /// Self-repair action taken (agent or channel restarted)
     RepairAction {
-        /// "agent" or "channel"
+ /// "agent" or "channel"
         kind: String,
         target_id: String,
         description: String,
         restart_count: u32,
     },
-    /// LLM generation completed (fires during progress callback, before AgentResponse)
+ /// LLM generation completed (fires during progress callback, before AgentResponse)
     Completed {
         session_id: String,
         agent_id: String,
         response: String,
     },
-    /// Agent encountered a processing error during message handling
+ /// Agent encountered a processing error during message handling
     ProcessingError {
         session_id: String,
         agent_id: String,
         message: String,
     },
-    /// Cron job announcement scheduled for delivery
+ /// Cron job announcement scheduled for delivery
     CronAnnounce {
         channel: String,
         to: String,
         message: String,
     },
-    /// Agent is thinking/generating response (typing indicator)
+ /// Agent is thinking/generating response (typing indicator)
     Thinking {
         session_id: String,
         agent_id: String,
         content: Option<String>,
     },
-    /// Streaming text content delta (for real-time typing effect)
+ /// Streaming text content delta (for real-time typing effect)
     ContentDelta {
         session_id: String,
         agent_id: String,
@@ -1082,9 +1082,9 @@ pub struct QueuedMessage {
     pub content: String,
     pub session_id: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    /// Optional model alias hint for agent routing
+ /// Optional model alias hint for agent routing
     pub model_alias: Option<String>,
-    /// Mention state of the message (for group chat mention gating)
+ /// Mention state of the message (for group chat mention gating)
     pub mention: crate::channels::MentionState,
 }
 
@@ -1122,31 +1122,31 @@ impl QueuedMessage {
 /// Query parameters for WebSocket connection
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
-    /// Start a new conversation (true/false)
+ /// Start a new conversation (true/false)
     pub new: Option<bool>,
-    /// Specific conversation ID to resume
+ /// Specific conversation ID to resume
     pub conversation: Option<String>,
 }
 
 /// Request body for switching default model
 #[derive(Debug, Deserialize)]
 pub struct SwitchModelRequest {
-    /// Model alias to switch to (e.g., "fast", "smart", "default")
+ /// Model alias to switch to (e.g., "fast", "smart", "default")
     pub model: String,
 }
 
 /// Request body for provider override in messages
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
-    /// Message content
+ /// Message content
     pub message: String,
-    /// Optional caller user ID (falls back to "api_user")
+ /// Optional caller user ID (falls back to "api_user")
     pub user_id: Option<String>,
-    /// Optional provider override (e.g., "anthropic", "openai")
+ /// Optional provider override (e.g., "anthropic", "openai")
     pub provider_override: Option<String>,
-    /// Optional model alias override (e.g., "fast", "smart")
+ /// Optional model alias override (e.g., "fast", "smart")
     pub model_alias: Option<String>,
-    /// Optional specific model ID override
+ /// Optional specific model ID override
     pub model_id: Option<String>,
 }
 
@@ -1179,7 +1179,7 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
         ));
     }
 
-    // Warn when token is configured but auth_mode is not Token
+ // Warn when token is configured but auth_mode is not Token
     if has_token && mode_unset && config.security.shared_token.as_deref() != Some("") {
         tracing::warn!(
             "shared_token is configured but auth_mode is 'none'. \
@@ -1191,9 +1191,9 @@ fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> {
 }
 
 impl Gateway {
-    /// Create a new gateway instance
+ /// Create a new gateway instance
     pub async fn new(config: GatewayConfig, config_path: Option<PathBuf>) -> crate::Result<Self> {
-        // Validate security configuration before proceeding
+ // Validate security configuration before proceeding
         validate_auth_config(&config)?;
 
         let (event_tx, _) = broadcast::channel(1000);
@@ -1201,7 +1201,7 @@ impl Gateway {
         let (message_queue_tx, message_queue_rx) = mpsc::channel(1000);
         let (routed_tx, routed_rx) = mpsc::channel(1000);
 
-        // Initialize storage adapter and shared SQLite pool early (needed for session_store → tool_registry)
+ // Initialize storage adapter and shared SQLite pool early (needed for session_store → tool_registry)
         #[allow(clippy::type_complexity)]
         let (storage, unified_vector_store, sqlite_pool): (
             Arc<RwLock<dyn crate::adapters::Storage>>,
@@ -1246,7 +1246,7 @@ impl Gateway {
             }
         };
 
-        // Create session_store early so it can be passed to tool registry
+ // Create session_store early so it can be passed to tool registry
         let session_store: Option<Arc<crate::agent::session_store::SessionStore>> =
             if let Some(ref pool) = sqlite_pool {
                 match crate::agent::session_store::SessionStore::from_pool(pool.clone()).await {
@@ -1266,7 +1266,7 @@ impl Gateway {
                 None
             };
 
-        // Create ACP control plane first (needed for tool registration)
+ // Create ACP control plane first (needed for tool registration)
         let acp_max_iter = config.acp.max_iterations;
         let acp = if let Some(ref store) = session_store {
             Arc::new(AcpControlPlane::new(acp_max_iter).with_store(store.clone()))
@@ -1275,19 +1275,19 @@ impl Gateway {
         };
         acp.load_persisted_sessions().await;
 
-        // Create the shared MCP manager
+ // Create the shared MCP manager
         let mcp_manager = Arc::new(McpManager::new());
 
-        // Create shared approval queue for human-in-the-loop tool policy enforcement
+ // Create shared approval queue for human-in-the-loop tool policy enforcement
         let approval_queue = Arc::new(ApprovalQueue::new());
 
-        // Shared holder for MemoryManager — populated after vector/FTS5 services start.
-        // Wrapped in Arc so MemorySearchTool can observe the late-init value.
+ // Shared holder for MemoryManager — populated after vector/FTS5 services start.
+ // Wrapped in Arc so MemorySearchTool can observe the late-init value.
         let memory_manager_holder: Arc<
             tokio::sync::RwLock<Option<Arc<crate::memory::MemoryManager>>>,
         > = Arc::new(tokio::sync::RwLock::new(None));
 
-        // Create tool registry with built-in tools (including ACP tools if enabled)
+ // Create tool registry with built-in tools (including ACP tools if enabled)
         let tool_registry = Arc::new(
             create_default_tool_registry(
                 acp.clone(),
@@ -1300,8 +1300,8 @@ impl Gateway {
             .await?,
         );
 
-        // Initialize computer adapter.
-        // Prefer remote control when configured; otherwise use local platform adapter.
+ // Initialize computer adapter.
+ // Prefer remote control when configured; otherwise use local platform adapter.
         let computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>> = if
             config.computer.enabled
         {
@@ -1378,7 +1378,7 @@ impl Gateway {
             None
         };
 
-        // Initialize plugin manager
+ // Initialize plugin manager
         let plugins_dir = crate::dirs::config_dir().join("plugins");
         let plugin_manager = {
             let pm = PluginManager::new(plugins_dir).await?;
@@ -1386,12 +1386,12 @@ impl Gateway {
             Arc::new(pm)
         };
 
-        // Create model router config — start empty, no hard-coded aliases.
+ // Create model router config — start empty, no hard-coded aliases.
         let mut model_router_config = crate::model_router::ModelRouterConfig::default();
 
-        // If providers are configured (env vars or syscity.toml), create a
-        // default alias from the first provider so the gateway is usable
-        // immediately without requiring a UI round-trip.
+ // If providers are configured (env vars or syscity.toml), create a
+ // default alias from the first provider so the gateway is usable
+ // immediately without requiring a UI round-trip.
         if let Some(first_provider) = config.providers.keys().next() {
             let alias = crate::model_router::ModelAlias {
                 name: "default".to_string(),
@@ -1406,7 +1406,7 @@ impl Gateway {
             model_router_config.default_model = "default".to_string();
         }
 
-        // Create and initialize model router early so it can be shared
+ // Create and initialize model router early so it can be shared
         let model_router = Arc::new(crate::model_router::ModelRouter::new(model_router_config));
         for (name, provider_config) in &config.providers {
             info!("Configuring provider: {}", name);
@@ -1418,7 +1418,7 @@ impl Gateway {
             }
         }
 
-        // Wire plugin manager to register plugin-backed providers with the model router
+ // Wire plugin manager to register plugin-backed providers with the model router
         {
             let mr_register = model_router.clone();
             let mr_unregister = model_router.clone();
@@ -1444,11 +1444,11 @@ impl Gateway {
                 .await;
         }
 
-        // Create skill manager early so it can be shared with ACP builder and GatewayState
+ // Create skill manager early so it can be shared with ACP builder and GatewayState
         let skills_manager =
             Arc::new(tokio::sync::RwLock::new(crate::skills::SkillManager::new().await?));
 
-        // Configure ACP default agent builder (needs provider + tools, which are now ready)
+ // Configure ACP default agent builder (needs provider + tools, which are now ready)
         if let Ok(default_provider) = model_router.create_default_provider().await {
             let mut default_agent_config = config.default_agent.clone();
             default_agent_config.workspace_dir = config
@@ -1477,7 +1477,7 @@ impl Gateway {
             warn!("No default LLM provider available — ACP subagent spawning will fail until a provider is configured");
         }
 
-        // Initialize security components
+ // Initialize security components
         let auth_manager = Arc::new(
             crate::security::AuthManager::new()
                 .with_pairing_required(config.security.pairing_required),
@@ -1487,7 +1487,7 @@ impl Gateway {
             config.security.rate_limit.refill_rate,
         ));
 
-        // Initialize multi-tier rate limiter with sliding window per user/ip/endpoint
+ // Initialize multi-tier rate limiter with sliding window per user/ip/endpoint
         let multi_tier_config = crate::gateway::rate_limit::MultiTierRateLimitConfig {
             global: crate::gateway::rate_limit::TierConfig {
                 enabled: config.security.rate_limit.global.enabled,
@@ -1513,7 +1513,7 @@ impl Gateway {
         let multi_tier_rate_limiter =
             Arc::new(crate::gateway::rate_limit::MultiTierRateLimiter::new(multi_tier_config));
 
-        // Create inbound / outbound pipelines (skeleton alignment)
+ // Create inbound / outbound pipelines (skeleton alignment)
         let agent_router = if let Some(pool) = sqlite_pool.clone() {
             let binding_store = Arc::new(
                 crate::inbound::SqliteBindingStore::new(pool)
@@ -1564,8 +1564,8 @@ impl Gateway {
                 None, // trajectory_writer – optional, can be wired later
             ));
 
-        // Create state with placeholder values for vector_memory and hot_reload
-        // We'll fill them in after state creation to allow callbacks to reference state
+ // Create state with placeholder values for vector_memory and hot_reload
+ // We'll fill them in after state creation to allow callbacks to reference state
         let state = Arc::new(GatewayState {
             config: Arc::new(RwLock::new(config.clone())),
             start_time: Instant::now(),
@@ -1601,7 +1601,7 @@ impl Gateway {
             ),
             command_gate: {
                 let gate = crate::tools::command_gate::CommandGate::new();
-                // Web terminal and API users need User level for slash commands
+ // Web terminal and API users need User level for slash commands
                 gate.set_user_level("web_user", crate::tools::command_gate::UserLevel::User);
                 gate.set_user_level("api_user", crate::tools::command_gate::UserLevel::User);
                 Arc::new(gate)
@@ -1680,18 +1680,18 @@ impl Gateway {
             task_scheduler: RwLock::new(None),
         });
 
-        // Attach SessionStore to SessionManager for unified session model
+ // Attach SessionStore to SessionManager for unified session model
         if let Some(ref store) = state.session_store {
             let mut mgr = state.session_manager.write().await;
             mgr.with_store(store.clone());
         }
 
-        // Initialize audit table (SQLite-backed persistent audit log)
+ // Initialize audit table (SQLite-backed persistent audit log)
         if let Err(e) = state.audit_log.init().await {
             warn!("Failed to initialize persistent audit log: {}", e);
         }
 
-        // Dynamically register OpenClaw-compatible tools that need GatewayState
+ // Dynamically register tools that need GatewayState
         state
             .tool_registry
             .register_dynamic(Arc::new(crate::tools::AgentsListTool::new(
@@ -1709,7 +1709,7 @@ impl Gateway {
                 state.canvas_manager.clone(),
             )));
 
-        // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
+ // Sync ProviderSdk / ToolSdk with existing registries (skeleton alignment)
         {
             let mut provider_sdk = state.provider_sdk.write().await;
             provider_sdk
@@ -1721,7 +1721,7 @@ impl Gateway {
             tool_sdk.sync_from_tool_registry(&state.tool_registry);
         }
 
-        // Initialize vector memory service if enabled
+ // Initialize vector memory service if enabled
         if config.vector_memory.enabled {
             info!("Initializing vector memory service...");
 
@@ -1782,8 +1782,8 @@ impl Gateway {
                 };
 
             if let Some(embedding_provider) = embedding_provider {
-                // Use unified storage as the vector store (if it's SqliteStorage)
-                // For non-SQLite storage, fall back to in-memory vector store
+ // Use unified storage as the vector store (if it's SqliteStorage)
+ // For non-SQLite storage, fall back to in-memory vector store
                 let vector_store: Arc<dyn crate::memory::VectorStore> = match unified_vector_store {
                     Some(store) => {
                         info!("Using unified SQLite storage for vector store");
@@ -1795,7 +1795,7 @@ impl Gateway {
                     }
                 };
 
-                // Create embedding config for the service
+ // Create embedding config for the service
                 let embedding_config = EmbeddingConfig {
                     model: config.vector_memory.embedding_model.clone(),
                     chunk_size: 512,
@@ -1803,8 +1803,8 @@ impl Gateway {
                     batch_size: 32,
                 };
 
-                // Wrap with a SHA-256 dedup cache (1 024-entry FIFO) to avoid
-                // re-embedding identical text across requests.
+ // Wrap with a SHA-256 dedup cache (1 024-entry FIFO) to avoid
+ // re-embedding identical text across requests.
                 let cached_provider = CachedEmbeddingProvider::new(embedding_provider, 1024);
                 let service = Arc::new(VectorMemoryService::new(
                     Arc::new(cached_provider),
@@ -1823,7 +1823,7 @@ impl Gateway {
             info!("Vector memory service disabled");
         }
 
-        // Initialize SessionSearch (FTS5) and MemoryManager (hybrid search) if we have SQLite
+ // Initialize SessionSearch (FTS5) and MemoryManager (hybrid search) if we have SQLite
         if let Some(pool) = sqlite_pool {
             info!("Initializing session search (FTS5)...");
             let session_search = Arc::new(crate::memory::SessionSearch::new(pool.clone()));
@@ -1833,11 +1833,11 @@ impl Gateway {
                 info!("✅ Session search (FTS5) initialized");
                 *state.session_search.write().await = Some(session_search.clone());
 
-                // Create MemoryManager with hybrid search enabled if we also have vector_memory
+ // Create MemoryManager with hybrid search enabled if we also have vector_memory
                 let vector_guard = state.vector_memory.read().await;
                 if let Some(ref vector_svc) = *vector_guard {
                     info!("Initializing MemoryManager with hybrid search...");
-                    // Create store from the existing pool (shared connection)
+ // Create store from the existing pool (shared connection)
                     let store = Arc::new(
                         crate::memory::UnifiedStore::new_with_pool(pool.clone())
                             .await
@@ -1879,7 +1879,7 @@ impl Gateway {
             info!("SQLite not in use; session search and hybrid memory disabled");
         }
 
-        // Initialize hot reload manager if enabled
+ // Initialize hot reload manager if enabled
         if config.hot_reload.enabled {
             info!("Initializing hot reload manager...");
             match HotReloadManager::new() {
@@ -1896,7 +1896,7 @@ impl Gateway {
             info!("Hot reload disabled");
         }
 
-        // Initialize cron scheduler if enabled
+ // Initialize cron scheduler if enabled
         if config.cron.enabled {
             info!("Initializing advanced cron scheduler...");
             use crate::cron::cron::{AnnounceDelivery, CronScheduler};
@@ -1905,7 +1905,7 @@ impl Gateway {
                 cron_scheduler.with_store_path(crate::dirs::cron_dir().join("jobs.json"));
             let cron_scheduler = Arc::new(tokio::sync::Mutex::new(cron_scheduler));
 
-            // Wire up announce delivery → SSE broadcast
+ // Wire up announce delivery → SSE broadcast
             let (announce_tx, mut announce_rx) = mpsc::channel::<AnnounceDelivery>(64);
             {
                 let mut scheduler = cron_scheduler.lock().await;
@@ -1928,7 +1928,7 @@ impl Gateway {
                 }
             });
 
-            // Start the scheduler in a background task
+ // Start the scheduler in a background task
             let cron_scheduler_clone = Arc::clone(&cron_scheduler);
             tokio::spawn(async move {
                 let mut scheduler = cron_scheduler_clone.lock().await;
@@ -1939,13 +1939,13 @@ impl Gateway {
             *state.cron_scheduler.write().await = Some(cron_scheduler.clone());
             info!("✅ Advanced cron scheduler initialized");
 
-            // Wire the scheduler into CronTool so it can delegate operations
+ // Wire the scheduler into CronTool so it can delegate operations
             crate::tools::CronTool::set_scheduler(cron_scheduler);
         } else {
             info!("Cron scheduler disabled");
         }
 
-        // ── TaskScheduler (recurring agent tasks) ───────────────────────────
+ // ── TaskScheduler (recurring agent tasks) ───────────────────────────
         {
             let mut task_scheduler = crate::planner::TaskScheduler::new();
             let state_for_scheduler = Arc::clone(&state);
@@ -1989,7 +1989,7 @@ impl Gateway {
             }
         }
 
-        // Wire side-effect executor with runtime context (memory + cron)
+ // Wire side-effect executor with runtime context (memory + cron)
         let side_effect_ctx = crate::outbound::SideEffectContext {
             memory_manager: state.memory_manager.read().await.clone(),
             cron_scheduler: state.cron_scheduler.read().await.clone(),
@@ -2006,39 +2006,39 @@ impl Gateway {
             .await;
         info!("✅ SideEffectExecutor context wired");
 
-        // Start message processing worker (legacy QueuedMessage path)
+ // Start message processing worker (legacy QueuedMessage path)
         tokio::spawn(Self::process_message_queue(state.clone(), message_queue_rx));
-        // Start routed-message worker (new InboundPipeline path)
+ // Start routed-message worker (new InboundPipeline path)
         tokio::spawn(Self::process_routed_messages(state.clone(), routed_rx));
 
         Ok(Self { state, config })
     }
 
-    /// Return a clone of the internal `ModelRouter` arc.
-    ///
-    /// Primarily used in integration / E2E tests to inject a mock provider
-    /// before calling `start()`.
+ /// Return a clone of the internal `ModelRouter` arc.
+ ///
+ /// Primarily used in integration / E2E tests to inject a mock provider
+ /// before calling `start()`.
     pub fn model_router(&self) -> Arc<crate::model_router::ModelRouter> {
         self.state.model_router.clone()
     }
 
-    /// Return a clone of the internal `ToolRegistry` arc.
+ /// Return a clone of the internal `ToolRegistry` arc.
     pub fn tool_registry(&self) -> Arc<crate::tools::ToolRegistry> {
         self.state.tool_registry.clone()
     }
 
-    /// Start the gateway
+ /// Start the gateway
     pub async fn start(&self) -> crate::Result<()> {
         info!("Starting Syscity Gateway control plane...");
 
-        // Initialize plugins if enabled
+ // Initialize plugins if enabled
         if self.config.plugins.enabled {
             if self.config.plugins.auto_load {
                 if let Err(e) = self.state.plugin_manager.initialize().await {
                     warn!("Failed to initialize plugins: {}", e);
                 }
 
-                // Watch WASM files for hot-reload
+ // Watch WASM files for hot-reload
                 if let Some(ref hot_reload) = *self.state.hot_reload.read().await {
                     let plugins = self.state.plugin_manager.list_plugins().await;
                     for plugin in plugins {
@@ -2072,7 +2072,7 @@ impl Gateway {
             info!("Plugin system disabled");
         }
 
-        // Initialize skills manager
+ // Initialize skills manager
         {
             let mut skills_manager = self.state.skills_manager.write().await;
             match skills_manager.initialize().await {
@@ -2081,7 +2081,7 @@ impl Gateway {
             }
         }
 
-        // Initialize hot reload if enabled
+ // Initialize hot reload if enabled
         let hot_reload = self.state.hot_reload.read().await.clone();
         if let Some(ref hot_reload) = hot_reload {
             let config_path = crate::dirs::default_config_file();
@@ -2091,7 +2091,7 @@ impl Gateway {
             {
                 warn!("Failed to watch config file: {}", e);
             }
-            // Start hot reload processing in background
+ // Start hot reload processing in background
             let hot_reload_clone = hot_reload.clone();
             tokio::spawn(async move {
                 if let Err(e) = hot_reload_clone.run().await {
@@ -2099,11 +2099,11 @@ impl Gateway {
                 }
             });
 
-            // Register config change handlers
+ // Register config change handlers
             self.register_hot_reload_handlers(hot_reload).await;
         }
 
-        // Initialize default agent (optional - requires provider configuration)
+ // Initialize default agent (optional - requires provider configuration)
         let mut default_config = self.config.default_agent.clone();
         let default_agent_dir = crate::dirs::agents_dir().join("default");
         default_config.system_prompt = format!(
@@ -2122,14 +2122,14 @@ impl Gateway {
             }
         }
 
-        // Discover agents from agents/ directory (OpenClaw-style auto-discovery)
+ // Discover agents from agents/ directory (auto-discovery)
         {
             let mut registry = self.state.agent_registry.write().await;
             match registry.discover().await {
                 Ok(count) => {
                     if count > 0 {
                         info!("🔍 Discovered {} agents from agents/ directory", count);
-                        // List discovered agents
+ // List discovered agents
                         for id in registry.list() {
                             if let Some(personality) = registry.get(&id) {
                                 info!("  📋 Agent '{}' - {}", id, personality.display_name());
@@ -2145,18 +2145,18 @@ impl Gateway {
             }
         }
 
-        // Auto-connect MCP servers (9.1, 9.2)
+ // Auto-connect MCP servers (9.1, 9.2)
         self.init_mcp_servers().await;
 
-        // Initialize configured channels
+ // Initialize configured channels
         self.init_channels().await?;
 
-        // Start dream scheduler if enabled
+ // Start dream scheduler if enabled
         if self.config.dreaming.enabled {
             if let Some(ref mm) = *self.state.memory_manager.read().await {
                 if let Some(tier_index) = mm.tier_index() {
                     let dreaming = &self.config.dreaming;
-                    // Convert string-based MemoryDreamingConfig to enum-based DreamConfig
+ // Convert string-based MemoryDreamingConfig to enum-based DreamConfig
                     let speed = match dreaming.speed.to_lowercase().as_str() {
                         "fast" => crate::memory::DreamSpeed::Fast,
                         "slow" => crate::memory::DreamSpeed::Slow,
@@ -2200,7 +2200,7 @@ impl Gateway {
             }
         }
 
-        // Start standing orders manager if configured
+ // Start standing orders manager if configured
         if self.config.standing_orders.enabled {
             let mut manager = crate::standing_orders::StandingOrderManager::new(
                 self.config.standing_orders.clone(),
@@ -2215,7 +2215,7 @@ impl Gateway {
                 .replace(manager);
         }
 
-        // Start browser bridge server if enabled
+ // Start browser bridge server if enabled
         #[cfg(feature = "browser")]
         if self.config.browser.bridge_enabled {
             let pool = Arc::new(crate::browser::BrowserPool::with_profiles(
@@ -2243,10 +2243,10 @@ impl Gateway {
             }
         }
 
-        // Build HTTP router
+ // Build HTTP router
         let app = self.build_router().await;
 
-        // Bind to address
+ // Bind to address
         let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
             .parse()
             .map_err(|e| crate::error::ConfigError::InvalidValue {
@@ -2263,13 +2263,13 @@ impl Gateway {
 
         info!("Gateway control plane listening on ws://{}", addr);
 
-        // Start Tailscale if enabled
+ // Start Tailscale if enabled
         #[cfg(feature = "tailscale")]
         if self.config.tailscale_enabled {
             self.start_tailscale().await?;
         }
 
-        // Forward ApprovalRequired events from the tool registry into the Gateway event bus
+ // Forward ApprovalRequired events from the tool registry into the Gateway event bus
         {
             let mut approval_rx = self.state.approval_queue.event_tx.subscribe();
             let event_tx = self.state.event_tx.clone();
@@ -2286,10 +2286,10 @@ impl Gateway {
             });
         }
 
-        // Start gateway-level self-repair watchdog (60 s interval)
+ // Start gateway-level self-repair watchdog (60 s interval)
         tokio::spawn(run_repair_loop(self.state.clone()));
 
-        // Start heartbeat runner if enabled
+ // Start heartbeat runner if enabled
         if self.config.heartbeat.enabled {
             let runner = crate::heartbeat::HeartbeatRunner::new(self.state.clone());
             let wake_tx = runner.wake_sender();
@@ -2301,8 +2301,8 @@ impl Gateway {
             });
             info!("Heartbeat runner started");
 
-            // Wire heartbeat wake sender into cron scheduler so cron jobs
-            // with wake_mode: heartbeat_nuke can trigger immediate heartbeats
+ // Wire heartbeat wake sender into cron scheduler so cron jobs
+ // with wake_mode: heartbeat_nuke can trigger immediate heartbeats
             if let Some(ref cron_arc) = *self.state.cron_scheduler.read().await {
                 let mut scheduler = cron_arc.lock().await;
                 scheduler.set_heartbeat_wake_tx(wake_tx);
@@ -2310,7 +2310,7 @@ impl Gateway {
             }
         }
 
-        // Start log tail broadcaster for real-time log streaming
+ // Start log tail broadcaster for real-time log streaming
         {
             let log_tx = self.state.log_tx.clone();
             tokio::spawn(async move {
@@ -2342,7 +2342,7 @@ impl Gateway {
                                         }
                                     }
                                 } else if new_len < pos {
-                                    // File was truncated/rotated
+ // File was truncated/rotated
                                     pos = 0;
                                 }
                             }
@@ -2357,7 +2357,7 @@ impl Gateway {
             info!("Log tail broadcaster started");
         }
 
-        // Run the server
+ // Run the server
         axum::serve(listener, app).await.map_err(|e| {
             crate::error::SyscityError::ExternalService {
                 source: "Gateway server error".to_string(),
@@ -2365,13 +2365,13 @@ impl Gateway {
             }
         })?;
 
-        // Stop dream scheduler on shutdown
+ // Stop dream scheduler on shutdown
         if let Some(mut scheduler) = self.state.dream_scheduler.write().await.take() {
             scheduler.stop().await;
             info!("Dream scheduler stopped");
         }
 
-        // Stop standing orders manager on shutdown
+ // Stop standing orders manager on shutdown
         if let Some(mut manager) = self.state.standing_order_manager.write().await.take() {
             manager.stop().await;
             info!("Standing orders manager stopped");
@@ -2380,14 +2380,14 @@ impl Gateway {
         Ok(())
     }
 
-    /// Build the HTTP router
+ /// Build the HTTP router
     async fn build_router(&self) -> Router {
         let state = self.state.clone();
 
-        // Public tier: Webhooks (no authentication, signature verification per-channel)
+ // Public tier: Webhooks (no authentication, signature verification per-channel)
         let public_router = webhooks::create_webhook_router(state.clone());
 
-        // Auth tier: OAuth login/logout (public-facing, no tailscale restriction)
+ // Auth tier: OAuth login/logout (public-facing, no tailscale restriction)
         let auth_router = Router::new()
             .route("/auth/github", get(auth::oauth::github_login_handler))
             .route("/auth/github/callback", get(auth::oauth::github_callback_handler))
@@ -2398,8 +2398,8 @@ impl Gateway {
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
-        // Admin tier: Essential APIs (not deprecated)
-        // Public health checks (no auth required)
+ // Admin tier: Essential APIs (not deprecated)
+ // Public health checks (no auth required)
         let essential_public_router = Router::new()
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
@@ -2407,29 +2407,30 @@ impl Gateway {
             .route("/api/v1/health", get(health_handler))
             .route("/api/v1/metrics", get(metrics_handler));
 
-        // Authenticated essential APIs (auth required)
+ // Authenticated essential APIs (auth required)
         let essential_auth_router = Router::new()
-            // OpenAI-compatible API
+ // OpenAI-compatible API
             .route("/v1/chat/completions", post(openai_chat_completions_handler))
             .route("/v1/models", get(openai_list_models_handler))
-            // Internal model catalog API
+ // Internal model catalog API
             .route("/api/v1/models", get(list_models_handler))
-            // WebSocket canvas
+ // WebSocket canvas
             .route("/ws/canvas/:id", get(canvas_ws_handler))
-            // Syscity as MCP server -- Streamable-HTTP endpoint
+ // Syscity as MCP server -- Streamable-HTTP endpoint
             .route("/mcp", post(syscity_as_mcp_server_handler))
-            // Admin redirect -- management UI moved to CLI
+ // Admin redirect -- management UI moved to CLI
             .route("/admin", get(admin_redirect_handler))
-            // Computer / desktop automation API
+ // Computer / desktop automation API
             .route("/api/v1/computer/screenshot", get(computer_screenshot_handler))
             .route("/api/v1/computer/execute", post(computer_execute_handler))
             .route("/api/v1/computer/status", get(computer_status_handler))
+            .route("/api/v1/reload", post(reload_all_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);
 
-        // Apply remaining middleware layers to essential routes
-        // (order matters - applied in reverse)
+ // Apply remaining middleware layers to essential routes
+ // (order matters - applied in reverse)
         let admin_router = essential_router
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
@@ -2437,13 +2438,13 @@ impl Gateway {
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 
-        // WebSocket sub-router with mandatory auth validation middleware
+ // WebSocket sub-router with mandatory auth validation middleware
         let ws_router = Router::new()
             .route("/ws", get(ws::ws_handler))
             .layer(from_fn_with_state(state.clone(), ws::ws_auth_middleware))
             .with_state(state.clone());
 
-        // Build CORS layer from config
+ // Build CORS layer from config
         let cors_layer = {
             let config = state.config.read().await;
             if config.security.cors.enabled {
@@ -2451,10 +2452,10 @@ impl Gateway {
                 if config.security.cors.allow_credentials {
                     cors = cors.allow_credentials(true);
                 }
-                // Allow configured origins
-                // When allow_credentials is true, wildcard (*) is invalid CORS
-                // per the Fetch spec. In that case we mirror the request origin
-                // instead, which achieves the same effect for local development.
+ // Allow configured origins
+ // When allow_credentials is true, wildcard (*) is invalid CORS
+ // per the Fetch spec. In that case we mirror the request origin
+ // instead, which achieves the same effect for local development.
                 let has_wildcard = config
                     .security
                     .cors
@@ -2472,7 +2473,7 @@ impl Gateway {
                         }
                     }
                 }
-                // Allow configured methods
+ // Allow configured methods
                 let methods: Vec<_> = config
                     .security
                     .cors
@@ -2483,7 +2484,7 @@ impl Gateway {
                 if !methods.is_empty() {
                     cors = cors.allow_methods(methods);
                 }
-                // Allow configured headers
+ // Allow configured headers
                 let headers: Vec<_> = config
                     .security
                     .cors
@@ -2502,14 +2503,14 @@ impl Gateway {
             }
         };
 
-        // SPA frontend routes (serve built React app from embedded assets)
+ // SPA frontend routes (serve built React app from embedded assets)
         let frontend_router = Router::new()
             .route("/", get(web_terminal_html_handler))
             .route("/favicon.svg", get(favicon_handler))
             .route("/syscity.png", get(syscity_png_handler))
             .route("/assets/*path", get(asset_handler));
 
-        // Merge all routers and apply global CORS
+ // Merge all routers and apply global CORS
         frontend_router
             .merge(public_router)
             .merge(auth_router)
@@ -2518,7 +2519,7 @@ impl Gateway {
             .layer(cors_layer)
     }
 
-    /// Spawn a new agent
+ /// Spawn a new agent
     async fn spawn_agent(&self, id: String, config: AgentConfig) -> crate::Result<()> {
         spawn_agent_inner(self.state.clone(), id, config).await
     }
@@ -2536,21 +2537,21 @@ async fn spawn_agent_inner(
 
     let (tx, mut rx) = mpsc::channel(100);
 
-    // Create provider from model router
+ // Create provider from model router
     let provider: Arc<dyn crate::providers::Provider> =
         state.model_router.create_default_provider().await?;
-    // Get tool registry from state
+ // Get tool registry from state
     let tools = state.tool_registry.clone();
 
-    // Get the model from config for this agent
+ // Get the model from config for this agent
     let model = state.config.read().await.model.clone();
 
-    // Create the actual Agent instance with model, memory manager, chat history,
-    // shared cost guard, and session management stores.
+ // Create the actual Agent instance with model, memory manager, chat history,
+ // shared cost guard, and session management stores.
     let memory_manager = state.memory_manager.read().await.clone();
     let cost_guard = Arc::clone(&state.cost_guard);
 
-    // Read computer config for the agent
+ // Read computer config for the agent
     let computer_config = {
         let cfg = state.config.read().await;
         crate::computer::LoopConfig {
@@ -2580,7 +2581,7 @@ async fn spawn_agent_inner(
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
         }
-        // Attach planner state store for crash recovery if available.
+ // Attach planner state store for crash recovery if available.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
         if planner_db.exists() {
             let url = format!("sqlite:/// {}", planner_db.display());
@@ -2605,7 +2606,7 @@ async fn spawn_agent_inner(
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
         }
-        // Attach planner state store for crash recovery if available.
+ // Attach planner state store for crash recovery if available.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
         if planner_db.exists() {
             let url = format!("sqlite:/// {}", planner_db.display());
@@ -2616,9 +2617,9 @@ async fn spawn_agent_inner(
         Arc::new(builder)
     };
 
-    // Wire the new agent into the cron scheduler so routine (agent-target)
-    // jobs can run.  Only the first agent is wired; subsequent agents keep
-    // the first one active unless explicitly overwritten.
+ // Wire the new agent into the cron scheduler so routine (agent-target)
+ // jobs can run. Only the first agent is wired; subsequent agents keep
+ // the first one active unless explicitly overwritten.
     {
         let cron_guard = state.cron_scheduler.read().await;
         if let Some(ref cron_arc) = *cron_guard {
@@ -2643,14 +2644,14 @@ async fn spawn_agent_inner(
         agents.insert(id.clone(), handle);
     }
 
-    // Start agent processing loop
+ // Start agent processing loop
     let agent_id = id.clone();
 
     tokio::spawn(async move {
         info!("Agent {} processing loop started", agent_id);
 
-        // Start per-agent stale-context eviction loop (check every 5 min,
-        // evict contexts idle > 30 min)
+ // Start per-agent stale-context eviction loop (check every 5 min,
+ // evict contexts idle > 30 min)
         let repair_handle = agent.start_self_repair_loop(
             std::time::Duration::from_secs(300),
             std::time::Duration::from_secs(1800),
@@ -2671,20 +2672,20 @@ async fn spawn_agent_inner(
                         let source_channel = channel;
                         info!("Agent {} processing message for session {}", agent_id, session_id);
 
-                        // Update status to processing
+ // Update status to processing
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: AgentStatus::Processing { session_id: session_id.clone() },
                         });
 
-                        // Create incoming message for the Agent
+ // Create incoming message for the Agent
                         let incoming_msg = crate::channels::IncomingMessage::new(
                             user_id.clone(),
                             session_id.clone(),
                             message.clone(),
                         );
 
-                        // Build trajectory log for this turn
+ // Build trajectory log for this turn
                         let trajectory = Arc::new(tokio::sync::Mutex::new(
                             crate::outbound::TrajectoryLog::new()
                         ));
@@ -2697,8 +2698,8 @@ async fn spawn_agent_inner(
                             });
                         }
 
-                        // Create progress callback that broadcasts tool events
-                        // and also records trajectory entries.
+ // Create progress callback that broadcasts tool events
+ // and also records trajectory entries.
                         let progress_state = state.clone();
                         let progress_session_id = session_id.clone();
                         let progress_agent_id = agent_id.clone();
@@ -2776,7 +2777,7 @@ async fn spawn_agent_inner(
                                 })
                             });
 
-                        // Process message with progress callbacks
+ // Process message with progress callbacks
                         let (response_content, response_usage) = match agent
                             .process_message_with_progress(incoming_msg, progress_cb)
                             .await
@@ -2800,7 +2801,7 @@ async fn spawn_agent_inner(
                             }
                         };
 
-                        // Look up conversation_id for response routing
+ // Look up conversation_id for response routing
                         let conversation_id = {
                             let sessions = state.session_channels.read().await;
                             sessions
@@ -2809,10 +2810,10 @@ async fn spawn_agent_inner(
                                 .unwrap_or_else(|| session_id.clone())
                         };
 
-                        // Generate run_id for this agent execution (OpenClaw-style run tracking)
+ // Generate run_id for this agent execution (run tracking)
                         let run_id = uuid::Uuid::new_v4().to_string();
 
-                        // Persist assistant response to session history
+ // Persist assistant response to session history
                         if let Some(ref store) = state.session_store {
                             if let Err(e) = store
                                 .append_message(&AppendMessageParams {
@@ -2829,7 +2830,7 @@ async fn spawn_agent_inner(
                             }
                         }
 
-                        // Send response event
+ // Send response event
                         info!("DEBUG: Agent {} sending AgentResponse for session {} (conversation: {})", agent_id, session_id, conversation_id);
                         let _ = state.event_tx.send(GatewayEvent::AgentResponse {
                             session_id: session_id.clone(),
@@ -2840,13 +2841,13 @@ async fn spawn_agent_inner(
                             usage: response_usage,
                         });
 
-                        // Extract the populated trajectory
+ // Extract the populated trajectory
                         let trajectory = {
                             let traj = trajectory.lock().await;
                             traj.clone()
                         };
 
-                        // Route through the outbound pipeline (trajectory → canvas → sse → reply → side effects)
+ // Route through the outbound pipeline (trajectory → canvas → sse → reply → side effects)
                         let outbound_ctx = crate::outbound::OutboundContext {
                             session_id: session_id.clone(),
                             channel: source_channel.clone(),
@@ -2858,12 +2859,12 @@ async fn spawn_agent_inner(
                         };
                         let outbound_result = state.outbound_pipeline.process(outbound_ctx).await;
 
-                        // Apply canvas updates if the pipeline produced any
+ // Apply canvas updates if the pipeline produced any
                         if let Some(canvas_update) = outbound_result.canvas_update {
                             state.canvas_manager.apply_update(&session_id, canvas_update).await;
                         }
 
-                        // Update status to idle
+ // Update status to idle
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: AgentStatus::Idle,
@@ -2874,7 +2875,7 @@ async fn spawn_agent_inner(
                     }
                     AgentCommand::UpdateConfig(new_config) => {
                         info!("Agent {} updating configuration", agent_id);
-                        // Update agent configuration dynamically
+ // Update agent configuration dynamically
                         {
                             let mut agents = state.agents.write().await;
                             if let Some(handle) = agents.get_mut(&agent_id) {
@@ -2882,7 +2883,7 @@ async fn spawn_agent_inner(
                                 info!("Agent {} configuration updated", agent_id);
                             }
                         }
-                        // Send status update
+ // Send status update
                         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
                             agent_id: agent_id.clone(),
                             status: AgentStatus::Idle,
@@ -2932,7 +2933,7 @@ async fn spawn_agent_inner(
 
         info!("Agent {} processing loop ended", agent_id);
 
-        // Stop the per-agent repair task when the agent exits
+ // Stop the per-agent repair task when the agent exits
         repair_handle.abort();
     });
 
@@ -2940,10 +2941,10 @@ async fn spawn_agent_inner(
 }
 
 impl Gateway {
-    /// Spawn an agent from its personality (on-demand spawning)
-    /// Returns true if agent was spawned, false if already exists
+ /// Spawn an agent from its personality (on-demand spawning)
+ /// Returns true if agent was spawned, false if already exists
     pub async fn spawn_agent_from_personality(&self, agent_id: &str) -> crate::Result<bool> {
-        // Check if agent already exists
+ // Check if agent already exists
         {
             let agents = self.state.agents.read().await;
             if agents.contains_key(agent_id) {
@@ -2951,7 +2952,7 @@ impl Gateway {
             }
         }
 
-        // Get personality from registry
+ // Get personality from registry
         let personality = {
             let registry = self.state.agent_registry.read().await;
             match registry.get(agent_id) {
@@ -2967,16 +2968,16 @@ impl Gateway {
 
         info!("🚀 On-demand spawning agent '{}' from personality", agent_id);
 
-        // Convert personality to config
+ // Convert personality to config
         let config = personality.to_agent_config();
 
-        // Spawn the agent
+ // Spawn the agent
         self.spawn_agent(agent_id.to_string(), config).await?;
 
         Ok(true)
     }
 
-    /// Spawn all discovered agents
+ /// Spawn all discovered agents
     pub async fn spawn_all_discovered_agents(&self) -> crate::Result<usize> {
         let agent_ids: Vec<String> = {
             let registry = self.state.agent_registry.read().await;
@@ -3003,10 +3004,10 @@ impl Gateway {
         Ok(spawned)
     }
 
-    /// Register a channel extension with the gateway.
-    ///
-    /// Extensions are wired into the inbound/outbound pipelines and replace
-    /// the ad-hoc per-channel initialisation code.
+ /// Register a channel extension with the gateway.
+ ///
+ /// Extensions are wired into the inbound/outbound pipelines and replace
+ /// the ad-hoc per-channel initialisation code.
     pub async fn register_channel_extension(
         &self,
         ext: Arc<dyn crate::channels::ChannelExtension>,
@@ -3016,9 +3017,9 @@ impl Gateway {
         info!("Registered channel extension: {}", ext.name());
     }
 
-    /// Get or spawn agent by ID (on-demand)
+ /// Get or spawn agent by ID (on-demand)
     pub async fn get_or_spawn_agent(&self, agent_id: &str) -> crate::Result<Option<AgentHandle>> {
-        // First check if already spawned
+ // First check if already spawned
         {
             let agents = self.state.agents.read().await;
             if let Some(handle) = agents.get(agent_id) {
@@ -3026,10 +3027,10 @@ impl Gateway {
             }
         }
 
-        // Try to spawn from personality
+ // Try to spawn from personality
         match self.spawn_agent_from_personality(agent_id).await {
             Ok(true) | Ok(false) => {
-                // Now get the spawned agent
+ // Now get the spawned agent
                 let agents = self.state.agents.read().await;
                 Ok(agents.get(agent_id).cloned())
             }
@@ -3040,8 +3041,8 @@ impl Gateway {
         }
     }
 
-    /// Initialize configured channels
-    /// Auto-connect MCP servers from config and register their tools (9.1, 9.2)
+ /// Initialize configured channels
+ /// Auto-connect MCP servers from config and register their tools (9.1, 9.2)
     async fn init_mcp_servers(&self) {
         let servers = &self.config.mcp.servers;
         if servers.is_empty() {
@@ -3070,9 +3071,9 @@ impl Gateway {
                         tools.len()
                     );
 
-                    // Register discovered tools into the ToolRegistry (9.2)
-                    // ToolRegistry is behind Arc<ToolRegistry> – need interior mutability.
-                    // Use Arc::get_mut if no other references, else fall back gracefully.
+ // Register discovered tools into the ToolRegistry (9.2)
+ // ToolRegistry is behind Arc<ToolRegistry> – need interior mutability.
+ // Use Arc::get_mut if no other references, else fall back gracefully.
                     let max_tools = if server_config.max_tools == 0 {
                         tools.len()
                     } else {
@@ -3104,7 +3105,7 @@ impl Gateway {
                 continue;
             }
 
-            // Check if channel already running
+ // Check if channel already running
             if self.state.channels.read().await.contains_key(name) {
                 info!("Channel {} already running, skipping", name);
                 continue;
@@ -3116,7 +3117,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize a single channel by name and config
+ /// Initialize a single channel by name and config
     async fn init_single_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         info!("Initializing channel {} ({:?})", name, config.channel_type);
 
@@ -3224,7 +3225,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize Telegram channel via ChannelExtension (skeleton alignment)
+ /// Initialize Telegram channel via ChannelExtension (skeleton alignment)
     #[cfg(feature = "telegram")]
     async fn init_telegram_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
@@ -3234,30 +3235,30 @@ impl Gateway {
             let channel =
                 Arc::new(crate::channels::telegram::TelegramChannel::new(telegram_config));
 
-            // Agent routing is now handled by the InboundPipeline (AgentRouter)
+ // Agent routing is now handled by the InboundPipeline (AgentRouter)
             let agent_name = config.agent_id.as_deref().unwrap_or("default");
             info!(
                 "Telegram channel '{}' will route via InboundPipeline (default agent: '{}')",
                 name, agent_name
             );
 
-            // Set channel default so the router knows which agent to use for Telegram
+ // Set channel default so the router knows which agent to use for Telegram
             self.state
                 .agent_router
                 .set_channel_default(name, agent_name.to_string(), None)
                 .await;
 
-            // Create the channel extension
+ // Create the channel extension
             let ext = Arc::new(crate::channels::TelegramChannelExtension::new(
                 channel.clone(),
                 self.state.session_channels.clone(),
             ));
 
-            // Create inbound channel: extension -> inbound pipeline
+ // Create inbound channel: extension -> inbound pipeline
             let (inbound_tx, mut inbound_rx) =
                 mpsc::channel::<crate::channels::IncomingMessage>(1000);
 
-            // Spawn extension inbound task (Telegram bot -> inbound pipeline)
+ // Spawn extension inbound task (Telegram bot -> inbound pipeline)
             let ext_inbound = ext.clone();
             tokio::spawn(async move {
                 if let Err(e) = ext_inbound.run_inbound(inbound_tx).await {
@@ -3265,7 +3266,7 @@ impl Gateway {
                 }
             });
 
-            // Bridge inbound messages into the pipeline
+ // Bridge inbound messages into the pipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(message) = inbound_rx.recv().await {
@@ -3280,11 +3281,11 @@ impl Gateway {
                 }
             });
 
-            // Create outbound channel: reply dispatcher -> extension outbound
+ // Create outbound channel: reply dispatcher -> extension outbound
             let (outbound_tx, outbound_rx) =
                 mpsc::channel::<crate::channels::OutgoingMessage>(1000);
 
-            // Spawn extension outbound task (outbound pipeline -> Telegram)
+ // Spawn extension outbound task (outbound pipeline -> Telegram)
             let ext_outbound = ext.clone();
             tokio::spawn(async move {
                 if let Err(e) = ext_outbound.run_outbound(outbound_rx).await {
@@ -3292,18 +3293,18 @@ impl Gateway {
                 }
             });
 
-            // Register a bridge with the reply dispatcher so outbound pipeline
-            // messages flow into the extension's run_outbound.
+ // Register a bridge with the reply dispatcher so outbound pipeline
+ // messages flow into the extension's run_outbound.
             let bridge = Arc::new(crate::channels::ChannelSenderBridge::new(name, outbound_tx));
             self.state
                 .reply_dispatcher
                 .register_channel(name, bridge)
                 .await;
 
-            // Register extension in the extension registry
+ // Register extension in the extension registry
             self.register_channel_extension(ext).await;
 
-            // Keep the raw channel in the channels map for direct access
+ // Keep the raw channel in the channels map for direct access
             self.state
                 .channels
                 .write()
@@ -3316,11 +3317,11 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize Discord channel
+ /// Initialize Discord channel
     #[cfg(feature = "discord")]
     async fn init_discord_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
-            // Create inbound bridge: Discord message_tx -> inbound pipeline
+ // Create inbound bridge: Discord message_tx -> inbound pipeline
             let (inbound_tx, mut inbound_rx) =
                 mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
             let mut discord_config = crate::channels::discord::DiscordConfig::new(token);
@@ -3328,7 +3329,7 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::discord::DiscordChannel::new(discord_config));
 
-            // Bridge inbound messages into the pipeline
+ // Bridge inbound messages into the pipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
@@ -3359,11 +3360,11 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize Slack channel
+ /// Initialize Slack channel
     #[cfg(feature = "slack")]
     async fn init_slack_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let Some(token) = config.credentials.get("token") {
-            // Create inbound bridge: Slack message_tx (Socket Mode) -> inbound pipeline
+ // Create inbound bridge: Slack message_tx (Socket Mode) -> inbound pipeline
             let (inbound_tx, mut inbound_rx) =
                 mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
             let mut slack_config = crate::channels::slack::SlackConfig::new(token);
@@ -3374,7 +3375,7 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::slack::SlackChannel::new(slack_config));
 
-            // Bridge inbound messages into the pipeline
+ // Bridge inbound messages into the pipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
@@ -3405,7 +3406,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize WhatsApp channel
+ /// Initialize WhatsApp channel
     #[cfg(feature = "whatsapp")]
     async fn init_whatsapp_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let (Some(phone_id), Some(token)) = (
@@ -3442,7 +3443,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize Feishu/Lark channel (outbound via ReplyDispatcher)
+ /// Initialize Feishu/Lark channel (outbound via ReplyDispatcher)
     #[cfg(feature = "feishu")]
     async fn init_feishu_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let (Some(app_id), Some(app_secret)) = (
@@ -3479,7 +3480,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Initialize QQ channel
+ /// Initialize QQ channel
     #[cfg(feature = "qq")]
     async fn init_qq_channel(&self, name: &str, config: &ChannelConfig) -> crate::Result<()> {
         if let (Some(app_id), Some(app_secret), Some(bot_qq)) = (
@@ -3487,7 +3488,7 @@ impl Gateway {
             config.credentials.get("app_secret"),
             config.credentials.get("bot_qq"),
         ) {
-            // Create inbound bridge: QQ WebSocket -> inbound pipeline
+ // Create inbound bridge: QQ WebSocket -> inbound pipeline
             let (inbound_tx, mut inbound_rx) =
                 mpsc::unbounded_channel::<crate::channels::IncomingMessage>();
             let mut qq_config = crate::channels::qq::QqConfig::new(app_id, app_secret, bot_qq);
@@ -3495,7 +3496,7 @@ impl Gateway {
 
             let channel = Arc::new(crate::channels::qq::QqChannel::new(qq_config));
 
-            // Bridge inbound messages into the pipeline
+ // Bridge inbound messages into the pipeline
             let state_clone = self.state.clone();
             tokio::spawn(async move {
                 while let Some(msg) = inbound_rx.recv().await {
@@ -3529,7 +3530,7 @@ impl Gateway {
         Ok(())
     }
 
-    /// Process message queue
+ /// Process message queue
     async fn process_message_queue(
         state: Arc<GatewayState>,
         mut rx: mpsc::Receiver<QueuedMessage>,
@@ -3537,7 +3538,7 @@ impl Gateway {
         while let Some(msg) = rx.recv().await {
             info!("Processing queued message: {}", msg.id);
 
-            // Centralized access check (blocklist, DM policy, mention, command gate)
+ // Centralized access check (blocklist, DM policy, mention, command gate)
             if let Err(reason) = state
                 .check_incoming_access(&msg.channel, &msg.user_id, &msg.content, &msg.mention)
                 .await
@@ -3546,8 +3547,8 @@ impl Gateway {
                 continue;
             }
 
-            // Convert QueuedMessage to IncomingMessage and route through
-            // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
+ // Convert QueuedMessage to IncomingMessage and route through
+ // the inbound pipeline (debounce -> media -> dispatch -> queue -> router).
             let incoming =
                 crate::channels::IncomingMessage::new(msg.user_id, msg.session_id, msg.content)
                     .with_provenance(crate::channels::InputProvenance::ExternalUser {
@@ -3556,15 +3557,15 @@ impl Gateway {
                     });
 
             let _ = state.inbound_pipeline.process(incoming).await;
-            // The pipeline forwards RoutedMessage to routed_tx; process_routed_messages
-            // handles the actual agent dispatch.
+ // The pipeline forwards RoutedMessage to routed_tx; process_routed_messages
+ // handles the actual agent dispatch.
         }
     }
 
-    /// Process routed messages from the inbound pipeline.
-    ///
-    /// Converts `RoutedMessage` into `AgentCommand::ProcessMessage` and
-    /// forwards it to the resolved agent, respecting `QueueMode`.
+ /// Process routed messages from the inbound pipeline.
+ ///
+ /// Converts `RoutedMessage` into `AgentCommand::ProcessMessage` and
+ /// forwards it to the resolved agent, respecting `QueueMode`.
     async fn process_routed_messages(
         state: Arc<GatewayState>,
         mut rx: mpsc::Receiver<crate::inbound::RoutedMessage>,
@@ -3582,7 +3583,7 @@ impl Gateway {
                 _ => "unknown".to_string(),
             };
 
-            // ── Group session membership check ───────────────────────────────
+ // ── Group session membership check ───────────────────────────────
             {
                 let user_id = &routed.incoming.user_id.0;
                 let groups = state.group_session_manager.read().await;
@@ -3609,7 +3610,7 @@ impl Gateway {
 
             match routed.queue_mode {
                 crate::inbound::QueueMode::Interrupt => {
-                    // Clear any buffered messages for this session
+ // Clear any buffered messages for this session
                     {
                         let mut buffers = state.session_message_buffer.write().await;
                         buffers.remove(&session_id);
@@ -3626,14 +3627,14 @@ impl Gateway {
                 }
 
                 crate::inbound::QueueMode::Steer => {
-                    // Send Cancel to agent (best-effort), then send the steer message
+ // Send Cancel to agent (best-effort), then send the steer message
                     {
                         let agents = state.agents.read().await;
                         if let Some(agent) = agents.get(&agent_id) {
                             let _ = agent.tx.send(AgentCommand::Cancel).await;
                         }
                     }
-                    // Small delay to let cancel take effect
+ // Small delay to let cancel take effect
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     Self::send_to_agent(
                         &state,
@@ -3647,7 +3648,7 @@ impl Gateway {
                 }
 
                 crate::inbound::QueueMode::FollowUp => {
-                    // Buffer message; flush after a delay if no more arrive
+ // Buffer message; flush after a delay if no more arrive
                     let should_flush = {
                         let mut buffers = state.session_message_buffer.write().await;
                         let buffer = buffers.entry(session_id.clone()).or_default();
@@ -3662,7 +3663,7 @@ impl Gateway {
                     if should_flush {
                         Self::flush_session_buffer(&state, &agent_id, &session_id).await;
                     } else {
-                        // Spawn a delayed flush task
+ // Spawn a delayed flush task
                         let state_clone = state.clone();
                         let agent_id_clone = agent_id.clone();
                         let session_id_clone = session_id.clone();
@@ -3679,7 +3680,7 @@ impl Gateway {
                 }
 
                 crate::inbound::QueueMode::Collect => {
-                    // /done trigger: flush the buffer
+ // /done trigger: flush the buffer
                     let has_buffered = {
                         let buffers = state.session_message_buffer.read().await;
                         buffers
@@ -3691,7 +3692,7 @@ impl Gateway {
                     if has_buffered {
                         Self::flush_session_buffer(&state, &agent_id, &session_id).await;
                     } else {
-                        // No buffer to flush; treat as normal message
+ // No buffer to flush; treat as normal message
                         Self::send_to_agent(
                             &state,
                             &agent_id,
@@ -3719,7 +3720,7 @@ impl Gateway {
         }
     }
 
-    /// Flush buffered messages for a session and send as a single batch.
+ /// Flush buffered messages for a session and send as a single batch.
     async fn flush_session_buffer(state: &Arc<GatewayState>, agent_id: &str, session_id: &str) {
         let messages: Vec<BufferedMessage> = {
             let mut buffers = state.session_message_buffer.write().await;
@@ -3756,10 +3757,10 @@ impl Gateway {
             .await;
     }
 
-    /// Extract a concise session name from the first assistant response.
-    /// Strips markdown, takes the first meaningful words, and limits length.
+ /// Extract a concise session name from the first assistant response.
+ /// Strips markdown, takes the first meaningful words, and limits length.
     fn extract_session_name(content: &str) -> String {
-        // Strip common markdown patterns
+ // Strip common markdown patterns
         let cleaned = content
             .replace("#", "")
             .replace("**", "")
@@ -3786,11 +3787,11 @@ impl Gateway {
         }
     }
 
-    /// Send a single message to an agent via the ACP controller.
-    ///
-    /// This routes execution through the centralized ACP actor queue,
-    /// enabling per-session serial processing and runtime controls
-    /// (pause / resume / step / cancel).
+ /// Send a single message to an agent via the ACP controller.
+ ///
+ /// This routes execution through the centralized ACP actor queue,
+ /// enabling per-session serial processing and runtime controls
+ /// (pause / resume / step / cancel).
     async fn send_to_agent(
         state: &Arc<GatewayState>,
         agent_id: &str,
@@ -3809,7 +3810,7 @@ impl Gateway {
         };
         drop(agents);
 
-        // Apply thinking config from runtime settings
+ // Apply thinking config from runtime settings
         let think_level = {
             let s = state.runtime_settings.read().await;
             s.get("think.level")
@@ -3828,7 +3829,7 @@ impl Gateway {
         });
         agent_handle.agent.set_extra_params(extra).await;
 
-        // Check queue mode and apply interrupt behavior if needed
+ // Check queue mode and apply interrupt behavior if needed
         let queue_mode = {
             let s = state.runtime_settings.read().await;
             s.get("queue.mode")
@@ -3849,7 +3850,7 @@ impl Gateway {
             is_direct: true,
         });
 
-        // Broadcast processing status
+ // Broadcast processing status
         let _ = state.event_tx.send(GatewayEvent::AgentStatus {
             agent_id: agent_id.to_string(),
             status: AgentStatus::Processing {
@@ -3857,7 +3858,7 @@ impl Gateway {
             },
         });
 
-        // Build progress callback that forwards events to gateway subscribers
+ // Build progress callback that forwards events to gateway subscribers
         let event_tx = state.event_tx.clone();
         let runtime_settings = state.runtime_settings.clone();
         let progress_session = session_id.to_string();
@@ -3870,7 +3871,7 @@ impl Gateway {
             let aid = progress_agent.clone();
             let _ch = progress_channel.clone();
             Box::pin(async move {
-                // Read directive settings
+ // Read directive settings
                 let reasoning_vis = {
                     let s = settings.read().await;
                     s.get("reasoning.visibility")
@@ -3891,11 +3892,11 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::Generating { content } => {
-                        // Skip reasoning events if visibility is off
+ // Skip reasoning events if visibility is off
                         if reasoning_vis.as_deref() == Some("off") {
                             return;
                         }
-                        // Only emit thinking events when there's actual content
+ // Only emit thinking events when there's actual content
                         if let Some(ref thinking) = content {
                             if !thinking.is_empty() {
                                 let _ = tx.send(GatewayEvent::Thinking {
@@ -3914,7 +3915,7 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::ToolCalling { name, arguments } => {
-                        // Skip tool events if verbose is off
+ // Skip tool events if verbose is off
                         if verbose_mode.as_deref() == Some("off") {
                             return;
                         }
@@ -3926,11 +3927,11 @@ impl Gateway {
                         });
                     }
                     crate::agent::ProgressEvent::ToolResult { name, result, data } => {
-                        // Skip tool events if verbose is off
+ // Skip tool events if verbose is off
                         if verbose_mode.as_deref() == Some("off") {
                             return;
                         }
-                        // In compact verbose mode, truncate long results
+ // In compact verbose mode, truncate long results
                         let result = if verbose_mode.as_deref() == Some("compact") {
                             if result.len() > 500 {
                                 format!("{}... (truncated)", &result[..500])
@@ -3966,14 +3967,14 @@ impl Gateway {
             })
         });
 
-        // Route through ACP for serialized execution
+ // Route through ACP for serialized execution
         match state
             .acp
             .execute_session_with_progress(agent_handle.agent.clone(), incoming_msg, progress_cb)
             .await
         {
             Ok(mut outgoing) => {
-                // Apply reasoning visibility filter
+ // Apply reasoning visibility filter
                 let reasoning_vis = {
                     let s = state.runtime_settings.read().await;
                     s.get("reasoning.visibility")
@@ -3984,7 +3985,7 @@ impl Gateway {
                     outgoing.reasoning_content = None;
                 }
 
-                // Accumulate usage statistics
+ // Accumulate usage statistics
                 if let Some(ref usage) = outgoing.usage {
                     let mut settings = state.runtime_settings.write().await;
                     let current_tokens = settings
@@ -4011,10 +4012,10 @@ impl Gateway {
                     );
                 }
 
-                // Generate run_id for this agent execution (OpenClaw-style run tracking)
+ // Generate run_id for this agent execution (run tracking)
                 let run_id = uuid::Uuid::new_v4().to_string();
 
-                // Save assistant response to persistent session history
+ // Save assistant response to persistent session history
                 if let Some(ref store) = state.session_store {
                     let reasoning = outgoing.reasoning_content.as_deref();
                     let tool_calls_json = outgoing
@@ -4037,7 +4038,7 @@ impl Gateway {
                         warn!("Failed to save assistant message to session history: {}", e);
                     }
 
-                    // Auto-name session from first assistant response if no name yet
+ // Auto-name session from first assistant response if no name yet
                     if let Ok(existing) = store.get_session_name(session_id).await {
                         if existing.is_none() {
                             let name = Self::extract_session_name(&outgoing.content);
@@ -4079,7 +4080,7 @@ impl Gateway {
     }
 
     #[allow(dead_code)]
-    /// Start Tailscale for remote access
+ /// Start Tailscale for remote access
     async fn start_tailscale(&self) -> crate::Result<()> {
         #[cfg(feature = "tailscale")]
         {
@@ -4097,22 +4098,22 @@ impl Gateway {
         Ok(())
     }
 
-    /// Register hot reload handlers for config changes
+ /// Register hot reload handlers for config changes
     async fn register_hot_reload_handlers(&self, hot_reload: &HotReloadManager) {
         use crate::config::hot_reload::ConfigFileType;
 
         let state = self.state.clone();
         let current_config = self.config.clone();
 
-        // Pre-clone for handlers registered after the main handler
-        // (the main handler's `move` closure will consume `state` and `current_config`)
+ // Pre-clone for handlers registered after the main handler
+ // (the main handler's `move` closure will consume `state` and `current_config`)
         let state_agent = state.clone();
         let state_channel = state.clone();
         let current_config_channel = current_config.clone();
         let state_plugin = state.clone();
         let state_gateway = state.clone();
 
-        // Handler for main config changes (includes syscity.toml)
+ // Handler for main config changes (includes syscity.toml)
         hot_reload
             .register_handler(ConfigFileType::Main, move |_event| {
                 let state = state.clone();
@@ -4120,7 +4121,7 @@ impl Gateway {
                 async move {
                     info!("Main config file changed - reloading configuration");
 
-                    // Reload config from disk
+ // Reload config from disk
                     let config_path = crate::dirs::syscity_dir().join("syscity.toml");
                     if !config_path.exists() {
                         return Ok(());
@@ -4142,13 +4143,13 @@ impl Gateway {
                         }
                     };
 
-                    // Get current running channels
+ // Get current running channels
                     let current_channels: Vec<String> = {
                         let channels = state.channels.read().await;
                         channels.keys().cloned().collect()
                     };
 
-                    // 1. Stop removed or disabled channels
+ // 1. Stop removed or disabled channels
                     for name in &current_channels {
                         let should_stop = match new_config.channels.get(name) {
                             None => {
@@ -4163,7 +4164,7 @@ impl Gateway {
                         };
 
                         if should_stop {
-                            // Remove channel from state (channel will be dropped, should clean up itself)
+ // Remove channel from state (channel will be dropped, should clean up itself)
                             let removed = {
                                 let mut channels = state.channels.write().await;
                                 channels.remove(name).is_some()
@@ -4174,7 +4175,7 @@ impl Gateway {
                         }
                     }
 
-                    // 2. Handle new or modified channels
+ // 2. Handle new or modified channels
                     for (name, new_channel_config) in &new_config.channels {
                         if !new_channel_config.enabled {
                             continue;
@@ -4187,7 +4188,7 @@ impl Gateway {
 
                         match existing {
                             Some(_channel) => {
-                                // Channel exists - check if config changed
+ // Channel exists - check if config changed
                                 let old_config = current_config.channels.get(name);
                                 let config_changed = old_config
                                     .map(|old| {
@@ -4201,13 +4202,13 @@ impl Gateway {
                                 if config_changed {
                                     info!("Channel '{}' config changed, restarting...", name);
 
-                                    // Remove old channel
+ // Remove old channel
                                     {
                                         let mut channels = state.channels.write().await;
                                         channels.remove(name);
                                     }
 
-                                    // Start with new config
+ // Start with new config
                                     let gateway = Gateway {
                                         state: state.clone(),
                                         config: new_config.clone(),
@@ -4222,7 +4223,7 @@ impl Gateway {
                                 }
                             }
                             None => {
-                                // New channel - initialize it
+ // New channel - initialize it
                                 info!(
                                     "Hot-reloading new channel: {} ({:?})",
                                     name, new_channel_config.channel_type
@@ -4248,7 +4249,7 @@ impl Gateway {
             })
             .await;
 
-        // Handler for agent config changes
+ // Handler for agent config changes
         {
             let state = state_agent;
             hot_reload
@@ -4279,7 +4280,7 @@ impl Gateway {
                             }
                         };
 
-                        // Send UpdateConfig to the running agent if it exists
+ // Send UpdateConfig to the running agent if it exists
                         let agents = state.agents.read().await;
                         if let Some(handle) = agents.get(&agent_name) {
                             match handle.tx.send(AgentCommand::UpdateConfig(new_config)).await {
@@ -4304,7 +4305,7 @@ impl Gateway {
                 .await;
         }
 
-        // Handler for channel config changes
+ // Handler for channel config changes
         {
             let state = state_channel;
             let current_config = current_config_channel;
@@ -4348,13 +4349,13 @@ impl Gateway {
                             return Ok(());
                         }
 
-                        // Stop existing channel
+ // Stop existing channel
                         {
                             let mut channels = state.channels.write().await;
                             channels.remove(&channel_name);
                         }
 
-                        // Re-initialize with new config
+ // Re-initialize with new config
                         let gateway = Gateway {
                             state: state.clone(),
                             config: current_config.clone(),
@@ -4378,7 +4379,7 @@ impl Gateway {
                 .await;
         }
 
-        // Handler for plugin config changes
+ // Handler for plugin config changes
         {
             let state = state_plugin;
             hot_reload
@@ -4399,7 +4400,7 @@ impl Gateway {
                             return Ok(());
                         }
 
-                        // Try state-preserving reload first
+ // Try state-preserving reload first
                         match state.plugin_manager.reload_plugin(&plugin_id).await {
                             Ok(reloaded_id) => {
                                 info!("✅ Reloaded plugin '{}' (preserved state)", reloaded_id);
@@ -4457,7 +4458,7 @@ impl Gateway {
                 .await;
         }
 
-        // Handler for gateway config changes
+ // Handler for gateway config changes
         {
             let state = state_gateway;
             hot_reload
@@ -4482,7 +4483,7 @@ impl Gateway {
                             }
                         };
 
-                        // Apply hot-reloadable fields (those that don't require server restart)
+ // Apply hot-reloadable fields (those that don't require server restart)
                         let mut config = state.config.write().await;
                         config.security = new_config.security;
                         config.providers = new_config.providers;
@@ -4522,15 +4523,15 @@ async fn create_default_tool_registry(
 
     let mut registry = ToolRegistry::new().with_approval_queue(approval_queue);
 
-    // Register file system tools
+ // Register file system tools
     registry.register(Box::new(FileReadTool::new()));
     registry.register(Box::new(FileWriteTool::new()));
     registry.register(Box::new(FileEditTool::new()));
     registry.register(Box::new(GlobTool::new()));
     registry.register(Box::new(GrepTool::new()));
 
-    // Register shell/execution tools wrapped in sandbox for path & timeout enforcement.
-    // ShellTool needs network access (git, curl, etc.); CodeExecutionTool does not.
+ // Register shell/execution tools wrapped in sandbox for path & timeout enforcement.
+ // ShellTool needs network access (git, curl, etc.); CodeExecutionTool does not.
     registry.register(Box::new(SandboxedTool::new(
         ShellTool::new(),
         SandboxConfig {
@@ -4543,31 +4544,31 @@ async fn create_default_tool_registry(
         SandboxConfig::default(),
     )));
 
-    // Register web tools
+ // Register web tools
     registry.register(Box::new(WebSearchTool::new()));
     registry.register(Box::new(WebFetchTool::new()));
 
-    // Register todo tool
+ // Register todo tool
     registry.register(Box::new(TodoTool::new()));
 
-    // Register cron tool
+ // Register cron tool
     registry.register(Box::new(CronTool::new()));
 
-    // Register heartbeat tool (agent self-management)
+ // Register heartbeat tool (agent self-management)
     registry.register(Box::new(HeartbeatTool::new()));
 
-    // Register time tool
+ // Register time tool
     registry.register(Box::new(TimeTool::new()));
 
-    // Register browser tool (if browser feature enabled)
+ // Register browser tool (if browser feature enabled)
     #[cfg(feature = "browser")]
     registry.register(Box::new(BrowserTool::new()));
 
-    // Register ACP tools for subagent spawning
+ // Register ACP tools for subagent spawning
     registry.register(Box::new(AcpSpawnTool::new(acp.clone(), session_store.clone())));
     registry.register(Box::new(AcpSessionTool::new(acp.clone())));
 
-    // Register OpenClaw-compatible session tools
+ // Register session tools
     registry.register(Box::new(SessionsListTool::new(session_store.clone())));
     registry.register(Box::new(SessionsHistoryTool::new(session_store.clone())));
     registry.register(Box::new(SessionsSendTool::new(acp.clone())));
@@ -4575,7 +4576,7 @@ async fn create_default_tool_registry(
     registry.register(Box::new(SessionStatusTool::new(session_store.clone())));
     registry.register(Box::new(ApplyPatchTool::new()));
 
-    // Register memory tool for persistent memory storage
+ // Register memory tool for persistent memory storage
     match MemoryTool::new().await {
         Ok(memory_tool) => {
             registry.register(Box::new(memory_tool));
@@ -4589,7 +4590,7 @@ async fn create_default_tool_registry(
         }
     }
 
-    // Register semantic/hybrid memory search tool
+ // Register semantic/hybrid memory search tool
     match MemorySearchTool::new().await {
         Ok(tool) => {
             let tool = tool.with_manager_holder(memory_manager);
@@ -4601,7 +4602,7 @@ async fn create_default_tool_registry(
         }
     }
 
-    // Register memory get/CRUD tool
+ // Register memory get/CRUD tool
     match MemoryGetTool::new().await {
         Ok(tool) => {
             registry.register(Box::new(tool));
@@ -4612,38 +4613,38 @@ async fn create_default_tool_registry(
         }
     }
 
-    // Register delegation tool for agent-to-agent task delegation
+ // Register delegation tool for agent-to-agent task delegation
     registry.register(Box::new(DelegateTool::root()));
 
-    // Register MCP (Model Context Protocol) connection tool (uses shared manager)
+ // Register MCP (Model Context Protocol) connection tool (uses shared manager)
     registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));
 
-    // Register plan management tool
+ // Register plan management tool
     registry.register(Box::new(UpdatePlanTool::new()));
 
-    // Register process management tool
+ // Register process management tool
     registry.register(Box::new(ProcessTool::new()));
 
-    // Register PDF generation tool
+ // Register PDF generation tool
     registry.register(Box::new(PdfTool::new()));
 
-    // Register image tools
+ // Register image tools
     registry.register(Box::new(ImageTool::new()));
     registry.register(Box::new(ImageGenerateTool::new()));
 
-    // Register TTS tool
+ // Register TTS tool
     registry.register(Box::new(TtsTool::new()));
 
-    // Register STT tool
+ // Register STT tool
     registry.register(Box::new(SttTool::new()));
 
-    // Register nodes/Tailscale tool
+ // Register nodes/Tailscale tool
     registry.register(Box::new(NodesTool::new()));
 
-    // Register capability discovery tool
+ // Register capability discovery tool
     registry.register(Box::new(ListCapabilitiesTool::new()));
 
-    // ── Register platform-specific capability sets ──
+ // ── Register platform-specific capability sets ──
     {
         use crate::capabilities::{
             CapabilityProfile, CapabilityRegistry, OsControlScope, ToolConflictStrategy,
@@ -4663,7 +4664,7 @@ async fn create_default_tool_registry(
             cap_reg.register(Box::new(crate::capabilities::MacosSet::new()));
         }
 
-        // Load capability profile from config
+ // Load capability profile from config
         let profile = match capabilities.profile.as_str() {
             "minimal" => CapabilityProfile::Minimal,
             "observer" => CapabilityProfile::Observer,
@@ -4684,7 +4685,7 @@ async fn create_default_tool_registry(
 
         profile.apply(&mut cap_reg);
 
-        // Apply max_scope filter: disable sets whose scope exceeds the limit
+ // Apply max_scope filter: disable sets whose scope exceeds the limit
         if let Some(limit) = max_scope {
             let to_disable: Vec<String> = cap_reg
                 .all_sets()
@@ -4697,12 +4698,12 @@ async fn create_default_tool_registry(
             }
         }
 
-        // Apply explicit disabled_sets filter
+ // Apply explicit disabled_sets filter
         for id in &disabled_sets {
             cap_reg.disable(id);
         }
 
-        // Log detected capabilities before exporting
+ // Log detected capabilities before exporting
         let available = cap_reg.available_sets();
         if available.is_empty() {
             info!("No platform-specific capability sets detected on this host");
@@ -4725,8 +4726,8 @@ async fn create_default_tool_registry(
         );
     }
 
-    // Gate high-privilege tools behind SkillTrust::Trusted.
-    // Community-trust skills see only read-only / informational tools.
+ // Gate high-privilege tools behind SkillTrust::Trusted.
+ // Community-trust skills see only read-only / informational tools.
     registry.mark_privileged("shell");
     registry.mark_privileged("execute_code");
     registry.mark_privileged("file_write");
@@ -4743,7 +4744,7 @@ async fn create_default_tool_registry(
     registry.mark_privileged("process");
     registry.mark_privileged("image_generate");
 
-    // OS control tools — privileged because they modify system state.
+ // OS control tools — privileged because they modify system state.
     registry.mark_privileged("system_inspect");
     registry.mark_privileged("service_manager");
 
@@ -4999,11 +5000,11 @@ pub struct ChatRequestCompat {
 /// Request body for web terminal chat
 #[derive(Debug, Deserialize)]
 pub struct WebTerminalChatRequest {
-    /// Message content from user
+ /// Message content from user
     message: String,
-    /// Optional conversation ID (creates new if not provided)
+ /// Optional conversation ID (creates new if not provided)
     conversation_id: Option<String>,
-    /// Optional user ID
+ /// Optional user ID
     user_id: Option<String>,
 }
 
@@ -5011,11 +5012,11 @@ pub struct WebTerminalChatRequest {
 /// Response for web terminal chat
 #[derive(Debug, Serialize)]
 pub struct WebTerminalChatResponse {
-    /// Message ID
+ /// Message ID
     message_id: String,
-    /// Conversation ID (new or existing)
+ /// Conversation ID (new or existing)
     conversation_id: String,
-    /// Status
+ /// Status
     status: String,
 }
 
@@ -5095,9 +5096,9 @@ pub struct MemoryAddRequest {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct RunSkillRequest {
-    /// Input for the skill
+ /// Input for the skill
     input: String,
-    /// Additional context
+ /// Additional context
     #[serde(default)]
     context: Option<serde_json::Value>,
 }
