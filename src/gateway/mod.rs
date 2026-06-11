@@ -2575,13 +2575,11 @@ async fn spawn_agent_inner(
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
         }
- // Attach planner state store for crash recovery if available.
+ // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
-        if planner_db.exists() {
-            let url = format!("sqlite:/// {}", planner_db.display());
-            if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
-                builder = builder.with_planner_state_store(store);
-            }
+        let url = format!("sqlite:///{}", planner_db.display());
+        if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
+            builder = builder.with_planner_state_store(store);
         }
         Arc::new(builder)
     } else {
@@ -2600,13 +2598,11 @@ async fn spawn_agent_inner(
                 .with_computer_adapter(adapter)
                 .with_computer_config(computer_config);
         }
- // Attach planner state store for crash recovery if available.
+ // Attach planner state store for crash recovery on restart.
         let planner_db = crate::dirs::syscity_dir().join("planner.db");
-        if planner_db.exists() {
-            let url = format!("sqlite:/// {}", planner_db.display());
-            if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
-                builder = builder.with_planner_state_store(store);
-            }
+        let url = format!("sqlite:///{}", planner_db.display());
+        if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
+            builder = builder.with_planner_state_store(store);
         }
         Arc::new(builder)
     };
