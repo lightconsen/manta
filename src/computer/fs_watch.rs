@@ -279,17 +279,26 @@ mod tests {
         // Create a file to trigger an event
         tokio::fs::write(&file_path, "hello").await.unwrap();
 
-        // Wait for the event with timeout
-        let event = tokio::time::timeout(Duration::from_secs(5), watcher.recv()).await;
+        // Wait for the event with timeout, filtering out tempfile's
+        // internal atomic-rename temp files (e.g. ".tmpXXXXXX").
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut found = None;
+        while tokio::time::Instant::now() < deadline {
+            let timeout_left = deadline - tokio::time::Instant::now();
+            if let Ok(Some(event)) =
+                tokio::time::timeout(timeout_left, watcher.recv()).await
+            {
+                if let Some(name) = event.path.file_name() {
+                    let s = name.to_string_lossy();
+                    if !s.starts_with('.') {
+                        found = Some(s.to_string());
+                        break;
+                    }
+                }
+            }
+        }
 
-        assert!(
-            event.is_ok(),
-            "Should receive a file change event within timeout"
-        );
-        let event = event.unwrap();
-        assert!(event.is_some(), "Should have received an event");
-        let event = event.unwrap();
-        assert_eq!(event.path.file_name().unwrap(), "test.txt");
+        assert_eq!(found, Some("test.txt".to_string()));
     }
 
     #[test]
