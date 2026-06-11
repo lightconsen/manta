@@ -4,6 +4,7 @@ pub mod cron_manager;
 pub mod firewall_manager;
 pub mod log_analyzer;
 pub mod network_diag;
+pub mod notification;
 pub mod package_manager;
 pub mod server_operator;
 pub mod service_manager;
@@ -14,6 +15,7 @@ pub use cron_manager::CronManagerTool;
 pub use firewall_manager::FirewallManagerTool;
 pub use log_analyzer::LogAnalyzerTool;
 pub use network_diag::NetworkDiagTool;
+pub use notification::NotificationTool;
 pub use package_manager::PackageManagerTool;
 pub use service_manager::ServiceManagerTool;
 pub use system_inspect::SystemInspectTool;
@@ -76,6 +78,7 @@ impl CapabilitySet for LinuxSet {
             Box::new(FirewallManagerTool::new()),
             Box::new(UserManagerTool::new()),
             Box::new(CronManagerTool::new()),
+            Box::new(NotificationTool::new()),
         ]
     }
 }

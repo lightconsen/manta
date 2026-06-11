@@ -3,12 +3,14 @@
 pub mod accessibility;
 pub mod applescript;
 pub mod desktop_control;
+pub mod notification;
 pub mod permissions;
 pub mod screenshot;
 
 pub use accessibility::AccessibilityTool;
 pub use applescript::AppleScriptTool;
 pub use desktop_control::DesktopControlTool;
+pub use notification::NotificationTool;
 pub use screenshot::ScreenshotTool;
 
 use super::{CapabilitySet, OsControlScope, PlatformConstraints};
@@ -66,6 +68,7 @@ impl CapabilitySet for MacosSet {
             Box::new(ScreenshotTool::new()),
             Box::new(AppleScriptTool::new()),
             Box::new(DesktopControlTool::new()),
+            Box::new(NotificationTool::new()),
         ]
     }
 

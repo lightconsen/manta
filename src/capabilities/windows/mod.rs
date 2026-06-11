@@ -3,12 +3,14 @@
 pub mod accessibility;
 pub mod clipboard;
 pub mod desktop_control;
+pub mod notification;
 pub mod powershell;
 pub mod screenshot;
 
 pub use accessibility::WindowsAccessibilityTool;
 pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
+pub use notification::NotificationTool;
 pub use powershell::PowerShellTool;
 pub use screenshot::ScreenshotTool;
 
@@ -67,6 +69,7 @@ impl CapabilitySet for WindowsSet {
             Box::new(ClipboardTool::new()),
             Box::new(PowerShellTool::new()),
             Box::new(WindowsAccessibilityTool::new()),
+            Box::new(NotificationTool::new()),
         ]
     }
 
