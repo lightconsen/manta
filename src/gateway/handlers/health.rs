@@ -235,6 +235,40 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     let audit_entries = state.audit_log.persisted_count().await as f64;
     gauge("syscity_audit_log_entries", audit_entries, "Total number of audit log entries");
 
+    // Core engine metrics
+    if let Some(ref em) = state.engine_metrics {
+        gauge(
+            "syscity_engine_entities_created",
+            em.entities_created.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total entities created by the core engine",
+        );
+        gauge(
+            "syscity_engine_entities_updated",
+            em.entities_updated.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total entities updated by the core engine",
+        );
+        gauge(
+            "syscity_engine_entities_deleted",
+            em.entities_deleted.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total entities deleted by the core engine",
+        );
+        gauge(
+            "syscity_engine_errors_total",
+            em.errors.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total errors encountered by the core engine",
+        );
+        gauge(
+            "syscity_engine_archive_runs_total",
+            em.archive_runs.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total archive sweep runs executed by the core engine",
+        );
+        gauge(
+            "syscity_engine_entities_archived_total",
+            em.entities_archived.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            "Total entities archived by the core engine",
+        );
+    }
+
     lines.push(String::new());
     lines.join("\n")
 }

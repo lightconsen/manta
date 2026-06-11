@@ -3,11 +3,34 @@
 //! The engine contains the main business logic and orchestrates
 //! operations. It is independent of external adapters.
 
+use super::events::{CoreEvent, EventBus};
 use super::models::{CreateEntityRequest, Entity, Id, Status, UpdateEntityRequest};
 use crate::error::{Result, SyscityError};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tracing::{debug, info, instrument, warn};
+
+/// Metrics counters for engine operations.
+///
+/// All counters use relaxed ordering — they are meant for observability,
+/// not for synchronisation.
+#[derive(Debug, Default)]
+pub struct EngineMetrics {
+    /// Total entities created since engine start.
+    pub entities_created: AtomicU64,
+    /// Total entities deleted since engine start.
+    pub entities_deleted: AtomicU64,
+    /// Total entities updated since engine start.
+    pub entities_updated: AtomicU64,
+    /// Total errors encountered during operations.
+    pub errors: AtomicU64,
+    /// Total archive runs executed.
+    pub archive_runs: AtomicU64,
+    /// Total entities archived across all runs.
+    pub entities_archived: AtomicU64,
+}
 
 /// The main engine that coordinates all business logic
 #[derive(Debug, Clone)]
@@ -16,6 +39,10 @@ pub struct Engine {
     entities: Arc<RwLock<HashMap<Id, Entity>>>,
     /// Engine configuration
     config: EngineConfig,
+    /// Metrics counters for observability
+    metrics: Arc<EngineMetrics>,
+    /// Optional domain event bus for cross-module notifications.
+    event_bus: Option<EventBus>,
 }
 
 /// Configuration for the engine
@@ -48,6 +75,42 @@ impl Engine {
         Self {
             entities: Arc::new(RwLock::new(HashMap::new())),
             config,
+            metrics: Arc::new(EngineMetrics::default()),
+            event_bus: None,
+        }
+    }
+
+    /// Return a reference to the engine metrics counters.
+    pub fn metrics(&self) -> Arc<EngineMetrics> {
+        self.metrics.clone()
+    }
+
+    /// Attach a domain event bus to this engine.
+    ///
+    /// Events (entity created / updated / deleted / archived) will be
+    /// published to the bus automatically on every mutation.
+    pub fn with_event_bus(mut self, bus: EventBus) -> Self {
+        self.event_bus = Some(bus);
+        self
+    }
+
+    /// Convenience: create the engine with both a config and an event bus.
+    pub fn with_config_and_event_bus(config: EngineConfig, bus: EventBus) -> Self {
+        Self {
+            entities: Arc::new(RwLock::new(HashMap::new())),
+            config,
+            metrics: Arc::new(EngineMetrics::default()),
+            event_bus: Some(bus),
+        }
+    }
+
+    /// Fire-and-forget a domain event through the bus (if one is attached).
+    fn emit_event(&self, event: CoreEvent) {
+        if let Some(ref bus) = self.event_bus {
+            let bus = bus.clone();
+            tokio::spawn(async move {
+                bus.publish(&event).await;
+            });
         }
     }
 
@@ -55,7 +118,10 @@ impl Engine {
     #[instrument(skip(self, request), fields(entity_name = %request.name))]
     pub fn create_entity(&self, request: CreateEntityRequest) -> Result<Entity> {
         debug!("Validating create entity request");
-        request.validate()?;
+        if let Err(e) = request.validate() {
+            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+            return Err(e);
+        }
 
         // Check entity limit
         {
@@ -65,6 +131,7 @@ impl Engine {
                 .map_err(|_| SyscityError::Internal("Failed to acquire read lock".to_string()))?;
 
             if entities.len() >= self.config.max_entities {
+                self.metrics.errors.fetch_add(1, Ordering::Relaxed);
                 return Err(SyscityError::Validation(format!(
                     "Maximum number of entities ({}) reached",
                     self.config.max_entities
@@ -75,6 +142,7 @@ impl Engine {
             if !self.config.allow_duplicate_names
                 && entities.values().any(|e| e.name == request.name)
             {
+                self.metrics.errors.fetch_add(1, Ordering::Relaxed);
                 return Err(SyscityError::Validation(format!(
                     "Entity with name '{}' already exists",
                     request.name
@@ -93,6 +161,8 @@ impl Engine {
             entities.insert(id, entity.clone());
         }
 
+        self.metrics.entities_created.fetch_add(1, Ordering::Relaxed);
+        self.emit_event(CoreEvent::entity_created(id, &entity.name));
         info!(entity_id = %id, "Entity created successfully");
         Ok(entity)
     }
@@ -146,14 +216,20 @@ impl Engine {
             .write()
             .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
-        let entity = entities
-            .get_mut(&id)
-            .ok_or_else(|| SyscityError::NotFound {
+        let entity = entities.get_mut(&id).ok_or_else(|| {
+            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+            SyscityError::NotFound {
                 resource: format!("Entity with ID '{}' not found", id),
-            })?;
+            }
+        })?;
 
-        request.apply(entity)?;
+        if let Err(e) = request.apply(entity) {
+            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+            return Err(e);
+        }
 
+        self.metrics.entities_updated.fetch_add(1, Ordering::Relaxed);
+        self.emit_event(CoreEvent::entity_updated(id));
         info!("Entity updated successfully");
         Ok(entity.clone())
     }
@@ -167,11 +243,14 @@ impl Engine {
             .map_err(|_| SyscityError::Internal("Failed to acquire write lock".to_string()))?;
 
         if entities.remove(&id).is_none() {
+            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
             return Err(SyscityError::NotFound {
                 resource: format!("Entity with ID '{}' not found", id),
             });
         }
 
+        self.metrics.entities_deleted.fetch_add(1, Ordering::Relaxed);
+        self.emit_event(CoreEvent::entity_deleted(id));
         info!("Entity deleted successfully");
         Ok(())
     }
@@ -188,6 +267,7 @@ impl Engine {
     /// Archive completed/failed entities older than a certain age
     #[instrument(skip(self))]
     pub fn archive_old_entities(&self, max_age_days: i64) -> Result<usize> {
+        let start = Instant::now();
         use chrono::Duration;
 
         let cutoff = chrono::Utc::now() - Duration::days(max_age_days);
@@ -208,7 +288,17 @@ impl Engine {
             }
         }
 
-        info!(count = archived_count, "Archived old entities");
+        self.metrics.archive_runs.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .entities_archived
+            .fetch_add(archived_count as u64, Ordering::Relaxed);
+        self.emit_event(CoreEvent::entity_archived(archived_count));
+
+        info!(
+            count = archived_count,
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "Archived old entities"
+        );
         Ok(archived_count)
     }
 }

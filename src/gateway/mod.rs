@@ -691,6 +691,8 @@ pub struct GatewayState {
     pub browser_bridge: tokio::sync::RwLock<Option<crate::browser::BrowserBridge>>,
  /// Computer / desktop automation adapter (optional)
     pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
+ /// Engine metrics counters (populated when a core `Engine` is wired in).
+    pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
  /// Task scheduler for recurring / cron-like agent tasks.
     pub task_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>>,
  /// Log line broadcast channel for real-time log streaming to WebSocket clients
@@ -1677,6 +1679,7 @@ impl Gateway {
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
             computer_adapter: tokio::sync::RwLock::new(computer_adapter),
+            engine_metrics: None,
             task_scheduler: RwLock::new(None),
         });
 

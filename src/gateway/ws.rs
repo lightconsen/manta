@@ -30,9 +30,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, Instrument, warn};
 use uuid::Uuid;
 
+use crate::core::context::RequestContext;
 use crate::gateway::protocol::*;
 use crate::gateway::{GatewayEvent, GatewayState};
 use crate::security::UserId;
@@ -1870,15 +1871,24 @@ async fn handle_acp_execute_session(req: &WsRequest, state: &Arc<GatewayState>) 
     drop(agents);
 
     let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Attach structured tracing context for this request.
+    // The _guard is explicitly dropped before .await because Entered is !Send.
+    let ctx = RequestContext::new(Some(session_id.clone()), Some(params.user_id.clone()));
+    let span = ctx.attach_to_span();
+    let _guard = span.clone().entered();
+
     let incoming = crate::channels::IncomingMessage::new(
         params.user_id.clone(),
         session_id.clone(),
         params.message,
     );
+    drop(_guard);
 
     match state
         .acp
         .execute_session_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
+        .instrument(span)
         .await
     {
         Ok(outgoing) => WsResponse::ok(
@@ -1925,15 +1935,24 @@ async fn handle_acp_execute_run(req: &WsRequest, state: &Arc<GatewayState>) -> W
     drop(agents);
 
     let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Attach structured tracing context for this request.
+    // The _guard is explicitly dropped before .await because Entered is !Send.
+    let ctx = RequestContext::new(Some(session_id.clone()), Some(params.user_id.clone()));
+    let span = ctx.attach_to_span();
+    let _guard = span.clone().entered();
+
     let incoming = crate::channels::IncomingMessage::new(
         params.user_id.clone(),
         session_id.clone(),
         params.message,
     );
+    drop(_guard);
 
     match state
         .acp
         .execute_run_with_max_iterations(agent_handle.agent, incoming, params.max_iterations)
+        .instrument(span)
         .await
     {
         Ok(outgoing) => WsResponse::ok(

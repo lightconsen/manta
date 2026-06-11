@@ -114,6 +114,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         hot_reload: RwLock::new(None),
         cron_scheduler: RwLock::new(None),
         task_scheduler: RwLock::new(None),
+        engine_metrics: None,
         heartbeat_wake_tx: RwLock::new(None),
         heartbeat_event_tx: RwLock::new(None),
         dream_scheduler: RwLock::new(None),
