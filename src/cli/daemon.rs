@@ -106,6 +106,43 @@ pub async fn run_start_daemon(
     }
 }
 
+/// Reload plugins and configuration without restarting daemon
+pub async fn run_reload_daemon() -> Result<()> {
+    const DAEMON_URL: &str = "http://127.0.0.1:18080";
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/plugins/reload", DAEMON_URL);
+
+    match client.post(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            if status.is_success() {
+                println!("Daemon reloaded successfully.");
+                if !text.is_empty() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let unloaded = json["unloaded"].as_u64().unwrap_or(0);
+                        let loaded = json["loaded"].as_u64().unwrap_or(0);
+                        println!("  Unloaded: {} plugin(s)", unloaded);
+                        println!("  Loaded:   {} plugin(s)", loaded);
+                    }
+                }
+                Ok(())
+            } else {
+                eprintln!("Reload failed ({}): {}", status, text);
+                Err(crate::error::SyscityError::Internal(format!(
+                    "Reload failed: {}",
+                    text
+                )))
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
+            eprintln!("Is the daemon running? Try: syscity start");
+            Err(crate::error::SyscityError::Internal(e.to_string()))
+        }
+    }
+}
+
 /// Stop the daemon
 pub async fn run_stop_daemon(force: bool) -> Result<()> {
     let daemon_config = DaemonConfig {

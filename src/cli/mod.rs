@@ -191,6 +191,8 @@ pub enum Commands {
         #[arg(short, long)]
         force: bool,
     },
+    /// Reload plugins and configuration without restarting daemon
+    Reload,
     /// Check daemon status
     Status,
     /// Show and tail daemon logs
@@ -402,6 +404,7 @@ impl Cli {
                 .await
             }
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
+            Commands::Reload => daemon::run_reload_daemon().await,
             Commands::Status => daemon::run_daemon_status().await,
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,
@@ -473,6 +476,12 @@ mod tests {
             }
             _ => panic!("expected Chat command"),
         }
+    }
+
+    #[test]
+    fn parse_reload_command() {
+        let cli = Cli::try_parse_from(["syscity", "reload"]).unwrap();
+        assert!(matches!(cli.command, Commands::Reload));
     }
 
     #[test]
