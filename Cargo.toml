@@ -134,7 +134,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 daemonize = "0.5"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
 
 # Vector database (QMD/LanceDB-style)
 pgvector = { version = "0.4", optional = true }
