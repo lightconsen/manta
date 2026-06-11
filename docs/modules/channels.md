@@ -34,14 +34,45 @@ pub trait Channel: Send + Sync {
 - **✅ Implemented**: Inbound debounce policy — `InboundDebouncer` with configurable `debounce_ms`, LRU eviction, bypass prefixes, per-key buffering. See `src/inbound/debounce.rs:1-302`.
 - **📝 Partial**: Advanced mention gating — `MentionState` with `DirectMessage`/`Mentioned`/`NotMentioned` exists (`src/channels/mod.rs:146-169`). Missing: implicit mentions (reply to bot, quoted bot, thread participant).
 - **📝 Partial**: Transport stall watchdog — `ChannelHealthMonitor` tracks heartbeats and `Stale`/`Degraded`/`Unhealthy` status (`src/channels/health.rs:1-338`, `src/channels/lifecycle.rs:1-567`). Missing: transport-specific stall detection (e.g., socket read timeout) inside individual channel implementations.
-- **❌ Missing**: Channel plugin architecture (WASM-based extensible channels).
-- **❌ Missing**: Config adapter with per-account enable/disable/inspect/delete.
-- **❌ Missing**: Sender identity validation (E164 format `+\d{3,}`, username rules, multi-field identity).
-- **❌ Missing**: Conversation resolution with multi-source fallback (command-provider, focused-binding, inbound-provider, inbound-bundled-artifact, inbound-bundled-plugin, inbound-fallback).
-- **❌ Missing**: Thread binding policy with idle timeout (default 24h) and max age, placement hint (current/child), spawn support (subagent/acp).
-- **❌ Missing**: Reply prefix template system (dynamic model info in responses).
-- **❌ Missing**: Channel-ACP binding integration.
-- **❌ Missing**: Command gating for channel messages — access groups, multi-authorizer OR logic, dual authorizer support.
-- **❌ Missing**: Account snapshot system — channel account state snapshots with diagnostic display tones (default/muted/success/warn/error).
-- **❌ Missing**: Channel allowlists with multi-source matching (account, channel, group dimensions).
-- **❌ Missing**: Session envelope context (storePath + previousTimestamp for interval calculation).
+- **📝 Partial**: Channel plugin architecture (WASM) — `PluginChannel` and `PluginChannelRegistry` exist in `src/channels/plugin_host.rs`, `ChannelRegistry` supports `plugins: Option<PluginChannelRegistry>`. Missing: wiring into `ChannelRegistry::start()` and Gateway channel lifecycle.
+- **📝 Partial**: Config adapter with per-account enable/disable — CLI `syscity channel enable/disable` exists (`src/cli/channel.rs`), channel configs have `enabled: bool`. Missing: REST API adapter for runtime enable/disable.
+- **✅ Implemented**: Sender identity validation — `SenderIdentity` type with E164 phone validation
+  (`+\d{3,}` up to 15 digits), username rules (alphanumeric + `_-\.`, 2-32 chars), multi-field
+  identity (user_id, username, phone, email, display_name), `IdentityValidator` with configurable
+  rules per platform (`AllowedCharSet` for Telegram/Discord/etc), platform-specific builders
+  (`telegram_identity()`, `discord_identity()`, `slack_identity()`).
+  See `src/channels/identity.rs:1-491`.
+- **✅ Implemented**: Conversation resolution with multi-source fallback — `ConversationResolver`
+  tries providers in order: `CommandProvider` (explicit `@agent`), `FocusedBindingProvider`
+  (existing binding), `InboundProvider` (channel default), `ArtifactBindingProvider` (placeholder),
+  `PluginBindingProvider` (placeholder), `FallbackProvider` (global default).
+  `ResolutionSource` enum with priority ordering. See `src/channels/resolver.rs:1-444`.
+- **✅ Implemented**: Thread binding policy — `ThreadBindingPolicy` with idle timeout (default 24h),
+  max age (default 7d), placement hint (`Current`/`Child`), spawn target (`Subagent`/`Acp`), max
+  children limit. `TrackedThreadBinding` with activity tracking. `ThreadBindingManager` with
+  register/get/record/reap lifecycle and hierarchy tracking. Presets: `strict_policy()`,
+  `branching_policy()`, `acp_policy()`. See `src/channels/thread_binding.rs:1-387`.
+- **✅ Implemented**: Reply prefix template system — `ReplyPrefixTemplate` with `{{placeholder}}`
+  syntax (`model_name`, `model_provider`, `timestamp`, `date`, `time`, `session_id`, `channel`,
+  `user_id`, `cost`, custom fields), `ReplyPrefixEngine` with channel filters and async rendering.
+  Presets: `model_tag_template()`, `minimal_model_template()`, `timestamp_model_template()`,
+  `cost_aware_template()`. See `src/channels/reply_prefix.rs:1-310`.
+- **✅ Implemented**: Channel-ACP binding integration — `ChannelAcpBridge` bridges channel
+  conversations to ACP sessions with bidirectional `channel_conversation_id ↔ acp_session_id`
+  mapping. Forwards messages via `AcpCommand::GetStatus/Pause/Resume/Cancel`. `parse_acp_command()`
+  parses `/spawn`, `/acp run`, `/acp pause/resume/cancel/status`. See `src/channels/acp_bridge.rs:1-470`.
+- **✅ Implemented**: Command gating for channel messages — `CommandGate` with named `AccessGroup`
+  user sets, `Authorizer` variants (GroupMember, PairedUser, Admin, Allowlisted, Public, DenyAll,
+  Custom), configurable OR/AND logic via `AuthorizerMode`, per-channel `CommandGateConfig` with
+  command filters, dual authorizer support via `check_dual()`. `parse_command()` utility for `/`
+  and `!` prefix parsing. See `src/channels/command_gate.rs:1-500`.
+- **✅ Implemented**: Account snapshot system — `AccountSnapshot` with diagnostic display tones
+  (Default/Muted/Success/Warn/Error), metrics tracking, `AccountSnapshotStore` with per-channel/
+  per-account storage, worst-tone aggregation, diagnostic summary. Helper builders:
+  `healthy_snapshot()`, `error_snapshot()`, `warning_snapshot()`, `muted_snapshot()`.
+  See `src/channels/snapshot.rs:1-350`.
+- **✅ Implemented**: Channel allowlists — every channel implementation supports `DmPolicy::Allowlist` with per-channel allowlist config: Discord, Telegram, Slack, Signal, QQ, Lark, iMessage, WhatsApp, WebChat. Multi-source matching via `MatchSource` enum in `src/security/allowlist.rs`.
+- **✅ Implemented**: Session envelope context — `SessionEnvelopeContext` with `store_path` +
+  `previous_timestamp` for interval calculation, session age, idle/expiry checks, messages-per-hour
+  rate. `SessionEnvelopeManager` with per-conversation tracking, idle/expired eviction, active count.
+  See `src/channels/envelope.rs:1-330`.

@@ -74,13 +74,58 @@ pub mod imessage;
 #[cfg(feature = "webchat")]
 pub mod webchat;
 
+pub mod acp_bridge;
+pub mod command_gate;
+pub mod envelope;
+pub mod resolver;
+pub mod thread_binding;
 pub mod extension;
+pub mod identity;
+pub mod reply_prefix;
+pub mod snapshot;
 
 #[cfg(feature = "telegram")]
 pub mod telegram_extension;
 
 pub use extension::{
     ChannelExtension, ChannelExtensionConfig, ChannelExtensionRegistry, ChannelSenderBridge,
+};
+
+pub use identity::{
+    discord_identity, slack_identity, telegram_identity, IdentityValidator,
+    IdentityValidatorConfig, IdentityValidationError, SenderIdentity,
+};
+
+pub use reply_prefix::{
+    cost_aware_template, minimal_model_template, model_tag_template,
+    timestamp_model_template, ReplyPrefixEngine, ReplyPrefixTemplate, TemplateContext,
+};
+
+pub use snapshot::{
+    error_snapshot, healthy_snapshot, muted_snapshot, warning_snapshot,
+    AccountSnapshot, AccountSnapshotStore, DisplayTone,
+};
+
+pub use acp_bridge::{
+    parse_acp_command, AcpCommandRequest, ChannelAcpBinding, ChannelAcpBridge, AcpForwardResult,
+};
+
+pub use command_gate::{
+    parse_command, AccessGroup, AuthContext, Authorizer, AuthorizerMode, CommandGate,
+    CommandGateConfig, GateResult,
+};
+
+pub use envelope::{SessionEnvelopeContext, SessionEnvelopeManager};
+
+pub use resolver::{
+    resolve_conversation, ArtifactBindingProvider, CommandProvider, ConversationResolution,
+    ConversationResolver, FallbackProvider, FocusedBindingProvider, InboundProvider,
+    PluginBindingProvider, ResolutionProvider, ResolutionSource,
+};
+
+pub use thread_binding::{
+    acp_policy, branching_policy, strict_policy, PlacementDecision, PlacementHint,
+    SpawnTarget, ThreadBindingManager, ThreadBindingPolicy, TrackedThreadBinding,
 };
 
 #[cfg(feature = "telegram")]
