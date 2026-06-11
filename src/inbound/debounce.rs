@@ -1,10 +1,10 @@
 //! Inbound Debouncer
 //!
 //! Buffers incoming messages per key (channel_id or thread_id) and flushes
-//! them after a configurable timeout.  This prevents a flood of rapid
+//! them after a configurable timeout. This prevents a flood of rapid
 //! messages from triggering multiple concurrent agent runs.
 //!
-//! Design matches OpenClaw's `src/auto-reply/inbound-debounce.ts`.
+//! ts`.
 
 use crate::channels::IncomingMessage;
 use std::collections::HashMap;
@@ -16,11 +16,11 @@ use tracing::{debug, warn};
 /// Configuration for the inbound debouncer.
 #[derive(Debug, Clone)]
 pub struct InboundDebouncerConfig {
-    /// Maximum number of keys to track (LRU eviction).
+ /// Maximum number of keys to track (LRU eviction).
     pub max_tracked_keys: usize,
-    /// Debounce window in milliseconds.
+ /// Debounce window in milliseconds.
     pub debounce_ms: u64,
-    /// Items with this prefix in their content bypass debouncing.
+ /// Items with this prefix in their content bypass debouncing.
     pub bypass_prefixes: Vec<String>,
 }
 
@@ -47,9 +47,9 @@ pub struct DebouncedItem {
 /// A buffer for one key.
 struct DebounceBuffer {
     items: Vec<DebouncedItem>,
-    /// When the timer fires, this sender will be notified.
+ /// When the timer fires, this sender will be notified.
     flush_tx: mpsc::Sender<Vec<DebouncedItem>>,
-    /// The in-flight timer handle.
+ /// The in-flight timer handle.
     timer_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -62,13 +62,13 @@ struct DebounceBuffer {
 /// debouncer.enqueue(message).await; // may return None if absorbed
 ///
 /// while let Some(batch) = rx.recv().await {
-///     for item in batch { /* process */ }
+/// for item in batch { /* process */ }
 /// }
 /// ```
 pub struct InboundDebouncer {
     config: InboundDebouncerConfig,
     buffers: RwLock<HashMap<String, Mutex<DebounceBuffer>>>,
-    /// Sender side of the flush channel.  One receiver lives outside.
+ /// Sender side of the flush channel. One receiver lives outside.
     flush_tx: mpsc::Sender<Vec<DebouncedItem>>,
 }
 
@@ -84,17 +84,17 @@ impl InboundDebouncer {
         })
     }
 
-    /// Enqueue a message for debouncing.
-    ///
-    /// Returns `Some(message)` immediately if the message bypasses debouncing
-    /// (e.g., commands starting with `/`).
-    ///
-    /// Returns `None` if the message is absorbed into a pending batch.
+ /// Enqueue a message for debouncing.
+ ///
+ /// Returns `Some(message)` immediately if the message bypasses debouncing
+ /// (e.g., commands starting with `/`).
+ ///
+ /// Returns `None` if the message is absorbed into a pending batch.
     pub async fn enqueue(self: &Arc<Self>, message: IncomingMessage) -> Option<IncomingMessage> {
         let key = Self::resolve_key(&message);
         let content = message.content.trim();
 
-        // Bypass: commands and other non-debouncable items go straight through.
+ // Bypass: commands and other non-debouncable items go straight through.
         if self.should_bypass(content) {
             debug!("Bypassing debounce for key {} (command)", key);
             return Some(message);
@@ -102,7 +102,7 @@ impl InboundDebouncer {
 
         let mut buffers = self.buffers.write().await;
 
-        // LRU eviction: if we're at capacity, drop the oldest key.
+ // LRU eviction: if we're at capacity, drop the oldest key.
         if buffers.len() >= self.config.max_tracked_keys && !buffers.contains_key(&key) {
             if let Some(oldest) = buffers.keys().next().cloned() {
                 warn!(
@@ -129,7 +129,7 @@ impl InboundDebouncer {
             received_at: Instant::now(),
         });
 
-        // (Re-)start the flush timer.
+ // (Re-)start the flush timer.
         if let Some(handle) = guard.timer_handle.take() {
             handle.abort();
         }
@@ -142,7 +142,7 @@ impl InboundDebouncer {
 
         guard.timer_handle = Some(tokio::spawn(async move {
             sleep(Duration::from_millis(debounce_ms)).await;
-            // Remove the buffer and send the batch.
+ // Remove the buffer and send the batch.
             let batch = {
                 let mut buffers = self_arc.buffers.write().await;
                 if let Some(buf) = buffers.remove(&key_clone) {
@@ -160,7 +160,7 @@ impl InboundDebouncer {
         None // message absorbed into pending batch
     }
 
-    /// Flush all pending items for a given key immediately.
+ /// Flush all pending items for a given key immediately.
     pub async fn flush_key(self: &Arc<Self>, key: &str) -> Vec<IncomingMessage> {
         let batch = {
             let mut buffers = self.buffers.write().await;
@@ -178,7 +178,7 @@ impl InboundDebouncer {
         batch.into_iter().map(|item| item.message).collect()
     }
 
-    /// Flush **all** pending buffers (useful at shutdown).
+ /// Flush **all** pending buffers (useful at shutdown).
     pub async fn flush_all(self: &Arc<Self>) -> Vec<IncomingMessage> {
         let mut all = Vec::new();
         let keys: Vec<String> = {
@@ -191,15 +191,15 @@ impl InboundDebouncer {
         all
     }
 
-    /// Resolve the debounce key for a message.
-    ///
-    /// Uses `conversation_id` as the primary key, which corresponds to
-    /// channel/thread in most cases.
+ /// Resolve the debounce key for a message.
+ ///
+ /// Uses `conversation_id` as the primary key, which corresponds to
+ /// channel/thread in most cases.
     fn resolve_key(message: &IncomingMessage) -> String {
         message.conversation_id.0.clone()
     }
 
-    /// Check if a message should bypass debouncing.
+ /// Check if a message should bypass debouncing.
     fn should_bypass(&self, content: &str) -> bool {
         for prefix in &self.config.bypass_prefixes {
             if content.starts_with(prefix) {

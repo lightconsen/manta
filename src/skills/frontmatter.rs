@@ -1,6 +1,6 @@
 //! SKILL.md frontmatter parser
 //!
-//! Parses YAML frontmatter from SKILL.md files with OpenClaw-compatible format.
+//! Parses YAML frontmatter from SKILL.md files.
 //!
 //! # Format Example
 //! ```yaml
@@ -9,24 +9,24 @@
 //! emoji: 🌤️
 //! always: false
 //! requires:
-//!   bins:
-//!     - curl
-//!   env:
-//!     - OPENWEATHER_API_KEY
-//!   config:
-//!     - ~/.weather/config.toml
+//! bins:
+//! - curl
+//! env:
+//! - OPENWEATHER_API_KEY
+//! config:
+//! - ~/.weather/config.toml
 //! install:
-//!   - action: download
-//!     binary: weather
-//!     from: https://example.com/weather-cli
-//!   - action: npm
-//!     package: @weather/cli
+//! - action: download
+//! binary: weather
+//! from: https://example.com/weather-cli
+//! - action: npm
+//! package: @weather/cli
 //! trigger:
-//!   user_invocable: true
-//!   model_invocable: true
+//! user_invocable: true
+//! model_invocable: true
 //! slash:
-//!   name: weather
-//!   description: Get weather information
+//! name: weather
+//! description: Get weather information
 //! ---
 //! ```
 
@@ -36,78 +36,78 @@ use std::collections::HashMap;
 /// Parsed SKILL.md content with frontmatter and body
 #[derive(Debug, Clone, Default)]
 pub struct SkillFile {
-    /// YAML frontmatter metadata
+ /// YAML frontmatter metadata
     pub frontmatter: SkillFrontmatter,
-    /// Markdown content after frontmatter
+ /// Markdown content after frontmatter
     pub content: String,
-    /// Raw file path
+ /// Raw file path
     pub path: std::path::PathBuf,
 }
 
 /// SKILL.md YAML frontmatter structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillFrontmatter {
-    /// Skill name (identifier)
+ /// Skill name (identifier)
     pub name: String,
 
-    /// Display emoji
+ /// Display emoji
     #[serde(default)]
     pub emoji: String,
 
-    /// Whether to always include in prompt
+ /// Whether to always include in prompt
     #[serde(default)]
     pub always: bool,
 
-    /// Runtime requirements
+ /// Runtime requirements
     #[serde(default)]
     pub requires: RequiresConfig,
 
-    /// Installation specifications
+ /// Installation specifications
     #[serde(default)]
     pub install: Vec<InstallSpec>,
 
-    /// Trigger configuration
+ /// Trigger configuration
     #[serde(default)]
     pub trigger: TriggerConfig,
 
-    /// Slash command configuration
+ /// Slash command configuration
     #[serde(default)]
     pub slash: Option<SlashConfig>,
 
-    /// Skill version
+ /// Skill version
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Human-readable description
+ /// Human-readable description
     #[serde(default)]
     pub description: String,
 
-    /// Author who created the skill
+ /// Author who created the skill
     #[serde(default)]
     pub author: String,
 
-    /// Triggers that activate this skill (OpenClaw format)
+ /// Triggers that activate this skill
     #[serde(default)]
     pub triggers: Vec<SkillTriggerItem>,
 
-    /// OpenClaw-specific metadata
-    #[serde(rename = "openclaw", default)]
-    pub openclaw: OpenClawFrontmatter,
+ /// Skill-specific metadata (emoji, category, tags, etc.)
+    #[serde(rename = "syscity", default)]
+    pub syscity: SyscityMetadata,
 
-    /// Skill dependencies: name -> version constraint
-    /// Example: `{ "weather": "^1.0.0", "base-utils": ">=2.0.0" }`
+ /// Skill dependencies: name -> version constraint
+ /// Example: `{ "weather": "^1.0.0", "base-utils": ">=2.0.0" }`
     #[serde(default)]
     pub depends_on: HashMap<String, String>,
 
-    /// Capabilities this skill provides
+ /// Capabilities this skill provides
     #[serde(default)]
     pub provides: Vec<String>,
 
-    /// Skills to chain after this one (execution pipeline)
+ /// Skills to chain after this one (execution pipeline)
     #[serde(default)]
     pub chain: Vec<String>,
 
-    /// Custom configuration values
+ /// Custom configuration values
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
@@ -119,26 +119,26 @@ fn default_version() -> String {
 /// Single trigger item in the triggers array
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillTriggerItem {
-    /// Trigger type: command, keyword, regex, intent
+ /// Trigger type: command, keyword, regex, intent
     #[serde(rename = "type")]
     pub trigger_type: String,
-    /// The pattern to match
+ /// The pattern to match
     pub pattern: String,
-    /// Priority (higher = checked first)
+ /// Priority (higher = checked first)
     #[serde(default)]
     pub priority: i32,
 }
 
-/// OpenClaw metadata in frontmatter
+/// Nested `syscity` metadata block in SKILL.md frontmatter
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenClawFrontmatter {
-    /// Display emoji
+pub struct SyscityMetadata {
+ /// Display emoji override
     #[serde(default)]
     pub emoji: String,
-    /// Category for organization
+ /// Category for organization
     #[serde(default)]
     pub category: String,
-    /// Tags for filtering
+ /// Tags for filtering
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -146,19 +146,19 @@ pub struct OpenClawFrontmatter {
 /// Runtime requirements configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RequiresConfig {
-    /// Required binaries
+ /// Required binaries
     #[serde(default)]
     pub bins: Vec<String>,
 
-    /// Required environment variables
+ /// Required environment variables
     #[serde(default)]
     pub env: Vec<String>,
 
-    /// Required config files (paths that must exist)
+ /// Required config files (paths that must exist)
     #[serde(default)]
     pub config: Vec<String>,
 
-    /// Allowed operating systems
+ /// Allowed operating systems
     #[serde(default)]
     pub os: Vec<String>,
 }
@@ -167,7 +167,7 @@ pub struct RequiresConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum InstallSpec {
-    /// Homebrew installation
+ /// Homebrew installation
     Brew {
         package: String,
         #[serde(default)]
@@ -176,7 +176,7 @@ pub enum InstallSpec {
         binary: Option<String>,
     },
 
-    /// NPM package installation
+ /// NPM package installation
     Npm {
         package: String,
         #[serde(default)]
@@ -185,21 +185,21 @@ pub enum InstallSpec {
         binary: Option<String>,
     },
 
-    /// Go tool installation
+ /// Go tool installation
     Go {
         package: String,
         #[serde(default)]
         binary: Option<String>,
     },
 
-    /// Python/uv tool installation
+ /// Python/uv tool installation
     Uv {
         package: String,
         #[serde(default)]
         binary: Option<String>,
     },
 
-    /// Direct download
+ /// Direct download
     Download {
         binary: String,
         from: String,
@@ -207,14 +207,14 @@ pub enum InstallSpec {
         extract: Option<String>, // tar.gz, zip, etc.
     },
 
-    /// Shell command
+ /// Shell command
     Shell {
         command: String,
         #[serde(default)]
         binary: Option<String>,
     },
 
-    /// Cargo installation
+ /// Cargo installation
     Cargo {
         package: String,
         #[serde(default)]
@@ -225,11 +225,11 @@ pub enum InstallSpec {
 /// Trigger configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerConfig {
-    /// Can be invoked by user via slash command
+ /// Can be invoked by user via slash command
     #[serde(default = "default_true")]
     pub user_invocable: bool,
 
-    /// Can be invoked by the AI model
+ /// Can be invoked by the AI model
     #[serde(default = "default_true")]
     pub model_invocable: bool,
 }
@@ -246,13 +246,13 @@ impl Default for TriggerConfig {
 /// Slash command configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SlashConfig {
-    /// Command name (e.g., "weather")
+ /// Command name (e.g., "weather")
     pub name: String,
 
-    /// Short description
+ /// Short description
     pub description: String,
 
-    /// Arguments schema
+ /// Arguments schema
     #[serde(default)]
     pub args: Vec<SlashArg>,
 }
@@ -273,7 +273,7 @@ fn default_true() -> bool {
 }
 
 impl SkillFile {
-    /// Parse a SKILL.md file from content
+ /// Parse a SKILL.md file from content
     pub fn parse(content: &str, path: std::path::PathBuf) -> crate::Result<Self> {
         let (frontmatter, body) = Self::extract_frontmatter(content)?;
 
@@ -284,7 +284,7 @@ impl SkillFile {
         })
     }
 
-    /// Load and parse a SKILL.md file from disk
+ /// Load and parse a SKILL.md file from disk
     pub async fn load(path: &std::path::Path) -> crate::Result<Self> {
         let content = tokio::fs::read_to_string(path)
             .await
@@ -293,24 +293,24 @@ impl SkillFile {
         Self::parse(&content, path.to_path_buf())
     }
 
-    /// Extract YAML frontmatter from markdown content
+ /// Extract YAML frontmatter from markdown content
     fn extract_frontmatter(content: &str) -> crate::Result<(SkillFrontmatter, &str)> {
-        // Look for frontmatter between --- markers
+ // Look for frontmatter between --- markers
         let trimmed = content.trim_start();
 
         if !trimmed.starts_with("---") {
-            // No frontmatter - return default and full content as body
+ // No frontmatter - return default and full content as body
             return Ok((SkillFrontmatter::default(), content));
         }
 
-        // Find the end of frontmatter (second ---)
+ // Find the end of frontmatter (second ---)
         let after_first = &trimmed[3..]; // Skip first ---
 
         if let Some(end_pos) = after_first.find("\n---") {
             let yaml_content = &after_first[..end_pos];
             let body = &after_first[end_pos + 4..]; // Skip \n---
 
-            // Parse YAML frontmatter
+ // Parse YAML frontmatter
             let frontmatter: SkillFrontmatter =
                 serde_yaml::from_str(yaml_content).map_err(|e| {
                     crate::error::SyscityError::Config(crate::error::ConfigError::Parse(format!(
@@ -321,17 +321,17 @@ impl SkillFile {
 
             Ok((frontmatter, body.trim_start()))
         } else {
-            // No closing --- found - treat as no frontmatter
+ // No closing --- found - treat as no frontmatter
             Ok((SkillFrontmatter::default(), content))
         }
     }
 
-    /// Get the skill name from frontmatter or filename
+ /// Get the skill name from frontmatter or filename
     pub fn skill_name(&self) -> String {
         if !self.frontmatter.name.is_empty() {
             self.frontmatter.name.clone()
         } else {
-            // Extract from filename (SKILL.md -> parent dir name)
+ // Extract from filename (SKILL.md -> parent dir name)
             self.path
                 .parent()
                 .and_then(|p| p.file_name())
@@ -341,20 +341,20 @@ impl SkillFile {
         }
     }
 
-    /// Get the prompt text for this skill
+ /// Get the prompt text for this skill
     pub fn to_prompt(&self) -> String {
         let mut prompt = String::new();
 
-        // Add emoji if present
+ // Add emoji if present
         if !self.frontmatter.emoji.is_empty() {
             prompt.push_str(&self.frontmatter.emoji);
             prompt.push(' ');
         }
 
-        // Add name
+ // Add name
         prompt.push_str(&format!("**{}**\n\n", self.skill_name()));
 
-        // Add content
+ // Add content
         prompt.push_str(&self.content);
 
         prompt
@@ -367,11 +367,11 @@ pub fn parse_skill_md(content: &str) -> crate::Result<(String, String)> {
     let trimmed = content.trim_start();
 
     if !trimmed.starts_with("---") {
-        // No frontmatter - return empty frontmatter and full content as body
+ // No frontmatter - return empty frontmatter and full content as body
         return Ok(("---\n---".to_string(), content.to_string()));
     }
 
-    // Find the end of frontmatter
+ // Find the end of frontmatter
     let after_first = &trimmed[3..];
 
     if let Some(end_pos) = after_first.find("\n---") {
@@ -381,7 +381,7 @@ pub fn parse_skill_md(content: &str) -> crate::Result<(String, String)> {
         let frontmatter_yaml = format!("---{}\n---", yaml_content);
         Ok((frontmatter_yaml, body.trim_start().to_string()))
     } else {
-        // No closing --- found
+ // No closing --- found
         Ok(("---\n---".to_string(), content.to_string()))
     }
 }
@@ -392,13 +392,13 @@ pub fn parse_skill_md(content: &str) -> crate::Result<(String, String)> {
 pub fn format_skill_md(name: &str, description: &str, prompt: &str, emoji: &str) -> String {
     let mut content = String::new();
 
-    // Frontmatter
+ // Frontmatter
     content.push_str("---\n");
     content.push_str(&format!("name: {}\n", name));
     content.push_str(&format!("emoji: {}\n", emoji));
     content.push_str("---\n\n");
 
-    // Content
+ // Content
     content.push_str(&format!("# {}\n\n", description));
     content.push_str(prompt);
 

@@ -1,6 +1,6 @@
 //! Vector Database and Embeddings System
 //!
-//! Provides semantic search capabilities similar to OpenClaw's QMD/LanceDB:
+//! Provides semantic search capabilities:
 //! - Embedding generation using fastembed (local) or API providers
 //! - Vector storage with SQLite vec extension or in-memory
 //! - Semantic similarity search with cosine similarity
@@ -19,12 +19,12 @@ use super::{Memory, MemoryId};
 /// Configuration for vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum VectorBackend {
-    /// SQLite with vector extension
+ /// SQLite with vector extension
     Sqlite { path: String },
-    /// In-memory storage (for testing/small datasets)
+ /// In-memory storage (for testing/small datasets)
     #[default]
     Memory,
-    /// QMD-style: query-model database (future)
+ /// QMD-style: query-model database (future)
     #[cfg(feature = "pgvector")]
     Postgres { url: String, table: String },
 }
@@ -32,13 +32,13 @@ pub enum VectorBackend {
 /// Configuration for embedding model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
-    /// Model name (e.g., "BAAI/bge-small-en", "nomic-ai/nomic-embed-text-v1")
+ /// Model name (e.g., "BAAI/bge-small-en", "nomic-ai/nomic-embed-text-v1")
     pub model: String,
-    /// Maximum chunk size for text splitting
+ /// Maximum chunk size for text splitting
     pub chunk_size: usize,
-    /// Chunk overlap for sliding window
+ /// Chunk overlap for sliding window
     pub chunk_overlap: usize,
-    /// Batch size for embedding generation
+ /// Batch size for embedding generation
     pub batch_size: usize,
 }
 
@@ -56,35 +56,35 @@ impl Default for EmbeddingConfig {
 /// A document chunk with its embedding
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddedChunk {
-    /// Unique identifier
+ /// Unique identifier
     pub id: String,
-    /// Original document/content ID
+ /// Original document/content ID
     pub source_id: String,
-    /// The text chunk
+ /// The text chunk
     pub text: String,
-    /// Embedding vector
+ /// Embedding vector
     pub embedding: Vec<f32>,
-    /// Chunk position in original document
+ /// Chunk position in original document
     pub position: usize,
-    /// Total chunks for this source
+ /// Total chunks for this source
     pub total_chunks: usize,
-    /// Metadata
+ /// Metadata
     pub metadata: Option<serde_json::Value>,
 }
 
 /// Trait for embedding providers
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
-    /// Get the model name
+ /// Get the model name
     fn model_name(&self) -> &str;
 
-    /// Get the embedding dimension
+ /// Get the embedding dimension
     fn dimension(&self) -> usize;
 
-    /// Generate embeddings for texts (batch)
+ /// Generate embeddings for texts (batch)
     async fn embed_batch(&self, texts: &[String]) -> crate::Result<Vec<Vec<f32>>>;
 
-    /// Generate embedding for single text
+ /// Generate embedding for single text
     async fn embed(&self, text: &str) -> crate::Result<Vec<f32>> {
         let mut results = self.embed_batch(&[text.to_string()]).await?;
         Ok(results.pop().unwrap_or_default())
@@ -127,39 +127,39 @@ pub struct LocalGgufEmbeddingProvider;
 
 #[cfg(not(feature = "local-embeddings"))]
 impl LocalGgufEmbeddingProvider {
-    /// Create stub
+ /// Create stub
     pub async fn create(_source: (), _dimension: usize) -> Self {
         Self
     }
 
-    /// FTS-only stub
+ /// FTS-only stub
     pub fn fts_only(_reason: impl Into<String>) -> Self {
         Self
     }
 
-    /// Always returns true for stub
+ /// Always returns true for stub
     pub fn is_fts_only(&self) -> bool {
         true
     }
 
-    /// Returns the reason for FTS-only mode
+ /// Returns the reason for FTS-only mode
     pub fn fts_reason(&self) -> Option<&str> {
         Some("'local-embeddings' feature not enabled")
     }
 
-    /// Always returns error
+ /// Always returns error
     pub async fn embed_batch(&self, _texts: &[String]) -> crate::Result<Vec<Vec<f32>>> {
         Err(crate::error::SyscityError::Validation(
             "Local GGUF embeddings require 'local-embeddings' feature. Install with: cargo build --features local-embeddings".to_string()
         ))
     }
 
-    /// Returns stub name
+ /// Returns stub name
     pub fn model_name(&self) -> &str {
         "disabled"
     }
 
-    /// Returns 0
+ /// Returns 0
     pub fn dimension(&self) -> usize {
         0
     }
@@ -182,7 +182,7 @@ impl EmbeddingProvider for LocalGgufEmbeddingProvider {
 }
 
 impl ApiEmbeddingProvider {
-    /// Create a new API embedding provider
+ /// Create a new API embedding provider
     pub fn new(api_key: String, model: String, dimension: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -193,7 +193,7 @@ impl ApiEmbeddingProvider {
         }
     }
 
-    /// Set custom base URL (for Azure, etc.)
+ /// Set custom base URL (for Azure, etc.)
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = url;
         self
@@ -251,7 +251,7 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
                 cause: Some(Box::new(e)),
             })?;
 
-        // Sort by index to maintain order
+ // Sort by index to maintain order
         let mut embeddings: Vec<(usize, Vec<f32>)> = response
             .data
             .into_iter()
@@ -268,7 +268,7 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
 /// In-memory SHA-256 content-dedup cache for embedding vectors.
 ///
 /// Wraps any [`EmbeddingProvider`] and skips API calls for texts whose SHA-256
-/// hash has already been cached.  The cache is bounded to `max_entries`; when
+/// hash has already been cached. The cache is bounded to `max_entries`; when
 /// full, the oldest inserted entry is evicted (simple FIFO).
 ///
 /// # Example
@@ -281,15 +281,15 @@ impl EmbeddingProvider for ApiEmbeddingProvider {
 /// ```
 pub struct CachedEmbeddingProvider<P: EmbeddingProvider> {
     inner: P,
-    /// SHA-256 hex → embedding vector.
+ /// SHA-256 hex → embedding vector.
     cache: RwLock<std::collections::HashMap<String, Vec<f32>>>,
-    /// Insertion-order keys for FIFO eviction.
+ /// Insertion-order keys for FIFO eviction.
     order: RwLock<std::collections::VecDeque<String>>,
     max_entries: usize,
 }
 
 impl<P: EmbeddingProvider> CachedEmbeddingProvider<P> {
-    /// Wrap `provider` with a FIFO dedup cache capped at `max_entries`.
+ /// Wrap `provider` with a FIFO dedup cache capped at `max_entries`.
     pub fn new(provider: P, max_entries: usize) -> Self {
         Self {
             inner: provider,
@@ -299,19 +299,19 @@ impl<P: EmbeddingProvider> CachedEmbeddingProvider<P> {
         }
     }
 
-    /// SHA-256 hex digest of `text` used as the cache key.
+ /// SHA-256 hex digest of `text` used as the cache key.
     fn sha256_key(text: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(text.as_bytes());
         format!("{:x}", hash)
     }
 
-    /// Current number of cached entries.
+ /// Current number of cached entries.
     pub async fn cache_size(&self) -> usize {
         self.cache.read().await.len()
     }
 
-    /// Remove all cached entries.
+ /// Remove all cached entries.
     pub async fn clear_cache(&self) {
         self.cache.write().await.clear();
         self.order.write().await.clear();
@@ -333,7 +333,7 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
         let mut miss_indices: Vec<usize> = Vec::new();
         let mut miss_texts: Vec<String> = Vec::new();
 
-        // Cache-hit pass.
+ // Cache-hit pass.
         {
             let cache = self.cache.read().await;
             for (i, text) in texts.iter().enumerate() {
@@ -351,10 +351,10 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
             return Ok(result.into_iter().flatten().collect());
         }
 
-        // Fetch missing embeddings from the inner provider.
+ // Fetch missing embeddings from the inner provider.
         let fetched = self.inner.embed_batch(&miss_texts).await?;
 
-        // Store fetched embeddings in cache, evicting oldest if full.
+ // Store fetched embeddings in cache, evicting oldest if full.
         {
             let mut cache = self.cache.write().await;
             let mut order = self.order.write().await;
@@ -362,7 +362,7 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
             for (text, embedding) in miss_texts.iter().zip(fetched.iter()) {
                 let key = Self::sha256_key(text);
                 if !cache.contains_key(&key) {
-                    // Evict oldest if at capacity.
+ // Evict oldest if at capacity.
                     if cache.len() >= self.max_entries {
                         if let Some(oldest) = order.pop_front() {
                             cache.remove(&oldest);
@@ -374,7 +374,7 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
             }
         }
 
-        // Merge fetched embeddings back into result.
+ // Merge fetched embeddings back into result.
         for (local_idx, global_idx) in miss_indices.into_iter().enumerate() {
             result[global_idx] = Some(fetched[local_idx].clone());
         }
@@ -386,10 +386,10 @@ impl<P: EmbeddingProvider + Send + Sync> EmbeddingProvider for CachedEmbeddingPr
 /// Vector storage trait
 #[async_trait]
 pub trait VectorStore: Send + Sync {
-    /// Store a chunk with its embedding
+ /// Store a chunk with its embedding
     async fn store_chunk(&self, chunk: EmbeddedChunk) -> crate::Result<()>;
 
-    /// Store multiple chunks
+ /// Store multiple chunks
     async fn store_chunks(&self, chunks: Vec<EmbeddedChunk>) -> crate::Result<()> {
         for chunk in chunks {
             self.store_chunk(chunk).await?;
@@ -397,7 +397,7 @@ pub trait VectorStore: Send + Sync {
         Ok(())
     }
 
-    /// Search for similar chunks
+ /// Search for similar chunks
     async fn search_similar(
         &self,
         query_embedding: &[f32],
@@ -405,13 +405,13 @@ pub trait VectorStore: Send + Sync {
         threshold: f32,
     ) -> crate::Result<Vec<(EmbeddedChunk, f32)>>;
 
-    /// Delete chunks by source ID
+ /// Delete chunks by source ID
     async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize>;
 
-    /// Get stats about the store
+ /// Get stats about the store
     async fn stats(&self) -> crate::Result<VectorStoreStats>;
 
-    /// Clear all data
+ /// Clear all data
     async fn clear(&self) -> crate::Result<()>;
 }
 
@@ -466,7 +466,7 @@ impl VectorStore for MemoryVectorStore {
             })
             .collect();
 
-        // Sort by similarity (descending)
+ // Sort by similarity (descending)
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(limit);
 
@@ -519,7 +519,7 @@ pub struct SqliteVectorStore {
 }
 
 impl SqliteVectorStore {
-    /// Create a new SQLite vector store. Creates the table if it doesn't exist.
+ /// Create a new SQLite vector store. Creates the table if it doesn't exist.
     pub async fn new(path: &str, dimension: usize) -> crate::Result<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -530,7 +530,7 @@ impl SqliteVectorStore {
                 details: e.to_string(),
             })?;
 
-        // Create the vector chunks table
+ // Create the vector chunks table
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS vector_chunks (
                 id TEXT PRIMARY KEY,
@@ -549,7 +549,7 @@ impl SqliteVectorStore {
             details: e.to_string(),
         })?;
 
-        // Create index for source_id lookups
+ // Create index for source_id lookups
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_source_id ON vector_chunks(source_id)")
             .execute(&pool)
             .await
@@ -562,13 +562,13 @@ impl SqliteVectorStore {
         Ok(Self { pool, dimension })
     }
 
-    /// Create an in-memory SQLite vector store (for testing).
+ /// Create an in-memory SQLite vector store (for testing).
     pub async fn new_in_memory(dimension: usize) -> crate::Result<Self> {
         Self::new("sqlite::memory:", dimension).await
     }
 
-    /// Load all chunks and compute cosine similarity in Rust.
-    /// This is the pragmatic fallback when vec0 extension is unavailable.
+ /// Load all chunks and compute cosine similarity in Rust.
+ /// This is the pragmatic fallback when vec0 extension is unavailable.
     async fn search_in_rust(
         &self,
         query_embedding: &[f32],
@@ -619,7 +619,7 @@ impl SqliteVectorStore {
             })
             .collect();
 
-        // Sort by similarity descending
+ // Sort by similarity descending
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(limit);
 
@@ -755,7 +755,7 @@ impl TextChunker {
         Self { chunk_size, chunk_overlap }
     }
 
-    /// Chunk text into overlapping segments
+ /// Chunk text into overlapping segments
     pub fn chunk(&self, text: &str) -> Vec<String> {
         let words: Vec<&str> = text.split_whitespace().collect();
         let mut chunks = Vec::new();
@@ -793,7 +793,7 @@ impl BatchEmbeddingProcessor {
         Self { provider, chunker, batch_size }
     }
 
-    /// Process documents and store embeddings
+ /// Process documents and store embeddings
     pub async fn process_documents(
         &self,
         documents: Vec<(String, String)>, // (id, content)
@@ -801,7 +801,7 @@ impl BatchEmbeddingProcessor {
     ) -> crate::Result<Vec<EmbeddedChunk>> {
         let mut all_chunks = Vec::new();
 
-        // Chunk all documents
+ // Chunk all documents
         for (doc_id, content) in &documents {
             let chunks = self.chunker.chunk(content);
             let total = chunks.len();
@@ -811,7 +811,7 @@ impl BatchEmbeddingProcessor {
             }
         }
 
-        // Process in batches
+ // Process in batches
         let mut embedded_chunks = Vec::new();
         let chunk_id_base = uuid::Uuid::new_v4().to_string();
 
@@ -834,7 +834,7 @@ impl BatchEmbeddingProcessor {
             }
         }
 
-        // Store all chunks
+ // Store all chunks
         store.store_chunks(embedded_chunks.clone()).await?;
 
         info!("Processed {} documents into {} chunks", documents.len(), embedded_chunks.len());
@@ -850,12 +850,12 @@ pub struct VectorMemoryService {
     vector_store: Arc<dyn VectorStore>,
     chunker: TextChunker,
     batch_processor: BatchEmbeddingProcessor,
-    /// Tracks the set of collections that have been written to
+ /// Tracks the set of collections that have been written to
     collections: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl VectorMemoryService {
-    /// Create a new vector memory service
+ /// Create a new vector memory service
     pub fn new(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         vector_store: Arc<dyn VectorStore>,
@@ -880,7 +880,7 @@ impl VectorMemoryService {
         }
     }
 
-    /// Store a memory with automatic chunking and embedding
+ /// Store a memory with automatic chunking and embedding
     pub async fn store_memory(&self, memory: &Memory) -> crate::Result<Vec<EmbeddedChunk>> {
         let chunks = self.chunker.chunk(&memory.content);
         let total = chunks.len();
@@ -907,7 +907,7 @@ impl VectorMemoryService {
         Ok(embedded_chunks)
     }
 
-    /// Search memories semantically
+ /// Search memories semantically
     pub async fn search(
         &self,
         query: &str,
@@ -920,19 +920,19 @@ impl VectorMemoryService {
             .await
     }
 
-    /// Delete memory embeddings
+ /// Delete memory embeddings
     pub async fn delete_memory(&self, memory_id: &MemoryId) -> crate::Result<usize> {
         self.vector_store
             .delete_by_source(&memory_id.to_string())
             .await
     }
 
-    /// Get stats
+ /// Get stats
     pub async fn stats(&self) -> crate::Result<VectorStoreStats> {
         self.vector_store.stats().await
     }
 
-    /// Search memories in a specific collection (simplified API for gateway)
+ /// Search memories in a specific collection (simplified API for gateway)
     pub async fn search_collection(
         &self,
         query: &str,
@@ -956,7 +956,7 @@ impl VectorMemoryService {
             .collect())
     }
 
-    /// Add content to a collection (simplified API for gateway)
+ /// Add content to a collection (simplified API for gateway)
     pub async fn add_to_collection(
         &self,
         content: &str,
@@ -986,7 +986,7 @@ impl VectorMemoryService {
 
         self.vector_store.store_chunks(embedded_chunks).await?;
 
-        // Record the collection name so list_collections() returns it
+ // Record the collection name so list_collections() returns it
         if let Ok(mut cols) = self.collections.write() {
             cols.insert(collection.to_string());
         }
@@ -994,7 +994,7 @@ impl VectorMemoryService {
         Ok(doc_id)
     }
 
-    /// List available collections
+ /// List available collections
     pub fn list_collections(&self) -> Vec<String> {
         self.collections
             .read()
@@ -1040,9 +1040,9 @@ mod tests {
         assert!((cosine_similarity(&a, &c) - 1.0).abs() < 0.001);
     }
 
-    // ── CachedEmbeddingProvider tests ────────────────────────────────────────
+ // ── CachedEmbeddingProvider tests ────────────────────────────────────────
 
-    /// Minimal stub that counts embed_batch calls.
+ /// Minimal stub that counts embed_batch calls.
     struct CountingProvider {
         calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         dim: usize,
@@ -1072,7 +1072,7 @@ mod tests {
         let _ = cached.embed_batch(&texts).await.unwrap();
         let _ = cached.embed_batch(&texts).await.unwrap();
 
-        // Second call should be served from cache → only 1 actual call to inner.
+ // Second call should be served from cache → only 1 actual call to inner.
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(cached.cache_size().await, 1);
     }
@@ -1086,7 +1086,7 @@ mod tests {
         let _ = cached.embed_batch(&["text_a".to_string()]).await.unwrap();
         let _ = cached.embed_batch(&["text_b".to_string()]).await.unwrap();
 
-        // Each unique text is a cache miss.
+ // Each unique text is a cache miss.
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(cached.cache_size().await, 2);
     }
@@ -1099,7 +1099,7 @@ mod tests {
 
         let _ = cached.embed_batch(&["a".to_string()]).await.unwrap();
         let _ = cached.embed_batch(&["b".to_string()]).await.unwrap();
-        // Full: inserting "c" should evict "a".
+ // Full: inserting "c" should evict "a".
         let _ = cached.embed_batch(&["c".to_string()]).await.unwrap();
 
         assert_eq!(cached.cache_size().await, 2);
@@ -1140,9 +1140,9 @@ mod tests {
         let text = "a b c d e f g";
         let chunks = chunker.chunk(text);
         assert!(chunks.len() > 1);
-        // First chunk should start with 'a'
+ // First chunk should start with 'a'
         assert!(chunks[0].starts_with('a'));
-        // Overlap: second chunk should share some words with first
+ // Overlap: second chunk should share some words with first
         assert!(chunks[1].contains('c'));
     }
 
@@ -1191,7 +1191,7 @@ mod tests {
     fn test_api_embedding_provider_with_base_url() {
         let provider = ApiEmbeddingProvider::new("k".into(), "m".into(), 128)
             .with_base_url("https://azure.example.com".to_string());
-        // base_url is private, but we can verify the struct was created
+ // base_url is private, but we can verify the struct was created
         assert_eq!(provider.model_name(), "m");
     }
 
@@ -1217,7 +1217,7 @@ mod tests {
         assert_eq!(results[0].0.id, "c1");
         assert!((results[0].1 - 1.0).abs() < 0.001);
 
-        // Orthogonal vector should not match above threshold
+ // Orthogonal vector should not match above threshold
         let results = store
             .search_similar(&[0.0, 1.0, 0.0], 5, 0.5)
             .await
@@ -1388,7 +1388,7 @@ mod tests {
 
         let chunks = processor.process_documents(docs, &*store).await.unwrap();
         assert!(!chunks.is_empty());
-        // All chunks should be stored
+ // All chunks should be stored
         let stats = store.stats().await.unwrap();
         assert_eq!(stats.total_vectors, chunks.len());
     }
@@ -1447,7 +1447,7 @@ mod tests {
         assert_eq!(results[0].0.id, "c1");
         assert!((results[0].1 - 1.0).abs() < 0.001);
 
-        // Orthogonal vector should not match above threshold
+ // Orthogonal vector should not match above threshold
         let results = store
             .search_similar(&[0.0, 1.0, 0.0], 5, 0.5)
             .await

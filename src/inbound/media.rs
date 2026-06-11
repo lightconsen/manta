@@ -1,16 +1,16 @@
 //! Media Understanding Pipeline
 //!
 //! Pre-processes inbound media attachments (images, audio, video, files)
-//! before they reach the agent.  Converts raw media into text descriptions
+//! before they reach the agent. Converts raw media into text descriptions
 //! or transcripts that can be injected into the agent context.
 //!
-//! This is a **stub** framework.  Full implementation requires:
+//! This is a **stub** framework. Full implementation requires:
 //! - Vision-capable model integration (Claude, GPT-4V, Gemini)
 //! - STT providers (Whisper, local CLI)
 //! - Image optimisation pipeline (resize, compress, HEIC conversion)
 //! - Video frame extraction
 //!
-//! Design matches OpenClaw's `src/media-understanding/`.
+//!
 
 use crate::channels::{Attachment, IncomingMessage};
 use base64::{engine::general_purpose, Engine as _};
@@ -39,14 +39,14 @@ pub struct AttachmentResult {
 pub struct MediaUnderstandingResult {
     pub message_id: String,
     pub attachment_results: Vec<AttachmentResult>,
-    /// Combined text to inject into the agent context.
+ /// Combined text to inject into the agent context.
     pub combined_text: String,
 }
 
 /// Cache for media attachments to avoid re-processing.
 #[derive(Debug, Default, Clone)]
 pub struct MediaAttachmentCache {
-    // Future: store processed results keyed by attachment hash.
+ // Future: store processed results keyed by attachment hash.
 }
 
 /// Media understanding pipeline.
@@ -54,7 +54,7 @@ pub struct MediaAttachmentCache {
 /// Processes inbound media attachments by routing them to appropriate
 /// providers (vision models for images, STT for audio, etc.).
 pub struct MediaUnderstandingPipeline {
-    /// Optional model router for vision-capable provider queries.
+ /// Optional model router for vision-capable provider queries.
     model_router: Option<Arc<crate::model_router::ModelRouter>>,
 }
 
@@ -63,16 +63,16 @@ impl MediaUnderstandingPipeline {
         Self { model_router: None }
     }
 
-    /// Attach a model router to enable vision model routing.
+ /// Attach a model router to enable vision model routing.
     pub fn with_model_router(mut self, router: Arc<crate::model_router::ModelRouter>) -> Self {
         self.model_router = Some(router);
         self
     }
 
-    /// Process all attachments on an incoming message.
-    ///
-    /// Returns `MediaUnderstandingResult` containing text descriptions
-    /// that should be injected into the agent context.
+ /// Process all attachments on an incoming message.
+ ///
+ /// Returns `MediaUnderstandingResult` containing text descriptions
+ /// that should be injected into the agent context.
     pub async fn process(&self, message: &IncomingMessage) -> MediaUnderstandingResult {
         let mut results = Vec::new();
 
@@ -139,11 +139,11 @@ impl MediaUnderstandingPipeline {
         }
     }
 
-    /// Route an image to the default provider for description.
-    ///
-    /// Constructs a prompt that includes the image filename, MIME type, and
-    /// either a URL or base64 data URL. Falls back to a placeholder if the
-    /// provider call fails.
+ /// Route an image to the default provider for description.
+ ///
+ /// Constructs a prompt that includes the image filename, MIME type, and
+ /// either a URL or base64 data URL. Falls back to a placeholder if the
+ /// provider call fails.
     async fn describe_image_with_vision(
         &self,
         attachment: &Attachment,

@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "summary"
     priority: 70
-openclaw:
+syscity:
   emoji: "📋"
   category: "productivity"
   tags:

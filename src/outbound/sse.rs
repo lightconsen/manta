@@ -1,8 +1,7 @@
 //! Server-Sent Events (SSE) Streamer
 //!
 //! Streams agent output tokens and events to connected HTTP clients
-//! using the SSE protocol.  This is the OpenClaw equivalent of
-//! streaming response handlers.
+//! using the SSE protocol for streaming response handlers.
 //!
 //! Manages per-session broadcast channels so that multiple clients
 //! can subscribe to the same agent turn simultaneously.
@@ -16,28 +15,28 @@ use tracing::{debug, warn};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "event")]
 pub enum SseEvent {
-    /// A token chunk from the LLM stream.
+ /// A token chunk from the LLM stream.
     Token { text: String },
-    /// A tool call started.
+ /// A tool call started.
     ToolStart { name: String },
-    /// A tool call finished.
+ /// A tool call finished.
     ToolEnd {
         name: String,
         result: serde_json::Value,
     },
-    /// The stream finished.
+ /// The stream finished.
     Done,
-    /// An error occurred.
+ /// An error occurred.
     Error { message: String },
-    /// A heartbeat to keep the connection alive.
+ /// A heartbeat to keep the connection alive.
     Heartbeat,
 }
 
 /// SSE streamer manages active SSE connections per session.
 pub struct SseStreamer {
-    /// session_id -> broadcast sender for that session
+ /// session_id -> broadcast sender for that session
     sessions: RwLock<HashMap<String, broadcast::Sender<SseEvent>>>,
-    /// Channel capacity for each per-session broadcast
+ /// Channel capacity for each per-session broadcast
     capacity: usize,
 }
 
@@ -49,7 +48,7 @@ impl SseStreamer {
         }
     }
 
-    /// Create with a custom broadcast capacity.
+ /// Create with a custom broadcast capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -57,10 +56,10 @@ impl SseStreamer {
         }
     }
 
-    /// Subscribe a new client to a session's SSE stream.
-    ///
-    /// Returns a receiver that yields [`SseEvent`]s for this session.
-    /// If the session does not yet exist, a new broadcast channel is created.
+ /// Subscribe a new client to a session's SSE stream.
+ ///
+ /// Returns a receiver that yields [`SseEvent`]s for this session.
+ /// If the session does not yet exist, a new broadcast channel is created.
     pub async fn subscribe(&self, session_id: &str) -> broadcast::Receiver<SseEvent> {
         let mut sessions = self.sessions.write().await;
         let sender = sessions
@@ -74,7 +73,7 @@ impl SseStreamer {
         sender.subscribe()
     }
 
-    /// Send an SSE event to all subscribers for a session.
+ /// Send an SSE event to all subscribers for a session.
     pub async fn send(&self, session_id: &str, event: SseEvent) {
         let sessions = self.sessions.read().await;
         if let Some(sender) = sessions.get(session_id) {
@@ -89,7 +88,7 @@ impl SseStreamer {
         }
     }
 
-    /// Clean up sessions with no remaining receivers.
+ /// Clean up sessions with no remaining receivers.
     pub async fn gc(&self) {
         let mut sessions = self.sessions.write().await;
         let before = sessions.len();
@@ -100,14 +99,14 @@ impl SseStreamer {
         }
     }
 
-    /// Remove a session explicitly (e.g. after turn completion).
+ /// Remove a session explicitly (e.g. after turn completion).
     pub async fn remove_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
         sessions.remove(session_id);
         debug!("SSE session {} removed", session_id);
     }
 
-    /// Number of active sessions.
+ /// Number of active sessions.
     pub async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
     }
@@ -159,7 +158,7 @@ mod tests {
             let _rx = streamer.subscribe("s1").await;
             assert_eq!(streamer.session_count().await, 1);
         }
-        // rx dropped — session should be stale
+ // rx dropped — session should be stale
         streamer.gc().await;
         assert_eq!(streamer.session_count().await, 0);
     }

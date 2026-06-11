@@ -1,6 +1,6 @@
 //! Process Tool — Background Process Management
 //!
-//! OpenClaw-compatible tool for managing background processes.
+//! tool for managing background processes.
 //! Unlike ShellTool (one-shot execution), ProcessTool starts processes
 //! that can run in the background and be queried/stopped later.
 
@@ -244,7 +244,7 @@ impl Tool for ProcessTool {
                             process_id, pid, full_cmd
                         );
 
-                        // Spawn a detached task to wait for the child and update status
+ // Spawn a detached task to wait for the child and update status
                         let registry = self.registry.clone();
                         let id = process_id.clone();
                         tokio::spawn(async move {
@@ -352,7 +352,7 @@ impl Tool for ProcessTool {
                     }
                     #[cfg(not(unix))]
                     {
-                        // On non-Unix, we can't send signals; just mark as killed
+ // On non-Unix, we can't send signals; just mark as killed
                         self.registry
                             .update_status(&process_id, ProcessStatus::Killed)
                             .await;
@@ -538,7 +538,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_tool_start_command_not_allowed() {
         let tool = ProcessTool::new();
-        // Only allow "echo", not "rm"
+ // Only allow "echo", not "rm"
         let ctx = ToolContext::new("user", "conv").allow_command("echo");
 
         let result = tool
@@ -573,8 +573,8 @@ mod tests {
         let registry = ProcessRegistry::new();
         let cloned = registry.clone();
 
-        // Clone should share the same underlying data
-        // (This is a smoke test to verify Clone works)
+ // Clone should share the same underlying data
+ // (This is a smoke test to verify Clone works)
         assert_eq!(std::sync::Arc::strong_count(&registry.processes), 2);
         drop(cloned);
         assert_eq!(std::sync::Arc::strong_count(&registry.processes), 1);

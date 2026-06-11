@@ -1,7 +1,7 @@
 # 状态快照机制（State Snapshot）
 
 > **关联文档**: [protocol.md](./protocol.md)
-> **状态**: 参考文档（OpenClaw 实现），Syscity 暂不实现
+> **状态**: 参考文档，Syscity 暂不实现
 
 ---
 
@@ -310,7 +310,3 @@ Syscity 的 `event` 帧格式预留了扩展空间：
 ---
 
 ## 7. 参考实现
-
-- **OpenClaw**: `src/gateway/protocol/schema/snapshot.ts`
-- **OpenClaw 握手**: `src/gateway/server/ws-connection/message-handler.ts` (hello-ok 发送 snapshot)
-- **OpenClaw 广播**: `src/gateway/server-broadcast.ts` (event 携带 stateVersion)

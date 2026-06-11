@@ -1,7 +1,7 @@
 //! OAuth2 Authentication Handlers
 //!
 //! Implements OAuth2 authorization code flow for GitHub and Google.
-//! Mirrors OpenClaw's `src/gateway/auth/oauth.ts` functionality.
+//! ts` functionality.
 
 use axum::{
     extract::{Query, State},
@@ -113,7 +113,7 @@ pub async fn github_login_handler(State(state): State<Arc<GatewayState>>) -> imp
         auth_request = auth_request.add_scope(Scope::new(scope.clone()));
     }
 
-    // Default scope if none configured
+ // Default scope if none configured
     if github_config.scopes.is_empty() {
         auth_request = auth_request.add_scope(Scope::new("read:user".to_string()));
         auth_request = auth_request.add_scope(Scope::new("user:email".to_string()));
@@ -166,7 +166,7 @@ pub async fn github_callback_handler(
         }
     };
 
-    // Exchange code for token
+ // Exchange code for token
     let token_result = match client
         .exchange_code(AuthorizationCode::new(params.code.clone()))
         .request_async(&oauth_http_client())
@@ -188,7 +188,7 @@ pub async fn github_callback_handler(
 
     let access_token = token_result.access_token().secret();
 
-    // Fetch user profile from GitHub API
+ // Fetch user profile from GitHub API
     let profile = match fetch_github_profile(access_token).await {
         Ok(p) => p,
         Err(e) => {
@@ -204,7 +204,7 @@ pub async fn github_callback_handler(
         }
     };
 
-    // Create or update user
+ // Create or update user
     let user_id = UserId::new(format!("github:{}", profile.provider_user_id));
     let user =
         User::new(user_id.0.clone(), profile.name.unwrap_or_else(|| "GitHub User".to_string()))
@@ -216,7 +216,7 @@ pub async fn github_callback_handler(
         }
     }
 
-    // Create session
+ // Create session
     let session = match state
         .auth_manager
         .create_session(user_id, 24 * 7, None)
@@ -230,7 +230,7 @@ pub async fn github_callback_handler(
         }
     };
 
-    // Set session cookie and redirect to admin
+ // Set session cookie and redirect to admin
     let cookie_config = SessionCookieConfig::default();
     let cookie = build_set_cookie(&cookie_config, &session.token);
 
@@ -490,7 +490,7 @@ pub async fn logout_handler(
     let cookie_config = SessionCookieConfig::default();
     let clear_cookie = crate::gateway::auth::build_clear_cookie(&cookie_config);
 
-    // Revoke session if present
+ // Revoke session if present
     if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
         state.auth_manager.revoke_session(&token).await;
     }

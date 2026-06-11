@@ -22,7 +22,7 @@ triggers:
   - type: keyword
     pattern: "issue"
     priority: 70
-openclaw:
+syscity:
   emoji: "🐙"
   category: "dev-tools"
   tags:

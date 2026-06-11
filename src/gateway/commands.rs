@@ -1,6 +1,6 @@
 //! Slash Command System for Syscity Gateway
 //!
-//! Provides OpenClaw-style `/` commands via WebSocket RPC.
+//! Provides `/` commands via WebSocket RPC.
 //! Commands are exposed via `commands.list` and executed via `commands.execute`.
 
 use crate::acp::AcpSessionId;
@@ -89,7 +89,7 @@ impl CommandDef {
 /// Built-in command catalog
 pub fn built_in_commands() -> Vec<CommandDef> {
     vec![
-        // Session
+ // Session
         CommandDef::new("new", "new", "Start a new session", CommandCategory::Session)
             .with_args("[model]")
             .local()
@@ -114,7 +114,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         )
         .with_args("[path]"),
         CommandDef::new("clear", "clear", "Clear chat history", CommandCategory::Session).local(),
-        // Model
+ // Model
         CommandDef::new(
             "model",
             "model",
@@ -139,7 +139,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         .with_args("[on|off|stream]"),
         CommandDef::new("queue", "queue", "Set queue behavior", CommandCategory::Model)
             .with_args("<mode>"),
-        // Status / Query
+ // Status / Query
         CommandDef::new("help", "help", "Show help summary", CommandCategory::Status).essential(),
         CommandDef::new(
             "commands",
@@ -163,7 +163,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Status,
         )
         .with_args("[list|detail|json]"),
-        // Agents / ACP
+ // Agents / ACP
         CommandDef::new("subagents", "subagents", "Manage sub-agents", CommandCategory::Agents)
             .with_args("list|kill|log|info|send|steer|spawn"),
         CommandDef::new("acp", "acp", "Manage ACP sessions", CommandCategory::Agents)
@@ -181,7 +181,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         CommandDef::new("unfocus", "unfocus", "Remove thread binding", CommandCategory::Agents),
         CommandDef::new("tell", "tell", "Alias for steer", CommandCategory::Agents)
             .with_args("<id> <message>"),
-        // Skills / Approval
+ // Skills / Approval
         CommandDef::new(
             "allowlist",
             "allowlist",
@@ -203,7 +203,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Agents,
         )
         .with_args("<question>"),
-        // Admin (owner-only)
+ // Admin (owner-only)
         CommandDef::new("config", "config", "Read or write config", CommandCategory::Admin)
             .with_args("show|get|set|unset")
             .admin(),
@@ -263,13 +263,13 @@ pub async fn handle_commands_execute(
 
     debug!("Executing command: /{} args='{}'", normalized, params.args);
 
-    // Determine session_id for persistence
+ // Determine session_id for persistence
     let mut session_id = params.session_id.clone();
     if session_id.is_none() {
         session_id = conn.read().await.subscriptions.first().cloned();
     }
 
-    // Persist user command input
+ // Persist user command input
     let user_text = if params.args.is_empty() {
         format!("/{}", normalized)
     } else {
@@ -293,9 +293,9 @@ pub async fn handle_commands_execute(
         tracing::warn!("No session_id for command /{}, cannot persist", normalized);
     }
 
-    // Execute command and capture response
+ // Execute command and capture response
     let response = async {
-        // Find the command definition
+ // Find the command definition
         let commands = built_in_commands();
         let def = match commands
             .iter()
@@ -311,7 +311,7 @@ pub async fn handle_commands_execute(
             }
         };
 
-        // Check admin requirement
+ // Check admin requirement
         if def.requires_admin {
             let conn_guard = conn.read().await;
             let scopes = &conn_guard.scopes;
@@ -320,7 +320,7 @@ pub async fn handle_commands_execute(
             }
         }
 
-        // Dispatch to handler
+ // Dispatch to handler
         match normalized.as_str() {
             "help" | "commands" => handle_help(req),
             "status" => handle_status(req, state).await,
@@ -365,7 +365,7 @@ pub async fn handle_commands_execute(
     }
     .await;
 
-    // Persist command result
+ // Persist command result
     let result_text = if response.ok {
         response
             .payload
@@ -496,7 +496,7 @@ async fn handle_reset(
             mgr.terminate_session(&sid);
             mgr.create_session(sid.clone());
         }
-        // Clear persisted history so the session truly resets
+ // Clear persisted history so the session truly resets
         if let Some(ref store) = state.session_store {
             if let Err(e) = store.delete_session(&sid).await {
                 tracing::warn!("Failed to delete session {} during reset: {}", sid, e);
@@ -590,7 +590,7 @@ async fn handle_compact(
         );
     };
 
-    // Resolve agent for session
+ // Resolve agent for session
     let route = state.agent_router.resolve_by_session(&sid).await;
     let agents = state.agents.read().await;
     let agent_handle = match agents.get(&route.agent_id) {
@@ -604,10 +604,10 @@ async fn handle_compact(
     };
     drop(agents);
 
-    // Run context compaction via the Summarize strategy
+ // Run context compaction via the Summarize strategy
     let compact_result = agent_handle.agent.compact_context(&sid).await;
 
-    // Flush transcript to disk as a compaction step
+ // Flush transcript to disk as a compaction step
     let export_result = state
         .transcript_store
         .export(&sid, TranscriptFormat::Markdown)
@@ -883,7 +883,7 @@ async fn handle_kill(
         );
     }
 
-    // Try to shutdown the specific subagent
+ // Try to shutdown the specific subagent
     match state.acp.shutdown_subagent(trimmed).await {
         Ok(true) => WsResponse::ok(
             &req.id,
@@ -1125,7 +1125,7 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
     let mut settings = state.runtime_settings.write().await;
 
     if enabled {
-        // Save current model and switch to fast alias
+ // Save current model and switch to fast alias
         let current_model = state.config.read().await.model.clone();
         settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
         if let Some(fast_model) = state.model_router.resolve_alias("fast").await {
@@ -1142,7 +1142,7 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
             serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
         )
     } else {
-        // Restore original model
+ // Restore original model
         let original = settings.get("fast.original_model").and_then(|v| v.as_str());
         if let Some(orig) = original {
             state.config.write().await.model = orig.to_string();
@@ -1221,7 +1221,7 @@ async fn handle_context(
         );
     };
 
-    // Resolve agent for session
+ // Resolve agent for session
     let route = state.agent_router.resolve_by_session(&sid).await;
     let agents = state.agents.read().await;
     let Some(agent_handle) = agents.get(&route.agent_id) else {

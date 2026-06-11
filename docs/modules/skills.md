@@ -1,6 +1,6 @@
 # Skills Module
 
-OpenClaw-compatible skill system for extending agent behavior with modular, trigger-activated prompt bundles.
+Skill system for extending agent behavior with modular, trigger-activated prompt bundles.
 
 ## Design
 
@@ -63,7 +63,7 @@ pub struct Skill {
     pub version: String,
     pub triggers: Vec<SkillTrigger>,
     pub prompt: String,
-    pub metadata: OpenClawMetadata,
+    pub metadata: SkillMetadata,
     pub depends_on: HashMap<String, String>,
     pub source_level: StorageLevel,
     pub is_eligible: bool,

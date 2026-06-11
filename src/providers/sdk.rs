@@ -3,7 +3,7 @@
 //! Extends the core provider trait with capability discovery,
 //! provider packs, and dynamic registration hooks.
 //!
-//! Design matches OpenClaw's provider extension architecture.
+//!
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,19 +11,19 @@ use std::collections::HashMap;
 /// Capabilities advertised by a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderCapabilities {
-    /// Supports streaming completions.
+ /// Supports streaming completions.
     pub streaming: bool,
-    /// Supports vision (image input).
+ /// Supports vision (image input).
     pub vision: bool,
-    /// Supports function calling / tool use.
+ /// Supports function calling / tool use.
     pub function_calling: bool,
-    /// Supports structured output (JSON schema).
+ /// Supports structured output (JSON schema).
     pub structured_output: bool,
-    /// Supports embeddings.
+ /// Supports embeddings.
     pub embeddings: bool,
-    /// Maximum context length (tokens).
+ /// Maximum context length (tokens).
     pub max_context_length: Option<u32>,
-    /// Model families supported (e.g. ["gpt-4", "gpt-3.5"]).
+ /// Model families supported (e.g. ["gpt-4", "gpt-3.5"]).
     pub model_families: Vec<String>,
 }
 
@@ -68,7 +68,7 @@ pub enum ProviderHealth {
 
 /// A "provider pack" — a bundle of related providers shipped as a unit.
 ///
-/// OpenClaw uses provider packs to group providers by vendor or capability.
+///
 pub struct ProviderPack {
     pub name: String,
     pub version: String,
@@ -93,10 +93,10 @@ impl ProviderSdk {
         self.packs.values().collect()
     }
 
-    /// Synchronize provider packs from the ModelRouter.
-    ///
-    /// Creates a provider pack containing all providers currently
-    /// registered in the model router.
+ /// Synchronize provider packs from the ModelRouter.
+ ///
+ /// Creates a provider pack containing all providers currently
+ /// registered in the model router.
     pub async fn sync_from_model_router(
         &mut self,
         model_router: &crate::model_router::ModelRouter,

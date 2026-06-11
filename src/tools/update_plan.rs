@@ -1,6 +1,6 @@
 //! Update Plan Tool — Agent Task Planning with Ordered Steps
 //!
-//! OpenClaw-compatible tool for creating and updating execution plans.
+//! tool for creating and updating execution plans.
 //! Each plan has ordered steps with status: pending, in_progress, or completed.
 
 use async_trait::async_trait;

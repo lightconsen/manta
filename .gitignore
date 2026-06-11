@@ -54,4 +54,3 @@ web/node_modules/
 # Local development env with sensitive data
 scripts/.env
 
-OPENCLAW_MODULES.txt

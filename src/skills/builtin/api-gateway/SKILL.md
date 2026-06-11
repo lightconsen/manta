@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "rest api"
     priority: 80
-openclaw:
+syscity:
   emoji: "🔌"
   category: "integration"
   tags:

@@ -1,6 +1,6 @@
 # Syscity Slash Commands
 
-OpenClaw-style `/` commands available in Syscity's web chat UI.
+`/` commands available in Syscity's web chat UI.
 
 Commands are exposed via `commands.list` and executed via `commands.execute` over the WebSocket RPC protocol.
 

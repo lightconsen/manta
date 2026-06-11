@@ -24,11 +24,11 @@ use tracing::{debug, error, info, warn};
 /// appropriate messaging channel (Discord, Telegram, WhatsApp, etc.).
 #[derive(Debug, Clone)]
 pub struct AnnounceDelivery {
-    /// Target channel name (e.g. `"discord"`, `"telegram"`)
+ /// Target channel name (e.g. `"discord"`, `"telegram"`)
     pub channel: String,
-    /// Recipient / room identifier (e.g. channel ID or user handle)
+ /// Recipient / room identifier (e.g. channel ID or user handle)
     pub to: String,
-    /// Message content to deliver
+ /// Message content to deliver
     pub message: String,
 }
 
@@ -36,9 +36,9 @@ pub struct AnnounceDelivery {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ExecutionTarget {
-    /// Execute shell command
+ /// Execute shell command
     Shell { command: String },
-    /// Execute via AI agent
+ /// Execute via AI agent
     Agent {
         agent_id: Option<String>,
         prompt: String,
@@ -47,12 +47,12 @@ pub enum ExecutionTarget {
 }
 
 impl ExecutionTarget {
-    /// Create a shell execution target
+ /// Create a shell execution target
     pub fn shell(command: impl Into<String>) -> Self {
         Self::Shell { command: command.into() }
     }
 
-    /// Create an agent execution target
+ /// Create an agent execution target
     pub fn agent(prompt: impl Into<String>) -> Self {
         Self::Agent {
             agent_id: None,
@@ -61,7 +61,7 @@ impl ExecutionTarget {
         }
     }
 
-    /// Create an agent execution target with specific agent
+ /// Create an agent execution target with specific agent
     pub fn agent_with_id(agent_id: impl Into<String>, prompt: impl Into<String>) -> Self {
         Self::Agent {
             agent_id: Some(agent_id.into()),
@@ -76,9 +76,9 @@ impl ExecutionTarget {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum SessionTarget {
-    /// Run in main session (has conversation context)
+ /// Run in main session (has conversation context)
     Main,
-    /// Run in isolated session (clean state: cron:{job_id})
+ /// Run in isolated session (clean state: cron:{job_id})
     #[default]
     Isolated,
 }
@@ -87,11 +87,11 @@ pub enum SessionTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum DeliveryMode {
-    /// No delivery (fire-and-forget)
+ /// No delivery (fire-and-forget)
     None,
-    /// Send to messaging channel
+ /// Send to messaging channel
     Announce { channel: String, to: String },
-    /// POST to webhook URL
+ /// POST to webhook URL
     Webhook {
         url: String,
         headers: HashMap<String, String>,
@@ -102,14 +102,14 @@ pub enum DeliveryMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Schedule {
-    /// Run at a specific time (one-shot)
+ /// Run at a specific time (one-shot)
     At { timestamp: DateTime<Utc> },
-    /// Run every N seconds
+ /// Run every N seconds
     Every {
         interval: Duration,
         anchor: Option<DateTime<Utc>>,
     },
-    /// Cron expression
+ /// Cron expression
     Cron {
         expression: String,
         timezone: Option<String>,
@@ -118,7 +118,7 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    /// Calculate the next run time after `from`
+ /// Calculate the next run time after `from`
     pub fn next_run(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self {
             Schedule::At { timestamp } => {
@@ -144,9 +144,9 @@ impl Schedule {
                 timezone: _,
                 stagger_ms,
             } => {
-                // Parse cron expression
-                // The cron crate v0.14 expects 6 fields (with seconds), so we need to
-                // convert 5-field expressions to 6-field by prepending "0" for seconds
+ // Parse cron expression
+ // The cron crate v0.14 expects 6 fields (with seconds), so we need to
+ // convert 5-field expressions to 6-field by prepending "0" for seconds
                 let normalized = if expression.split_whitespace().count() == 5 {
                     format!("0 {}", expression.trim())
                 } else {
@@ -155,10 +155,10 @@ impl Schedule {
 
                 let schedule = CronSchedule::from_str(&normalized).ok()?;
 
-                // Get next occurrence
+ // Get next occurrence
                 let next = schedule.upcoming(Utc).next()?;
 
-                // Add stagger if configured
+ // Add stagger if configured
                 if let Some(stagger) = stagger_ms {
                     let jitter = rand::random::<u64>() % stagger;
                     Some(next + ChronoDuration::milliseconds(jitter as i64))
@@ -169,7 +169,7 @@ impl Schedule {
         }
     }
 
-    /// Check if this is a one-shot schedule that should be deleted after execution
+ /// Check if this is a one-shot schedule that should be deleted after execution
     pub fn is_one_shot(&self) -> bool {
         matches!(self, Schedule::At { .. })
     }
@@ -179,9 +179,9 @@ impl Schedule {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackoffStrategy {
-    /// Fixed delay between retries
+ /// Fixed delay between retries
     Fixed,
-    /// Exponential backoff
+ /// Exponential backoff
     Exponential,
 }
 
@@ -202,12 +202,12 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Calculate delay for a specific retry attempt
+ /// Calculate delay for a specific retry attempt
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let base_delay_secs = match self.backoff {
             BackoffStrategy::Fixed => 30,
             BackoffStrategy::Exponential => {
-                // Tiered exponential: 30s, 1m, 5m, 15m, 1h
+ // Tiered exponential: 30s, 1m, 5m, 15m, 1h
                 match attempt {
                     0 => 30,
                     1 => 60,
@@ -224,17 +224,17 @@ impl RetryConfig {
 /// Job execution state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobState {
-    /// When the job is scheduled to run next
+ /// When the job is scheduled to run next
     pub next_run_at: Option<DateTime<Utc>>,
-    /// When the job last ran
+ /// When the job last ran
     pub last_run_at: Option<DateTime<Utc>>,
-    /// When the job started running (if currently running)
+ /// When the job started running (if currently running)
     pub running_at_ms: Option<i64>,
-    /// Total execution count
+ /// Total execution count
     pub run_count: u32,
-    /// Last error message
+ /// Last error message
     pub last_error: Option<String>,
-    /// Consecutive error count
+ /// Consecutive error count
     pub consecutive_errors: u32,
 }
 
@@ -242,10 +242,10 @@ pub struct JobState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeMode {
-    /// No wake — run cron job normally
+ /// No wake — run cron job normally
     #[default]
     None,
-    /// Wake the heartbeat runner immediately after job execution
+ /// Wake the heartbeat runner immediately after job execution
     HeartbeatWake,
 }
 
@@ -268,15 +268,14 @@ pub struct CronJob {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub state: JobState,
-    /// Wake mode — when set to `HeartbeatWake`, sends a wake request to the
-    /// heartbeat runner after the job completes, similar to OpenClaw's
-    /// `requestHeartbeatNow()` for `sessionTarget: "main"` + `wakeMode: "now"`.
+ /// Wake mode — when set to `HeartbeatWake`, sends a wake request to the
+ /// heartbeat runner after the job completes.
     #[serde(default, skip_serializing_if = "WakeMode::is_none")]
     pub wake_mode: WakeMode,
 }
 
 impl CronJob {
-    /// Create a new cron job
+ /// Create a new cron job
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -304,31 +303,31 @@ impl CronJob {
         }
     }
 
-    /// Set the wake mode for heartbeat integration
+ /// Set the wake mode for heartbeat integration
     pub fn with_wake_mode(mut self, wake_mode: WakeMode) -> Self {
         self.wake_mode = wake_mode;
         self
     }
 
-    /// Set the delivery mode
+ /// Set the delivery mode
     pub fn with_delivery(mut self, delivery: DeliveryMode) -> Self {
         self.delivery = delivery;
         self
     }
 
-    /// Set the session target
+ /// Set the session target
     pub fn with_session(mut self, session: SessionTarget) -> Self {
         self.session = session;
         self
     }
 
-    /// Set retry configuration
+ /// Set retry configuration
     pub fn with_retry(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
         self
     }
 
-    /// Check if the job should run at the given time
+ /// Check if the job should run at the given time
     pub fn should_run(&self, now: DateTime<Utc>) -> bool {
         if !self.enabled {
             return false;
@@ -344,7 +343,7 @@ impl CronJob {
         }
     }
 
-    /// Update the next run time based on schedule
+ /// Update the next run time based on schedule
     pub fn update_next_run(&mut self, after: DateTime<Utc>) {
         self.state.next_run_at = self.schedule.next_run(after);
         if let Some(next) = self.state.next_run_at {
@@ -400,22 +399,22 @@ pub enum CronCommand {
     GetJob(String, oneshot::Sender<Option<CronJob>>),
 }
 
-/// Advanced cron scheduler with single global timer (OpenClaw-style)
+/// Advanced cron scheduler with single global timer
 pub struct CronScheduler {
     jobs: Arc<RwLock<HashMap<String, CronJob>>>,
     command_tx: mpsc::Sender<CronCommand>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    /// Shared agent reference — wrapping in `Arc<RwLock<…>>` lets
-    /// `set_agent()` update the running scheduler's agent without
-    /// restarting any background tasks.
+ /// Shared agent reference — wrapping in `Arc<RwLock<…>>` lets
+ /// `set_agent()` update the running scheduler's agent without
+ /// restarting any background tasks.
     agent: Arc<RwLock<Option<Arc<Agent>>>>,
     store_path: Option<PathBuf>,
-    /// Optional sender for Announce-mode delivery events.
+ /// Optional sender for Announce-mode delivery events.
     announce_tx: Option<mpsc::Sender<AnnounceDelivery>>,
-    /// Optional sender for heartbeat wake requests.
-    /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent here.
+ /// Optional sender for heartbeat wake requests.
+ /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent here.
     heartbeat_wake_tx: Option<mpsc::Sender<crate::heartbeat::WakeRequest>>,
-    /// Notify the timer to re-calculate next wake time
+ /// Notify the timer to re-calculate next wake time
     rearm_notify: Arc<tokio::sync::Notify>,
 }
 
@@ -429,7 +428,7 @@ impl std::fmt::Debug for CronScheduler {
 }
 
 impl CronScheduler {
-    /// Create a new scheduler
+ /// Create a new scheduler
     pub fn new() -> (Self, mpsc::Receiver<CronCommand>) {
         let (command_tx, command_rx) = mpsc::channel(100);
         let scheduler = Self {
@@ -445,45 +444,44 @@ impl CronScheduler {
         (scheduler, command_rx)
     }
 
-    /// Attach an announce delivery sender.
-    ///
-    /// When a cron job uses `DeliveryMode::Announce`, the scheduler sends an
-    /// [`AnnounceDelivery`] event on this channel.  The caller is responsible
-    /// for receiving the events and routing them to the correct messaging back-end.
+ /// Attach an announce delivery sender.
+ ///
+ /// When a cron job uses `DeliveryMode::Announce`, the scheduler sends an
+ /// [`AnnounceDelivery`] event on this channel. The caller is responsible
+ /// for receiving the events and routing them to the correct messaging back-end.
     pub fn set_announce_tx(&mut self, tx: mpsc::Sender<AnnounceDelivery>) {
         self.announce_tx = Some(tx);
     }
 
-    /// Attach a heartbeat wake sender.
-    ///
-    /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent
-    /// to this channel after the job completes, similar to OpenClaw's
-    /// `requestHeartbeatNow()`.
+ /// Attach a heartbeat wake sender.
+ ///
+ /// When a cron job has `wake_mode: HeartbeatWake`, a wake request is sent
+ /// to this channel after the job completes.
     pub fn set_heartbeat_wake_tx(&mut self, tx: mpsc::Sender<crate::heartbeat::WakeRequest>) {
         self.heartbeat_wake_tx = Some(tx);
     }
 
-    /// Wire an `Agent` into a running scheduler.
-    ///
-    /// Because all background tasks hold an `Arc` to the same
-    /// `RwLock<Option<Arc<Agent>>>`, calling this after `start()` is safe
-    /// and immediately visible to any task that tries to execute an agent job.
+ /// Wire an `Agent` into a running scheduler.
+ ///
+ /// Because all background tasks hold an `Arc` to the same
+ /// `RwLock<Option<Arc<Agent>>>`, calling this after `start()` is safe
+ /// and immediately visible to any task that tries to execute an agent job.
     pub async fn set_agent(&self, agent: Arc<Agent>) {
         *self.agent.write().await = Some(agent);
     }
 
-    /// Set the store path for persistence
+ /// Set the store path for persistence
     pub fn with_store_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.store_path = Some(path.into());
         self
     }
 
-    /// Start the scheduler
+ /// Start the scheduler
     pub async fn start(&mut self, mut command_rx: mpsc::Receiver<CronCommand>) -> Result<()> {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         self.shutdown_tx = Some(shutdown_tx);
 
-        // Load jobs from store if configured
+ // Load jobs from store if configured
         let store_path = self.store_path.clone();
         if let Some(ref path) = store_path {
             self.load_jobs(path).await.ok();
@@ -495,7 +493,7 @@ impl CronScheduler {
         let announce_tx = self.announce_tx.clone();
         let heartbeat_wake_tx = self.heartbeat_wake_tx.clone();
 
-        // Spawn command handler
+ // Spawn command handler
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -512,7 +510,7 @@ impl CronScheduler {
             }
         });
 
-        // Spawn single global timer task (OpenClaw-style)
+ // Spawn single global timer task
         let jobs_for_timer = Arc::clone(&self.jobs);
         let agent_for_timer = Arc::clone(&self.agent);
         let store_path_for_timer = self.store_path.clone();
@@ -521,19 +519,19 @@ impl CronScheduler {
         let rearm_notify = Arc::clone(&self.rearm_notify);
 
         tokio::spawn(async move {
-            // Track if we're currently running jobs to prevent overlapping ticks
+ // Track if we're currently running jobs to prevent overlapping ticks
             let running = Arc::new(RwLock::new(false));
 
             loop {
-                // Calculate next wake time (minimum delay across all jobs)
+ // Calculate next wake time (minimum delay across all jobs)
                 let delay_ms = Self::calculate_next_wake_ms(&jobs_for_timer).await;
 
-                // Cap at MAX_TIMER_DELAY_MS to ensure we wake at least once per minute
+ // Cap at MAX_TIMER_DELAY_MS to ensure we wake at least once per minute
                 let capped_delay = delay_ms
                     .map(|d| d.min(MAX_TIMER_DELAY_MS))
                     .unwrap_or(MAX_TIMER_DELAY_MS);
 
-                // Ensure minimum delay to prevent tight loops
+ // Ensure minimum delay to prevent tight loops
                 let final_delay = capped_delay.max(MIN_REFIRE_GAP_MS);
 
                 debug!(
@@ -543,13 +541,13 @@ impl CronScheduler {
                     final_delay
                 );
 
-                // Wait for timer OR rearm notification
+ // Wait for timer OR rearm notification
                 let sleep_fut = tokio::time::sleep(Duration::from_millis(final_delay));
                 let notify_fut = rearm_notify.notified();
 
                 tokio::select! {
                     _ = sleep_fut => {
-                        // Timer fired - proceed to check jobs
+ // Timer fired - proceed to check jobs
                     }
                     _ = notify_fut => {
                         debug!("Timer re-arming due to schedule change");
@@ -557,7 +555,7 @@ impl CronScheduler {
                     }
                 }
 
-                // Check if already running (prevent overlapping ticks like OpenClaw's armRunningRecheckTimer)
+ // Check if already running (prevent overlapping ticks)
                 let running_guard = running.read().await;
                 if *running_guard {
                     debug!("Timer tick skipped: previous tick still running");
@@ -565,17 +563,17 @@ impl CronScheduler {
                 }
                 drop(running_guard);
 
-                // Mark as running
+ // Mark as running
                 *running.write().await = true;
 
-                // Run due jobs - ALWAYS re-arm in finally pattern
+ // Run due jobs - ALWAYS re-arm in finally pattern
                 let jobs = Arc::clone(&jobs_for_timer);
                 let agent = Arc::clone(&agent_for_timer);
                 let store_path = store_path_for_timer.clone();
                 let announce_tx = announce_tx_for_timer.clone();
                 let heartbeat_wake_tx = heartbeat_wake_tx_for_timer.clone();
 
-                // Run jobs (result unused)
+ // Run jobs (result unused)
                 async {
                     Self::run_due_jobs(
                         &jobs,
@@ -588,10 +586,10 @@ impl CronScheduler {
                 }
                 .await;
 
-                // Always mark as not running and continue (re-arm happens at loop start)
+ // Always mark as not running and continue (re-arm happens at loop start)
                 *running.write().await = false;
 
-                // The loop continues and re-arms automatically
+ // The loop continues and re-arms automatically
             }
         });
 
@@ -599,8 +597,8 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Calculate the next wake time in milliseconds
-    /// Returns None if no jobs are scheduled
+ /// Calculate the next wake time in milliseconds
+ /// Returns None if no jobs are scheduled
     async fn calculate_next_wake_ms(jobs: &Arc<RwLock<HashMap<String, CronJob>>>) -> Option<u64> {
         let jobs_lock = jobs.read().await;
         let now = Utc::now();
@@ -620,7 +618,7 @@ impl CronScheduler {
                         min_next_ms = Some(delay);
                     }
                 } else {
-                    // Job is overdue - wake immediately
+ // Job is overdue - wake immediately
                     return Some(0);
                 }
             }
@@ -629,7 +627,7 @@ impl CronScheduler {
         min_next_ms
     }
 
-    /// Run all jobs that are currently due
+ /// Run all jobs that are currently due
     async fn run_due_jobs(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
@@ -673,12 +671,12 @@ impl CronScheduler {
         }
     }
 
-    /// Trigger timer rearm after schedule changes
+ /// Trigger timer rearm after schedule changes
     fn trigger_rearm(&self) {
         self.rearm_notify.notify_one();
     }
 
-    /// Handle scheduler commands
+ /// Handle scheduler commands
     async fn handle_command(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         agent: &Arc<RwLock<Option<Arc<Agent>>>>,
@@ -691,14 +689,14 @@ impl CronScheduler {
             CronCommand::Add(mut job) => {
                 info!("Adding job: {} ({})", job.name, job.id);
 
-                // Calculate initial next run
+ // Calculate initial next run
                 if job.state.next_run_at.is_none() {
                     job.update_next_run(Utc::now());
                 }
 
                 jobs.write().await.insert(job.id.clone(), job);
 
-                // Persist
+ // Persist
                 if let Some(ref path) = store_path {
                     Self::save_jobs(jobs, path)
                         .await
@@ -721,7 +719,7 @@ impl CronScheduler {
                     job.enabled = enabled;
                     info!("Job {} enabled = {}", id, enabled);
 
-                    // Recalculate next run if enabling
+ // Recalculate next run if enabling
                     if enabled {
                         job.update_next_run(Utc::now());
                     }
@@ -765,10 +763,10 @@ impl CronScheduler {
         }
     }
 
-    /// Execute a job
-    ///
-    /// When `force` is true, the job runs regardless of `should_run` / `next_run_at`.
-    /// Used by manual trigger (`Trigger` command). Timer-driven execution passes `false`.
+ /// Execute a job
+ ///
+ /// When `force` is true, the job runs regardless of `should_run` / `next_run_at`.
+ /// Used by manual trigger (`Trigger` command). Timer-driven execution passes `false`.
     async fn execute_job(
         jobs: &Arc<RwLock<HashMap<String, CronJob>>>,
         job_id: &str,
@@ -788,13 +786,13 @@ impl CronScheduler {
                 }
             };
 
-            // Check if should run (skip when forced)
+ // Check if should run (skip when forced)
             let now = Utc::now();
             if !force && !job.should_run(now) {
                 return;
             }
 
-            // Mark as running
+ // Mark as running
             job.state.running_at_ms = Some(now.timestamp_millis());
             job.clone()
         };
@@ -803,7 +801,7 @@ impl CronScheduler {
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
 
-        // Execute based on target type
+ // Execute based on target type
         let result = match &job.target {
             ExecutionTarget::Shell { command } => Self::execute_shell(command).await,
             ExecutionTarget::Agent { prompt, agent_id, .. } => {
@@ -818,7 +816,7 @@ impl CronScheduler {
 
         let completed_at = Utc::now();
 
-        // Update job state
+ // Update job state
         {
             let mut jobs_lock = jobs.write().await;
             if let Some(j) = jobs_lock.get_mut(job_id) {
@@ -826,7 +824,7 @@ impl CronScheduler {
                 j.state.last_run_at = Some(completed_at);
                 j.state.run_count += 1;
 
-                // Build structured delivery payload for both success and error
+ // Build structured delivery payload for both success and error
                 let delivery_payload = match &result {
                     Ok(output) => {
                         j.state.last_error = None;
@@ -857,7 +855,7 @@ impl CronScheduler {
                     }
                 };
 
-                // Deliver result if configured
+ // Deliver result if configured
                 if !matches!(j.delivery, DeliveryMode::None) {
                     let message = serde_json::to_string(&delivery_payload)
                         .unwrap_or_else(|_| delivery_payload.to_string());
@@ -866,7 +864,7 @@ impl CronScheduler {
                     }
                 }
 
-                // Update next run (or schedule retry on error)
+ // Update next run (or schedule retry on error)
                 match &result {
                     Ok(_) => j.update_next_run(completed_at),
                     Err(_) => {
@@ -883,7 +881,7 @@ impl CronScheduler {
                     }
                 }
 
-                // Remove one-shot jobs after execution
+ // Remove one-shot jobs after execution
                 if j.schedule.is_one_shot() {
                     info!("Removing one-shot job: {}", j.name);
                     jobs_lock.remove(job_id);
@@ -891,15 +889,15 @@ impl CronScheduler {
             }
         }
 
-        // Persist
+ // Persist
         if let Some(ref path) = store_path {
             let _ = Self::save_jobs(jobs, path).await;
         }
 
-        // Log the run
+ // Log the run
         let _ = Self::log_run(job_id, &run_id, started_at, completed_at, result, store_path).await;
 
-        // Send heartbeat wake if configured and job succeeded
+ // Send heartbeat wake if configured and job succeeded
         if matches!(job.wake_mode, WakeMode::HeartbeatWake) {
             if let Some(ref tx) = heartbeat_wake_tx {
                 let agent_id = match &job.target {
@@ -921,7 +919,7 @@ impl CronScheduler {
         }
     }
 
-    /// Execute shell command
+ /// Execute shell command
     async fn execute_shell(command: &str) -> Result<String> {
         let output = tokio::process::Command::new("sh")
             .arg("-c")
@@ -939,7 +937,7 @@ impl CronScheduler {
         }
     }
 
-    /// Execute via agent
+ /// Execute via agent
     async fn execute_agent(
         agent: &Arc<Agent>,
         job: &CronJob,
@@ -965,7 +963,7 @@ impl CronScheduler {
         Ok(response.content)
     }
 
-    /// Deliver result
+ /// Deliver result
     async fn deliver_result(
         delivery: &DeliveryMode,
         output: &str,
@@ -1052,7 +1050,7 @@ impl CronScheduler {
         }
     }
 
-    /// Log a job run
+ /// Log a job run
     async fn log_run(
         job_id: &str,
         run_id: &str,
@@ -1086,7 +1084,7 @@ impl CronScheduler {
 
         debug!("Job run logged: {} - {:?}", entry.job_id, entry.status);
 
-        // Persist to JSONL file if store_path is configured
+ // Persist to JSONL file if store_path is configured
         if let Some(ref path) = store_path {
             let log_path = path.with_extension("runs.jsonl");
             let line = serde_json::to_string(&entry).map_err(|e| {
@@ -1110,7 +1108,7 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Load jobs from store
+ /// Load jobs from store
     async fn load_jobs(&mut self, path: &PathBuf) -> Result<()> {
         if !path.exists() {
             return Ok(());
@@ -1125,7 +1123,7 @@ impl CronScheduler {
 
         let mut jobs_lock = self.jobs.write().await;
         for job in jobs {
-            // Clear stale running markers (crash recovery)
+ // Clear stale running markers (crash recovery)
             let mut job = job;
             if job.state.running_at_ms.is_some() {
                 job.state.running_at_ms = None;
@@ -1139,7 +1137,7 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Save jobs to store
+ /// Save jobs to store
     async fn save_jobs(jobs: &Arc<RwLock<HashMap<String, CronJob>>>, path: &PathBuf) -> Result<()> {
         let jobs_lock = jobs.read().await;
         let jobs_vec: Vec<&CronJob> = jobs_lock.values().collect();
@@ -1147,7 +1145,7 @@ impl CronScheduler {
         let json = serde_json::to_string_pretty(&jobs_vec)
             .map_err(|e| SyscityError::Internal(format!("Failed to serialize jobs: {}", e)))?;
 
-        // Ensure parent directory exists
+ // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.ok();
         }
@@ -1159,18 +1157,18 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Add a job
+ /// Add a job
     pub async fn add_job(&self, job: CronJob) -> Result<()> {
         self.command_tx
             .send(CronCommand::Add(job))
             .await
             .map_err(|e| SyscityError::Internal(format!("Failed to add job: {}", e)))?;
-        // Trigger rearm to pick up new job
+ // Trigger rearm to pick up new job
         self.trigger_rearm();
         Ok(())
     }
 
-    /// Remove a job
+ /// Remove a job
     pub async fn remove_job(&self, job_id: &str) -> Result<()> {
         self.command_tx
             .send(CronCommand::Remove(job_id.to_string()))
@@ -1180,7 +1178,7 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Enable/disable a job
+ /// Enable/disable a job
     pub async fn set_job_enabled(&self, job_id: &str, enabled: bool) -> Result<()> {
         self.command_tx
             .send(CronCommand::SetEnabled(job_id.to_string(), enabled))
@@ -1192,7 +1190,7 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Trigger a job immediately
+ /// Trigger a job immediately
     pub async fn trigger_job(&self, job_id: &str) -> Result<()> {
         self.command_tx
             .send(CronCommand::Trigger(job_id.to_string()))
@@ -1200,14 +1198,14 @@ impl CronScheduler {
             .map_err(|e| SyscityError::Internal(format!("Failed to trigger job: {}", e)))
     }
 
-    /// List all jobs
+ /// List all jobs
     pub async fn list_jobs(&self) -> Vec<CronJob> {
         let (tx, rx) = oneshot::channel();
         let _ = self.command_tx.send(CronCommand::ListJobs(tx)).await;
         rx.await.unwrap_or_default()
     }
 
-    /// Get a specific job
+ /// Get a specific job
     pub async fn get_job(&self, job_id: &str) -> Option<CronJob> {
         let (tx, rx) = oneshot::channel();
         let _ = self
@@ -1217,7 +1215,7 @@ impl CronScheduler {
         rx.await.ok().flatten()
     }
 
-    /// Shutdown the scheduler
+ /// Shutdown the scheduler
     pub async fn shutdown(&mut self) -> Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;
@@ -1245,7 +1243,7 @@ mod tests {
         let schedule = Schedule::At { timestamp: future };
         assert_eq!(schedule.next_run(now), Some(future));
 
-        // Past time returns None
+ // Past time returns None
         let past = now - ChronoDuration::hours(1);
         let schedule = Schedule::At { timestamp: past };
         assert_eq!(schedule.next_run(now), None);
@@ -1261,7 +1259,7 @@ mod tests {
         let next = schedule.next_run(now);
         assert!(next.is_some());
 
-        // Should be about 1 hour from now
+ // Should be about 1 hour from now
         let diff = next.unwrap() - now;
         assert!(diff.num_seconds() >= 3600);
     }
@@ -1300,7 +1298,7 @@ mod tests {
     #[test]
     fn test_schedule_cron_expression() {
         let now = Utc::now();
-        // Every minute expression (6 fields with seconds)
+ // Every minute expression (6 fields with seconds)
         let schedule = Schedule::Cron {
             expression: "0 * * * * *".to_string(),
             timezone: None,
@@ -1310,14 +1308,14 @@ mod tests {
         assert!(next.is_some());
         let next = next.unwrap();
         assert!(next > now);
-        // Should be within ~1 minute
+ // Should be within ~1 minute
         assert!((next - now).num_seconds() <= 61);
     }
 
     #[test]
     fn test_schedule_cron_5field_normalization() {
         let now = Utc::now();
-        // 5-field cron (no seconds) should be normalized to 6-field
+ // 5-field cron (no seconds) should be normalized to 6-field
         let schedule = Schedule::Cron {
             expression: "* * * * *".to_string(),
             timezone: None,
@@ -1436,27 +1434,27 @@ mod tests {
         let schedule = Schedule::At { timestamp: past };
         let target = ExecutionTarget::shell("echo");
 
-        // Job with past schedule - should run because next_run is past and enabled
+ // Job with past schedule - should run because next_run is past and enabled
         let mut job = CronJob::new("j1", "Test", schedule, target);
         job.state.next_run_at = Some(past);
         assert!(job.should_run(now));
 
-        // Disabled job should not run
+ // Disabled job should not run
         job.enabled = false;
         assert!(!job.should_run(now));
         job.enabled = true;
 
-        // Running job should not run
+ // Running job should not run
         job.state.running_at_ms = Some(now.timestamp_millis());
         assert!(!job.should_run(now));
         job.state.running_at_ms = None;
 
-        // Future job should not run yet
+ // Future job should not run yet
         let future = now + ChronoDuration::hours(1);
         job.state.next_run_at = Some(future);
         assert!(!job.should_run(now));
 
-        // No next_run should still return true (legacy behavior)
+ // No next_run should still return true (legacy behavior)
         job.state.next_run_at = None;
         assert!(job.should_run(now));
     }
@@ -1470,7 +1468,7 @@ mod tests {
 
         job.update_next_run(now);
         let next = job.state.next_run_at.unwrap();
-        // Next run should be about 1 hour from anchor
+ // Next run should be about 1 hour from anchor
         let diff = next - now;
         assert!(diff.num_seconds() >= 3600);
     }
@@ -1509,7 +1507,7 @@ mod tests {
         let (scheduler, rx) = CronScheduler::new();
         assert!(scheduler.store_path.is_none());
         assert!(scheduler.announce_tx.is_none());
-        // rx should be open
+ // rx should be open
         assert!(!rx.is_closed());
     }
 
@@ -1559,16 +1557,16 @@ mod tests {
         let store_path = cron_dir.join("test-say-hi.json");
         let runs_path = cron_dir.join("test-say-hi.runs.jsonl");
 
-        // Clean up any previous test artifacts
+ // Clean up any previous test artifacts
         let _ = tokio::fs::remove_file(&store_path).await;
         let _ = tokio::fs::remove_file(&runs_path).await;
 
-        // Create and start scheduler
+ // Create and start scheduler
         let (mut scheduler, command_rx) = CronScheduler::new();
         scheduler.store_path = Some(store_path.clone());
         scheduler.start(command_rx).await.unwrap();
 
-        // Create the "say-hi-every-2-min" job
+ // Create the "say-hi-every-2-min" job
         let job = CronJob::new(
             "say-hi-001",
             "say-hi-every-2-min",
@@ -1585,7 +1583,7 @@ mod tests {
 
         scheduler.add_job(job).await.unwrap();
 
-        // Verify job is in scheduler
+ // Verify job is in scheduler
         let jobs = scheduler.list_jobs().await;
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "say-hi-every-2-min");
@@ -1594,7 +1592,7 @@ mod tests {
             matches!(jobs[0].target, ExecutionTarget::Shell { ref command } if command == "echo 'hi from cron'")
         );
 
-        // Verify persistence file written
+ // Verify persistence file written
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(store_path.exists(), "jobs store file should exist");
 
@@ -1602,25 +1600,25 @@ mod tests {
         assert!(store_content.contains("say-hi-every-2-min"));
         assert!(store_content.contains("*/2 * * * *"));
 
-        // Trigger immediate execution
+ // Trigger immediate execution
         scheduler.trigger_job("say-hi-001").await.unwrap();
 
-        // Wait for execution to complete
+ // Wait for execution to complete
         tokio::time::sleep(Duration::from_millis(800)).await;
 
-        // Verify run log
+ // Verify run log
         assert!(runs_path.exists(), "runs log file should exist after execution");
         let runs_content = tokio::fs::read_to_string(&runs_path).await.unwrap();
         assert!(!runs_content.is_empty(), "runs log should contain at least one entry");
         assert!(runs_content.contains("say-hi-001"), "run log should reference job id");
 
-        // Verify job state updated
+ // Verify job state updated
         let jobs_after = scheduler.list_jobs().await;
         assert_eq!(jobs_after[0].state.run_count, 1);
         assert!(jobs_after[0].state.last_run_at.is_some());
         assert!(jobs_after[0].state.last_error.is_none());
 
-        // Cleanup
+ // Cleanup
         let _ = tokio::fs::remove_file(&store_path).await;
         let _ = tokio::fs::remove_file(&runs_path).await;
 
@@ -1647,7 +1645,7 @@ mod tests {
             ExecutionTarget::shell("echo"),
         );
         let json = serde_json::to_string(&job).unwrap();
-        // WakeMode::None should be skipped due to skip_serializing_if
+ // WakeMode::None should be skipped due to skip_serializing_if
         assert!(!json.contains("wake_mode"));
     }
 
@@ -1677,7 +1675,7 @@ mod tests {
         let deserialized: CronJob = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.wake_mode, WakeMode::HeartbeatWake);
         assert_eq!(deserialized.id, job.id);
-        // Also verify the agent target is preserved
+ // Also verify the agent target is preserved
         assert!(matches!(deserialized.target, ExecutionTarget::Agent { .. }));
     }
 }

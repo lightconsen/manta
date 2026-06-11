@@ -3,7 +3,7 @@
 //! Extends the core tool registry with tool packs, capability schemas,
 //! and dynamic registration hooks for plugin-provided tools.
 //!
-//! Design matches OpenClaw's tool extension architecture.
+//!
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,15 +11,15 @@ use std::collections::HashMap;
 /// Capabilities advertised by a tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCapabilities {
-    /// Whether this tool requires human approval.
+ /// Whether this tool requires human approval.
     pub requires_approval: bool,
-    /// Whether this tool can run in a sandbox.
+ /// Whether this tool can run in a sandbox.
     pub sandboxed: bool,
-    /// Whether this tool supports streaming output.
+ /// Whether this tool supports streaming output.
     pub streaming: bool,
-    /// Risk level classification.
+ /// Risk level classification.
     pub risk_level: crate::tools::approval::RiskLevel,
-    /// Categories (e.g. ["file", "system", "network"]).
+ /// Categories (e.g. ["file", "system", "network"]).
     pub categories: Vec<String>,
 }
 
@@ -46,7 +46,7 @@ pub struct ToolMetadata {
 
 /// A "tool pack" — a bundle of related tools shipped as a unit.
 ///
-/// OpenClaw uses tool packs to group tools by domain (e.g. "filesystem",
+/// g. "filesystem",
 /// "web", "system").
 pub struct ToolPack {
     pub name: String,
@@ -77,10 +77,10 @@ impl ToolSdk {
         self.packs.get(name)
     }
 
-    /// Synchronize tool packs from the ToolRegistry.
-    ///
-    /// Creates a tool pack containing all tools currently registered
-    /// in the tool registry (both static and dynamic).
+ /// Synchronize tool packs from the ToolRegistry.
+ ///
+ /// Creates a tool pack containing all tools currently registered
+ /// in the tool registry (both static and dynamic).
     pub fn sync_from_tool_registry(&mut self, tool_registry: &crate::tools::ToolRegistry) {
         let tools = tool_registry.list();
         if tools.is_empty() {
@@ -182,7 +182,7 @@ mod tests {
         };
         let json = serde_json::to_string(&caps).unwrap();
         assert!(json.contains("requires_approval"));
-        // RiskLevel serializes as integer (2 for High)
+ // RiskLevel serializes as integer (2 for High)
     }
 
     #[test]

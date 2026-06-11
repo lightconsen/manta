@@ -2,20 +2,20 @@
 //!
 //! All Syscity data is stored in ~/.syscity/ with the following structure:
 //! ~/.syscity/
-//! ├── syscity.toml       # Configuration file
-//! ├── data/            # SQLite database (syscity.db) - unified storage
-//! ├── logs/            # Log files (daemon.log)
-//! ├── skills/          # User-installed skills
-//! ├── agents/          # Agent configurations
-//! │   └── {agent-id}/
-//! │       ├── personality.toml  # Agent configuration
-//! │       ├── workspace/        # Agent-specific workspace (AI file ops)
-//! │       └── data/             # Agent runtime data (sessions, state)
-//! ├── cron/            # Cron job data
-//! ├── todos/           # Task persistence
-//! ├── workspace/       # Default workspace for AI file operations
-//! │                    # (also holds SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
-//! └── memory/          # Legacy directory (deprecated, kept for backward compatibility)
+//! ├── syscity.toml # Configuration file
+//! ├── data/ # SQLite database (syscity.db) - unified storage
+//! ├── logs/ # Log files (daemon.log)
+//! ├── skills/ # User-installed skills
+//! ├── agents/ # Agent configurations
+//! │ └── {agent-id}/
+//! │ ├── personality.toml # Agent configuration
+//! │ ├── workspace/ # Agent-specific workspace (AI file ops)
+//! │ └── data/ # Agent runtime data (sessions, state)
+//! ├── cron/ # Cron job data
+//! ├── todos/ # Task persistence
+//! ├── workspace/ # Default workspace for AI file operations
+//! │ # (also holds SOUL.md, IDENTITY.md, BOOTSTRAP.md, USER.md)
+//! └── memory/ # Legacy directory (deprecated, kept for backward compatibility)
 
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -45,7 +45,7 @@ pub fn memory_dir() -> PathBuf {
     syscity_dir().join("memory")
 }
 
-/// Get the workspace data directory for OpenClaw-style files (~/.syscity/workspace)
+/// Get the workspace data directory for files (~/.syscity/workspace)
 ///
 /// This is where SOUL.md, IDENTITY.md, BOOTSTRAP.md, and USER.md are stored.
 pub fn workspace_memory_dir() -> PathBuf {
@@ -198,7 +198,7 @@ pub fn workspace_state_file() -> PathBuf {
 pub async fn init() -> crate::Result<PathBuf> {
     let base = syscity_dir();
 
-    // Create all subdirectories
+ // Create all subdirectories
     let dirs = [
         &base,
         &memory_dir(),
@@ -228,14 +228,14 @@ pub async fn init() -> crate::Result<PathBuf> {
         }
     }
 
-    // Seed default agent personality templates
+ // Seed default agent personality templates
     seed_default_agent_personality(&base).await?;
 
     info!("Syscity directories initialized at: {:?}", base);
     Ok(base)
 }
 
-/// Seed the default agent (`agents/default/`) with standard OpenClaw-style
+/// Seed the default agent (`agents/default/`) with standard
 /// personality files if they don't already exist.
 async fn seed_default_agent_personality(base: &Path) -> crate::Result<()> {
     let default_agent_dir = base.join("agents").join("default");
@@ -247,7 +247,7 @@ async fn seed_default_agent_personality(base: &Path) -> crate::Result<()> {
 pub fn init_sync() -> crate::Result<PathBuf> {
     let base = syscity_dir();
 
-    // Create all subdirectories
+ // Create all subdirectories
     let dirs = [
         &base,
         &memory_dir(),
@@ -275,7 +275,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         }
     }
 
-    // Seed default agent personality templates (sync)
+ // Seed default agent personality templates (sync)
     seed_default_agent_personality_sync(&base)?;
 
     info!("Syscity directories initialized at: {:?}", base);
@@ -315,29 +315,29 @@ pub fn path_for(file_type: FileType) -> PathBuf {
 /// Types of files that can be retrieved
 #[derive(Debug, Clone, Copy)]
 pub enum FileType {
-    /// Main configuration file
+ /// Main configuration file
     Config,
-    /// Memory database
+ /// Memory database
     MemoryDb,
-    /// Log file
+ /// Log file
     Log,
-    /// PID file
+ /// PID file
     Pid,
-    /// SOUL.md personality file
+ /// SOUL.md personality file
     Soul,
-    /// IDENTITY.md personality file
+ /// IDENTITY.md personality file
     Identity,
-    /// BOOTSTRAP.md personality file
+ /// BOOTSTRAP.md personality file
     Bootstrap,
-    /// USER.md user-specific memory file
+ /// USER.md user-specific memory file
     User,
-    /// AGENTS.md operating instructions file
+ /// AGENTS.md operating instructions file
     Agents,
-    /// TOOLS.md tool notes and conventions file
+ /// TOOLS.md tool notes and conventions file
     Tools,
-    /// HEARTBEAT.md periodic task checklist file
+ /// HEARTBEAT.md periodic task checklist file
     Heartbeat,
-    /// MEMORY.md curated long-term memory file
+ /// MEMORY.md curated long-term memory file
     Memory,
 }
 
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_syscity_dir_structure() {
-        // Just verify the paths are constructed correctly
+ // Just verify the paths are constructed correctly
         let base = syscity_dir();
         assert!(base.to_string_lossy().contains(".syscity"));
 
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_is_initialized() {
-        // Just verify it doesn't panic
+ // Just verify it doesn't panic
         let _ = is_initialized();
     }
 

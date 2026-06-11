@@ -13,7 +13,7 @@ triggers:
   - type: keyword
     pattern: "tmux session"
     priority: 90
-openclaw:
+syscity:
   emoji: "🖥️"
   category: "development"
   tags:

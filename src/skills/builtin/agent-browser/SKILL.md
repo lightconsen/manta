@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "web search"
     priority: 70
-openclaw:
+syscity:
   emoji: "🌐"
   category: "research"
   tags:

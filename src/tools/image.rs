@@ -1,6 +1,6 @@
 //! Image Tools — Image Viewing and AI Generation
 //!
-//! OpenClaw-compatible tools for:
+//! tools for:
 //! - `image`: View image file info (dimensions, format, size)
 //! - `image_generate`: Generate images via external AI APIs (DALL-E, Stable Diffusion)
 
@@ -128,18 +128,18 @@ impl Tool for ImageTool {
             _ => "Unknown",
         };
 
-        // Try to detect dimensions using the `file` command or image header parsing
+ // Try to detect dimensions using the `file` command or image header parsing
         let mut width = None::<u32>;
         let mut height = None::<u32>;
 
-        // Try file command for basic dimensions
+ // Try file command for basic dimensions
         if let Ok(output) = tokio::process::Command::new("file")
             .arg(path.to_str().unwrap_or(""))
             .output()
             .await
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // Parse "640 x 480" from file output
+ // Parse "640 x 480" from file output
             let re = regex::Regex::new(r"(\d+)\s*x\s*(\d+)").unwrap();
             if let Some(caps) = re.captures(&stdout) {
                 width = caps.get(1).and_then(|m| m.as_str().parse().ok());
@@ -147,11 +147,11 @@ impl Tool for ImageTool {
             }
         }
 
-        // Fallback: try parsing PNG/JPEG headers directly
+ // Fallback: try parsing PNG/JPEG headers directly
         if width.is_none() && (ext == "png" || ext == "jpg" || ext == "jpeg") {
             if let Ok(data) = tokio::fs::read(&path).await {
                 if ext == "png" && data.len() > 24 {
-                    // PNG: width at bytes 16-19, height at 20-23 (big-endian)
+ // PNG: width at bytes 16-19, height at 20-23 (big-endian)
                     width = Some(u32::from_be_bytes([data[16], data[17], data[18], data[19]]));
                     height = Some(u32::from_be_bytes([data[20], data[21], data[22], data[23]]));
                 }
@@ -307,7 +307,7 @@ impl Tool for ImageGenerateTool {
         let size = args.size.as_deref().unwrap_or("1024x1024");
         let style = args.style.as_deref().unwrap_or("vivid");
 
-        // Build DALL-E 3 request
+ // Build DALL-E 3 request
         let body = serde_json::json!({
             "model": "dall-e-3",
             "prompt": args.prompt,
@@ -366,7 +366,7 @@ impl Tool for ImageGenerateTool {
                     .and_then(|u| u.as_str());
 
                 if let Some(url) = image_url {
-                    // Download the image
+ // Download the image
                     let output_path = if let Some(out) = args.output {
                         context.resolve_path(std::path::Path::new(&out))
                     } else {

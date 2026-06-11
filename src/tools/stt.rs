@@ -1,6 +1,6 @@
 //! STT Tool — Speech-to-Text
 //!
-//! OpenClaw-compatible tool for transcribing audio to text.
+//! tool for transcribing audio to text.
 //! Uses OpenAI Whisper API as the backend.
 
 use async_trait::async_trait;
@@ -28,21 +28,21 @@ impl Default for SttTool {
 
 #[derive(Debug, Deserialize)]
 struct SttArgs {
-    /// Path to the audio file to transcribe
+ /// Path to the audio file to transcribe
     audio: String,
-    /// Whisper model name (default: whisper-1)
+ /// Whisper model name (default: whisper-1)
     #[serde(default)]
     model: Option<String>,
-    /// Language code (e.g., "en", "zh") — auto-detected if not set
+ /// Language code (e.g., "en", "zh") — auto-detected if not set
     #[serde(default)]
     language: Option<String>,
-    /// Response format: text, srt, vtt, json, verbose_json (default: text)
+ /// Response format: text, srt, vtt, json, verbose_json (default: text)
     #[serde(default)]
     response_format: Option<String>,
-    /// Sampling temperature (0.0 - 1.0)
+ /// Sampling temperature (0.0 - 1.0)
     #[serde(default)]
     temperature: Option<f32>,
-    /// Optional context prompt to guide the transcription
+ /// Optional context prompt to guide the transcription
     #[serde(default)]
     prompt: Option<String>,
 }
@@ -132,7 +132,7 @@ impl Tool for SttTool {
 
         let audio_path = std::path::PathBuf::from(&args.audio);
 
-        // Check file exists
+ // Check file exists
         if !audio_path.exists() {
             return Ok(ToolExecutionResult {
                 success: false,
@@ -143,7 +143,7 @@ impl Tool for SttTool {
             });
         }
 
-        // Try OpenAI Whisper API
+ // Try OpenAI Whisper API
         if let Some(api_key) = context.environment.get("OPENAI_API_KEY") {
             let model = args.model.as_deref().unwrap_or("whisper-1");
             let response_format = args
@@ -151,7 +151,7 @@ impl Tool for SttTool {
                 .as_deref()
                 .unwrap_or("text");
 
-            // Read the audio file
+ // Read the audio file
             let audio_bytes = match tokio::fs::read(&audio_path).await {
                 Ok(bytes) => bytes,
                 Err(e) => {
@@ -172,7 +172,7 @@ impl Tool for SttTool {
 
             let mime = mime_for_ext(&audio_path);
 
-            // Build multipart form
+ // Build multipart form
             let mut form = reqwest::multipart::Form::new()
                 .part(
                     "file",
@@ -249,7 +249,7 @@ impl Tool for SttTool {
             }
         }
 
-        // No API key available
+ // No API key available
         Ok(ToolExecutionResult {
             success: false,
             output: String::new(),
@@ -342,7 +342,7 @@ mod tests {
         let tool = SttTool::new();
         let ctx = ToolContext::new("user", "conv");
 
-        // Create a temp file so the file-exists check passes
+ // Create a temp file so the file-exists check passes
         let dir = tempfile::tempdir().unwrap();
         let audio_file = dir.path().join("test.wav");
         tokio::fs::write(&audio_file, b"fake audio data")

@@ -13,7 +13,7 @@ triggers:
   - type: keyword
     pattern: "recurring"
     priority: 70
-openclaw:
+syscity:
   emoji: "⏰"
   category: "automation"
   tags:

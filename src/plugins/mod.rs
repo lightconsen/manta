@@ -1,6 +1,6 @@
 //! Plugin System for Syscity
 //!
-//! Provides runtime extensibility similar to OpenClaw's plugin SDK:
+//! Provides runtime extensibility:
 //! - WASM-based sandboxed plugins
 //! - Tool registration from plugins
 //! - Channel plugins
@@ -51,12 +51,12 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// Create a new plugin manager
+ /// Create a new plugin manager
     pub async fn new(plugins_dir: PathBuf) -> crate::Result<Self> {
         let runtime = Arc::new(PluginRuntime::new()?);
         let hook_registry = Arc::new(HookRegistry::new());
 
-        // Ensure plugins directory exists
+ // Ensure plugins directory exists
         tokio::fs::create_dir_all(&plugins_dir).await.ok();
 
         Ok(Self {
@@ -71,7 +71,7 @@ impl PluginManager {
         })
     }
 
-    /// Set callbacks for registering / unregistering plugin-backed providers.
+ /// Set callbacks for registering / unregistering plugin-backed providers.
     pub async fn set_provider_callbacks(
         &self,
         register: ProviderRegisterFn,
@@ -83,14 +83,14 @@ impl PluginManager {
         *unreg = Some(unregister);
     }
 
-    /// Attach a `ToolRegistry` so that plugin tools are automatically
-    /// registered on load / unregistered on unload.
+ /// Attach a `ToolRegistry` so that plugin tools are automatically
+ /// registered on load / unregistered on unload.
     pub async fn set_tool_registry(&self, registry: Arc<ToolRegistry>) {
         let mut tr = self.tool_registry.write().await;
         *tr = Some(registry);
     }
 
-    /// Initialize and load all plugins
+ /// Initialize and load all plugins
     pub async fn initialize(&self) -> crate::Result<usize> {
         info!("Initializing plugin manager...");
 
@@ -120,7 +120,7 @@ impl PluginManager {
         Ok(count)
     }
 
-    /// Load a plugin from a directory and register its tools and providers.
+ /// Load a plugin from a directory and register its tools and providers.
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
         let plugin_id = self.runtime.load_plugin(path).await?;
 
@@ -132,7 +132,7 @@ impl PluginManager {
         Ok(plugin_id)
     }
 
-    /// Unload a plugin, unregistering its tools, providers, and hooks.
+ /// Unload a plugin, unregistering its tools, providers, and hooks.
     pub async fn unload_plugin(&self, plugin_id: &str) -> crate::Result<bool> {
         self.deregister_plugin_tools(plugin_id).await;
         self.deregister_plugin_providers(plugin_id).await;
@@ -140,10 +140,10 @@ impl PluginManager {
         self.runtime.unload_plugin(plugin_id).await
     }
 
-    /// Reload a plugin with state preservation.
-    ///
-    /// Preserves `PluginState::memory`, re-reads the manifest from disk,
-    /// and re-registers tools into the `ToolRegistry`.
+ /// Reload a plugin with state preservation.
+ ///
+ /// Preserves `PluginState::memory`, re-reads the manifest from disk,
+ /// and re-registers tools into the `ToolRegistry`.
     pub async fn reload_plugin(&self, plugin_id: &str) -> crate::Result<String> {
         info!("Reloading plugin '{}'...", plugin_id);
 
@@ -162,13 +162,13 @@ impl PluginManager {
         Ok(reloaded_id)
     }
 
-    /// Enable or disable plugin trace logging.
+ /// Enable or disable plugin trace logging.
     pub fn set_trace_enabled(&self, enabled: bool) {
         self.trace_enabled
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Register a plugin's tools into the `ToolRegistry`.
+ /// Register a plugin's tools into the `ToolRegistry`.
     async fn register_plugin_tools(&self, plugin: &PluginInstance) {
         let tool_registry = self.tool_registry.read().await;
         if let Some(ref registry) = *tool_registry {
@@ -185,7 +185,7 @@ impl PluginManager {
         }
     }
 
-    /// Deregister a plugin's tools from the `ToolRegistry`.
+ /// Deregister a plugin's tools from the `ToolRegistry`.
     async fn deregister_plugin_tools(&self, plugin_id: &str) {
         let tool_registry = self.tool_registry.read().await;
         if let Some(ref registry) = *tool_registry {
@@ -198,7 +198,7 @@ impl PluginManager {
         }
     }
 
-    /// Register a plugin's provider capabilities with the system.
+ /// Register a plugin's provider capabilities with the system.
     async fn register_plugin_providers(&self, plugin: &PluginInstance) {
         let register_fn = self.provider_register.read().await;
         if let Some(ref register) = *register_fn {
@@ -234,7 +234,7 @@ impl PluginManager {
         }
     }
 
-    /// Deregister a plugin's providers from the system.
+ /// Deregister a plugin's providers from the system.
     async fn deregister_plugin_providers(&self, plugin_id: &str) {
         let unregister_fn = self.provider_unregister.read().await;
         if let Some(ref unregister) = *unregister_fn {
@@ -254,32 +254,32 @@ impl PluginManager {
         }
     }
 
-    /// Get a plugin instance
+ /// Get a plugin instance
     pub async fn get_plugin(&self, plugin_id: &str) -> Option<PluginInstance> {
         self.runtime.get_plugin(plugin_id).await
     }
 
-    /// List all plugins
+ /// List all plugins
     pub async fn list_plugins(&self) -> Vec<PluginInstance> {
         self.runtime.list_plugins().await
     }
 
-    /// Enable/disable a plugin
+ /// Enable/disable a plugin
     pub async fn set_enabled(&self, plugin_id: &str, enabled: bool) -> crate::Result<()> {
         self.runtime.set_enabled(plugin_id, enabled).await
     }
 
-    /// Get the hook registry
+ /// Get the hook registry
     pub fn hook_registry(&self) -> &Arc<HookRegistry> {
         &self.hook_registry
     }
 
-    /// Get the plugin runtime
+ /// Get the plugin runtime
     pub fn runtime(&self) -> &Arc<PluginRuntime> {
         &self.runtime
     }
 
-    /// Execute a hook
+ /// Execute a hook
     pub async fn execute_hook(
         &self,
         hook_type: HookType,
@@ -288,23 +288,23 @@ impl PluginManager {
         self.hook_registry.execute(hook_type, payload).await
     }
 
-    /// Register a hook handler
+ /// Register a hook handler
     pub async fn register_hook(&self, handler: HookHandler) {
         self.hook_registry.register(handler).await;
     }
 
-    /// Shutdown all plugins
+ /// Shutdown all plugins
     pub async fn shutdown(&self) -> crate::Result<()> {
         info!("Shutting down plugin manager...");
         self.runtime.shutdown().await
     }
 
-    /// Create a sample plugin template
+ /// Create a sample plugin template
     pub async fn create_template(&self, name: &str, description: &str) -> crate::Result<PathBuf> {
         let plugin_dir = self.plugins_dir.join(name);
         tokio::fs::create_dir_all(&plugin_dir).await?;
 
-        // Create manifest
+ // Create manifest
         let manifest = PluginManifest {
             id: format!("com.example.{}", name),
             name: name.to_string(),
@@ -324,14 +324,14 @@ impl PluginManager {
         let manifest_json = serde_json::to_string_pretty(&manifest)?;
         tokio::fs::write(plugin_dir.join("plugin.json"), manifest_json).await?;
 
-        // Create config.json
+ // Create config.json
         let config = serde_json::json!({
             "example_setting": "value"
         });
         tokio::fs::write(plugin_dir.join("config.json"), serde_json::to_string_pretty(&config)?)
             .await?;
 
-        // Create README
+ // Create README
         let readme = format!(
             r#"# {}
 
@@ -396,7 +396,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let manager = PluginManager::new(tmp.path().to_path_buf()).await.unwrap();
 
-        // Create two plugin templates
+ // Create two plugin templates
         manager
             .create_template("plugin-a", "Plugin A")
             .await
@@ -498,7 +498,7 @@ mod tests {
             .unwrap();
         let id = manager.load_plugin(&path).await.unwrap();
 
-        // Modify manifest on disk
+ // Modify manifest on disk
         let manifest_path = path.join("plugin.json");
         let mut manifest: PluginManifest = {
             let content = tokio::fs::read_to_string(&manifest_path).await.unwrap();

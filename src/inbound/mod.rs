@@ -2,11 +2,11 @@
 //!
 //! The inbound pipeline is the entry point for all user messages.
 //! It replaces the direct "Channel -> Gateway -> Agent" path with a layered
-//! processing pipeline that matches OpenClaw's architecture:
+//! processing pipeline:
 //!
 //! ```text
 //! Channel Extension -> Debounce -> Media Understanding -> Dispatch
-//!     -> Queue Mode Resolve -> Agent Router -> Agent
+//! -> Queue Mode Resolve -> Agent Router -> Agent
 //! ```
 
 use crate::channels::IncomingMessage;
@@ -32,17 +32,17 @@ pub use router::{
 /// for routing to an agent.
 #[derive(Debug, Clone)]
 pub struct RoutedMessage {
-    /// The original incoming message
+ /// The original incoming message
     pub incoming: IncomingMessage,
-    /// Target agent ID (resolved by router)
+ /// Target agent ID (resolved by router)
     pub agent_id: String,
-    /// Target workspace ID (if multi-workspace)
+ /// Target workspace ID (if multi-workspace)
     pub workspace_id: Option<String>,
-    /// Queue mode for this message
+ /// Queue mode for this message
     pub queue_mode: QueueMode,
-    /// Whether delivery should be suppressed (silent mode)
+ /// Whether delivery should be suppressed (silent mode)
     pub suppress_delivery: bool,
-    /// Media understanding results (if any attachments were processed)
+ /// Media understanding results (if any attachments were processed)
     pub media_results: Option<MediaUnderstandingResult>,
 }
 
@@ -52,15 +52,15 @@ pub struct RoutedMessage {
 /// (debounce, media, dispatch, queue, router) and produce `RoutedMessage`s.
 #[async_trait::async_trait]
 pub trait InboundPipeline: Send + Sync {
-    /// Process a single incoming message.
-    ///
-    /// Returns `None` if the message was absorbed by the pipeline
-    /// (e.g., debounced, filtered, or queued for later).
+ /// Process a single incoming message.
+ ///
+ /// Returns `None` if the message was absorbed by the pipeline
+ /// (e.g., debounced, filtered, or queued for later).
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage>;
 
-    /// Flush all pending messages for a given key.
-    ///
-    /// Used at shutdown or when an explicit flush is needed.
+ /// Flush all pending messages for a given key.
+ ///
+ /// Used at shutdown or when an explicit flush is needed.
     async fn flush(&self, key: &str) -> Vec<RoutedMessage>;
 }
 
@@ -73,9 +73,9 @@ pub struct DefaultInboundPipeline {
     dispatch: AutoReplyDispatch,
     queue_resolver: QueueModeResolver,
     router: AgentRouter,
-    /// Sender to forward routed messages to the agent execution layer.
+ /// Sender to forward routed messages to the agent execution layer.
     routed_tx: mpsc::Sender<RoutedMessage>,
-    /// Receiver for debounced message batches from the debouncer.
+ /// Receiver for debounced message batches from the debouncer.
     flush_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<crate::inbound::debounce::DebouncedItem>>>,
 }
 
@@ -100,8 +100,8 @@ impl DefaultInboundPipeline {
         }
     }
 
-    /// Start a background task that consumes debounced messages and runs
-    /// them through the rest of the pipeline.
+ /// Start a background task that consumes debounced messages and runs
+ /// them through the rest of the pipeline.
     pub fn start(self: Arc<Self>) {
         let pipeline = self.clone();
         tokio::spawn(async move {
@@ -118,17 +118,17 @@ impl DefaultInboundPipeline {
         }
     }
 
-    /// Run the pipeline stages after debounce (media, dispatch, queue, router).
-    /// Called directly for messages that have already passed through the debouncer.
+ /// Run the pipeline stages after debounce (media, dispatch, queue, router).
+ /// Called directly for messages that have already passed through the debouncer.
     async fn process_stages(&self, message: IncomingMessage) -> Option<RoutedMessage> {
-        // Stage 2: Media understanding
+ // Stage 2: Media understanding
         let media_results = if !message.attachments.is_empty() {
             Some(self.media_pipeline.process(&message).await)
         } else {
             None
         };
 
-        // Stage 3: Dispatch (send policy, plugin-owned binding, etc.)
+ // Stage 3: Dispatch (send policy, plugin-owned binding, etc.)
         let dispatch_result = self
             .dispatch
             .process(&message, media_results.as_ref())
@@ -137,10 +137,10 @@ impl DefaultInboundPipeline {
             return None;
         }
 
-        // Stage 4: Queue mode resolution
+ // Stage 4: Queue mode resolution
         let queue_mode = self.queue_resolver.resolve(&message).await;
 
-        // Stage 5: Agent routing
+ // Stage 5: Agent routing
         let route = self
             .router
             .route(&message, dispatch_result.workspace_hint.as_deref())
@@ -155,7 +155,7 @@ impl DefaultInboundPipeline {
             media_results,
         };
 
-        // Forward to the agent execution layer
+ // Forward to the agent execution layer
         let _ = self.routed_tx.send(routed.clone()).await;
 
         Some(routed)
@@ -165,9 +165,9 @@ impl DefaultInboundPipeline {
 #[async_trait::async_trait]
 impl InboundPipeline for DefaultInboundPipeline {
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
-        // Stage 1: Debounce
-        // If the message should be batched, the debouncer absorbs it and
-        // will emit a flushed batch later.
+ // Stage 1: Debounce
+ // If the message should be batched, the debouncer absorbs it and
+ // will emit a flushed batch later.
         let debounced = self.debouncer.enqueue(message).await?;
         self.process_stages(debounced).await
     }

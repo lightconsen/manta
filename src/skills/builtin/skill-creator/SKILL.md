@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "make skill"
     priority: 90
-openclaw:
+syscity:
   emoji: "🛠️"
   category: "system"
   tags:
@@ -50,7 +50,7 @@ triggers:
     pattern: "keyword"
   - type: command
     pattern: "command"
-openclaw:
+syscity:
   emoji: "🛠️"
   requires:
     bins: ["optional-binary"]
@@ -87,7 +87,7 @@ description: "Get weather information"
 triggers:
   - type: keyword
     pattern: "weather"
-openclaw:
+syscity:
   emoji: "🌤️"
 ---
 
@@ -102,7 +102,7 @@ description: "Summarize git activity"
 triggers:
   - type: command
     pattern: "git-summary"
-openclaw:
+syscity:
   emoji: "📊"
 ---
 

@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "pdf document"
     priority: 70
-openclaw:
+syscity:
   emoji: "📄"
   category: "documents"
   tags:

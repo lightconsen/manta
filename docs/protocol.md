@@ -1,7 +1,7 @@
 # Syscity 协议规范 v1.0
 
 > **状态**: 草案
-> **目标**: 将 Syscity 的前后端通信统一到单一的 WebSocket-native 协议，与 OpenClaw 架构对齐，并支持 `assistant-ui` 作为主力 Web 前端。
+> **目标**: 将 Syscity 的前后端通信统一到单一的 WebSocket-native 协议，并支持 `assistant-ui` 作为主力 Web 前端。
 
 ---
 

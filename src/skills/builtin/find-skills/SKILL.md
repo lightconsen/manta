@@ -19,7 +19,7 @@ triggers:
   - type: keyword
     pattern: "show skills"
     priority: 80
-openclaw:
+syscity:
   emoji: "🔍"
   category: "system"
   tags:

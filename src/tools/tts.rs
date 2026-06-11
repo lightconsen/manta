@@ -1,6 +1,6 @@
 //! TTS Tool — Text-to-Speech
 //!
-//! OpenClaw-compatible tool for converting text to speech.
+//! tool for converting text to speech.
 //! Supports OpenAI TTS API as the primary backend, with
 //! fallback to macOS `say` command or festival/espeak.
 
@@ -102,7 +102,7 @@ impl Tool for TtsTool {
                 .join(format!("tts_{}.mp3", uuid::Uuid::new_v4()))
         };
 
-        // Try OpenAI TTS API first
+ // Try OpenAI TTS API first
         if let Some(api_key) = context.environment.get("OPENAI_API_KEY") {
             let voice = args.voice.as_deref().unwrap_or("alloy");
             let speed = args.speed.unwrap_or(1.0).clamp(0.25, 4.0);
@@ -162,7 +162,7 @@ impl Tool for TtsTool {
             }
         }
 
-        // Fallback: macOS say command
+ // Fallback: macOS say command
         #[cfg(target_os = "macos")]
         {
             let output_aiff = output_path.with_extension("aiff");
@@ -191,7 +191,7 @@ impl Tool for TtsTool {
             }
         }
 
-        // Fallback: espeak (Linux)
+ // Fallback: espeak (Linux)
         {
             let output_wav = output_path.with_extension("wav");
             let mut cmd = tokio::process::Command::new("espeak");
@@ -215,7 +215,7 @@ impl Tool for TtsTool {
             }
         }
 
-        // Final fallback: just return the text (no audio generated)
+ // Final fallback: just return the text (no audio generated)
         Ok(ToolExecutionResult {
             success: false,
             output: String::new(),
@@ -285,9 +285,9 @@ mod tests {
             .await
             .unwrap();
 
-        // On macOS, the `say` fallback may succeed even without API key.
-        // On other platforms without espeak, this would fail.
-        // We just verify the result is well-formed.
+ // On macOS, the `say` fallback may succeed even without API key.
+ // On other platforms without espeak, this would fail.
+ // We just verify the result is well-formed.
         if result.success {
             assert!(
                 result.output.contains("TTS audio saved")
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_speed_clamping() {
-        // Verify clamp behavior: values outside 0.25-4.0 should be clamped
+ // Verify clamp behavior: values outside 0.25-4.0 should be clamped
         let low = 0.1_f32.clamp(0.25, 4.0);
         assert_eq!(low, 0.25);
 

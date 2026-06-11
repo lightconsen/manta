@@ -59,208 +59,208 @@ pub use team::TeamCommands;
 #[command(about = "Syscity - Your AI assistant")]
 #[command(version)]
 pub struct Cli {
-    /// Configuration file path
+ /// Configuration file path
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
-    /// Log level override (trace, debug, info, warn, error)
+ /// Log level override (trace, debug, info, warn, error)
     #[arg(short, long, global = true)]
     pub log_level: Option<String>,
 
-    /// Subcommand to execute
+ /// Subcommand to execute
     #[command(subcommand)]
     pub command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Entity management commands
+ /// Entity management commands
     Entity {
-        /// Entity subcommand
+ /// Entity subcommand
         #[command(subcommand)]
         command: EntityCommands,
     },
-    /// Export conversations and memories to files
+ /// Export conversations and memories to files
     Export {
-        /// Export subcommand
+ /// Export subcommand
         #[command(subcommand)]
         command: ExportCommands,
     },
-    /// Configuration management (get, set, validate)
+ /// Configuration management (get, set, validate)
     Config {
-        /// Config subcommand
+ /// Config subcommand
         #[command(subcommand)]
         command: Option<ConfigCommands>,
     },
-    /// Health check
+ /// Health check
     Health,
-    /// Chat with the AI assistant
+ /// Chat with the AI assistant
     Chat {
-        /// Use a specific conversation ID (for resuming conversations)
+ /// Use a specific conversation ID (for resuming conversations)
         #[arg(short, long)]
         conversation: Option<String>,
-        /// Single message mode (non-interactive)
+ /// Single message mode (non-interactive)
         #[arg(short, long)]
         message: Option<String>,
     },
-    /// Run as an assistant process (internal use)
+ /// Run as an assistant process (internal use)
     AssistantRun {
-        /// Configuration file path
+ /// Configuration file path
         #[arg(short, long)]
         config: PathBuf,
     },
-    /// Admin commands for Gateway management (provider switching, status, etc.)
+ /// Admin commands for Gateway management (provider switching, status, etc.)
     Admin {
-        /// Admin subcommand
+ /// Admin subcommand
         #[command(subcommand)]
         command: AdminCommands,
     },
-    /// Cron job management
+ /// Cron job management
     Cron {
-        /// Cron subcommand
+ /// Cron subcommand
         #[command(subcommand)]
         command: CronCommands,
     },
-    /// Skill management commands
+ /// Skill management commands
     Skill {
-        /// Skill subcommand
+ /// Skill subcommand
         #[command(subcommand)]
         command: SkillCommands,
     },
-    /// Agent personality management (OpenClaw-style memory files)
+ /// Agent personality management (memory files)
     Agent {
-        /// Agent subcommand
+ /// Agent subcommand
         #[command(subcommand)]
         command: AgentCommands,
     },
-    /// Agent team management (create teams, assign roles, define hierarchies)
+ /// Agent team management (create teams, assign roles, define hierarchies)
     Team {
-        /// Team subcommand
+ /// Team subcommand
         #[command(subcommand)]
         command: TeamCommands,
     },
-    /// Channel management (Telegram, Discord, Slack)
+ /// Channel management (Telegram, Discord, Slack)
     Channel {
-        /// Channel subcommand
+ /// Channel subcommand
         #[command(subcommand)]
         command: ChannelCommands,
     },
-    /// Plugin management for WASM channel extensions
+ /// Plugin management for WASM channel extensions
     #[command(name = "plugin")]
     Plugin {
-        /// Plugin subcommand
+ /// Plugin subcommand
         #[command(subcommand)]
         command: PluginCommands,
     },
-    /// Start the Syscity daemon (background server)
+ /// Start the Syscity daemon (background server)
     Start {
-        /// Host to bind to
+ /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
-        /// Port for gateway API, WebSocket, and SPA
+ /// Port for gateway API, WebSocket, and SPA
         #[arg(short, long, default_value = "18080")]
         port: u16,
-        /// Run in foreground (don't detach)
+ /// Run in foreground (don't detach)
         #[arg(long)]
         foreground: bool,
-        /// Remote control target host
+ /// Remote control target host
         #[arg(long)]
         remote_control_host: Option<String>,
-        /// Remote control username
+ /// Remote control username
         #[arg(long)]
         remote_control_user: Option<String>,
-        /// Remote control port
+ /// Remote control port
         #[arg(long, default_value = "22")]
         remote_control_port: u16,
-        /// Remote control protocol (ssh, vnc, rdp)
+ /// Remote control protocol (ssh, vnc, rdp)
         #[arg(long, default_value = "ssh")]
         remote_control_protocol: String,
-        /// Path to SSH private key for remote control
+ /// Path to SSH private key for remote control
         #[arg(long)]
         remote_control_key: Option<String>,
-        /// Enable headless display mode
+ /// Enable headless display mode
         #[arg(long)]
         headless: bool,
-        /// Headless display identifier (e.g. ":99")
+ /// Headless display identifier (e.g. ":99")
         #[arg(long, default_value = ":99")]
         headless_display: String,
     },
-    /// Stop the Syscity daemon
+ /// Stop the Syscity daemon
     Stop {
-        /// Force kill if graceful shutdown fails
+ /// Force kill if graceful shutdown fails
         #[arg(short, long)]
         force: bool,
     },
-    /// Reload plugins and configuration without restarting daemon
+ /// Reload plugins and configuration without restarting daemon
     Reload,
-    /// Check daemon status
+ /// Check daemon status
     Status,
-    /// Show and tail daemon logs
+ /// Show and tail daemon logs
     Logs {
-        /// Number of lines to show (default: 50)
+ /// Number of lines to show (default: 50)
         #[arg(short = 'n', long, default_value = "50")]
         lines: usize,
-        /// Follow/tail the logs (like tail -f)
+ /// Follow/tail the logs (like tail -f)
         #[arg(short, long)]
         follow: bool,
     },
-    /// MCP (Model Context Protocol) management
+ /// MCP (Model Context Protocol) management
     Mcp {
-        /// MCP subcommand
+ /// MCP subcommand
         #[command(subcommand)]
         command: McpCommands,
     },
-    /// Vector memory management (search, add)
+ /// Vector memory management (search, add)
     Memory {
-        /// Memory subcommand
+ /// Memory subcommand
         #[command(subcommand)]
         command: MemoryCommands,
     },
-    /// Security audit, DM pairing, and access control
+ /// Security audit, DM pairing, and access control
     Security {
-        /// Security subcommand
+ /// Security subcommand
         #[command(subcommand)]
         command: SecurityCommands,
     },
-    /// Session, thread, and turn management (introspect & undo)
+ /// Session, thread, and turn management (introspect & undo)
     Session {
-        /// Session subcommand
+ /// Session subcommand
         #[command(subcommand)]
         command: SessionCommands,
     },
-    /// Initialize Syscity with an interactive setup wizard
+ /// Initialize Syscity with an interactive setup wizard
     Setup,
-    /// Device pairing management
+ /// Device pairing management
     Device {
-        /// Device subcommand
+ /// Device subcommand
         #[command(subcommand)]
         command: DeviceCommands,
     },
-    /// Tool approval management (human-in-the-loop)
+ /// Tool approval management (human-in-the-loop)
     Approval {
-        /// Approval subcommand
+ /// Approval subcommand
         #[command(subcommand)]
         command: ApprovalCommands,
     },
-    /// Audit log and security audit
+ /// Audit log and security audit
     Audit {
-        /// Audit subcommand
+ /// Audit subcommand
         #[command(subcommand)]
         command: AuditCommands,
     },
-    /// Provider management (list, enable, disable, switch)
+ /// Provider management (list, enable, disable, switch)
     Provider {
-        /// Provider subcommand
+ /// Provider subcommand
         #[command(subcommand)]
         command: ProviderCommands,
     },
-    /// Diagnostic system (run checks, view reports)
+ /// Diagnostic system (run checks, view reports)
     Doctor {
-        /// Doctor subcommand
+ /// Doctor subcommand
         #[command(subcommand)]
         command: DoctorCommands,
     },
-    /// Check and display available OS capability sets
+ /// Check and display available OS capability sets
     Capabilities,
 }
 
@@ -269,25 +269,25 @@ pub enum Commands {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ChannelType {
-    /// Telegram bot
+ /// Telegram bot
     Telegram,
-    /// Discord bot
+ /// Discord bot
     Discord,
-    /// Slack bot
+ /// Slack bot
     Slack,
-    /// WhatsApp bot
+ /// WhatsApp bot
     Whatsapp,
-    /// QQ bot
+ /// QQ bot
     Qq,
-    /// Feishu/Lark bot
+ /// Feishu/Lark bot
     Feishu,
-    /// Custom WebSocket endpoint
+ /// Custom WebSocket endpoint
     Websocket,
-    /// Signal via signal-cli
+ /// Signal via signal-cli
     Signal,
-    /// iMessage via BlueBubbles
+ /// iMessage via BlueBubbles
     Imessage,
-    /// WebChat browser interface
+ /// WebChat browser interface
     Webchat,
 }
 
@@ -308,11 +308,11 @@ pub enum ConfigFormat {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum StorageType {
-    /// SQLite storage (default, embedded)
+ /// SQLite storage (default, embedded)
     Sqlite,
-    /// PostgreSQL storage (requires external database)
+ /// PostgreSQL storage (requires external database)
     Postgres,
-    /// Redis storage (for caching and pub/sub)
+ /// Redis storage (for caching and pub/sub)
     Redis,
 }
 
@@ -331,25 +331,25 @@ fn init_logging(log_level: Option<&str>) {
 }
 
 impl Cli {
-    /// Run the CLI
+ /// Run the CLI
     pub async fn run() -> Result<()> {
         let cli = Cli::parse();
 
-        // Initialize logging
+ // Initialize logging
         init_logging(cli.log_level.as_deref());
 
-        // Load configuration
+ // Load configuration
         let config = if let Some(config_path) = &cli.config {
             Config::load_with_file(Some(config_path))?
         } else {
             Config::load()?
         };
 
-        // Execute command
+ // Execute command
         cli.execute(&config).await
     }
 
-    /// Execute the CLI command
+ /// Execute the CLI command
     pub async fn execute(&self, config: &Config) -> Result<()> {
         match &self.command {
             Commands::Entity { command } => entity::run_entity_command(command).await,
@@ -461,10 +461,10 @@ mod tests {
         }
     }
 
-    // NOTE: `start` command has a clap conflict: `-h` is used by both `host`
-    // and `--help`. This is a bug in the CLI definition.
-    // #[test]
-    // fn parse_start_command_with_custom_port() { ... }
+ // NOTE: `start` command has a clap conflict: `-h` is used by both `host`
+ // and `--help`. This is a bug in the CLI definition.
+ // #[test]
+ // fn parse_start_command_with_custom_port() { ... }
 
     #[test]
     fn parse_chat_command_with_message() {
@@ -534,10 +534,10 @@ mod tests {
         }
     }
 
-    // NOTE: `plugin list` has a clap conflict: `-l` is used by both `loaded`
-    // and the global `--log-level`. This is a bug in the CLI definition.
-    // #[test]
-    // fn parse_plugin_list_subcommand() { ... }
+ // NOTE: `plugin list` has a clap conflict: `-l` is used by both `loaded`
+ // and the global `--log-level`. This is a bug in the CLI definition.
+ // #[test]
+ // fn parse_plugin_list_subcommand() { ... }
 
     #[test]
     fn parse_security_pairing_list() {

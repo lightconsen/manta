@@ -14,22 +14,22 @@ use tracing::{debug, info, warn};
 /// Result of routing a message to an agent.
 #[derive(Debug, Clone)]
 pub struct RouteResult {
-    /// The agent ID that should handle this message.
+ /// The agent ID that should handle this message.
     pub agent_id: String,
-    /// The workspace the agent belongs to (if any).
+ /// The workspace the agent belongs to (if any).
     pub workspace_id: Option<String>,
-    /// Whether this is a new binding created on-the-fly.
+ /// Whether this is a new binding created on-the-fly.
     pub created_binding: bool,
 }
 
 /// Configuration for the agent router.
 #[derive(Debug, Clone)]
 pub struct AgentRouterConfig {
-    /// Default agent ID when no other route matches.
+ /// Default agent ID when no other route matches.
     pub default_agent_id: String,
-    /// Default workspace ID when no other route matches.
+ /// Default workspace ID when no other route matches.
     pub default_workspace_id: Option<String>,
-    /// Whether to create a new agent binding on-the-fly when none exists.
+ /// Whether to create a new agent binding on-the-fly when none exists.
     pub auto_create_binding: bool,
 }
 
@@ -46,16 +46,16 @@ impl Default for AgentRouterConfig {
 /// Persistent storage for session-to-agent bindings.
 #[async_trait]
 pub trait BindingStore: Send + Sync {
-    /// Load all stored bindings into memory.
+ /// Load all stored bindings into memory.
     async fn load_bindings(&self) -> crate::Result<HashMap<String, (String, Option<String>)>>;
-    /// Persist a single binding.
+ /// Persist a single binding.
     async fn save_binding(
         &self,
         session_id: &str,
         agent_id: &str,
         workspace_id: Option<&str>,
     ) -> crate::Result<()>;
-    /// Remove a persisted binding.
+ /// Remove a persisted binding.
     async fn remove_binding(&self, session_id: &str) -> crate::Result<()>;
 }
 
@@ -210,20 +210,20 @@ impl BindingStore for SqliteBindingStore {
 /// This replaces `Gateway::resolve_agent_for_session`.
 pub struct AgentRouter {
     config: AgentRouterConfig,
-    /// session_id -> (agent_id, workspace_id)
+ /// session_id -> (agent_id, workspace_id)
     session_bindings: RwLock<HashMap<String, (String, Option<String>)>>,
-    /// channel_name -> (agent_id, workspace_id)
+ /// channel_name -> (agent_id, workspace_id)
     channel_defaults: RwLock<HashMap<String, (String, Option<String>)>>,
-    /// workspace_id -> default_agent_id
+ /// workspace_id -> default_agent_id
     workspace_defaults: RwLock<HashMap<String, String>>,
-    /// Optional persistent binding store
+ /// Optional persistent binding store
     binding_store: Option<Arc<dyn BindingStore>>,
 }
 
 impl Clone for AgentRouter {
     fn clone(&self) -> Self {
-        // Since we can't clone RwLock contents without async, we create a new
-        // router with the same config.  Bindings are repopulated on first use.
+ // Since we can't clone RwLock contents without async, we create a new
+ // router with the same config. Bindings are repopulated on first use.
         Self::new(self.config.clone())
     }
 }
@@ -239,13 +239,13 @@ impl AgentRouter {
         }
     }
 
-    /// Attach a persistent binding store.
+ /// Attach a persistent binding store.
     pub fn with_binding_store(mut self, store: Arc<dyn BindingStore>) -> Self {
         self.binding_store = Some(store);
         self
     }
 
-    /// Load persisted bindings into memory.
+ /// Load persisted bindings into memory.
     pub async fn load_bindings(&self) -> crate::Result<()> {
         if let Some(store) = &self.binding_store {
             match store.load_bindings().await {
@@ -262,22 +262,22 @@ impl AgentRouter {
         Ok(())
     }
 
-    /// Derive a stable session key from channel and user_id.
-    ///
-    /// OpenClaw-style normalization: `{channel}:{user_id}`
+ /// Derive a stable session key from channel and user_id.
+ ///
+ /// normalization: `{channel}:{user_id}`
     pub fn derive_session_key(channel: &str, user_id: &str) -> String {
         format!("{}:{}", channel, user_id)
     }
 
-    /// Route an incoming message to an agent.
-    ///
-    /// Resolution order:
-    /// 1. Explicit `@agent_name` mention in message content
-    /// 2. Existing session binding (by conversation_id)
-    /// 3. Existing session binding (by derived `{channel}:{user_id}` key)
-    /// 4. Channel-specific default
-    /// 5. Workspace-specific default
-    /// 6. Global default agent
+ /// Route an incoming message to an agent.
+ ///
+ /// Resolution order:
+ /// 1. Explicit `@agent_name` mention in message content
+ /// 2. Existing session binding (by conversation_id)
+ /// 3. Existing session binding (by derived `{channel}:{user_id}` key)
+ /// 4. Channel-specific default
+ /// 5. Workspace-specific default
+ /// 6. Global default agent
     pub async fn route(
         &self,
         message: &IncomingMessage,
@@ -286,7 +286,7 @@ impl AgentRouter {
         let session_id = message.conversation_id.0.clone();
         let content = message.content.trim();
 
-        // 1. Check for explicit @agent_name mention
+ // 1. Check for explicit @agent_name mention
         if let Some(mentioned) = Self::extract_agent_mention(content) {
             info!("Explicit agent mention: {} for session {}", mentioned, session_id);
             return RouteResult {
@@ -296,7 +296,7 @@ impl AgentRouter {
             };
         }
 
-        // 2. Check existing session binding (by conversation_id)
+ // 2. Check existing session binding (by conversation_id)
         {
             let bindings = self.session_bindings.read().await;
             if let Some((agent_id, workspace_id)) = bindings.get(&session_id) {
@@ -309,7 +309,7 @@ impl AgentRouter {
             }
         }
 
-        // 2b. Check existing session binding by derived `{channel}:{user_id}` key
+ // 2b. Check existing session binding by derived `{channel}:{user_id}` key
         let channel_name = match &message.provenance {
             crate::channels::InputProvenance::ExternalUser { channel, .. } => {
                 Some(channel.as_str())
@@ -336,7 +336,7 @@ impl AgentRouter {
             }
         }
 
-        // 3. Check channel-specific default
+ // 3. Check channel-specific default
         let channel_name = match &message.provenance {
             crate::channels::InputProvenance::ExternalUser { channel, .. } => Some(channel.clone()),
             _ => None,
@@ -351,14 +351,14 @@ impl AgentRouter {
                     workspace_id: workspace_id.clone(),
                     created_binding: true,
                 };
-                // Store binding for future messages
+ // Store binding for future messages
                 drop(defaults);
                 self.bind_session(&session_id, &result).await;
                 return result;
             }
         }
 
-        // 4. Check workspace-specific default
+ // 4. Check workspace-specific default
         if let Some(ws) = workspace_hint {
             let defaults = self.workspace_defaults.read().await;
             if let Some(agent_id) = defaults.get(ws) {
@@ -374,7 +374,7 @@ impl AgentRouter {
             }
         }
 
-        // 5. Fall back to global default
+ // 5. Fall back to global default
         debug!(
             "No binding found for session {}, using default agent {}",
             session_id, self.config.default_agent_id
@@ -388,7 +388,7 @@ impl AgentRouter {
         result
     }
 
-    /// Bind a session to a specific agent.
+ /// Bind a session to a specific agent.
     pub async fn bind_session(&self, session_id: &str, route: &RouteResult) {
         let mut bindings = self.session_bindings.write().await;
         bindings
@@ -410,7 +410,7 @@ impl AgentRouter {
         );
     }
 
-    /// Unbind a session (e.g., on `/new` command).
+ /// Unbind a session (e.g., on `/new` command).
     pub async fn unbind_session(&self, session_id: &str) {
         let mut bindings = self.session_bindings.write().await;
         let removed = bindings.remove(session_id).is_some();
@@ -426,7 +426,7 @@ impl AgentRouter {
         }
     }
 
-    /// Set the default agent for a channel.
+ /// Set the default agent for a channel.
     pub async fn set_channel_default(
         &self,
         channel: &str,
@@ -437,24 +437,24 @@ impl AgentRouter {
         defaults.insert(channel.to_string(), (agent_id, workspace_id));
     }
 
-    /// Set the default agent for a workspace.
+ /// Set the default agent for a workspace.
     pub async fn set_workspace_default(&self, workspace_id: &str, agent_id: String) {
         let mut defaults = self.workspace_defaults.write().await;
         defaults.insert(workspace_id.to_string(), agent_id);
     }
 
-    /// List all active session bindings.
+ /// List all active session bindings.
     pub async fn list_bindings(&self) -> HashMap<String, (String, Option<String>)> {
         let bindings = self.session_bindings.read().await;
         bindings.clone()
     }
 
-    /// Resolve an agent by session ID only (used when the full IncomingMessage
-    /// is not yet available, e.g. from the message queue processor).
-    ///
-    /// Checks session bindings and falls back to the global default.
+ /// Resolve an agent by session ID only (used when the full IncomingMessage
+ /// is not yet available, e.g. from the message queue processor).
+ ///
+ /// Checks session bindings and falls back to the global default.
     pub async fn resolve_by_session(&self, session_id: &str) -> RouteResult {
-        // 1. Check existing session binding
+ // 1. Check existing session binding
         {
             let bindings = self.session_bindings.read().await;
             if let Some((agent_id, workspace_id)) = bindings.get(session_id) {
@@ -467,7 +467,7 @@ impl AgentRouter {
             }
         }
 
-        // 2. Fall back to global default
+ // 2. Fall back to global default
         debug!(
             "No binding found for session {}, using default agent {}",
             session_id, self.config.default_agent_id
@@ -481,11 +481,11 @@ impl AgentRouter {
         result
     }
 
-    /// Extract an explicit `@agent_name` mention from message content.
-    ///
-    /// Looks for patterns like `@agent_name` at the start of the message.
+ /// Extract an explicit `@agent_name` mention from message content.
+ ///
+ /// Looks for patterns like `@agent_name` at the start of the message.
     fn extract_agent_mention(content: &str) -> Option<String> {
-        // Look for @agent_name at the very beginning
+ // Look for @agent_name at the very beginning
         if let Some(rest) = content.strip_prefix('@') {
             let name = rest.split_whitespace().next()?;
             if !name.is_empty()
@@ -527,11 +527,11 @@ mod tests {
         let router = AgentRouter::new(AgentRouterConfig::default());
         let msg = IncomingMessage::new("u1", "s1", "hello");
 
-        // First message creates binding
+ // First message creates binding
         let route1 = router.route(&msg, None).await;
         assert!(route1.created_binding);
 
-        // Second message uses existing binding
+ // Second message uses existing binding
         let msg2 = IncomingMessage::new("u1", "s1", "again");
         let route2 = router.route(&msg2, None).await;
         assert!(!route2.created_binding);
@@ -561,7 +561,7 @@ mod tests {
 
         let msg2 = IncomingMessage::new("u1", "s1", "again");
         let route2 = router.route(&msg2, None).await;
-        // After unbind, a new binding is created (may be different agent)
+ // After unbind, a new binding is created (may be different agent)
         assert!(route2.created_binding);
     }
 }

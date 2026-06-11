@@ -1,7 +1,7 @@
 //! Syscity WebSocket Protocol
 //!
 //! Implements the WebSocket-native RPC protocol defined in docs/protocol.md.
-//! Uses req/res/event framing aligned with OpenClaw's protocol.
+//! Uses req/res/event framing aligned with
 
 use crate::gateway::GatewayEvent;
 use crate::security::UserId;
@@ -19,14 +19,14 @@ pub const PROTOCOL_VERSION_MIN: u32 = 1;
 /// A frame received from the client (always a request)
 #[derive(Debug, Clone, Deserialize)]
 pub struct WsRequest {
-    /// Frame type discriminator — always "req" for client messages
+ /// Frame type discriminator — always "req" for client messages
     #[serde(rename = "type")]
     pub frame_type: String,
-    /// Client-generated request ID (mirrored in response)
+ /// Client-generated request ID (mirrored in response)
     pub id: String,
-    /// Method name, dot-namespaced (e.g. "chat.send")
+ /// Method name, dot-namespaced (e.g. "chat.send")
     pub method: String,
-    /// Method-specific parameters
+ /// Method-specific parameters
     #[serde(default)]
     pub params: Option<serde_json::Value>,
 }
@@ -34,23 +34,23 @@ pub struct WsRequest {
 /// A response frame sent to the client
 #[derive(Debug, Clone, Serialize)]
 pub struct WsResponse {
-    /// Frame type discriminator — always "res"
+ /// Frame type discriminator — always "res"
     #[serde(rename = "type")]
     pub frame_type: &'static str,
-    /// Mirrors the request ID
+ /// Mirrors the request ID
     pub id: String,
-    /// Success flag
+ /// Success flag
     pub ok: bool,
-    /// Response payload (when ok = true)
+ /// Response payload (when ok = true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
-    /// Error details (when ok = false)
+ /// Error details (when ok = false)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<WsError>,
 }
 
 impl WsResponse {
-    /// Build a successful response
+ /// Build a successful response
     pub fn ok(id: impl Into<String>, payload: impl Serialize) -> Self {
         Self {
             frame_type: "res",
@@ -61,7 +61,7 @@ impl WsResponse {
         }
     }
 
-    /// Build an error response
+ /// Build an error response
     pub fn err(id: impl Into<String>, code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             frame_type: "res",
@@ -79,21 +79,21 @@ impl WsResponse {
 /// An event frame pushed from server to client
 #[derive(Debug, Clone, Serialize)]
 pub struct WsEvent {
-    /// Frame type discriminator — always "event"
+ /// Frame type discriminator — always "event"
     #[serde(rename = "type")]
     pub frame_type: &'static str,
-    /// Event name (e.g. "chat.delta")
+ /// Event name (e.g. "chat.delta")
     pub event: String,
-    /// Event-specific payload
+ /// Event-specific payload
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
-    /// Monotonic sequence number for ordering/dedup
+ /// Monotonic sequence number for ordering/dedup
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
 }
 
 impl WsEvent {
-    /// Build an event frame
+ /// Build an event frame
     pub fn new(event: impl Into<String>, payload: impl Serialize, seq: u64) -> Self {
         Self {
             frame_type: "event",
@@ -107,9 +107,9 @@ impl WsEvent {
 /// Error shape in a response frame
 #[derive(Debug, Clone, Serialize)]
 pub struct WsError {
-    /// Error code (e.g. "UNAUTHORIZED", "SESSION_NOT_FOUND")
+ /// Error code (e.g. "UNAUTHORIZED", "SESSION_NOT_FOUND")
     pub code: String,
-    /// Human-readable error message
+ /// Human-readable error message
     pub message: String,
 }
 
@@ -118,15 +118,15 @@ pub struct WsError {
 /// Parameters sent by client in the first `connect` request
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectParams {
-    /// Protocol version requested by client
+ /// Protocol version requested by client
     pub protocol_version: u32,
-    /// Client identification
+ /// Client identification
     pub client: Option<ClientInfo>,
-    /// Authentication credentials
+ /// Authentication credentials
     pub auth: Option<AuthParams>,
-    /// Device identity (for device pairing mode)
+ /// Device identity (for device pairing mode)
     pub device: Option<DeviceIdentity>,
-    /// Requested scopes
+ /// Requested scopes
     #[serde(default)]
     pub scopes: Vec<String>,
 }
@@ -134,9 +134,9 @@ pub struct ConnectParams {
 /// Client identification
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClientInfo {
-    /// Client type: "web", "ios", "android", "cli"
+ /// Client type: "web", "ios", "android", "cli"
     pub id: String,
-    /// Client software version
+ /// Client software version
     #[serde(default)]
     pub version: String,
 }
@@ -144,10 +144,10 @@ pub struct ClientInfo {
 /// Authentication parameters within connect
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthParams {
-    /// Shared token or device token
+ /// Shared token or device token
     #[serde(default)]
     pub token: Option<String>,
-    /// Password (for password auth mode)
+ /// Password (for password auth mode)
     #[serde(default)]
     pub password: Option<String>,
 }
@@ -155,15 +155,15 @@ pub struct AuthParams {
 /// Device identity for pairing
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DeviceIdentity {
-    /// Device unique ID
+ /// Device unique ID
     pub id: String,
-    /// Ed25519 public key (base64)
+ /// Ed25519 public key (base64)
     #[serde(default)]
     pub public_key: Option<String>,
-    /// Signature over nonce + timestamp
+ /// Signature over nonce + timestamp
     #[serde(default)]
     pub signature: Option<String>,
-    /// Nonce from the connect challenge
+ /// Nonce from the connect challenge
     #[serde(default)]
     pub nonce: Option<String>,
 }
@@ -171,35 +171,34 @@ pub struct DeviceIdentity {
 /// Payload of the hello-ok response
 #[derive(Debug, Clone, Serialize)]
 pub struct HelloOkPayload {
-    /// Protocol version accepted by server
+ /// Protocol version accepted by server
     pub protocol_version: u32,
-    /// Session key derived for this connection
+ /// Session key derived for this connection
     pub session_key: String,
-    /// Available features / methods
+ /// Available features / methods
     pub features: Vec<String>,
-    /// Scopes granted to this connection
+ /// Scopes granted to this connection
     pub scopes_granted: Vec<String>,
-    /// Server info
+ /// Server info
     pub server: ServerInfo,
 }
 
 /// Server info in hello-ok
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerInfo {
-    /// Server version string
+ /// Server version string
     pub version: String,
-    /// Connection ID
+ /// Connection ID
     pub conn_id: String,
 }
 
 // ── Scopes (Operator Scope system) ────────────────────────────────────────────
 //
-// Syscity uses an Operator Scope model aligned with OpenClaw's
-// `method-scopes.ts`. Each WebSocket method declares a required scope;
+// Syscity uses an Operator Scope model. Each WebSocket method declares a required scope;
 // the gateway verifies the connection's granted scopes before dispatch.
 //
 // Scope hierarchy (least to most privileged):
-//   read < chat < write < acp < pairing < admin
+// read < chat < write < acp < pairing < admin
 
 // Scope: chat operations (send, history, abort)
 pub const SCOPE_CHAT: &str = "chat";
@@ -258,7 +257,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         "acp.list" | "acp.status" | "acp.tree" => Some(SCOPE_READ),
         "connect" | "ping" => None, // No scope required
         _ => {
-            // Admin scope required for unknown methods (default-deny)
+ // Admin scope required for unknown methods (default-deny)
             Some(SCOPE_ADMIN)
         }
     }
@@ -283,17 +282,17 @@ pub fn scopes_allow(granted: &[String], method: &str) -> bool {
 /// Gateway authentication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AuthMode {
-    /// No authentication (development only)
+ /// No authentication (development only)
     #[serde(rename = "none")]
     #[default]
     None,
-    /// Shared secret token
+ /// Shared secret token
     #[serde(rename = "token")]
     Token,
-    /// Device pairing required
+ /// Device pairing required
     #[serde(rename = "device")]
     Device,
-    /// Tailscale automatic auth
+ /// Tailscale automatic auth
     #[serde(rename = "tailscale")]
     Tailscale,
 }
@@ -303,21 +302,21 @@ pub enum AuthMode {
 /// Per-connection state maintained during the WebSocket session
 #[derive(Debug)]
 pub struct ProtocolConnection {
-    /// Whether the handshake is complete
+ /// Whether the handshake is complete
     pub handshaked: bool,
-    /// Granted scopes
+ /// Granted scopes
     pub scopes: Vec<String>,
-    /// User ID if authenticated
+ /// User ID if authenticated
     pub user_id: Option<UserId>,
-    /// Client info
+ /// Client info
     pub client: Option<ClientInfo>,
-    /// Subscribed session IDs (empty = all)
+ /// Subscribed session IDs (empty = all)
     pub subscriptions: Vec<String>,
-    /// Monotonic sequence counter for events
+ /// Monotonic sequence counter for events
     pub seq: u64,
-    /// Connection ID
+ /// Connection ID
     pub conn_id: String,
-    /// Log subscription cancel sender
+ /// Log subscription cancel sender
     #[allow(dead_code)]
     pub log_cancel_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
@@ -336,13 +335,13 @@ impl ProtocolConnection {
         }
     }
 
-    /// Increment and return the next sequence number
+ /// Increment and return the next sequence number
     pub fn next_seq(&mut self) -> u64 {
         self.seq += 1;
         self.seq
     }
 
-    /// Check if this connection is subscribed to a session
+ /// Check if this connection is subscribed to a session
     pub fn is_subscribed(&self, session_id: &str) -> bool {
         self.subscriptions.is_empty() || self.subscriptions.contains(&session_id.to_string())
     }
@@ -354,8 +353,8 @@ impl ProtocolConnection {
 pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::Value)> {
     match event {
         GatewayEvent::AgentResponse { .. } => {
-            // Suppressed: non-streaming responses emit chat.final via Completed,
-            // so emitting chat.delta here would duplicate the full content.
+ // Suppressed: non-streaming responses emit chat.final via Completed,
+ // so emitting chat.delta here would duplicate the full content.
             None
         }
         GatewayEvent::Thinking { session_id, agent_id, content } => Some((
@@ -465,7 +464,7 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
             }),
         )),
         GatewayEvent::CronAnnounce { channel: _, to: _, message } => {
-            // message is a JSON string produced by CronScheduler; try to parse it
+ // message is a JSON string produced by CronScheduler; try to parse it
             let payload = serde_json::from_str(message)
                 .unwrap_or_else(|_| serde_json::json!({ "message": message }));
             Some(("cron.completed".to_string(), payload))

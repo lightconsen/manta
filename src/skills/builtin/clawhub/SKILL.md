@@ -13,7 +13,7 @@ triggers:
   - type: keyword
     pattern: "find skill"
     priority: 80
-openclaw:
+syscity:
   emoji: "🦞"
   category: "meta"
   tags:

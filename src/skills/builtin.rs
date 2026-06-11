@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub fn get_builtin_skills() -> HashMap<String, Skill> {
     let mut skills = HashMap::new();
 
-    // Add each built-in skill
+ // Add each built-in skill
     let skill_creator = create_skill_creator();
     skills.insert(skill_creator.name.clone(), skill_creator);
 
@@ -63,7 +63,7 @@ fn create_skill_creator() -> Skill {
     .with_emoji("🛠️")
     .by("syscity");
 
-    // Add triggers
+ // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -95,7 +95,7 @@ fn create_skill_creator() -> Skill {
         },
     ];
 
-    // Mark as built-in
+ // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -113,7 +113,7 @@ fn create_find_skills() -> Skill {
     .with_emoji("🔍")
     .by("syscity");
 
-    // Add triggers
+ // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -152,7 +152,7 @@ fn create_find_skills() -> Skill {
         },
     ];
 
-    // Mark as built-in
+ // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -166,7 +166,7 @@ fn create_cron_skill() -> Skill {
         .with_emoji("⏰")
         .by("syscity");
 
-    // Add triggers
+ // Add triggers
     skill.triggers = vec![
         SkillTrigger {
             trigger_type: TriggerType::Command,
@@ -212,7 +212,7 @@ fn create_cron_skill() -> Skill {
         },
     ];
 
-    // Mark as built-in
+ // Mark as built-in
     skill.source_level = StorageLevel::Bundled;
     skill.is_eligible = true;
     skill.enabled = true;
@@ -471,7 +471,7 @@ triggers:
     pattern: "keyword"
   - type: command
     pattern: "command"
-openclaw:
+syscity:
   emoji: "🛠️"
   requires:
     bins: ["optional-binary"]
@@ -508,7 +508,7 @@ description: "Get weather information"
 triggers:
   - type: keyword
     pattern: "weather"
-openclaw:
+syscity:
   emoji: "🌤️"
 ---
 
@@ -523,7 +523,7 @@ description: "Summarize git activity"
 triggers:
   - type: command
     pattern: "git-summary"
-openclaw:
+syscity:
   emoji: "📊"
 ---
 
@@ -709,7 +709,7 @@ Jobs can be:
 /// ClawHub skill prompt
 const CLAWHUB_PROMPT: &str = r#"# ClawHub - Public Skill Registry
 
-Search and install skills from ClawHub (clawhub.ai), the public skill registry for OpenClaw-based agents.
+Search and install skills from ClawHub (clawhub.ai), the public skill registry.
 
 ## When to Use
 
@@ -1596,7 +1596,7 @@ fn create_nano_pdf_skill() -> Skill {
         },
     ];
 
-    // Note: requires_bin takes ownership, must chain before assigning to skill
+ // Note: requires_bin takes ownership, must chain before assigning to skill
     let mut skill = skill.requires_bin("pdftotext").requires_bin("pandoc");
 
     skill.source_level = StorageLevel::Bundled;
@@ -2123,7 +2123,7 @@ fn create_agent_creator_skill() -> Skill {
 /// Agent Creator skill prompt
 const AGENT_CREATOR_PROMPT: &str = r#"# Agent Creator - Create New Agent Personalities
 
-Create new agent personalities using natural language. This skill parses your description and creates OpenClaw-style memory files (SOUL.md, IDENTITY.md, BOOTSTRAP.md).
+Create new agent personalities using natural language. This skill parses your description and creates memory files (SOUL.md, IDENTITY.md, BOOTSTRAP.md).
 
 ## When to Use
 
@@ -2301,7 +2301,6 @@ After creating the agent, report:
 - Agent names should be lowercase with hyphens (not spaces)
 - Default location is ~/.syscity/agents/
 - Agent won't be active until user runs `syscity agent set <name>`
-- Files follow OpenClaw specification
 "#;
 
 #[cfg(test)]
@@ -2455,7 +2454,7 @@ mod tests {
         assert!(skill.is_eligible);
         assert!(skill.enabled);
         assert!(!skill.triggers.is_empty());
-        // Nano PDF requires pdftotext and pandoc
+ // Nano PDF requires pdftotext and pandoc
         assert!(skill
             .metadata
             .requires

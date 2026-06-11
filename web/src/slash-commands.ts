@@ -1,6 +1,6 @@
 /**
  * Slash command parser and types for Syscity chat UI.
- * Matches OpenClaw-style `/command [args]` syntax.
+ * Parses `/command [args]` syntax.
  */
 
 export type CommandCategory = "session" | "model" | "status" | "agents" | "tools" | "admin";

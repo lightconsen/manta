@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "deploy agent"
     priority: 70
-openclaw:
+syscity:
   emoji: "🤖"
   category: "meta"
   tags:

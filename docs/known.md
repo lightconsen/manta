@@ -167,14 +167,14 @@ src/
 │   ├── audit.rs              # Comprehensive security audit (risk scoring)
 │   ├── runtime_audit.rs      # In-memory ring buffer
 │   ├── persistent_audit.rs   # SQLite audit log
-│   ├── pairing.rs            # DM pairing (OpenClaw-style)
+│   ├── pairing.rs            # DM pairing
 │   ├── device_pairing.rs     # WS device pairing (token auth)
 │   ├── mention_gate.rs       # Mention gating policy
 │   ├── sliding_window.rs     # Sliding window rate limiter
 │   └── pentest.rs            # Dynamic penetration testing (pluggable probes)
 │
 ├── skills/                   # Skill system
-│   ├── mod.rs                # Skill manager (OpenClaw-compatible SKILL.md)
+│   ├── mod.rs                # Skill manager (SKILL.md)
 │   ├── builtin.rs            # 13 built-in skills
 │   ├── builtin_macros.rs     # Compile-time skill embedding macros
 │   ├── registry.rs           # Remote skill registry client

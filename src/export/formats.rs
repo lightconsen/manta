@@ -4,7 +4,7 @@
 //! These formats are designed to be:
 //! - Human-readable (Markdown for conversations)
 //! - Machine-parseable (JSON/JSONL)
-//! - Compatible with OpenClaw-style exports for interoperability
+//! - Compatible with exports for interoperability
 
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -12,11 +12,11 @@ use std::time::SystemTime;
 /// Export format options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
-    /// Markdown format (human-readable conversation transcript)
+ /// Markdown format (human-readable conversation transcript)
     Markdown,
-    /// JSON format (structured, single file)
+ /// JSON format (structured, single file)
     Json,
-    /// JSON Lines format (one record per line, streaming-friendly)
+ /// JSON Lines format (one record per line, streaming-friendly)
     Jsonl,
 }
 
@@ -44,7 +44,7 @@ impl std::fmt::Display for ExportFormat {
 }
 
 impl ExportFormat {
-    /// Get the file extension for this format
+ /// Get the file extension for this format
     pub fn extension(&self) -> &'static str {
         match self {
             ExportFormat::Markdown => "md",
@@ -55,28 +55,28 @@ impl ExportFormat {
 }
 
 /// JSONL representation of a chat message
-/// Compatible with OpenClaw-style transcript files
+/// Compatible with transcript files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonLineMessage {
-    /// Unique message identifier
+ /// Unique message identifier
     pub id: String,
-    /// Conversation identifier
+ /// Conversation identifier
     pub conversation_id: String,
-    /// User identifier
+ /// User identifier
     pub user_id: String,
-    /// Message role (user, assistant, system)
+ /// Message role (user, assistant, system)
     pub role: String,
-    /// Message content
+ /// Message content
     pub content: String,
-    /// Timestamp (ISO 8601 format)
+ /// Timestamp (ISO 8601 format)
     pub timestamp: String,
-    /// Optional metadata (tool calls, tokens, etc.)
+ /// Optional metadata (tool calls, tokens, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
 impl JsonLineMessage {
-    /// Create from a ChatMessage
+ /// Create from a ChatMessage
     pub fn from_chat_message(msg: &crate::memory::ChatMessage) -> Self {
         Self {
             id: msg.id.clone(),
@@ -93,36 +93,36 @@ impl JsonLineMessage {
 /// JSONL representation of a memory entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonLineMemory {
-    /// Unique memory identifier
+ /// Unique memory identifier
     pub id: String,
-    /// User identifier
+ /// User identifier
     pub user_id: String,
-    /// Optional conversation identifier
+ /// Optional conversation identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
-    /// Memory content
+ /// Memory content
     pub content: String,
-    /// Memory type (fact, preference, semantic, etc.)
+ /// Memory type (fact, preference, semantic, etc.)
     pub memory_type: String,
-    /// Creation timestamp (ISO 8601)
+ /// Creation timestamp (ISO 8601)
     pub created_at: String,
-    /// Expiration timestamp (ISO 8601), if any
+ /// Expiration timestamp (ISO 8601), if any
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    /// Importance score [0.0, 1.0]
+ /// Importance score [0.0, 1.0]
     pub importance_score: f32,
-    /// Source of the memory (agent, user, compaction)
+ /// Source of the memory (agent, user, compaction)
     pub source: String,
-    /// Optional metadata
+ /// Optional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
-    /// Embedding vector (optional, excluded by default for size)
+ /// Embedding vector (optional, excluded by default for size)
     #[serde(skip_serializing)]
     pub embedding: Option<Vec<f32>>,
 }
 
 impl JsonLineMemory {
-    /// Create from a Memory, optionally including the embedding
+ /// Create from a Memory, optionally including the embedding
     pub fn from_memory(memory: &crate::memory::Memory, include_embedding: bool) -> Self {
         Self {
             id: memory.id.to_string(),
@@ -147,47 +147,47 @@ impl JsonLineMemory {
 /// Conversation export in JSON format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationExport {
-    /// Export metadata
+ /// Export metadata
     pub meta: ExportMeta,
-    /// Conversation messages
+ /// Conversation messages
     pub messages: Vec<JsonLineMessage>,
 }
 
 /// Memory export in JSON format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryExport {
-    /// Export metadata
+ /// Export metadata
     pub meta: ExportMeta,
-    /// Memory entries
+ /// Memory entries
     pub memories: Vec<JsonLineMemory>,
 }
 
 /// Combined export (conversations + memories)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullExport {
-    /// Export metadata
+ /// Export metadata
     pub meta: ExportMeta,
-    /// Conversations mapped by ID
+ /// Conversations mapped by ID
     pub conversations: std::collections::HashMap<String, Vec<JsonLineMessage>>,
-    /// Memory entries
+ /// Memory entries
     pub memories: Vec<JsonLineMemory>,
 }
 
 /// Export metadata header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportMeta {
-    /// Export version
+ /// Export version
     pub version: String,
-    /// Export timestamp
+ /// Export timestamp
     pub exported_at: String,
-    /// Source application
+ /// Source application
     pub source: String,
-    /// Export format version
+ /// Export format version
     pub format_version: u32,
 }
 
 impl ExportMeta {
-    /// Create new export metadata
+ /// Create new export metadata
     pub fn new() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -389,7 +389,7 @@ mod tests {
             embedding: Some(vec![1.0, 2.0]),
         };
         let json = serde_json::to_string(&mem).unwrap();
-        // Embedding should be skipped in serialization
+ // Embedding should be skipped in serialization
         assert!(!json.contains("embedding"));
     }
 }

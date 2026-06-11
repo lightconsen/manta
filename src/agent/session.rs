@@ -1,6 +1,6 @@
 //! Multi-Agent Session Orchestration
 //!
-//! Inspired by OpenClaw's ACP session management, this provides:
+//! This provides:
 //! - Multi-agent sessions with multiple agents collaborating
 //! - Session thread binding (isolated, parent, shared, new)
 //! - Agent lifecycle management within a session
@@ -55,41 +55,41 @@ pub fn get_thread_id_legacy(binding: &ThreadBinding, parent_thread: &str) -> Str
 /// Agent instance within a session
 #[derive(Debug, Clone)]
 pub struct SessionAgent {
-    /// Agent ID
+ /// Agent ID
     pub id: String,
-    /// Agent personality
+ /// Agent personality
     pub personality: AgentPersonality,
-    /// Thread binding mode
+ /// Thread binding mode
     pub binding: ThreadBinding,
-    /// Thread ID this agent is bound to
+ /// Thread ID this agent is bound to
     pub thread_id: String,
-    /// Whether agent is currently active
+ /// Whether agent is currently active
     pub is_active: bool,
-    /// Agent status
+ /// Agent status
     pub status: AgentInstanceStatus,
-    /// Spawn time
+ /// Spawn time
     pub spawned_at: std::time::Instant,
-    /// Last activity time
+ /// Last activity time
     pub last_activity: std::time::Instant,
 }
 
 /// Status of an agent instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentInstanceStatus {
-    /// Agent is starting up
+ /// Agent is starting up
     Starting,
-    /// Agent is ready to process messages
+ /// Agent is ready to process messages
     Ready,
-    /// Agent is busy processing
+ /// Agent is busy processing
     Busy,
-    /// Agent is shutting down
+ /// Agent is shutting down
     ShuttingDown,
-    /// Agent has terminated
+ /// Agent has terminated
     Terminated,
 }
 
 impl SessionAgent {
-    /// Create a new session agent with optional active-thread tracking for Auto binding.
+ /// Create a new session agent with optional active-thread tracking for Auto binding.
     pub fn new_with_threads(
         id: String,
         personality: AgentPersonality,
@@ -111,7 +111,7 @@ impl SessionAgent {
         }
     }
 
-    /// Create a new session agent (backward-compatible wrapper).
+ /// Create a new session agent (backward-compatible wrapper).
     pub fn new(
         id: String,
         personality: AgentPersonality,
@@ -121,30 +121,30 @@ impl SessionAgent {
         Self::new_with_threads(id, personality, binding, parent_thread, None)
     }
 
-    /// Mark agent as ready
+ /// Mark agent as ready
     pub fn mark_ready(&mut self) {
         self.status = AgentInstanceStatus::Ready;
         self.last_activity = std::time::Instant::now();
     }
 
-    /// Mark agent as busy
+ /// Mark agent as busy
     pub fn mark_busy(&mut self) {
         self.status = AgentInstanceStatus::Busy;
         self.last_activity = std::time::Instant::now();
     }
 
-    /// Mark agent as terminated
+ /// Mark agent as terminated
     pub fn mark_terminated(&mut self) {
         self.status = AgentInstanceStatus::Terminated;
         self.is_active = false;
     }
 
-    /// Check if agent shares context with another agent
+ /// Check if agent shares context with another agent
     pub fn shares_context_with(&self, other: &SessionAgent) -> bool {
         match (&self.binding, &other.binding) {
-            // New isolated threads never share
+ // New isolated threads never share
             (ThreadBinding::New, _) | (_, ThreadBinding::New) => false,
-            // Same thread ID - share context
+ // Same thread ID - share context
             _ => self.thread_id == other.thread_id,
         }
     }
@@ -153,44 +153,44 @@ impl SessionAgent {
 /// Multi-agent session for orchestrating multiple agents
 #[derive(Debug)]
 pub struct MultiAgentSession {
-    /// Session ID
+ /// Session ID
     pub id: String,
-    /// Primary thread ID for this session
+ /// Primary thread ID for this session
     pub primary_thread_id: String,
-    /// Agents in this session
+ /// Agents in this session
     agents: HashMap<String, SessionAgent>,
-    /// Context shared across the session (for Shared binding mode)
+ /// Context shared across the session (for Shared binding mode)
     shared_context: Arc<RwLock<HashMap<String, String>>>,
-    /// Session creation time
+ /// Session creation time
     pub created_at: std::time::Instant,
-    /// Last activity time
+ /// Last activity time
     pub last_activity: std::time::Instant,
-    /// Message channel for routing
+ /// Message channel for routing
     message_tx: mpsc::Sender<SessionMessage>,
 }
 
 /// Message within a session
 #[derive(Debug)]
 pub enum SessionMessage {
-    /// Route message to specific agent
+ /// Route message to specific agent
     RouteToAgent {
         agent_id: String,
         message: IncomingMessage,
     },
-    /// Broadcast to all agents in session
+ /// Broadcast to all agents in session
     Broadcast {
         message: IncomingMessage,
         exclude_agent: Option<String>,
     },
-    /// Spawn new agent in session
+ /// Spawn new agent in session
     SpawnAgent {
         agent_id: String,
         personality: AgentPersonality,
         binding: ThreadBinding,
     },
-    /// Terminate agent
+ /// Terminate agent
     TerminateAgent { agent_id: String },
-    /// Get session status
+ /// Get session status
     GetStatus {
         respond_to: oneshot::Sender<SessionStatus>,
     },
@@ -206,7 +206,7 @@ pub struct SessionStatus {
 }
 
 impl MultiAgentSession {
-    /// Create a new multi-agent session
+ /// Create a new multi-agent session
     pub fn new(id: String) -> (Self, mpsc::Receiver<SessionMessage>) {
         let (message_tx, message_rx) = mpsc::channel(100);
         let primary_thread_id = format!("session-{}", id);
@@ -224,12 +224,12 @@ impl MultiAgentSession {
         (session, message_rx)
     }
 
-    /// Get the message sender for this session
+ /// Get the message sender for this session
     pub fn sender(&self) -> mpsc::Sender<SessionMessage> {
         self.message_tx.clone()
     }
 
-    /// Spawn an agent in this session
+ /// Spawn an agent in this session
     pub fn spawn_agent(
         &mut self,
         agent_id: String,
@@ -241,7 +241,7 @@ impl MultiAgentSession {
             agent_id, self.id, binding
         );
 
-        // Build set of active thread IDs for Auto binding resolution
+ // Build set of active thread IDs for Auto binding resolution
         let active_threads: std::collections::HashSet<String> =
             self.agents.values().map(|a| a.thread_id.clone()).collect();
 
@@ -259,7 +259,7 @@ impl MultiAgentSession {
         self.agents.get(&agent_id).unwrap()
     }
 
-    /// Terminate an agent
+ /// Terminate an agent
     pub fn terminate_agent(&mut self, agent_id: &str) {
         if let Some(agent) = self.agents.get_mut(agent_id) {
             agent.mark_terminated();
@@ -267,22 +267,22 @@ impl MultiAgentSession {
         }
     }
 
-    /// Get an agent by ID
+ /// Get an agent by ID
     pub fn get_agent(&self, agent_id: &str) -> Option<&SessionAgent> {
         self.agents.get(agent_id)
     }
 
-    /// Get mutable agent by ID
+ /// Get mutable agent by ID
     pub fn get_agent_mut(&mut self, agent_id: &str) -> Option<&mut SessionAgent> {
         self.agents.get_mut(agent_id)
     }
 
-    /// Get all agents
+ /// Get all agents
     pub fn get_agents(&self) -> &HashMap<String, SessionAgent> {
         &self.agents
     }
 
-    /// Get agents by thread binding
+ /// Get agents by thread binding
     pub fn get_agents_by_thread(&self, thread_id: &str) -> Vec<&SessionAgent> {
         self.agents
             .values()
@@ -290,17 +290,17 @@ impl MultiAgentSession {
             .collect()
     }
 
-    /// Get active agents
+ /// Get active agents
     pub fn get_active_agents(&self) -> Vec<&SessionAgent> {
         self.agents.values().filter(|a| a.is_active).collect()
     }
 
-    /// Get shared context
+ /// Get shared context
     pub fn shared_context(&self) -> Arc<RwLock<HashMap<String, String>>> {
         self.shared_context.clone()
     }
 
-    /// Get session status
+ /// Get session status
     pub fn get_status(&self) -> SessionStatus {
         let active_agents: Vec<String> = self
             .agents
@@ -324,11 +324,11 @@ impl MultiAgentSession {
         }
     }
 
-    /// Find best agent for a message based on intent
+ /// Find best agent for a message based on intent
     pub fn find_agent_for_intent(&self, message: &str) -> Option<&SessionAgent> {
         let message_lower = message.to_lowercase();
 
-        // Simple intent-based routing
+ // Simple intent-based routing
         let intent_keywords: Vec<(&str, Vec<&str>)> = vec![
             ("code", vec!["code", "program", "debug", "fix", "error", "bug"]),
             ("review", vec!["review", "check", "audit", "analyze"]),
@@ -338,7 +338,7 @@ impl MultiAgentSession {
 
         for (intent, keywords) in intent_keywords {
             if keywords.iter().any(|kw| message_lower.contains(kw)) {
-                // Find an agent that can handle this intent
+ // Find an agent that can handle this intent
                 return self.agents.values().find(|a| {
                     a.is_active
                         && a.status == AgentInstanceStatus::Ready
@@ -347,18 +347,18 @@ impl MultiAgentSession {
             }
         }
 
-        // Fallback: return first ready agent
+ // Fallback: return first ready agent
         self.agents
             .values()
             .find(|a| a.is_active && a.status == AgentInstanceStatus::Ready)
     }
 
-    /// Check if session has timed out (no activity)
+ /// Check if session has timed out (no activity)
     pub fn is_timed_out(&self, timeout: std::time::Duration) -> bool {
         self.last_activity.elapsed() > timeout
     }
 
-    /// Cleanup terminated agents
+ /// Cleanup terminated agents
     pub fn cleanup_terminated(&mut self) {
         self.agents
             .retain(|_, a| a.is_active || a.status != AgentInstanceStatus::Terminated);
@@ -368,16 +368,16 @@ impl MultiAgentSession {
 /// Session manager for all multi-agent sessions
 #[derive(Debug, Default)]
 pub struct SessionManager {
-    /// Active sessions (Arc-wrapped so the background processing task can access them)
+ /// Active sessions (Arc-wrapped so the background processing task can access them)
     sessions: HashMap<String, Arc<std::sync::Mutex<MultiAgentSession>>>,
-    /// Session timeout
+ /// Session timeout
     timeout: std::time::Duration,
-    /// Optional persistent session store for unified session model
+ /// Optional persistent session store for unified session model
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
 }
 
 impl SessionManager {
-    /// Create new session manager
+ /// Create new session manager
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
@@ -386,19 +386,19 @@ impl SessionManager {
         }
     }
 
-    /// Attach a persistent session store for unified session operations.
+ /// Attach a persistent session store for unified session operations.
     pub fn with_store(&mut self, store: Arc<crate::agent::session_store::SessionStore>) {
         self.store = Some(store);
     }
 
-    /// Create a new session and spawn its background processing task.
-    /// Also persists to SessionStore when available (unified session model).
+ /// Create a new session and spawn its background processing task.
+ /// Also persists to SessionStore when available (unified session model).
     pub fn create_session(&mut self, session_id: String) -> mpsc::Sender<SessionMessage> {
         let (session, message_rx) = MultiAgentSession::new(session_id.clone());
         let sender = session.sender();
         let session_arc = Arc::new(std::sync::Mutex::new(session));
 
-        // Spawn session processing task, passing a shared handle to the session
+ // Spawn session processing task, passing a shared handle to the session
         tokio::spawn(session_processing_task(
             session_id.clone(),
             message_rx,
@@ -407,7 +407,7 @@ impl SessionManager {
 
         self.sessions.insert(session_id.clone(), session_arc);
 
-        // Auto-persist to SessionStore if available
+ // Auto-persist to SessionStore if available
         if let Some(ref store) = self.store {
             let store = store.clone();
             let sid = session_id;
@@ -422,7 +422,7 @@ impl SessionManager {
         sender
     }
 
-    /// Get a shared handle to a session
+ /// Get a shared handle to a session
     pub fn get_session(
         &self,
         session_id: &str,
@@ -430,7 +430,7 @@ impl SessionManager {
         self.sessions.get(session_id).cloned()
     }
 
-    /// Terminate a session. Also updates SessionStore when available.
+ /// Terminate a session. Also updates SessionStore when available.
     pub fn terminate_session(&mut self, session_id: &str) {
         if let Some(arc) = self.sessions.get(session_id) {
             if let Ok(mut session) = arc.lock() {
@@ -441,7 +441,7 @@ impl SessionManager {
         }
         self.sessions.remove(session_id);
 
-        // Update SessionStore if available
+ // Update SessionStore if available
         if let Some(ref store) = self.store {
             let store = store.clone();
             let sid = session_id.to_string();
@@ -455,7 +455,7 @@ impl SessionManager {
         info!("Terminated session '{}'", session_id);
     }
 
-    /// Cleanup timed out sessions
+ /// Cleanup timed out sessions
     pub fn cleanup_timed_out(&mut self) {
         let timed_out: Vec<String> = self
             .sessions
@@ -474,8 +474,8 @@ impl SessionManager {
         }
     }
 
-    /// List all sessions. Delegates to SessionStore when available (unified model),
-    /// otherwise falls back to in-memory sessions.
+ /// List all sessions. Delegates to SessionStore when available (unified model),
+ /// otherwise falls back to in-memory sessions.
     pub async fn list_sessions(&self) -> Vec<String> {
         if let Some(ref store) = self.store {
             match store.find_sessions(None, None, None, false).await {
@@ -490,7 +490,7 @@ impl SessionManager {
         }
     }
 
-    /// Set session timeout
+ /// Set session timeout
     pub fn set_timeout(&mut self, timeout: std::time::Duration) {
         self.timeout = timeout;
     }
@@ -507,7 +507,7 @@ async fn session_processing_task(
 
     while let Some(msg) = message_rx.recv().await {
         match msg {
-            // ── Status query ────────────────────────────────────────────────
+ // ── Status query ────────────────────────────────────────────────
             SessionMessage::GetStatus { respond_to } => {
                 let status =
                     session
@@ -522,7 +522,7 @@ async fn session_processing_task(
                 let _ = respond_to.send(status);
             }
 
-            // ── Spawn a new agent in the session ────────────────────────────
+ // ── Spawn a new agent in the session ────────────────────────────
             SessionMessage::SpawnAgent { agent_id, personality, binding } => {
                 if let Ok(mut s) = session.lock() {
                     s.spawn_agent(agent_id.clone(), personality, binding);
@@ -532,7 +532,7 @@ async fn session_processing_task(
                 }
             }
 
-            // ── Terminate an agent ──────────────────────────────────────────
+ // ── Terminate an agent ──────────────────────────────────────────
             SessionMessage::TerminateAgent { agent_id } => {
                 if let Ok(mut s) = session.lock() {
                     s.terminate_agent(&agent_id);
@@ -542,10 +542,10 @@ async fn session_processing_task(
                 }
             }
 
-            // ── Route a message to a specific agent ─────────────────────────
-            // SessionAgent is a data-only struct with no own channel; we mark
-            // it busy and log.  Callers that need actual agent execution should
-            // use `Agent::process_message_with_progress` directly.
+ // ── Route a message to a specific agent ─────────────────────────
+ // SessionAgent is a data-only struct with no own channel; we mark
+ // it busy and log. Callers that need actual agent execution should
+ // use `Agent::process_message_with_progress` directly.
             SessionMessage::RouteToAgent { agent_id, message } => {
                 if let Ok(mut s) = session.lock() {
                     if let Some(agent) = s.get_agent_mut(&agent_id) {
@@ -565,7 +565,7 @@ async fn session_processing_task(
                 }
             }
 
-            // ── Broadcast a message to all (non-excluded) agents ────────────
+ // ── Broadcast a message to all (non-excluded) agents ────────────
             SessionMessage::Broadcast { message, exclude_agent } => {
                 if let Ok(mut s) = session.lock() {
                     let targets: Vec<String> = s
@@ -622,13 +622,13 @@ mod tests {
         let shared = get_thread_id(&ThreadBinding::Auto, parent, None);
         assert_eq!(shared, format!("shared-{}", parent));
 
-        // Auto with active_threads containing parent -> reuses parent
+ // Auto with active_threads containing parent -> reuses parent
         let mut active = std::collections::HashSet::new();
         active.insert(parent.to_string());
         let auto_reuse = get_thread_id(&ThreadBinding::Auto, parent, Some(&active));
         assert_eq!(auto_reuse, parent);
 
-        // Auto with active_threads not containing parent -> creates new
+ // Auto with active_threads not containing parent -> creates new
         let auto_new =
             get_thread_id(&ThreadBinding::Auto, parent, Some(&std::collections::HashSet::new()));
         assert!(auto_new.starts_with("thread-"));
@@ -871,12 +871,12 @@ mod tests {
             agent.mark_ready();
         }
 
-        // Should find the coder for code-related intent
+ // Should find the coder for code-related intent
         let found = session.find_agent_for_intent("please debug this error");
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, "coder");
 
-        // Should return None if no ready agents
+ // Should return None if no ready agents
         {
             let agent = session.get_agent_mut("coder").unwrap();
             agent.mark_busy();
@@ -896,7 +896,7 @@ mod tests {
         let agent = session.get_agent_mut("general").unwrap();
         agent.mark_ready();
 
-        // No intent keywords match, falls back to first ready agent
+ // No intent keywords match, falls back to first ready agent
         let found = session.find_agent_for_intent("hello how are you");
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, "general");
@@ -990,7 +990,7 @@ mod tests {
     fn test_session_manager_set_timeout() {
         let mut manager = SessionManager::new();
         manager.set_timeout(std::time::Duration::from_secs(60));
-        // Verify by creating a session and checking it doesn't time out quickly
-        // (mostly checking this doesn't panic)
+ // Verify by creating a session and checking it doesn't time out quickly
+ // (mostly checking this doesn't panic)
     }
 }

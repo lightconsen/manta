@@ -1,6 +1,6 @@
 //! Nodes Tool — Tailscale Device Discovery and Control
 //!
-//! OpenClaw-compatible tool for discovering and controlling paired nodes
+//! tool for discovering and controlling paired nodes
 //! via Tailscale. Supports status queries, device info, camera/screen
 //! capture, notifications, and remote invocation.
 
@@ -73,7 +73,7 @@ struct TailscaleNode {
 
 /// Fetch Tailscale node list via tailscale CLI API
 async fn fetch_tailscale_nodes() -> Vec<TailscaleNode> {
-    // Try tailscale status --json
+ // Try tailscale status --json
     let output = match tokio::process::Command::new("tailscale")
         .args(["status", "--json"])
         .output()
@@ -200,7 +200,7 @@ impl Tool for NodesTool {
             }
         };
 
-        // Check if tailscale is available
+ // Check if tailscale is available
         let tailscale_available = tokio::process::Command::new("tailscale")
             .arg("version")
             .output()
@@ -330,8 +330,8 @@ impl Tool for NodesTool {
                 }
             }
             NodesAction::CameraSnap { node_id } => {
-                // Camera snap requires a remote agent running on the node
-                // This is a stub that documents the capability
+ // Camera snap requires a remote agent running on the node
+ // This is a stub that documents the capability
                 warn!("Camera snap requested for node {} — requires remote agent", node_id);
                 Ok(ToolExecutionResult {
                     success: false,
@@ -374,7 +374,7 @@ impl Tool for NodesTool {
                 })
             }
             NodesAction::LocationGet { node_id } => {
-                // Try to get location from tailscale status --json (may include geo info)
+ // Try to get location from tailscale status --json (may include geo info)
                 let output = tokio::process::Command::new("tailscale")
                     .args(["status", "--json"])
                     .output()
@@ -383,7 +383,7 @@ impl Tool for NodesTool {
                 match output {
                     Ok(o) if o.status.success() => {
                         let _json: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
-                        // Tailscale doesn't expose location directly; this is a placeholder
+ // Tailscale doesn't expose location directly; this is a placeholder
                         Ok(ToolExecutionResult {
                             success: false,
                             output: String::new(),

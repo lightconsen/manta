@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "temperature"
     priority: 80
-openclaw:
+syscity:
   emoji: "🌤️"
   category: "productivity"
   tags:

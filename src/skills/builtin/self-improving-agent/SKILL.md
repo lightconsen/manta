@@ -16,7 +16,7 @@ triggers:
   - type: keyword
     pattern: "optimize behavior"
     priority: 80
-openclaw:
+syscity:
   emoji: "🔄"
   category: "meta"
   tags:

@@ -1,7 +1,7 @@
 //! Pre-compaction Memory Flush
 //!
 //! Triggers a silent agent turn before compaction to store durable memories.
-//! Similar to OpenClaw's memory flush system.
+//!
 
 use crate::agent::compaction::{compute_context_hash, MemoryFlushConfig, SessionCompactionState};
 use chrono::Local;
@@ -17,11 +17,11 @@ pub struct MemoryFlushDecision {
 /// Reason why a memory flush was triggered (or not)
 #[derive(Debug, Clone)]
 pub enum FlushReason {
-    /// No flush needed
+ /// No flush needed
     None,
-    /// Token threshold exceeded
+ /// Token threshold exceeded
     TokenThreshold,
-    /// Transcript size exceeded
+ /// Transcript size exceeded
     TranscriptSize,
 }
 
@@ -47,7 +47,7 @@ pub fn check_memory_flush(
 ) -> MemoryFlushDecision {
     let context_hash = compute_context_hash(current_messages);
 
-    // Check if already flushed this cycle
+ // Check if already flushed this cycle
     if compaction_state.memory_flush_compaction_count == Some(compaction_state.compaction_count) {
         return MemoryFlushDecision {
             should_flush: false,
@@ -56,7 +56,7 @@ pub fn check_memory_flush(
         };
     }
 
-    // Check context hash dedup
+ // Check context hash dedup
     if compaction_state.last_flush_context_hash.as_deref() == Some(&context_hash) {
         return MemoryFlushDecision {
             should_flush: false,
@@ -65,7 +65,7 @@ pub fn check_memory_flush(
         };
     }
 
-    // Check token threshold
+ // Check token threshold
     let threshold = context_window
         .saturating_sub(config.reserve_tokens_floor)
         .saturating_sub(config.soft_threshold_tokens);
@@ -78,7 +78,7 @@ pub fn check_memory_flush(
         };
     }
 
-    // Check transcript size
+ // Check transcript size
     if transcript_bytes >= config.force_flush_transcript_bytes {
         return MemoryFlushDecision {
             should_flush: true,
@@ -114,7 +114,7 @@ pub fn record_flush_in_state(state: &mut SessionCompactionState, context_hash: &
 /// Increment the compaction count (called after compaction completes)
 pub fn increment_compaction_count(state: &mut SessionCompactionState) {
     state.compaction_count += 1;
-    // Clear flush tracking when compaction count changes
+ // Clear flush tracking when compaction count changes
     state.memory_flush_compaction_count = None;
     state.last_flush_context_hash = None;
 }
@@ -140,9 +140,9 @@ mod tests {
             ("assistant".to_string(), "Hi there!".to_string()),
         ];
 
-        // Low tokens - should not flush
-        // Threshold = 8000 - 20000 - 4000 = 0 (saturating_sub), so 1000 >= 0 triggers flush
-        // To NOT trigger, we need a larger context window
+ // Low tokens - should not flush
+ // Threshold = 8000 - 20000 - 4000 = 0 (saturating_sub), so 1000 >= 0 triggers flush
+ // To NOT trigger, we need a larger context window
         let decision = check_memory_flush(
             1000,  // total_tokens
             10000, // transcript_bytes
@@ -150,11 +150,11 @@ mod tests {
             100000, // context_window - large: threshold = 100000 - 20000 - 4000 = 76000
             &state, &messages,
         );
-        // 1000 < 76000, should NOT flush
+ // 1000 < 76000, should NOT flush
         assert!(!decision.should_flush);
         assert!(matches!(decision.reason, FlushReason::None));
 
-        // High tokens - should flush
+ // High tokens - should flush
         let decision = check_memory_flush(
             80000, // total_tokens - above threshold (76000)
             10000, // transcript_bytes
@@ -171,7 +171,7 @@ mod tests {
         let state = default_state();
         let messages = vec![];
 
-        // Small transcript - should not flush
+ // Small transcript - should not flush
         let decision = check_memory_flush(
             1000, // total_tokens
             1000, // transcript_bytes - well under 2MB
@@ -180,7 +180,7 @@ mod tests {
         );
         assert!(!decision.should_flush);
 
-        // Large transcript - should flush
+ // Large transcript - should flush
         let decision = check_memory_flush(
             1000,      // total_tokens
             3_000_000, // transcript_bytes - over 2MB
@@ -226,8 +226,8 @@ mod tests {
             &state, &messages,
         );
 
-        // Should not flush if context hash matches (context unchanged)
-        // Note: This test depends on what hash compute_context_hash returns for empty messages
+ // Should not flush if context hash matches (context unchanged)
+ // Note: This test depends on what hash compute_context_hash returns for empty messages
     }
 
     #[test]
@@ -235,7 +235,7 @@ mod tests {
         let path = resolve_flush_target_path();
         assert!(path.starts_with("memory/"));
         assert!(path.ends_with(".md"));
-        // Should contain a date in YYYY-MM-DD format
+ // Should contain a date in YYYY-MM-DD format
         assert!(path.contains(&Local::now().format("%Y-%m-%d").to_string()));
     }
 

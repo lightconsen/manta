@@ -6,7 +6,7 @@
 //! - Per-IP: IP-based limits for anonymous requests
 //! - Per-endpoint: specific endpoint restrictions
 //!
-//! Mirrors OpenClaw's layered rate limiting architecture.
+//!
 
 use crate::gateway::auth::extract_session_cookie;
 use crate::gateway::auth::SessionCookieConfig;
@@ -29,13 +29,13 @@ use crate::gateway::GatewayState;
 /// Multi-tier rate limit configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiTierRateLimitConfig {
-    /// Global rate limit (all requests)
+ /// Global rate limit (all requests)
     pub global: TierConfig,
-    /// Per-authenticated-user rate limit
+ /// Per-authenticated-user rate limit
     pub per_user: TierConfig,
-    /// Per-IP rate limit (for anonymous requests)
+ /// Per-IP rate limit (for anonymous requests)
     pub per_ip: TierConfig,
-    /// Per-endpoint rate limit
+ /// Per-endpoint rate limit
     pub per_endpoint: TierConfig,
 }
 
@@ -69,33 +69,33 @@ impl Default for MultiTierRateLimitConfig {
 /// Single tier configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierConfig {
-    /// Enable this tier
+ /// Enable this tier
     pub enabled: bool,
-    /// Maximum requests per window
+ /// Maximum requests per window
     pub capacity: u32,
-    /// Window size in seconds
+ /// Window size in seconds
     pub window_secs: u64,
 }
 
 /// Multi-tier rate limiter combining token bucket and sliding window
 #[derive(Debug, Clone)]
 pub struct MultiTierRateLimiter {
-    /// Global sliding window limiter
+ /// Global sliding window limiter
     global: Arc<SlidingWindowRateLimiter>,
-    /// Per-user sliding window limiter
+ /// Per-user sliding window limiter
     per_user: Arc<SlidingWindowRateLimiter>,
-    /// Per-IP sliding window limiter
+ /// Per-IP sliding window limiter
     per_ip: Arc<SlidingWindowRateLimiter>,
-    /// Per-endpoint sliding window limiter
+ /// Per-endpoint sliding window limiter
     per_endpoint: Arc<SlidingWindowRateLimiter>,
-    /// Legacy token bucket rate limiter (for backward compat)
+ /// Legacy token bucket rate limiter (for backward compat)
     token_bucket: Arc<RateLimiter>,
-    /// Configuration
+ /// Configuration
     config: MultiTierRateLimitConfig,
 }
 
 impl MultiTierRateLimiter {
-    /// Create a new multi-tier rate limiter
+ /// Create a new multi-tier rate limiter
     pub fn new(config: MultiTierRateLimitConfig) -> Self {
         Self {
             global: Arc::new(SlidingWindowRateLimiter::new(
@@ -119,14 +119,14 @@ impl MultiTierRateLimiter {
         }
     }
 
-    /// Check all tiers for a request
+ /// Check all tiers for a request
     pub async fn check(
         &self,
         user_id: &UserId,
         ip: Option<std::net::IpAddr>,
         endpoint: &str,
     ) -> MultiTierResult {
-        // Check global tier
+ // Check global tier
         if self.config.global.enabled {
             let global_key = RateLimitKey::new("global", endpoint);
             let result = self.global.check_and_record(&global_key);
@@ -138,7 +138,7 @@ impl MultiTierRateLimiter {
             }
         }
 
-        // Check per-user tier (for authenticated users)
+ // Check per-user tier (for authenticated users)
         if self.config.per_user.enabled && !user_id.0.starts_with("ip:") && user_id.0 != "anonymous"
         {
             let user_key = RateLimitKey::new(&user_id.0, endpoint);
@@ -151,7 +151,7 @@ impl MultiTierRateLimiter {
             }
         }
 
-        // Check per-IP tier (for anonymous or as fallback)
+ // Check per-IP tier (for anonymous or as fallback)
         if self.config.per_ip.enabled {
             let ip_str = ip
                 .map(|i| i.to_string())
@@ -166,7 +166,7 @@ impl MultiTierRateLimiter {
             }
         }
 
-        // Check per-endpoint tier
+ // Check per-endpoint tier
         if self.config.per_endpoint.enabled {
             let endpoint_key = RateLimitKey::new("endpoint", endpoint);
             let result = self.per_endpoint.check_and_record(&endpoint_key);
@@ -178,7 +178,7 @@ impl MultiTierRateLimiter {
             }
         }
 
-        // Legacy token bucket check for backward compatibility
+ // Legacy token bucket check for backward compatibility
         let legacy = self.token_bucket.check(user_id).await;
         if !legacy.is_allowed() {
             return MultiTierResult::Denied {
@@ -198,7 +198,7 @@ impl MultiTierRateLimiter {
         MultiTierResult::Allowed { remaining }
     }
 
-    /// Get current state summary
+ /// Get current state summary
     pub fn stats(&self) -> RateLimitStats {
         RateLimitStats {
             global_windows: self.global.window_count(),
@@ -208,7 +208,7 @@ impl MultiTierRateLimiter {
         }
     }
 
-    /// Cleanup old windows (call periodically)
+ /// Cleanup old windows (call periodically)
     pub fn cleanup(&self) {
         self.global.cleanup();
         self.per_user.cleanup();
@@ -226,9 +226,9 @@ impl Default for MultiTierRateLimiter {
 /// Result of multi-tier rate limit check
 #[derive(Debug, Clone)]
 pub enum MultiTierResult {
-    /// Request allowed
+ /// Request allowed
     Allowed { remaining: u32 },
-    /// Request denied by a specific tier
+ /// Request denied by a specific tier
     Denied {
         tier: &'static str,
         retry_after_secs: u64,
@@ -236,12 +236,12 @@ pub enum MultiTierResult {
 }
 
 impl MultiTierResult {
-    /// Check if request is allowed
+ /// Check if request is allowed
     pub fn is_allowed(&self) -> bool {
         matches!(self, MultiTierResult::Allowed { .. })
     }
 
-    /// Get retry after seconds
+ /// Get retry after seconds
     pub fn retry_after(&self) -> Option<u64> {
         match self {
             MultiTierResult::Denied { retry_after_secs, .. } => Some(*retry_after_secs),
@@ -261,7 +261,7 @@ pub struct RateLimitStats {
 
 /// Extract client IP from request (re-export from middleware for convenience)
 fn extract_client_ip(req: &Request) -> Option<std::net::IpAddr> {
-    // Check X-Forwarded-For header
+ // Check X-Forwarded-For header
     if let Some(forwarded) = req.headers().get("x-forwarded-for") {
         if let Ok(forwarded_str) = forwarded.to_str() {
             if let Some(first_ip) = forwarded_str.split(',').next() {
@@ -272,7 +272,7 @@ fn extract_client_ip(req: &Request) -> Option<std::net::IpAddr> {
         }
     }
 
-    // Check X-Real-IP header
+ // Check X-Real-IP header
     if let Some(real_ip) = req.headers().get("x-real-ip") {
         if let Ok(real_ip_str) = real_ip.to_str() {
             if let Ok(ip) = real_ip_str.parse() {
@@ -290,7 +290,7 @@ pub async fn multi_tier_rate_limit_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Check if rate limiting is enabled
+ // Check if rate limiting is enabled
     let rate_limit_enabled = {
         let config = state.config.read().await;
         config.security.rate_limit.enabled
@@ -300,9 +300,9 @@ pub async fn multi_tier_rate_limit_middleware(
         return Ok(next.run(req).await);
     }
 
-    // Get user identifier
+ // Get user identifier
     let user_id = {
-        // Try Bearer token first
+ // Try Bearer token first
         let auth_header = req.headers().get("authorization");
         if let Some(header_value) = auth_header {
             if let Ok(header_str) = header_value.to_str() {
@@ -310,7 +310,7 @@ pub async fn multi_tier_rate_limit_middleware(
                     if let Some(session) = state.auth_manager.validate_session(token).await {
                         session.user_id
                     } else {
-                        // Try session cookie
+ // Try session cookie
                         let cookie_config = SessionCookieConfig::default();
                         if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
                             if let Some(session) = state.auth_manager.validate_session(&token).await
@@ -338,7 +338,7 @@ pub async fn multi_tier_rate_limit_middleware(
                     .unwrap_or_else(|| UserId::new("anonymous"))
             }
         } else {
-            // Try session cookie for OAuth users
+ // Try session cookie for OAuth users
             let cookie_config = SessionCookieConfig::default();
             if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
                 if let Some(session) = state.auth_manager.validate_session(&token).await {
@@ -359,7 +359,7 @@ pub async fn multi_tier_rate_limit_middleware(
     let ip = extract_client_ip(&req);
     let endpoint = req.uri().path().to_string();
 
-    // Check multi-tier rate limit using the shared instance from GatewayState
+ // Check multi-tier rate limit using the shared instance from GatewayState
     let result = state
         .multi_tier_rate_limiter
         .check(&user_id, ip, &endpoint)
@@ -432,12 +432,12 @@ mod tests {
         let user = UserId::new("user1");
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        // First 2 requests allowed
+ // First 2 requests allowed
         for _ in 0..2 {
             let result = rt.block_on(limiter.check(&user, None, "/api/test"));
             assert!(result.is_allowed());
         }
-        // 3rd request denied
+ // 3rd request denied
         let result = rt.block_on(limiter.check(&user, None, "/api/test"));
         assert!(!result.is_allowed());
     }
@@ -509,6 +509,6 @@ mod tests {
 
         assert!(limiter.stats().global_windows > 0);
         limiter.cleanup();
-        // After cleanup, windows may be empty depending on timing
+ // After cleanup, windows may be empty depending on timing
     }
 }
