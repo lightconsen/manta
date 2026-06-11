@@ -4,6 +4,7 @@
 //! multi-agent routing system.
 
 use crate::channels::IncomingMessage;
+use crate::channels::resolver::ConversationResolver;
 use async_trait::async_trait;
 use sqlx::Row;
 use std::collections::HashMap;
@@ -218,6 +219,9 @@ pub struct AgentRouter {
     workspace_defaults: RwLock<HashMap<String, String>>,
  /// Optional persistent binding store
     binding_store: Option<Arc<dyn BindingStore>>,
+ /// Optional conversation resolver for supplementary routing fallback.
+    #[allow(dead_code)]
+    conversation_resolver: Option<ConversationResolver>,
 }
 
 impl Clone for AgentRouter {
@@ -236,12 +240,19 @@ impl AgentRouter {
             channel_defaults: RwLock::new(HashMap::new()),
             workspace_defaults: RwLock::new(HashMap::new()),
             binding_store: None,
+            conversation_resolver: None,
         }
     }
 
  /// Attach a persistent binding store.
     pub fn with_binding_store(mut self, store: Arc<dyn BindingStore>) -> Self {
         self.binding_store = Some(store);
+        self
+    }
+
+ /// Attach a conversation resolver for supplementary routing fallback.
+    pub fn with_conversation_resolver(mut self, resolver: ConversationResolver) -> Self {
+        self.conversation_resolver = Some(resolver);
         self
     }
 
@@ -369,6 +380,32 @@ impl AgentRouter {
                     created_binding: true,
                 };
                 drop(defaults);
+                self.bind_session(&session_id, &result).await;
+                return result;
+            }
+        }
+
+        // 4b. Supplementary resolution via ConversationResolver (before global fallback)
+        if let Some(ref resolver) = self.conversation_resolver {
+            let resolution = resolver.resolve(message).await;
+            // Only use the resolver result if it's not the fallback (which just
+            // returns the global default — we handle that in step 5 ourselves)
+            let is_fallback = matches!(
+                resolution.source,
+                crate::channels::resolver::ResolutionSource::InboundFallback
+            );
+            if !is_fallback {
+                debug!(
+                    session_id,
+                    agent_id = %resolution.agent_id,
+                    workspace_id = ?resolution.workspace_id,
+                    "Supplementary conversation resolver matched"
+                );
+                let result = RouteResult {
+                    agent_id: resolution.agent_id,
+                    workspace_id: resolution.workspace_id,
+                    created_binding: true,
+                };
                 self.bind_session(&session_id, &result).await;
                 return result;
             }

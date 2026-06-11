@@ -4,6 +4,7 @@
 //! manages context, calls tools, and interacts with LLM providers.
 
 use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::channels::thread_binding::ThreadBindingManager;
 use crate::providers::{CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolRegistry};
 use std::collections::HashMap;
@@ -825,6 +826,9 @@ pub struct Agent {
     computer_config: Option<crate::computer::LoopConfig>,
     /// Optional goal planner for complex multi-step tasks with DAG scheduling.
     goal_planner: Option<crate::planner::GoalPlanner>,
+    /// Optional thread binding manager for tracking session/thread hierarchy
+    /// with idle timeout, max age, and child-spawning policies.
+    thread_binding_manager: Option<ThreadBindingManager>,
 }
 
 impl Agent {
@@ -866,6 +870,7 @@ impl Agent {
             computer_adapter: None,
             computer_config: None,
             goal_planner: None,
+            thread_binding_manager: None,
         }
     }
 
@@ -1087,6 +1092,12 @@ impl Agent {
         if let Some(ref mut planner) = self.goal_planner {
             *planner = planner.clone().with_state_store(store);
         }
+        self
+    }
+
+    /// Attach a thread binding manager for tracking session/thread hierarchy.
+    pub fn with_thread_binding_manager(mut self, manager: ThreadBindingManager) -> Self {
+        self.thread_binding_manager = Some(manager);
         self
     }
 
@@ -1498,6 +1509,24 @@ Your response:"#,
                  If you believe this is a mistake, please rephrase your message."
                     .to_string(),
             ));
+        }
+
+        // ── Thread binding check ──────────────────────────────────────────────
+        if let Some(ref manager) = self.thread_binding_manager {
+            // Check if a binding exists and is still valid
+            if manager.is_valid(&conversation_id).await {
+                // Record activity on the existing binding
+                manager.record_activity(&conversation_id).await;
+            } else if manager.get(&conversation_id).await.is_some() {
+                // Binding exists but is expired — remove it and warn
+                warn!(
+                    "Thread binding expired/session {} for conversation {}",
+                    conversation_id, conversation_id
+                );
+                manager.remove(&conversation_id).await;
+            }
+            // Reap any idle bindings periodically (best-effort)
+            let _ = manager.reap().await;
         }
 
         // Check cache for identical prompt (only for non-follow-up, non-time-sensitive messages)
@@ -3502,6 +3531,8 @@ pub struct AgentBuilder {
     computer_adapter: Option<Arc<dyn crate::computer::ComputerAdapter>>,
     /// Configuration for the computer use loop.
     computer_config: Option<crate::computer::LoopConfig>,
+    /// Thread binding manager for tracking session/thread hierarchy.
+    thread_binding_manager: Option<ThreadBindingManager>,
 }
 
 impl AgentBuilder {
@@ -3628,6 +3659,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Set thread binding manager for tracking session/thread hierarchy.
+    pub fn with_thread_binding_manager(mut self, manager: ThreadBindingManager) -> Self {
+        self.thread_binding_manager = Some(manager);
+        self
+    }
+
     /// Build the agent
     pub fn build(self) -> crate::Result<Agent> {
         let mut agent = Agent::new(
@@ -3696,6 +3733,10 @@ impl AgentBuilder {
 
         if let Some(config) = self.computer_config {
             agent = agent.with_computer_config(config);
+        }
+
+        if let Some(manager) = self.thread_binding_manager {
+            agent = agent.with_thread_binding_manager(manager);
         }
 
         Ok(agent)

@@ -19,6 +19,8 @@ pub mod side_effects;
 pub mod sse;
 pub mod trajectory;
 
+use crate::channels::reply_prefix::{ReplyPrefixEngine, TemplateContext};
+
 pub use reply_dispatcher::{ReplyDispatchConfig, ReplyDispatcher};
 pub use side_effects::{SideEffect, SideEffectContext, SideEffectExecutor, SideEffectRegistry};
 pub use sse::{SseEvent, SseStreamer};
@@ -69,6 +71,8 @@ pub struct DefaultOutboundPipeline {
     side_effects: Arc<SideEffectExecutor>,
     sse: Option<Arc<SseStreamer>>,
     trajectory_writer: Option<Arc<TrajectoryWriter>>,
+    /// Optional reply prefix engine for prepending model info / metadata.
+    reply_prefix_engine: Option<ReplyPrefixEngine>,
 }
 
 impl DefaultOutboundPipeline {
@@ -83,7 +87,15 @@ impl DefaultOutboundPipeline {
             side_effects,
             sse,
             trajectory_writer,
+            reply_prefix_engine: None,
         }
+    }
+
+    /// Attach a reply prefix engine to prepend model info / metadata
+    /// before dispatching messages.
+    pub fn with_reply_prefix_engine(mut self, engine: ReplyPrefixEngine) -> Self {
+        self.reply_prefix_engine = Some(engine);
+        self
     }
 }
 
@@ -141,10 +153,20 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             channel: ctx.channel.clone(),
         };
 
- // Stage 5: Dispatch via reply dispatcher
+ // Stage 5: Apply reply prefix if configured
+        let final_content = if let Some(ref engine) = self.reply_prefix_engine {
+            let template_ctx = TemplateContext::new()
+                .with_session(&ctx.session_id)
+                .with_channel(&ctx.channel);
+            engine.apply_async(&ctx.raw_output, &template_ctx, Some(&ctx.channel)).await
+        } else {
+            ctx.raw_output.clone()
+        };
+
+ // Stage 6: Dispatch via reply dispatcher
         let outbound_msg = crate::channels::OutgoingMessage {
             conversation_id: crate::channels::ConversationId::new(&ctx.session_id),
-            content: ctx.raw_output,
+            content: final_content,
             reasoning_content: None,
             tool_calls: None,
             formatted_content: None,
@@ -165,7 +187,7 @@ impl OutboundPipeline for DefaultOutboundPipeline {
             tracing::warn!("Reply dispatch failed for channel {}: {}", ctx.channel, e);
         }
 
- // Stage 6: Side effects (memory storage, cron, etc.)
+ // Stage 7: Side effects (memory storage, cron, etc.)
         if !result.side_effects.is_empty() {
             self.side_effects.execute_batch(&result.side_effects).await;
         }

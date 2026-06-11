@@ -108,6 +108,7 @@ pub struct ChannelHealthMonitor {
 
 impl ChannelHealthMonitor {
     /// Create a new health monitor
+    /// Create a new health monitor
     pub fn new(check_interval: Duration, stale_threshold: Duration) -> Self {
         Self {
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -142,6 +143,14 @@ impl ChannelHealthMonitor {
         let channels = self.channels.read().await;
         if let Some(health) = channels.get(channel_name) {
             health.write().await.record_heartbeat();
+        }
+    }
+
+    /// Record a failure for a channel
+    pub async fn record_failure(&self, channel_name: &str) {
+        let channels = self.channels.read().await;
+        if let Some(health) = channels.get(channel_name) {
+            health.write().await.record_failure();
         }
     }
 
@@ -244,6 +253,34 @@ impl ChannelHealthMonitor {
         }
 
         needs_restart
+    }
+
+    /// Spawn a background task that periodically calls `channel.health_check()`
+    /// and records heartbeats or failures via this monitor.
+    pub fn monitor_channel(
+        self: &Arc<Self>,
+        channel_name: &str,
+        channel: Arc<dyn crate::channels::Channel>,
+        check_interval: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let monitor = self.clone();
+        let name = channel_name.to_string();
+        tokio::spawn(async move {
+            // Register the channel so the staleness background task tracks it
+            monitor.register_channel(&name).await;
+            loop {
+                match channel.health_check().await {
+                    Ok(true) => {
+                        monitor.record_heartbeat(&name).await;
+                    }
+                    _ => {
+                        warn!("Health check failed for channel '{}'", name);
+                        monitor.record_failure(&name).await;
+                    }
+                }
+                tokio::time::sleep(check_interval).await;
+            }
+        })
     }
 }
 

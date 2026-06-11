@@ -7,6 +7,7 @@
 //! This replaces the direct "enqueue then route" logic in Gateway.
 
 use crate::channels::IncomingMessage;
+use crate::channels::command_gate::{AuthContext, CommandGate as ChannelCommandGate};
 use crate::gateway::send_policy::{PolicyDecision, SendPolicy};
 
 use super::media::MediaUnderstandingResult;
@@ -60,13 +61,26 @@ pub struct AutoReplyDispatchConfig {
 /// 2. Plugin-owned binding resolution
 /// 3. Workspace hint extraction (`@workspace` mention)
 /// 4. Suppression check (group chats without mention)
+/// 5. Secondary command gate check (channels::CommandGate)
 pub struct AutoReplyDispatch {
     config: AutoReplyDispatchConfig,
+    /// Optional channel-level command gate for richer authorizer logic.
+    #[allow(dead_code)]
+    channel_command_gate: Option<ChannelCommandGate>,
 }
 
 impl AutoReplyDispatch {
     pub fn new(config: AutoReplyDispatchConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            channel_command_gate: None,
+        }
+    }
+
+    /// Attach a channel-level command gate for secondary authorization checks.
+    pub fn with_channel_command_gate(mut self, gate: ChannelCommandGate) -> Self {
+        self.channel_command_gate = Some(gate);
+        self
     }
 
     /// Process a message through the dispatch layer.
@@ -112,6 +126,35 @@ impl AutoReplyDispatch {
             let is_mentioned = message.mention.should_process(true);
             if is_group && !is_mentioned {
                 return DispatchResult::suppress("group chat without mention");
+            }
+        }
+
+        // Stage 5: Secondary command gate check (channels::CommandGate)
+        // This does NOT replace the tools::command_gate — it adds richer
+        // authorizer logic (OR/AND, AccessGroup, Authorizer enum) on top.
+        if let Some(ref gate) = self.channel_command_gate {
+            let channel = match &message.provenance {
+                crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
+                _ => "unknown".to_string(),
+            };
+            let ctx = AuthContext {
+                user_id: message.user_id.0.clone(),
+                channel,
+                command: message.content.clone(),
+                is_paired: false,
+                is_admin: false,
+                is_allowlisted: false,
+                custom_flags: Default::default(),
+            };
+            let decision = gate.check(&ctx).await;
+            if !decision.is_allowed() {
+                return DispatchResult::suppress(format!(
+                    "channel command gate denied: {}",
+                    match &decision {
+                        crate::channels::command_gate::GateResult::Denied(reason) => reason.as_str(),
+                        _ => "unknown",
+                    }
+                ));
             }
         }
 

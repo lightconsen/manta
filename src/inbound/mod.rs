@@ -9,9 +9,12 @@
 //! -> Queue Mode Resolve -> Agent Router -> Agent
 //! ```
 
+use crate::channels::identity::IdentityValidator;
+use crate::channels::envelope::SessionEnvelopeManager;
 use crate::channels::IncomingMessage;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 pub mod debounce;
 pub mod dispatch;
@@ -73,10 +76,16 @@ pub struct DefaultInboundPipeline {
     dispatch: AutoReplyDispatch,
     queue_resolver: QueueModeResolver,
     router: AgentRouter,
- /// Sender to forward routed messages to the agent execution layer.
+    /// Sender to forward routed messages to the agent execution layer.
     routed_tx: mpsc::Sender<RoutedMessage>,
- /// Receiver for debounced message batches from the debouncer.
+    /// Receiver for debounced message batches from the debouncer.
     flush_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<crate::inbound::debounce::DebouncedItem>>>,
+    /// Optional identity validator for pre-debounce checks.
+    #[allow(dead_code)]
+    identity_validator: Option<IdentityValidator>,
+    /// Optional session envelope manager for tracking session context.
+    #[allow(dead_code)]
+    envelope_manager: Option<SessionEnvelopeManager>,
 }
 
 impl DefaultInboundPipeline {
@@ -97,7 +106,21 @@ impl DefaultInboundPipeline {
             router,
             routed_tx,
             flush_rx: tokio::sync::Mutex::new(flush_rx),
+            identity_validator: None,
+            envelope_manager: None,
         }
+    }
+
+    /// Attach an identity validator for pre-debounce checks.
+    pub fn with_identity_validator(mut self, validator: IdentityValidator) -> Self {
+        self.identity_validator = Some(validator);
+        self
+    }
+
+    /// Attach a session envelope manager for tracking session context.
+    pub fn with_envelope_manager(mut self, manager: SessionEnvelopeManager) -> Self {
+        self.envelope_manager = Some(manager);
+        self
     }
 
  /// Start a background task that consumes debounced messages and runs
@@ -137,6 +160,13 @@ impl DefaultInboundPipeline {
             return None;
         }
 
+        // Envelope tracking (between dispatch and queue/routing)
+        if let Some(ref envelope_manager) = self.envelope_manager {
+            let _envelope = envelope_manager
+                .get_or_create(&message.conversation_id.0)
+                .await;
+        }
+
  // Stage 4: Queue mode resolution
         let queue_mode = self.queue_resolver.resolve(&message).await;
 
@@ -165,6 +195,29 @@ impl DefaultInboundPipeline {
 #[async_trait::async_trait]
 impl InboundPipeline for DefaultInboundPipeline {
     async fn process(&self, message: IncomingMessage) -> Option<RoutedMessage> {
+        // Stage 0: Identity validation (warn-only, never drops messages)
+        if let Some(ref validator) = self.identity_validator {
+            let identity = crate::channels::identity::SenderIdentity {
+                user_id: message.user_id.0.clone(),
+                display_name: None,
+                username: None,
+                phone: None,
+                email: None,
+                raw: None,
+                platform_data: None,
+            };
+            let result = validator.validate(&identity);
+            if let Err(ref err) = result {
+                warn!(
+                    message_id = %message.id,
+                    user_id = %message.user_id,
+                    conversation_id = %message.conversation_id,
+                    reason = %err,
+                    "Identity validation failed (message not dropped)"
+                );
+            }
+        }
+
  // Stage 1: Debounce
  // If the message should be batched, the debouncer absorbs it and
  // will emit a flushed batch later.

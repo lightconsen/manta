@@ -807,6 +807,7 @@ pub struct PluginManifest {
 /// Registry for managing WASM channel plugins
 pub struct PluginChannelRegistry {
     plugins: Arc<RwLock<HashMap<String, Arc<PluginChannel>>>>,
+    manifests: Arc<RwLock<HashMap<String, PluginManifest>>>,
     plugin_dir: PathBuf,
     message_tx: mpsc::UnboundedSender<IncomingMessage>,
 }
@@ -815,6 +816,7 @@ impl PluginChannelRegistry {
     pub fn new(plugin_dir: PathBuf, message_tx: mpsc::UnboundedSender<IncomingMessage>) -> Self {
         Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
+            manifests: Arc::new(RwLock::new(HashMap::new())),
             plugin_dir,
             message_tx,
         }
@@ -878,12 +880,13 @@ impl PluginChannelRegistry {
         }
 
         let manifest_path = self.plugin_dir.join(format!("{}.yaml", name));
-        let config = if manifest_path.exists() {
+        let (config, manifest) = if manifest_path.exists() {
             let manifest_yaml = tokio::fs::read_to_string(&manifest_path).await?;
-            let _manifest: PluginManifest = serde_yaml::from_str(&manifest_yaml)?;
-            config.unwrap_or_else(|| serde_json::json!({}))
+            let m: PluginManifest = serde_yaml::from_str(&manifest_yaml)?;
+            let manifest = Some(m);
+            (config.unwrap_or_else(|| serde_json::json!({})), manifest)
         } else {
-            config.unwrap_or_else(|| serde_json::json!({}))
+            (config.unwrap_or_else(|| serde_json::json!({})), None)
         };
 
         let plugin = PluginChannel::load(&wasm_path, config, self.message_tx.clone()).await?;
@@ -896,15 +899,27 @@ impl PluginChannelRegistry {
             plugins.insert(name.to_string(), plugin.clone());
         }
 
+        // Store manifest if present
+        if let Some(m) = manifest {
+            let mut manifests = self.manifests.write().await;
+            manifests.insert(name.to_string(), m);
+        }
+
         info!("Loaded plugin '{}'", name);
         Ok(plugin)
     }
 
     pub async fn unload_plugin(&self, name: &str) -> crate::Result<()> {
-        let mut plugins = self.plugins.write().await;
-        if let Some(plugin) = plugins.remove(name) {
-            let _ = plugin.stop().await;
-            info!("Unloaded plugin '{}'", name);
+        {
+            let mut plugins = self.plugins.write().await;
+            if let Some(plugin) = plugins.remove(name) {
+                let _ = plugin.stop().await;
+                info!("Unloaded plugin '{}'", name);
+            }
+        }
+        {
+            let mut manifests = self.manifests.write().await;
+            manifests.remove(name);
         }
         Ok(())
     }
@@ -912,6 +927,11 @@ impl PluginChannelRegistry {
     pub async fn get_plugin(&self, name: &str) -> Option<Arc<PluginChannel>> {
         let plugins = self.plugins.read().await;
         plugins.get(name).cloned()
+    }
+
+    pub async fn get_manifest(&self, name: &str) -> Option<PluginManifest> {
+        let manifests = self.manifests.read().await;
+        manifests.get(name).cloned()
     }
 
     pub async fn list_loaded(&self) -> Vec<String> {
@@ -969,6 +989,7 @@ impl Default for PluginChannelRegistry {
         let (message_tx, _) = mpsc::unbounded_channel();
         Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
+            manifests: Arc::new(RwLock::new(HashMap::new())),
             plugin_dir: PathBuf::from("./plugins"),
             message_tx,
         }

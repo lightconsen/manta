@@ -734,3 +734,154 @@ pub async fn reload_all_handler(
     (StatusCode::OK, Json(result)).into_response()
 }
 
+// ── Channel management ─────────────────────────────────────────────────────────
+
+/// GET /api/v1/channels — List all channels and their enabled status.
+#[allow(dead_code)]
+pub async fn channel_list_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let config = state.config.read().await;
+    let channels: Vec<serde_json::Value> = config
+        .channels
+        .iter()
+        .map(|(name, cfg)| {
+            serde_json::json!({
+                "name": name,
+                "type": cfg.channel_type,
+                "enabled": cfg.enabled,
+                "agent_id": cfg.agent_id,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "channels": channels }))
+}
+
+/// POST /api/v1/channels/{name}/enable — Enable a channel.
+#[allow(dead_code)]
+pub async fn enable_channel_handler(
+    Path(name): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let mut config = state.config.write().await;
+    let channel_config = match config.channels.get_mut(&name) {
+        Some(cfg) => cfg,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("Channel '{}' not found", name) })),
+            )
+                .into_response();
+        }
+    };
+
+    if channel_config.enabled {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "name": name,
+                "enabled": true,
+                "message": "Channel is already enabled",
+            })),
+        )
+            .into_response();
+    }
+
+    channel_config.enabled = true;
+    drop(config);
+
+    // Persist config to disk
+    if let Err(e) = persist_config(&state).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to persist config: {}", e) })),
+        )
+            .into_response();
+    }
+
+    info!("Enabled channel '{}' via REST API", name);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "name": name,
+            "enabled": true,
+            "message": "Channel enabled",
+        })),
+    )
+        .into_response()
+}
+
+/// POST /api/v1/channels/{name}/disable — Disable a channel.
+#[allow(dead_code)]
+pub async fn disable_channel_handler(
+    Path(name): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let mut config = state.config.write().await;
+    let channel_config = match config.channels.get_mut(&name) {
+        Some(cfg) => cfg,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("Channel '{}' not found", name) })),
+            )
+                .into_response();
+        }
+    };
+
+    if !channel_config.enabled {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "name": name,
+                "enabled": false,
+                "message": "Channel is already disabled",
+            })),
+        )
+            .into_response();
+    }
+
+    channel_config.enabled = false;
+    drop(config);
+
+    // Persist config to disk
+    if let Err(e) = persist_config(&state).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to persist config: {}", e) })),
+        )
+            .into_response();
+    }
+
+    info!("Disabled channel '{}' via REST API", name);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "name": name,
+            "enabled": false,
+            "message": "Channel disabled",
+        })),
+    )
+        .into_response()
+}
+
+/// Persist the current gateway config to disk.
+async fn persist_config(state: &Arc<GatewayState>) -> Result<(), String> {
+    let config_path = match state.config_path.clone() {
+        Some(p) => p,
+        None => return Err("No config file path configured".to_string()),
+    };
+
+    let config = state.config.read().await;
+    let toml_str = toml::to_string_pretty(&*config)
+        .map_err(|e| format!("TOML serialization failed: {}", e))?;
+    drop(config);
+
+    tokio::fs::write(&config_path, toml_str)
+        .await
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    info!("Persisted config to {:?}", config_path);
+    Ok(())
+}
+

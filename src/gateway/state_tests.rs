@@ -163,6 +163,9 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         #[cfg(feature = "browser")]
         browser_bridge: tokio::sync::RwLock::new(None),
         computer_adapter: tokio::sync::RwLock::new(None),
+        acp_bridge: None,
+        health_monitor: None,
+        snapshot_store: None,
     }
 }
 

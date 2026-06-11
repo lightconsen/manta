@@ -297,6 +297,45 @@ impl Default for MentionGate {
 /// - Exact string match
 /// - `*` wildcard at start or end (e.g. `*bot`, `spam*`)
 /// - `*` as full wildcard matching everything
+// ── Implicit Mention Detection ────────────────────────────────────────────────
+
+/// Check if the message is a direct reply to a bot message.
+pub fn is_reply_to_bot(bot_user_id: &str, reply_to_user_id: Option<&str>) -> bool {
+    reply_to_user_id.map_or(false, |uid| uid == bot_user_id)
+}
+
+/// Check if the message text contains a quote/mention of the bot.
+pub fn is_quoting_bot(message: &str, bot_name: &str) -> bool {
+    message.contains(bot_name) || message.contains(&format!("@{}", bot_name))
+}
+
+/// Detects implicit mentions that do not use the platform's native @-mention
+/// mechanism but still warrant a bot response (replies, quotes, thread participation).
+pub struct ImplicitMentionDetector {
+    pub bot_user_id: String,
+    pub bot_name: String,
+}
+
+impl ImplicitMentionDetector {
+    pub fn new(bot_user_id: String, bot_name: String) -> Self {
+        Self { bot_user_id, bot_name }
+    }
+
+    /// Check the message for any form of implicit mention and return the
+    /// corresponding `MentionState`.
+    pub fn check(&self, message: &str, reply_to_user_id: Option<&str>) -> crate::channels::MentionState {
+        if is_reply_to_bot(&self.bot_user_id, reply_to_user_id) {
+            crate::channels::MentionState::Mentioned
+        } else if is_quoting_bot(message, &self.bot_name) {
+            crate::channels::MentionState::Mentioned
+        } else {
+            crate::channels::MentionState::NotMentioned
+        }
+    }
+}
+
+// ── Pattern matching ──────────────────────────────────────────────────────────
+
 fn pattern_matches(pattern: &str, text: &str) -> bool {
     if pattern == "*" {
         return true;

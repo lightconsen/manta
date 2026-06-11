@@ -38,6 +38,9 @@ use crate::agent::session_store::AppendMessageParams;
 use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
+use crate::channels::acp_bridge::ChannelAcpBridge;
+use crate::channels::health::ChannelHealthMonitor;
+use crate::channels::snapshot::{AccountSnapshotStore, healthy_snapshot, error_snapshot};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
 use crate::inbound::*;
 use crate::memory::vector::{
@@ -697,6 +700,12 @@ pub struct GatewayState {
     pub task_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>>,
  /// Log line broadcast channel for real-time log streaming to WebSocket clients
     pub log_tx: broadcast::Sender<String>,
+ /// Channel account snapshot store for per-channel health tracking.
+    pub snapshot_store: Option<AccountSnapshotStore>,
+ /// ACP bridge for routing ACP commands from channel messages.
+    pub acp_bridge: Option<Arc<ChannelAcpBridge>>,
+    /// Optional health monitor for periodic health checks and stall detection.
+    pub health_monitor: Option<Arc<ChannelHealthMonitor>>,
 }
 
 impl GatewayState {
@@ -1681,6 +1690,9 @@ impl Gateway {
             computer_adapter: tokio::sync::RwLock::new(computer_adapter),
             engine_metrics: None,
             task_scheduler: RwLock::new(None),
+            snapshot_store: None,
+            acp_bridge: None,
+            health_monitor: None,
         });
 
  // Attach SessionStore to SessionManager for unified session model
@@ -2419,6 +2431,10 @@ impl Gateway {
             .route("/api/v1/models", get(list_models_handler))
  // Computer / desktop automation API
             .route("/api/v1/reload", post(reload_all_handler))
+ // Channel management API
+            .route("/api/v1/channels", get(channel_list_handler))
+            .route("/api/v1/channels/{name}/enable", post(enable_channel_handler))
+            .route("/api/v1/channels/{name}/disable", post(disable_channel_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);
@@ -3212,6 +3228,26 @@ impl Gateway {
                 }
             }
         }
+
+        // Record a healthy snapshot after successful channel initialization
+        if let Some(ref store) = self.state.snapshot_store {
+            let snap = healthy_snapshot(name, None);
+            store.store(snap).await;
+        }
+
+        // Start health monitoring if configured
+        if let Some(ref monitor) = self.state.health_monitor {
+            let channels = self.state.channels.read().await;
+            if let Some(channel) = channels.get(name).cloned() {
+                drop(channels);
+                let check_interval = std::time::Duration::from_secs(30);
+                monitor.monitor_channel(name, channel, check_interval);
+                info!("Started health monitoring for channel '{}'", name);
+            } else {
+                warn!("Channel '{}' not found in registry for health monitoring", name);
+            }
+        }
+
         Ok(())
     }
 

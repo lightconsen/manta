@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 
 pub mod formatter;
 pub mod health;
@@ -961,6 +961,10 @@ pub struct ExtendedChannelRegistry {
     native: ChannelRegistry,
     /// WASM plugin channels
     plugins: Option<PluginChannelRegistry>,
+    /// Cached plugin channel instances for name-based lookup (interior mutability for &self access)
+    plugin_channels: Arc<RwLock<HashMap<String, Arc<PluginChannel>>>>,
+    /// Parsed manifests for loaded plugins (name -> manifest)
+    manifests: Arc<RwLock<HashMap<String, PluginManifest>>>,
 }
 
 #[cfg(feature = "plugins")]
@@ -971,6 +975,8 @@ impl ExtendedChannelRegistry {
         Self {
             native: ChannelRegistry::new(),
             plugins: Some(PluginChannelRegistry::new(plugin_dir, message_tx)),
+            plugin_channels: Arc::new(RwLock::new(HashMap::new())),
+            manifests: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -979,14 +985,19 @@ impl ExtendedChannelRegistry {
         self.native.register(channel);
     }
 
-    /// Get a channel by name (checks native first, then plugins)
+    /// Get a channel by name (checks native first, then plugin channels)
     pub fn get(&self, name: &str) -> Option<SharedChannel> {
         // Check native channels first
         if let Some(channel) = self.native.get(name) {
             return Some(channel);
         }
 
-        // Plugin channels don't support name-based lookup in this registry
+        // Check plugin channels (blocking read — small, fast map)
+        let pc = self.plugin_channels.blocking_read();
+        if let Some(channel) = pc.get(name).cloned() {
+            return Some(channel as SharedChannel);
+        }
+
         None
     }
 
@@ -1006,6 +1017,21 @@ impl ExtendedChannelRegistry {
         names
     }
 
+    /// Register a plugin channel externally (e.g., from PluginChannelRegistry callbacks).
+    pub async fn register_plugin_channel(
+        &self,
+        name: &str,
+        channel: Arc<PluginChannel>,
+        manifest: Option<PluginManifest>,
+    ) {
+        let mut pc = self.plugin_channels.write().await;
+        pc.insert(name.to_string(), channel);
+        if let Some(m) = manifest {
+            let mut manifests = self.manifests.write().await;
+            manifests.insert(name.to_string(), m);
+        }
+    }
+
     /// Load a WASM plugin
     pub async fn load_plugin(
         &self,
@@ -1013,7 +1039,15 @@ impl ExtendedChannelRegistry {
         config: Option<serde_json::Value>,
     ) -> crate::Result<()> {
         if let Some(ref plugins) = self.plugins {
-            plugins.load_plugin(name, config).await?;
+            let plugin = plugins.load_plugin(name, config).await?;
+            // Store the loaded plugin for name-based lookup
+            let mut pc = self.plugin_channels.write().await;
+            pc.insert(name.to_string(), plugin.clone());
+            // Also fetch and store the manifest if available
+            if let Some(manifest) = plugins.get_manifest(name).await {
+                let mut m = self.manifests.write().await;
+                m.insert(name.to_string(), manifest);
+            }
         }
         Ok(())
     }
@@ -1022,6 +1056,15 @@ impl ExtendedChannelRegistry {
     pub async fn unload_plugin(&self, name: &str) -> crate::Result<()> {
         if let Some(ref plugins) = self.plugins {
             plugins.unload_plugin(name).await?;
+        }
+        // Clean up cached references
+        {
+            let mut pc = self.plugin_channels.write().await;
+            pc.remove(name);
+        }
+        {
+            let mut m = self.manifests.write().await;
+            m.remove(name);
         }
         Ok(())
     }
