@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/lightconsen/syscity/discussions
+    about: Please ask and answer questions here.
+  - name: Discord community
+    url: https://discord.gg/syscity
+    about: Join our Discord for real-time chat and support.
+  - name: Security vulnerability
+    url: https://github.com/lightconsen/syscity/security/advisories/new
+    about: Please report security vulnerabilities privately.

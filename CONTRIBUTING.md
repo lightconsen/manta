@@ -186,6 +186,32 @@ docs: update API documentation for channels
 test(memory): add tests for session search
 ```
 
+## Developer Certificate of Origin
+
+We use the [Developer Certificate of Origin (DCO)](https://developercertificate.org/)
+for all contributions. By signing off your commits, you certify that you have the
+right to submit the code under the project's license.
+
+All commits must include a `Signed-off-by` line:
+
+```
+feat(tools): add new grep tool
+
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+You can automatically sign off commits by using the `-s` flag:
+
+```bash
+git commit -s -m "feat(tools): add new grep tool"
+```
+
+Or configure Git to always sign off:
+
+```bash
+git config --global format.signoff true
+```
+
 ## Pull Request Process
 
 1. **Before Submitting**
@@ -194,6 +220,7 @@ test(memory): add tests for session search
    - Run clippy: `cargo clippy --all-features -- -D warnings`
    - Update documentation if needed
    - Add tests for new functionality
+   - All commits are signed off (`git log --format="%h %s" | grep -i signed-off`)
 
 2. **PR Description**
    - Clearly describe the changes

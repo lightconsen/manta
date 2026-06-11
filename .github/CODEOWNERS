@@ -1,0 +1,24 @@
+# Global default: all files require review from the maintainer
+* @lightconsen
+
+# Core engine and business logic
+/src/core/ @lightconsen
+/src/agent/ @lightconsen
+
+# Security-related code
+/src/security/ @lightconsen
+
+# Provider integrations
+/src/providers/ @lightconsen
+
+# Gateway and API
+/src/gateway/ @lightconsen
+
+# Tool system
+/src/tools/ @lightconsen
+
+# CI/CD configuration
+/.github/workflows/ @lightconsen
+
+# Documentation
+/docs/ @lightconsen
