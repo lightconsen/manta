@@ -92,6 +92,7 @@ pub struct ConfigChangeEvent {
 
 ## Missing / TODO
 
-- **📝 Partial**: Config schema validation beyond serde — `GatewayConfig` uses serde `#[serde(deny_unknown_fields)]` for catch-all validation. Missing: JSON Schema generation, cross-field validation.
-- **❌ Missing**: Config migration system for version upgrades (schema version tracking).
-- **❌ Missing**: Environment variable interpolation inside config files (e.g., `url = "${API_URL}"`).
+- **✅ Implemented**: Config schema version migration — `schema_version` field, `CURRENT_SCHEMA_VERSION` constant, and `migrate()` with sequential v0→v1 support. Auto-applied on load when `config.schema_version < CURRENT_SCHEMA_VERSION`. See `src/config.rs:19-24`, `src/config.rs:968-986`.
+- **📝 Partial**: Config schema validation — `Config::validate()` checks individual fields (port, log level, ...) but has no JSON Schema generation (`schemars`), no cross-field validation (e.g., incompatible feature combinations), and serde does not use `#[serde(deny_unknown_fields)]` on `Config` or `GatewayConfig`.
+- **❌ Missing**: Environment variable interpolation inside config file values (e.g., `url = "${API_URL}"`). `SecretRef` supports `$ENV_VAR` syntax but only on `api_key` fields in service configs (`src/config.rs:440-442`) — not as a general-purpose mechanism for arbitrary TOML values. `load_from_env()` reads `SYSCITY_*` env vars but maps to specific fields, not arbitrary values.
+- **❌ Missing**: Config diff / audit trail — no mechanism to detect, log, or audit what config values changed between reloads.
