@@ -2417,16 +2417,7 @@ impl Gateway {
             .route("/v1/models", get(openai_list_models_handler))
  // Internal model catalog API
             .route("/api/v1/models", get(list_models_handler))
- // WebSocket canvas
-            .route("/ws/canvas/:id", get(canvas_ws_handler))
- // Syscity as MCP server -- Streamable-HTTP endpoint
-            .route("/mcp", post(syscity_as_mcp_server_handler))
- // Admin redirect -- management UI moved to CLI
-            .route("/admin", get(admin_redirect_handler))
  // Computer / desktop automation API
-            .route("/api/v1/computer/screenshot", get(computer_screenshot_handler))
-            .route("/api/v1/computer/execute", post(computer_execute_handler))
-            .route("/api/v1/computer/status", get(computer_status_handler))
             .route("/api/v1/reload", post(reload_all_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
@@ -4470,6 +4461,9 @@ impl Gateway {
                     async move {
                         info!("Gateway config changed: {:?}", event.path);
 
+                        // Snapshot before applying changes
+                        let pre_snapshot = state.config.read().await.snapshot();
+
                         let content = match tokio::fs::read_to_string(&event.path).await {
                             Ok(c) => c,
                             Err(e) => {
@@ -4492,9 +4486,37 @@ impl Gateway {
                         config.providers = new_config.providers;
                         config.mcp = new_config.mcp;
                         config.hot_reload = new_config.hot_reload;
+                        drop(config);
                         info!(
                             "✅ Applied gateway config updates (security, providers, mcp settings)"
                         );
+
+ // Compute diff and log to audit
+                        let post_config = state.config.read().await;
+                        let changes = post_config.diff_since(&pre_snapshot);
+                        drop(post_config);
+
+                        if !changes.is_empty() {
+                            let details = serde_json::to_value(&changes).unwrap_or_default();
+                            state
+                                .audit_log
+                                .log(
+                                    crate::security::runtime_audit::AuditEventType::ConfigChange,
+                                    "file_watcher",
+                                    "config",
+                                    true,
+                                    format!(
+                                        "Hot-reload config change: {} field(s)",
+                                        changes.len()
+                                    ),
+                                    Some(details),
+                                )
+                                .await;
+                            info!(
+                                changes = ?changes.iter().map(|c| &c.path).collect::<Vec<_>>(),
+                                "Gateway config hot-reload changes"
+                            );
+                        }
 
                         Ok(())
                     }
@@ -4938,17 +4960,107 @@ async fn run_repair_loop(state: Arc<GatewayState>) {
 
 
 
-// ── Computer / Desktop Automation Handlers ─────────────────────────────────
 
-/// Request body for executing a desktop action.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ComputerExecuteRequest {
-    action: crate::computer::DesktopAction,
+
+
+
+
+/// A snapshot of hot-reloadable configuration fields, used to compute
+/// what changed between reloads.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConfigSnapshot {
+    /// Timestamp when the snapshot was taken
+    pub timestamp: String,
+    /// The hot-reloadable field values keyed by dotted path (e.g. "providers.openai.base_url")
+    pub fields: HashMap<String, serde_json::Value>,
 }
 
+/// A single configuration field change detected during hot reload.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConfigChange {
+    /// Dotted path of the changed field (e.g. "model", "providers.openai")
+    pub path: String,
+    /// Previous value (absent for newly added fields)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_value: Option<serde_json::Value>,
+    /// New value (absent for removed fields)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_value: Option<serde_json::Value>,
+}
 
+impl GatewayConfig {
+    /// Capture a snapshot of all hot-reloadable fields.
+    pub fn snapshot(&self) -> ConfigSnapshot {
+        let mut fields = HashMap::new();
 
+        let json = serde_json::to_value(self).unwrap_or_default();
+        let obj = json.as_object().map(|o| o.clone()).unwrap_or_default();
 
+        // Only capture fields that are actually hot-reloadable
+        let reloadable_keys = [
+            "security", "providers", "mcp", "hot_reload", "cost_guard",
+            "capabilities", "computer", "workspace_dir", "workspace_only",
+            "model", "model_provider", "dreaming", "standing_orders", "cron",
+            "browser",
+        ];
+
+        for key in &reloadable_keys {
+            if let Some(val) = obj.get(*key) {
+                if !val.is_null() {
+                    fields.insert(key.to_string(), val.clone());
+                }
+            }
+        }
+
+        ConfigSnapshot {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            fields,
+        }
+    }
+
+    /// Compute the list of field-level changes between a previous snapshot
+    /// and the current configuration.
+    pub fn diff_since(&self, old: &ConfigSnapshot) -> Vec<ConfigChange> {
+        let current = self.snapshot();
+        let mut changes = Vec::new();
+
+        let all_keys: std::collections::BTreeSet<&String> =
+            old.fields.keys().chain(current.fields.keys()).collect();
+
+        for key in all_keys {
+            let old_val = old.fields.get(key);
+            let new_val = current.fields.get(key);
+
+            match (old_val, new_val) {
+                (Some(a), Some(b)) if a == b => continue,
+                (Some(_), Some(b)) => {
+                    changes.push(ConfigChange {
+                        path: key.clone(),
+                        old_value: old_val.cloned(),
+                        new_value: Some(b.clone()),
+                    });
+                }
+                (Some(a), None) => {
+                    changes.push(ConfigChange {
+                        path: key.clone(),
+                        old_value: Some(a.clone()),
+                        new_value: None,
+                    });
+                }
+                (None, Some(b)) => {
+                    changes.push(ConfigChange {
+                        path: key.clone(),
+                        old_value: None,
+                        new_value: Some(b.clone()),
+                    });
+                }
+                (None, None) => {}
+            }
+        }
+
+        changes
+    }
+}
 
 /// Health report response structure
 #[derive(Debug, Serialize)]

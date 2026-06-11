@@ -389,15 +389,3 @@ pub async fn list_conversations_handler(
     }
 }
 
-// Canvas/A2UI Handlers
-
-pub async fn canvas_ws_handler(
-    ws: WebSocketUpgrade,
-    Path(canvas_id): Path<String>,
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    let canvas_id = crate::canvas::CanvasId(canvas_id);
-
-    ws.on_upgrade(move |socket| handle_canvas_websocket(socket, canvas_id, state))
-}
-

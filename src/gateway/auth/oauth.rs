@@ -239,7 +239,7 @@ pub async fn github_callback_handler(
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(axum::http::header::SET_COOKIE, cookie)],
-        [(axum::http::header::LOCATION, "/admin")],
+        [(axum::http::header::LOCATION, "/api/v1/health")],
         "Redirecting...",
     )
         .into_response()
@@ -440,7 +440,7 @@ pub async fn google_callback_handler(
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(axum::http::header::SET_COOKIE, cookie)],
-        [(axum::http::header::LOCATION, "/admin")],
+        [(axum::http::header::LOCATION, "/api/v1/health")],
         "Redirecting...",
     )
         .into_response()

@@ -785,6 +785,9 @@ impl Config {
             source: e,
         })?;
 
+        // Interpolate environment variables ($VAR / ${VAR}) in the raw TOML
+        let contents = Self::interpolate_env_vars(&contents);
+
         let config: Config = toml::from_str(&contents)
             .map_err(|e| ConfigError::Parse(format!("Invalid TOML: {}", e)))?;
 
@@ -965,6 +968,40 @@ impl Config {
         Ok(())
     }
 
+    /// Interpolate `$VAR` and `${VAR}` patterns in a raw config string.
+    ///
+    /// Unknown variables are left as-is (no error) so that fields using `$`
+    /// for other purposes are not silently broken.  Variables that reference
+    /// other env vars are **not** recursively resolved.
+    fn interpolate_env_vars(input: &str) -> String {
+        // Match both ${VAR} and $VAR — but not $$ (escaped dollar)
+        let re =
+            regex::Regex::new(r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))")
+                .expect("valid env var regex");
+
+        re.replace_all(input, |caps: &regex::Captures<'_>| {
+            // $$VAR → literal $VAR (escape)
+            if caps.name("escaped").is_some() {
+                return format!("${}", caps.name("escaped").unwrap().as_str());
+            }
+
+            let var_name = caps
+                .name("braced")
+                .or_else(|| caps.name("plain"))
+                .map(|m| m.as_str())
+                .unwrap_or_default();
+
+            match std::env::var(var_name) {
+                Ok(val) => val,
+                Err(_) => {
+                    warn!(var = %var_name, "Config env var not set, leaving as-is");
+                    caps["full"].to_string()
+                }
+            }
+        })
+        .into_owned()
+    }
+
     /// Migrate configuration from an older schema version to the current one.
     ///
     /// This applies sequential migrations (v0→v1, v1→v2, etc.) so that
@@ -1014,6 +1051,44 @@ impl Config {
                 message: "Bridge port cannot be 0".to_string(),
             }
             .into());
+        }
+
+        // ── Cross-field validation ────────────────────────────────────
+
+        // Storage: database type requires a connection string
+        if matches!(self.storage.storage_type, StorageType::Database)
+            && self.storage.connection.is_none()
+        {
+            return Err(ConfigError::InvalidValue {
+                key: "storage.connection".to_string(),
+                message: "Connection string is required when storage type is 'database'".to_string(),
+            }
+            .into());
+        }
+
+        // Heartbeat: active hours must be a valid HH:MM format
+        if self.heartbeat.enabled {
+            let time_re = regex::Regex::new(r"^\d{2}:\d{2}$").expect("valid time regex");
+            if !time_re.is_match(&self.heartbeat.active_hours_start) {
+                return Err(ConfigError::InvalidValue {
+                    key: "heartbeat.active_hours_start".to_string(),
+                    message: format!(
+                        "Invalid time format '{}', expected HH:MM",
+                        self.heartbeat.active_hours_start
+                    ),
+                }
+                .into());
+            }
+            if !time_re.is_match(&self.heartbeat.active_hours_end) {
+                return Err(ConfigError::InvalidValue {
+                    key: "heartbeat.active_hours_end".to_string(),
+                    message: format!(
+                        "Invalid time format '{}', expected HH:MM",
+                        self.heartbeat.active_hours_end
+                    ),
+                }
+                .into());
+            }
         }
 
         // Validate computer config

@@ -103,8 +103,3 @@ pub async fn syscity_png_handler() -> impl IntoResponse {
     StatusCode::NOT_FOUND.into_response()
 }
 
-/// Admin redirect handler — admin UI moved to CLI
-pub async fn admin_redirect_handler() -> Html<&'static str> {
-    Html("<h1>Admin UI Moved</h1><p>Administration is now available via CLI: <code>syscity admin</code></p>")
-}
-

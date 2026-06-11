@@ -487,6 +487,9 @@ pub async fn reload_all_handler(
     let scope = req.scope.to_lowercase();
     let mut result = serde_json::json!({ "scope": &scope });
 
+    // ── Snapshot pre-reload config for audit diff ──────────────────────
+    let pre_snapshot = state.config.read().await.snapshot();
+
     // ── 1. Reload main configuration from disk ────────────────────────────
     let new_config = if scope == "all" || scope == "config" || scope == "providers" || scope == "mcp" {
         let config_path = state.config_path.clone()
@@ -565,6 +568,32 @@ pub async fn reload_all_handler(
             info!("Applied hot-reloadable configuration fields");
         } else {
             result["config"] = serde_json::json!({ "updated": false, "reason": "parse or read error" });
+        }
+    }
+
+    // ── Compute config diff and log to audit ──────────────────────────
+    if scope == "all" || scope == "config" {
+        let post_config = state.config.read().await;
+        let changes = post_config.diff_since(&pre_snapshot);
+        drop(post_config);
+
+        if !changes.is_empty() {
+            let details = serde_json::to_value(&changes).unwrap_or_default();
+            state
+                .audit_log
+                .log(
+                    crate::security::runtime_audit::AuditEventType::ConfigChange,
+                    "system",
+                    "config",
+                    true,
+                    format!("Config reloaded: {} field(s) changed", changes.len()),
+                    Some(details),
+                )
+                .await;
+            info!(
+                changes = ?changes.iter().map(|c| &c.path).collect::<Vec<_>>(),
+                "Config changes detected on reload"
+            );
         }
     }
 

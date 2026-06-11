@@ -39,26 +39,6 @@ use crate::tools::ToolRegistry;
 use crate::gateway::GatewayState;
 use crate::gateway::*;
 
-/// Helper: build a JSON-RPC error response as an Axum Response.
-pub(crate) fn json_rpc_error_response(
-    id: Option<&serde_json::Value>,
-    code: i32,
-    message: &str,
-) -> axum::response::Response {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message,
-        }
-    });
-    axum::response::Response::builder()
-        .status(200)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(body.to_string()))
-        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
-}
 
 /// `POST /v1/chat/completions`
 ///
