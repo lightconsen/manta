@@ -80,7 +80,7 @@ impl Tool for DesktopControlTool {
                 "action": {
                     "type": "string",
                     "description": "Action: click, type, key",
-                    "enum": ["click", "double_click", "type", "key", "scroll", "drag", "close_window"]
+                    "enum": ["click", "double_click", "type", "key", "scroll", "drag", "close_window", "activate_window"]
                 },
                 "x": {
                     "type": "integer",
@@ -211,10 +211,15 @@ impl Tool for DesktopControlTool {
                 }
             }
             "scroll" => {
+                let x = args.get("x").and_then(|v| v.as_i64());
+                let y = args.get("y").and_then(|v| v.as_i64());
                 let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("down");
                 let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(3);
 
                 if tool == "ydotool" {
+                    if let (Some(xv), Some(yv)) = (x, y) {
+                        let _ = Self::run_cmd("ydotool", &["mousemove", &format!("{}, {}", xv, yv)]).await?;
+                    }
                     let key = match direction {
                         "up" => "PageUp",
                         "down" => "PageDown",
@@ -274,6 +279,29 @@ impl Tool for DesktopControlTool {
                     }
                 } else {
                     Ok(ToolExecutionResult::error("Provide 'name' for close_window".to_string()))
+                }
+            }
+            "activate_window" => {
+                let name = args.get("name").and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    // Try wlrctl first (generic Wayland compositor controller)
+                    let (ok, _, _) = Self::run_cmd("wlrctl", &["window", "focus", n]).await?;
+                    if ok {
+                        return Ok(ToolExecutionResult::success(format!("Activated window '{}' via wlrctl", n)));
+                    }
+                    // Fallback: use ydotool key combo Alt+Tab repeatedly to cycle windows
+                    // This is best-effort; real window activation is compositor-dependent on Wayland.
+                    let (ok2, _, err2) = Self::run_cmd("ydotool", &["key", "Alt+Tab"]).await?;
+                    if ok2 {
+                        Ok(ToolExecutionResult::success(format!(
+                            "Best-effort window activation for '{}'. Wayland compositors may restrict window management.",
+                            n
+                        )))
+                    } else {
+                        Ok(ToolExecutionResult::error(format!("Activate failed: {}", err2)))
+                    }
+                } else {
+                    Ok(ToolExecutionResult::error("Provide 'name' for activate_window".to_string()))
                 }
             }
             "type" => {

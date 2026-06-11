@@ -1,10 +1,12 @@
 //! Linux Wayland desktop capability set — GUI automation via Wayland portals.
 
 pub mod accessibility;
+pub mod clipboard;
 pub mod desktop_control;
 pub mod screenshot;
 
 pub use accessibility::WaylandAccessibilityTool;
+pub use clipboard::ClipboardTool;
 pub use desktop_control::DesktopControlTool;
 pub use screenshot::ScreenshotTool;
 
@@ -38,7 +40,8 @@ impl CapabilitySet for LinuxDesktopWaylandSet {
 
     fn description(&self) -> &str {
         "Linux Wayland desktop automation: screenshots (grim/spectacle/gnome-screenshot) \
-         and input simulation (ydotool/wtype for click, type, key). \
+         and input simulation (ydotool/wtype for click, type, key), \
+         and clipboard (wl-copy/wl-paste). \
          Note: Wayland restricts window introspection compared to X11."
     }
 
@@ -60,6 +63,7 @@ impl CapabilitySet for LinuxDesktopWaylandSet {
         vec![
             Box::new(ScreenshotTool::new()),
             Box::new(DesktopControlTool::new()),
+            Box::new(ClipboardTool::new()),
             Box::new(WaylandAccessibilityTool::new()),
         ]
     }

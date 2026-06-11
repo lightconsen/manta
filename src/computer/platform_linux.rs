@@ -100,12 +100,7 @@ impl ComputerAdapter for X11ComputerAdapter {
                 ))
             }
             DesktopAction::Click { target, button } => {
-                let (x, y) = match target {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "X11 adapter only supports coordinate clicks for now".to_string(),
-                    )),
-                };
+                let (x, y) = self.resolve_click_target(target).await?;
                 let btn_num = match button {
                     MouseButton::Left => 1,
                     MouseButton::Middle => 2,
@@ -123,12 +118,7 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::DoubleClick { target, button } => {
-                let (x, y) = match target {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "X11 adapter only supports coordinate double-clicks for now".to_string(),
-                    )),
-                };
+                let (x, y) = self.resolve_click_target(target).await?;
                 let btn_num = match button {
                     MouseButton::Left => 1,
                     MouseButton::Middle => 2,
@@ -146,12 +136,7 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::Scroll { target, direction, amount } => {
-                let (x, y) = match target {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "X11 adapter only supports coordinate scroll for now".to_string(),
-                    )),
-                };
+                let (x, y) = self.resolve_click_target(target).await?;
                 let dir_str = match direction {
                     crate::computer::ScrollDirection::Up => "up",
                     crate::computer::ScrollDirection::Down => "down",
@@ -170,18 +155,8 @@ impl ComputerAdapter for X11ComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::Drag { from, to } => {
-                let (from_x, from_y) = match from {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "X11 adapter only supports coordinate drag for now".to_string(),
-                    )),
-                };
-                let (to_x, to_y) = match to {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "X11 adapter only supports coordinate drag for now".to_string(),
-                    )),
-                };
+                let (from_x, from_y) = self.resolve_click_target(from).await?;
+                let (to_x, to_y) = self.resolve_click_target(to).await?;
                 let args = serde_json::json!({
                     "action": "drag", "from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y,
                 });
@@ -512,12 +487,96 @@ impl ComputerAdapter for X11ComputerAdapter {
 
     async fn wait_for(
         &self,
-        _condition: WaitCondition,
+        condition: WaitCondition,
         timeout: Duration,
     ) -> Result<bool> {
-        // Minimal implementation: just wait the timeout
-        tokio::time::sleep(timeout).await;
+        let deadline = std::time::Instant::now() + timeout;
+        let poll_interval = Duration::from_millis(500);
+
+        while std::time::Instant::now() < deadline {
+            let matched = match &condition {
+                WaitCondition::UiTreeContains { role, label } => {
+                    let tree = self.read_ui_tree(None).await?;
+                    tree.iter().any(|e| {
+                        e.role == *role
+                            && label
+                                .as_ref()
+                                .map(|l| e.label.as_ref().map(|el| el.contains(l)).unwrap_or(false))
+                                .unwrap_or(true)
+                    })
+                }
+                WaitCondition::WindowTitleContains { pattern } => {
+                    let args = serde_json::json!({ "action": "list_windows" });
+                    if let Some(Ok(result)) = self
+                        .registry
+                        .execute("linux_x11_desktop_control", args, &crate::tools::ToolContext::default())
+                        .await
+                    {
+                        result.output.contains(pattern)
+                    } else {
+                        false
+                    }
+                }
+                WaitCondition::ProcessRunning { name } => {
+                    let output = tokio::process::Command::new("pidof")
+                        .arg(name)
+                        .output()
+                        .await;
+                    match output {
+                        Ok(out) => !out.stdout.is_empty(),
+                        _ => false,
+                    }
+                }
+                WaitCondition::FileExists { path } => {
+                    tokio::fs::try_exists(path).await.unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if matched {
+                return Ok(true);
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
         Ok(false)
+    }
+}
+
+impl X11ComputerAdapter {
+    async fn resolve_click_target(&self, target: ClickTarget) -> Result<(i32, i32)> {
+        match target {
+            ClickTarget::Coordinate(p) => Ok((p.x, p.y)),
+            ClickTarget::ElementId(id) => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| e.id == id)
+                    .ok_or_else(|| ComputerError::ElementNotFound(id.clone()))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+            ClickTarget::ElementLabel(label) => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false))
+                    .ok_or_else(|| ComputerError::ElementNotFound(label.clone()))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+            ClickTarget::ElementRoleLabel { role, label } => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| {
+                        e.role == role
+                            && e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false)
+                    })
+                    .ok_or_else(|| ComputerError::ElementNotFound(format!("{}:{}", role, label)))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+        }
     }
 }
 
@@ -610,12 +669,7 @@ impl ComputerAdapter for WaylandComputerAdapter {
                 ))
             }
             DesktopAction::Click { target, button } => {
-                let (x, y) = match target {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "Wayland adapter only supports coordinate clicks for now".to_string(),
-                    )),
-                };
+                let (x, y) = self.resolve_click_target(target).await?;
                 let btn_num = match button {
                     MouseButton::Left => 1,
                     MouseButton::Middle => 2,
@@ -633,12 +687,7 @@ impl ComputerAdapter for WaylandComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::DoubleClick { target, button } => {
-                let (x, y) = match target {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "Wayland adapter only supports coordinate double-clicks for now".to_string(),
-                    )),
-                };
+                let (x, y) = self.resolve_click_target(target).await?;
                 let btn_num = match button {
                     MouseButton::Left => 1,
                     MouseButton::Middle => 2,
@@ -656,6 +705,7 @@ impl ComputerAdapter for WaylandComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::Scroll { target, direction, amount } => {
+                let (x, y) = self.resolve_click_target(target).await?;
                 let dir_str = match direction {
                     crate::computer::ScrollDirection::Up => "up",
                     crate::computer::ScrollDirection::Down => "down",
@@ -663,7 +713,7 @@ impl ComputerAdapter for WaylandComputerAdapter {
                     crate::computer::ScrollDirection::Right => "right",
                 };
                 let args = serde_json::json!({
-                    "action": "scroll", "direction": dir_str, "amount": amount,
+                    "action": "scroll", "x": x, "y": y, "direction": dir_str, "amount": amount,
                 });
                 let result = self
                     .registry
@@ -674,18 +724,8 @@ impl ComputerAdapter for WaylandComputerAdapter {
                 Ok(ActionResult::success(result.output))
             }
             DesktopAction::Drag { from, to } => {
-                let (from_x, from_y) = match from {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "Wayland adapter only supports coordinate drag for now".to_string(),
-                    )),
-                };
-                let (to_x, to_y) = match to {
-                    ClickTarget::Coordinate(p) => (p.x, p.y),
-                    _ => return Err(ComputerError::Other(
-                        "Wayland adapter only supports coordinate drag for now".to_string(),
-                    )),
-                };
+                let (from_x, from_y) = self.resolve_click_target(from).await?;
+                let (to_x, to_y) = self.resolve_click_target(to).await?;
                 let args = serde_json::json!({
                     "action": "drag", "from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y,
                 });
@@ -721,6 +761,62 @@ impl ComputerAdapter for WaylandComputerAdapter {
             }
             DesktopAction::KeyPress { keys } => {
                 let args = serde_json::json!({ "action": "key", "keys": keys });
+                let result = self
+                    .registry
+                    .execute("linux_wayland_desktop_control", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| ComputerError::ToolFailed("desktop control not found".to_string()))?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::ClipboardGet => {
+                let args = serde_json::json!({ "action": "get" });
+                let result = self
+                    .registry
+                    .execute("linux_wayland_clipboard", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::ClipboardSet { text } => {
+                let args = serde_json::json!({ "action": "set", "text": text });
+                let result = self
+                    .registry
+                    .execute("linux_wayland_clipboard", args, &crate::tools::ToolContext::default())
+                    .await
+                    .ok_or_else(|| ComputerError::ToolFailed("clipboard tool not found".to_string()))?
+                    .map_err(|e| ComputerError::ToolFailed(e.to_string()))?;
+                Ok(ActionResult::success(result.output))
+            }
+            DesktopAction::LaunchApp { name, wait_for_ready, .. } => {
+                let result = tokio::process::Command::new(&name)
+                    .spawn()
+                    .map_err(|e| ComputerError::ToolFailed(format!("Failed to launch {}: {}", name, e)))?;
+                drop(result);
+                if wait_for_ready {
+                    let ready = self
+                        .wait_for(
+                            WaitCondition::ProcessRunning {
+                                name: name.clone(),
+                            },
+                            Duration::from_secs(10),
+                        )
+                        .await?;
+                    if !ready {
+                        return Ok(ActionResult::error(format!(
+                            "Launched {} but it did not appear within 10s",
+                            name
+                        )));
+                    }
+                }
+                Ok(ActionResult::success(format!("Launched {}", name)))
+            }
+            DesktopAction::ActivateWindow { title_pattern } => {
+                let args = serde_json::json!({
+                    "action": "activate_window",
+                    "name": title_pattern,
+                });
                 let result = self
                     .registry
                     .execute("linux_wayland_desktop_control", args, &crate::tools::ToolContext::default())
@@ -960,11 +1056,96 @@ impl ComputerAdapter for WaylandComputerAdapter {
 
     async fn wait_for(
         &self,
-        _condition: WaitCondition,
+        condition: WaitCondition,
         timeout: Duration,
     ) -> Result<bool> {
-        tokio::time::sleep(timeout).await;
+        let deadline = std::time::Instant::now() + timeout;
+        let poll_interval = Duration::from_millis(500);
+
+        while std::time::Instant::now() < deadline {
+            let matched = match &condition {
+                WaitCondition::UiTreeContains { role, label } => {
+                    let tree = self.read_ui_tree(None).await?;
+                    tree.iter().any(|e| {
+                        e.role == *role
+                            && label
+                                .as_ref()
+                                .map(|l| e.label.as_ref().map(|el| el.contains(l)).unwrap_or(false))
+                                .unwrap_or(true)
+                    })
+                }
+                WaitCondition::WindowTitleContains { pattern } => {
+                    // Wayland restricts window title introspection; fall back to
+                    // checking whether a process with that name is running.
+                    let output = tokio::process::Command::new("pidof")
+                        .arg(pattern)
+                        .output()
+                        .await;
+                    match output {
+                        Ok(out) => !out.stdout.is_empty(),
+                        _ => false,
+                    }
+                }
+                WaitCondition::ProcessRunning { name } => {
+                    let output = tokio::process::Command::new("pidof")
+                        .arg(name)
+                        .output()
+                        .await;
+                    match output {
+                        Ok(out) => !out.stdout.is_empty(),
+                        _ => false,
+                    }
+                }
+                WaitCondition::FileExists { path } => {
+                    tokio::fs::try_exists(path).await.unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if matched {
+                return Ok(true);
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
         Ok(false)
+    }
+}
+
+impl WaylandComputerAdapter {
+    async fn resolve_click_target(&self, target: ClickTarget) -> Result<(i32, i32)> {
+        match target {
+            ClickTarget::Coordinate(p) => Ok((p.x, p.y)),
+            ClickTarget::ElementId(id) => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| e.id == id)
+                    .ok_or_else(|| ComputerError::ElementNotFound(id.clone()))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+            ClickTarget::ElementLabel(label) => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false))
+                    .ok_or_else(|| ComputerError::ElementNotFound(label.clone()))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+            ClickTarget::ElementRoleLabel { role, label } => {
+                let tree = self.read_ui_tree(None).await?;
+                let el = tree
+                    .iter()
+                    .find(|e| {
+                        e.role == role
+                            && e.label.as_ref().map(|l| l.contains(&label)).unwrap_or(false)
+                    })
+                    .ok_or_else(|| ComputerError::ElementNotFound(format!("{}:{}", role, label)))?;
+                let center = el.center();
+                Ok((center.x, center.y))
+            }
+        }
     }
 }
 
