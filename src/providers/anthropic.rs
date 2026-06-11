@@ -50,12 +50,15 @@ struct AnthropicMessage {
     content: Vec<ContentBlock>,
 }
 
-/// Content block (text or tool use)
+/// Content block (text, image, or tool use)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlock {
     Text {
         text: String,
+    },
+    Image {
+        source: ImageSource,
     },
     ToolUse {
         id: String,
@@ -68,6 +71,15 @@ enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+}
+
+/// Anthropic image source format
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ImageSource {
+    #[serde(rename = "type")]
+    source_type: String,
+    media_type: String,
+    data: String,
 }
 
 /// Anthropic tool definition
@@ -227,18 +239,59 @@ impl AnthropicProvider {
                     system_prompt = Some(msg.content.clone());
                 }
                 Role::User => {
+                    let content = if let Some(ref blocks) = msg.content_blocks {
+                        blocks
+                            .iter()
+                            .map(|b| match b {
+                                super::ContentBlock::Text { text } => {
+                                    ContentBlock::Text { text: text.clone() }
+                                }
+                                super::ContentBlock::Image { base64, mime_type } => {
+                                    ContentBlock::Image {
+                                        source: ImageSource {
+                                            source_type: "base64".to_string(),
+                                            media_type: mime_type.clone(),
+                                            data: base64.clone(),
+                                        },
+                                    }
+                                }
+                            })
+                            .collect()
+                    } else {
+                        vec![ContentBlock::Text { text: msg.content.clone() }]
+                    };
                     anthropic_messages.push(AnthropicMessage {
                         role: "user".to_string(),
-                        content: vec![ContentBlock::Text { text: msg.content.clone() }],
+                        content,
                     });
                 }
                 Role::Assistant => {
-                    let mut content_blocks = vec![ContentBlock::Text { text: msg.content.clone() }];
+                    let mut content = if let Some(ref blocks) = msg.content_blocks {
+                        blocks
+                            .iter()
+                            .map(|b| match b {
+                                super::ContentBlock::Text { text } => {
+                                    ContentBlock::Text { text: text.clone() }
+                                }
+                                super::ContentBlock::Image { base64, mime_type } => {
+                                    ContentBlock::Image {
+                                        source: ImageSource {
+                                            source_type: "base64".to_string(),
+                                            media_type: mime_type.clone(),
+                                            data: base64.clone(),
+                                        },
+                                    }
+                                }
+                            })
+                            .collect()
+                    } else {
+                        vec![ContentBlock::Text { text: msg.content.clone() }]
+                    };
 
                     // Add tool calls if present
                     if let Some(tool_calls) = &msg.tool_calls {
                         for tc in tool_calls {
-                            content_blocks.push(ContentBlock::ToolUse {
+                            content.push(ContentBlock::ToolUse {
                                 id: tc.id.clone(),
                                 name: tc.function.name.clone(),
                                 input: serde_json::from_str(&tc.function.arguments)
@@ -249,7 +302,7 @@ impl AnthropicProvider {
 
                     anthropic_messages.push(AnthropicMessage {
                         role: "assistant".to_string(),
-                        content: content_blocks,
+                        content,
                     });
                 }
                 Role::Tool => {
@@ -299,6 +352,7 @@ impl AnthropicProvider {
             message: Message {
                 role: Role::Assistant,
                 content: text_content,
+                content_blocks: None,
                 reasoning_content: None,
                 name: None,
                 tool_calls: if tool_calls.is_empty() {

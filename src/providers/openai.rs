@@ -120,6 +120,28 @@ impl OpenAiProvider {
 
     /// Convert internal message to OpenAI format
     fn to_openai_message(msg: &Message) -> OpenAiMessage {
+        let content = if let Some(ref blocks) = msg.content_blocks {
+            let parts: Vec<serde_json::Value> = blocks
+                .iter()
+                .map(|b| match b {
+                    super::ContentBlock::Text { text } => {
+                        serde_json::json!({"type": "text", "text": text})
+                    }
+                    super::ContentBlock::Image { base64, mime_type } => {
+                        serde_json::json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", mime_type, base64)
+                            }
+                        })
+                    }
+                })
+                .collect();
+            Some(serde_json::Value::Array(parts))
+        } else {
+            Some(serde_json::Value::String(msg.content.clone()))
+        };
+
         OpenAiMessage {
             role: match msg.role {
                 Role::System => "system",
@@ -128,7 +150,7 @@ impl OpenAiProvider {
                 Role::Tool => "tool",
             }
             .to_string(),
-            content: Some(msg.content.clone()),
+            content,
             reasoning_content: msg.reasoning_content.clone(),
             name: msg.name.clone(),
             tool_calls: msg.tool_calls.as_ref().map(|calls| {
@@ -158,6 +180,25 @@ impl OpenAiProvider {
             }
         })?;
 
+        let content = match choice.message.content {
+            Some(serde_json::Value::String(s)) => s,
+            Some(serde_json::Value::Array(parts)) => {
+                // Extract text from multimodal content parts
+                parts
+                    .iter()
+                    .filter_map(|p| {
+                        if let Some(text) = p.get("text").and_then(|t| t.as_str()) {
+                            Some(text.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            _ => String::new(),
+        };
+
         let message = Message {
             role: match choice.message.role.as_str() {
                 "system" => Role::System,
@@ -165,7 +206,8 @@ impl OpenAiProvider {
                 "tool" => Role::Tool,
                 _ => Role::User,
             },
-            content: choice.message.content.unwrap_or_default(),
+            content,
+            content_blocks: None,
             reasoning_content: choice.message.reasoning_content,
             name: choice.message.name,
             tool_calls: choice.message.tool_calls.map(|calls| {
@@ -484,8 +526,9 @@ struct OpenAiRequest {
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiMessage {
     role: String,
+    /// Either a plain text string or an array of content parts for multimodal.
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<serde_json::Value>,
     /// Reasoning / thinking content returned by some models (e.g. Qwen)
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
@@ -730,7 +773,7 @@ mod tests {
         let msg = Message::user("Hello");
         let openai = OpenAiProvider::to_openai_message(&msg);
         assert_eq!(openai.role, "user");
-        assert_eq!(openai.content, Some("Hello".to_string()));
+        assert_eq!(openai.content, Some(serde_json::json!("Hello")));
     }
 
     #[test]
@@ -840,6 +883,7 @@ mod tests {
         let msg = Message {
             role: Role::System,
             content: "You are helpful".to_string(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -848,7 +892,7 @@ mod tests {
         };
         let openai = OpenAiProvider::to_openai_message(&msg);
         assert_eq!(openai.role, "system");
-        assert_eq!(openai.content, Some("You are helpful".to_string()));
+        assert_eq!(openai.content, Some(serde_json::json!("You are helpful")));
     }
 
     #[test]
@@ -856,6 +900,7 @@ mod tests {
         let msg = Message {
             role: Role::Tool,
             content: "result".to_string(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -864,7 +909,7 @@ mod tests {
         };
         let openai = OpenAiProvider::to_openai_message(&msg);
         assert_eq!(openai.role, "tool");
-        assert_eq!(openai.content, Some("result".to_string()));
+        assert_eq!(openai.content, Some(serde_json::json!("result")));
         assert_eq!(openai.tool_call_id, Some("call_123".to_string()));
     }
 
@@ -888,6 +933,7 @@ mod tests {
         let msg = Message {
             role: Role::Assistant,
             content: "".to_string(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: Some(vec![ToolCall {
@@ -925,7 +971,7 @@ mod tests {
                 index: 0,
                 message: OpenAiMessage {
                     role: "user".to_string(),
-                    content: Some("Hello".to_string()),
+                    content: Some(serde_json::json!("Hello")),
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,
@@ -954,7 +1000,7 @@ mod tests {
                 index: 0,
                 message: OpenAiMessage {
                     role: "tool".to_string(),
-                    content: Some("result".to_string()),
+                    content: Some(serde_json::json!("result")),
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,
@@ -983,7 +1029,7 @@ mod tests {
                 index: 0,
                 message: OpenAiMessage {
                     role: "assistant".to_string(),
-                    content: Some("".to_string()),
+                    content: Some(serde_json::json!("")),
                     reasoning_content: None,
                     name: None,
                     tool_calls: Some(vec![OpenAiToolCall {
@@ -1020,7 +1066,7 @@ mod tests {
                 index: 0,
                 message: OpenAiMessage {
                     role: "assistant".to_string(),
-                    content: Some("Hi".to_string()),
+                    content: Some(serde_json::json!("Hi")),
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,

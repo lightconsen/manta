@@ -32,6 +32,36 @@ impl std::fmt::Display for Role {
     }
 }
 
+/// A content block within a message (text or image).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum ContentBlock {
+    /// Plain text content
+    Text { text: String },
+    /// Base64-encoded image
+    Image {
+        /// Base64-encoded image data (without the data URI prefix).
+        base64: String,
+        /// MIME type, e.g. `image/png`.
+        mime_type: String,
+    },
+}
+
+impl ContentBlock {
+    /// Create a text block.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    /// Create an image block from base64 data.
+    pub fn image_base64(base64: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::Image {
+            base64: base64.into(),
+            mime_type: mime_type.into(),
+        }
+    }
+}
+
 /// A single message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -39,6 +69,9 @@ pub struct Message {
     pub role: Role,
     /// The content of the message
     pub content: String,
+    /// Optional multimodal content blocks (override `content` when present).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_blocks: Option<Vec<ContentBlock>>,
     /// Optional reasoning / thinking content (e.g. from reasoning models)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
@@ -62,6 +95,7 @@ impl Message {
         Self {
             role: Role::System,
             content: content.into(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -75,6 +109,7 @@ impl Message {
         Self {
             role: Role::User,
             content: content.into(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -95,6 +130,7 @@ impl Message {
         Self {
             role: Role::Assistant,
             content: content.into(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -108,6 +144,7 @@ impl Message {
         Self {
             role: Role::Tool,
             content: content.into(),
+            content_blocks: None,
             reasoning_content: None,
             name: None,
             tool_calls: None,
@@ -138,6 +175,45 @@ impl Message {
             .unwrap()
             .insert(key.into(), value.into());
         self
+    }
+
+    /// Replace content with multimodal content blocks.
+    pub fn with_content_blocks(mut self, blocks: Vec<ContentBlock>) -> Self {
+        self.content_blocks = Some(blocks);
+        self
+    }
+
+    /// Add an image block to this message.
+    pub fn with_image(mut self, base64: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        let block = ContentBlock::image_base64(base64, mime_type);
+        match self.content_blocks {
+            Some(ref mut blocks) => blocks.push(block),
+            None => self.content_blocks = Some(vec![block]),
+        }
+        self
+    }
+
+    /// Whether this message contains any image blocks.
+    pub fn has_images(&self) -> bool {
+        self.content_blocks
+            .as_ref()
+            .map(|blocks| blocks.iter().any(|b| matches!(b, ContentBlock::Image { .. })))
+            .unwrap_or(false)
+    }
+
+    /// Collect all text from content blocks, falling back to `content`.
+    pub fn all_text(&self) -> String {
+        match &self.content_blocks {
+            Some(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            None => self.content.clone(),
+        }
     }
 }
 
