@@ -740,6 +740,30 @@ mod tests {
     }
 
     #[test]
+    fn test_to_anthropic_messages_with_image() {
+        let messages = vec![Message::user("")
+            .with_content_blocks(vec![
+                crate::providers::ContentBlock::text("What is this?"),
+                crate::providers::ContentBlock::image_base64("abc123", "image/png"),
+            ])];
+
+        let (system, anthropic_msgs) = AnthropicProvider::to_anthropic_messages(&messages);
+
+        assert_eq!(system, None);
+        assert_eq!(anthropic_msgs.len(), 1);
+        assert_eq!(anthropic_msgs[0].role, "user");
+        assert_eq!(anthropic_msgs[0].content.len(), 2);
+        assert!(matches!(
+            &anthropic_msgs[0].content[0],
+            ContentBlock::Text { text } if text == "What is this?"
+        ));
+        assert!(matches!(
+            &anthropic_msgs[0].content[1],
+            ContentBlock::Image { source } if source.source_type == "base64" && source.media_type == "image/png" && source.data == "abc123"
+        ));
+    }
+
+    #[test]
     fn test_from_anthropic_response() {
         let response = AnthropicResponse {
             id: "test-id".to_string(),

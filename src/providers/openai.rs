@@ -186,13 +186,7 @@ impl OpenAiProvider {
                 // Extract text from multimodal content parts
                 parts
                     .iter()
-                    .filter_map(|p| {
-                        if let Some(text) = p.get("text").and_then(|t| t.as_str()) {
-                            Some(text.to_string())
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|text| text.to_string()))
                     .collect::<Vec<_>>()
                     .join("\n")
             }
@@ -958,6 +952,27 @@ mod tests {
         assert_eq!(calls[0].call_type, "function");
         assert_eq!(calls[0].function.name, "test_tool");
         assert_eq!(calls[0].function.arguments, "{\"x\": 1}");
+    }
+
+    #[test]
+    fn test_to_openai_message_with_image() {
+        let msg = Message::user("")
+            .with_content_blocks(vec![
+                crate::providers::ContentBlock::text("Describe this"),
+                crate::providers::ContentBlock::image_base64("abc123", "image/png"),
+            ]);
+        let openai = OpenAiProvider::to_openai_message(&msg);
+        assert_eq!(openai.role, "user");
+        let content = openai.content.unwrap();
+        let parts = content.as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "Describe this");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(
+            parts[1]["image_url"]["url"],
+            "data:image/png;base64,abc123"
+        );
     }
 
     #[test]

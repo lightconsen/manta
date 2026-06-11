@@ -184,11 +184,19 @@ impl Message {
     }
 
     /// Add an image block to this message.
+    ///
+    /// If the message currently has no content blocks, the existing `content`
+    /// text is automatically converted into a text block so that both text
+    /// and image are sent together.
     pub fn with_image(mut self, base64: impl Into<String>, mime_type: impl Into<String>) -> Self {
         let block = ContentBlock::image_base64(base64, mime_type);
         match self.content_blocks {
             Some(ref mut blocks) => blocks.push(block),
-            None => self.content_blocks = Some(vec![block]),
+            None => {
+                let mut blocks = vec![ContentBlock::text(self.content.clone())];
+                blocks.push(block);
+                self.content_blocks = Some(blocks);
+            }
         }
         self
     }
@@ -595,6 +603,43 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("Hello"));
         assert!(json.contains("user"));
+    }
+
+    #[test]
+    fn test_message_with_image() {
+        let msg = Message::user("describe this")
+            .with_image("iVBORw0KGgo=", "image/png");
+        assert!(msg.has_images());
+        assert_eq!(msg.content_blocks.as_ref().unwrap().len(), 2);
+        assert_eq!(msg.all_text(), "describe this");
+    }
+
+    #[test]
+    fn test_message_with_content_blocks() {
+        let msg = Message::user("")
+            .with_content_blocks(vec![
+                ContentBlock::text("What do you see?"),
+                ContentBlock::image_base64("abc123", "image/jpeg"),
+            ]);
+        assert!(msg.has_images());
+        assert_eq!(msg.content_blocks.as_ref().unwrap().len(), 2);
+        assert_eq!(msg.all_text(), "What do you see?");
+    }
+
+    #[test]
+    fn test_message_no_images() {
+        let msg = Message::user("Just text");
+        assert!(!msg.has_images());
+        assert_eq!(msg.all_text(), "Just text");
+    }
+
+    #[test]
+    fn test_content_block_creation() {
+        let text = ContentBlock::text("hello");
+        assert!(matches!(text, ContentBlock::Text { text } if text == "hello"));
+
+        let img = ContentBlock::image_base64("data", "image/png");
+        assert!(matches!(img, ContentBlock::Image { base64, mime_type } if base64 == "data" && mime_type == "image/png"));
     }
 
     #[test]
