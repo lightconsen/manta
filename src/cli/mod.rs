@@ -15,7 +15,6 @@ mod approval;
 mod audit;
 mod capability;
 mod channel;
-mod chat;
 mod config_cmd;
 mod cron;
 mod daemon;
@@ -95,15 +94,6 @@ pub enum Commands {
     },
  /// Health check
     Health,
- /// Chat with the AI assistant
-    Chat {
- /// Use a specific conversation ID (for resuming conversations)
-        #[arg(short, long)]
-        conversation: Option<String>,
- /// Single message mode (non-interactive)
-        #[arg(short, long)]
-        message: Option<String>,
-    },
  /// Run as an assistant process (internal use)
     AssistantRun {
  /// Configuration file path
@@ -360,9 +350,6 @@ impl Cli {
                 None => setup::run_setup().await,
             },
             Commands::Health => daemon::run_health_check(config).await,
-            Commands::Chat { conversation, message } => {
-                chat::run_chat(config, conversation.clone(), message.clone()).await
-            }
             Commands::AssistantRun { config: config_path } => {
                 daemon::run_assistant_process(config_path).await
             }
@@ -467,17 +454,6 @@ mod tests {
  // #[test]
  // fn parse_start_command_with_custom_port() { ... }
 
-    #[test]
-    fn parse_chat_command_with_message() {
-        let cli = Cli::try_parse_from(["syscity", "chat", "--message", "hello"]).unwrap();
-        match cli.command {
-            Commands::Chat { conversation, message } => {
-                assert_eq!(message, Some("hello".to_string()));
-                assert_eq!(conversation, None);
-            }
-            _ => panic!("expected Chat command"),
-        }
-    }
 
     #[test]
     fn parse_reload_command() {
