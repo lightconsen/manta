@@ -37,6 +37,10 @@ pub enum ProviderStreamFamily {
     GoogleThinking,
     /// OpenRouter with provider routing metadata
     OpenRouter,
+    /// Moonshot/Kimi OpenAI-compatible API
+    Moonshot,
+    /// MiniMax OpenAI-compatible API
+    Minimax,
     /// Catch-all for unknown providers
     Generic,
 }
@@ -106,6 +110,28 @@ impl Default for StreamFamilyRegistry {
         );
         registry.register(
             ProviderStreamFamily::GoogleThinking,
+            vec![
+                reasoning_content_wrapper(),
+                thinking_tag_extractor_wrapper(),
+                tool_call_accumulator_wrapper(),
+                html_entity_decoder_wrapper(),
+                json_repair_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
+        registry.register(
+            ProviderStreamFamily::Moonshot,
+            vec![
+                reasoning_content_wrapper(),
+                thinking_tag_extractor_wrapper(),
+                tool_call_accumulator_wrapper(),
+                html_entity_decoder_wrapper(),
+                json_repair_wrapper(),
+                usage_extractor_wrapper(),
+            ],
+        );
+        registry.register(
+            ProviderStreamFamily::Minimax,
             vec![
                 reasoning_content_wrapper(),
                 thinking_tag_extractor_wrapper(),

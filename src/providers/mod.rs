@@ -481,18 +481,118 @@ impl ProviderRegistry {
 
 pub mod anthropic;
 pub mod fallback;
+pub mod gemini;
 pub mod mock;
 pub mod openai;
 pub mod sdk;
+pub mod preset;
+pub mod resolver;
 pub mod stream_wrappers;
 
 pub use anthropic::AnthropicProvider;
 pub use fallback::{FallbackChainBuilder, FallbackProvider};
+pub use gemini::GeminiProvider;
 pub use openai::OpenAiProvider;
 pub use sdk::{ProviderCapabilities, ProviderHealth, ProviderMetadata, ProviderPack, ProviderSdk};
 
 /// Re-export the programmable mock provider for tests (unit + integration).
 pub use mock::MockProvider;
+
+// ──── Protocol & Provider Architecture Types ────
+
+/// Supported API protocols.
+///
+/// Each protocol has its own request/response format and SSE event structure.
+/// Only 3 protocols exist; vendors map to one of these via presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    /// OpenAI Chat Completions API (SSE delta format, /chat/completions)
+    OpenAi,
+    /// Anthropic Messages API (content_block_delta events, /v1/messages)
+    Anthropic,
+    /// Google Gemini API (parts[], generateContent)
+    Gemini,
+}
+
+/// Authentication method for a provider endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethod {
+    /// Authorization: Bearer {key}
+    Bearer,
+    /// x-api-key: {key}
+    ApiKeyHeader,
+    /// x-goog-api-key: {key}
+    GoogleApiKey,
+    /// No authentication (local services like Ollama)
+    None,
+    /// Custom header name
+    CustomHeader { name: String },
+}
+
+/// A protocol variant within a provider definition.
+///
+/// A single vendor (e.g. Kimi) may expose multiple protocol endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolVariant {
+    /// The API protocol
+    pub protocol: Protocol,
+    /// Default base URL for this variant
+    pub default_base_url: String,
+    /// Default model name
+    pub default_model: String,
+    /// Authentication method
+    pub auth_method: AuthMethod,
+    /// Default max context length
+    pub default_max_context: usize,
+    /// Whether vision is supported by default
+    pub default_supports_vision: bool,
+    /// Whether tool calling is supported by default
+    pub default_supports_tools: bool,
+    /// Default stream family for this variant
+    pub default_stream_family: stream_wrappers::ProviderStreamFamily,
+}
+
+/// Definition of a provider vendor (preset).
+///
+/// Each vendor has one or more protocol variants. For example, Kimi supports
+/// both OpenAI-compatible and Anthropic-compatible endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDefinition {
+    /// Configuration key name (e.g. "kimi", "openai")
+    pub name: String,
+    /// Human-readable display name
+    pub display_name: String,
+    /// Available protocol variants
+    pub variants: Vec<ProtocolVariant>,
+}
+
+/// Runtime configuration that drives a protocol-level provider.
+///
+/// This is the fully-resolved configuration after merging preset defaults
+/// with user overrides. It is passed directly to protocol providers.
+#[derive(Debug, Clone)]
+pub struct ProviderInstanceConfig {
+    /// The protocol to use
+    pub protocol: Protocol,
+    /// Authentication method
+    pub auth_method: AuthMethod,
+    /// API key (if applicable)
+    pub api_key: Option<String>,
+    /// Base URL for the API endpoint
+    pub base_url: String,
+    /// Model name
+    pub model: String,
+    /// Max context length
+    pub max_context: usize,
+    /// Whether vision is supported
+    pub supports_vision: bool,
+    /// Whether tool calling is supported
+    pub supports_tools: bool,
+    /// Stream family for wrapper selection
+    pub stream_family: stream_wrappers::ProviderStreamFamily,
+}
 
 #[cfg(test)]
 mod tests {

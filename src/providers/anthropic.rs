@@ -3,8 +3,9 @@
 //! Supports Claude 3/3.5 models with native Anthropic API format.
 
 use super::{
-    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition,
-    Message, Provider, Role, ToolCall, Usage,
+    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest,
+    CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider,
+    ProviderInstanceConfig, Role, ToolCall, Usage,
 };
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, CONTENT_TYPE};
@@ -25,6 +26,8 @@ pub struct AnthropicProvider {
     api_version: String,
     /// HTTP client
     client: reqwest::Client,
+    /// Optional stream family override (e.g. for Kimi Anthropic endpoint)
+    stream_family_override: Option<ProviderStreamFamily>,
 }
 
 /// Anthropic API request body
@@ -190,7 +193,22 @@ impl AnthropicProvider {
             default_model: "claude-3-5-sonnet-20241022".to_string(),
             api_version: "2023-06-01".to_string(),
             client,
+            stream_family_override: None,
         })
+    }
+
+    /// Create from a fully-resolved `ProviderInstanceConfig`.
+    ///
+    /// This is the primary constructor used by the resolver; it sets all fields
+    /// including protocol-variant-specific stream families (e.g., Kimi Anthropic).
+    pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
+        let credential =
+            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+        let mut this = Self::with_credential(credential)?;
+        this.base_url = config.base_url;
+        this.default_model = config.model;
+        this.stream_family_override = Some(config.stream_family);
+        Ok(this)
     }
 
     /// Set the default model
@@ -457,11 +475,14 @@ impl Provider for AnthropicProvider {
         &self.default_model
     }
 
-    fn stream_family(&self) -> crate::providers::stream_wrappers::ProviderStreamFamily {
+    fn stream_family(&self) -> ProviderStreamFamily {
+        if let Some(family) = self.stream_family_override {
+            return family;
+        }
         if self.default_model.contains("thinking") {
-            crate::providers::stream_wrappers::ProviderStreamFamily::AnthropicThinking
+            ProviderStreamFamily::AnthropicThinking
         } else {
-            crate::providers::stream_wrappers::ProviderStreamFamily::Anthropic
+            ProviderStreamFamily::Anthropic
         }
     }
 

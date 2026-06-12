@@ -463,6 +463,9 @@ pub enum ProviderType {
     OpenAi,
     Azure,
     Ollama,
+    Gemini,
+    Moonshot,
+    Minimax,
     Custom { name: String },
 }
 
@@ -537,8 +540,8 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         "kimi".to_string(),
         ProviderPreset {
             display_name: "Kimi".to_string(),
-            protocol: ProviderType::OpenAi,
-            default_base_url: Some("https://api.moonshot.cn/v1".to_string()),
+            protocol: ProviderType::Moonshot,
+            default_base_url: None,
             models: vec![
                 "kimi-k2".to_string(),
                 "kimi-moonshot-v1-8k".to_string(),
@@ -551,10 +554,8 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         "gemini".to_string(),
         ProviderPreset {
             display_name: "Gemini".to_string(),
-            protocol: ProviderType::OpenAi,
-            default_base_url: Some(
-                "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
-            ),
+            protocol: ProviderType::Gemini,
+            default_base_url: None,
             models: vec![
                 "gemini-1.5-pro".to_string(),
                 "gemini-1.5-flash".to_string(),
@@ -566,8 +567,8 @@ pub fn provider_presets() -> HashMap<String, ProviderPreset> {
         "minimax".to_string(),
         ProviderPreset {
             display_name: "MiniMax".to_string(),
-            protocol: ProviderType::OpenAi,
-            default_base_url: Some("https://api.minimax.chat/v1".to_string()),
+            protocol: ProviderType::Minimax,
+            default_base_url: None,
             models: vec!["abab6.5s-chat".to_string(), "abab6-chat".to_string()],
         },
     );
@@ -617,6 +618,9 @@ impl std::fmt::Display for ProviderType {
             ProviderType::OpenAi => write!(f, "openai"),
             ProviderType::Azure => write!(f, "azure"),
             ProviderType::Ollama => write!(f, "ollama"),
+            ProviderType::Gemini => write!(f, "gemini"),
+            ProviderType::Moonshot => write!(f, "moonshot"),
+            ProviderType::Minimax => write!(f, "minimax"),
             ProviderType::Custom { name } => write!(f, "{}", name),
         }
     }
@@ -858,57 +862,29 @@ impl ModelRouter {
         config: &ProviderConfig,
     ) -> crate::Result<Arc<dyn Provider + Send + Sync>> {
         let api_key = config.effective_key();
-        match config.provider_type {
-            ProviderType::Anthropic => {
-                // Create Anthropic provider (with optional custom base_url for Kimi, etc.)
-                let provider = if let Some(ref base_url) = config.base_url {
-                    crate::providers::anthropic::AnthropicProvider::with_base_url(
-                        api_key,
-                        base_url.clone(),
-                    )?
-                } else {
-                    crate::providers::anthropic::AnthropicProvider::new(api_key)?
-                };
-                Ok(Arc::new(provider))
-            }
-            ProviderType::OpenAi => {
-                // Create OpenAI-compatible provider (covers OpenAI, DeepSeek, Qwen, etc.)
-                let base_url = config
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
-                Ok(Arc::new(provider))
-            }
-            ProviderType::Azure => {
-                let base_url = config.base_url.clone().ok_or_else(|| {
-                    crate::error::ConfigError::InvalidValue {
-                        key: "base_url".to_string(),
-                        message: "Azure OpenAI requires a base_url".to_string(),
-                    }
-                })?;
-                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
-                Ok(Arc::new(provider))
-            }
-            ProviderType::Ollama => {
-                let base_url = config
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "http://localhost:11434".to_string());
-                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
-                Ok(Arc::new(provider))
-            }
-            ProviderType::Custom { .. } => {
-                let base_url = config.base_url.clone().ok_or_else(|| {
-                    crate::error::ConfigError::InvalidValue {
-                        key: "base_url".to_string(),
-                        message: "Custom provider requires a base_url".to_string(),
-                    }
-                })?;
-                let provider = crate::providers::OpenAiProvider::with_base_url(api_key, base_url)?;
-                Ok(Arc::new(provider))
-            }
-        }
+        let provider_type = config.provider_type.to_string();
+
+        // Map legacy provider_type names to preset names
+        let provider_type = match provider_type.as_str() {
+            "moonshot" => "kimi",
+            other => other,
+        };
+
+        use crate::providers::resolver::resolve_from_config;
+
+        resolve_from_config(
+            provider_type,
+            Some(api_key),
+            None, // protocol: auto-detect from preset default
+            config.base_url.clone(),
+            None, // model: use preset default
+            None, // max_context: use preset default
+            None, // supports_vision: use preset default
+            None, // supports_tools: use preset default
+            None, // stream_family: use preset default
+            None, // auth_method: use preset default
+        )
+        .map(|p| p as Arc<dyn Provider + Send + Sync>)
     }
 
     /// Rebuild a provider with the current auth profile key after rotation.

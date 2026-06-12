@@ -1,6 +1,81 @@
 # Providers Module
 
-LLM provider abstractions for OpenAI, Anthropic, and fallback chains.
+LLM provider abstractions with a protocol-driven architecture: 3 protocol implementations
+(OpenAI, Anthropic, Gemini) serve all vendors via configurable presets.
+
+## Architecture
+
+```
+Vendor (preset, e.g. "kimi") ──► Protocol (OpenAI / Anthropic / Gemini) ──► Provider impl
+       │
+       ├── builtin presets define defaults (base_url, model, auth, features)
+       ├── users can override any default
+       └── "custom" type for fully-manual configuration
+```
+
+Key insight: **vendor ≠ protocol**. A single vendor (e.g. Kimi) may expose multiple
+protocol endpoints (OpenAI-compatible and Anthropic-compatible).
+
+### Core Types
+
+| Type | File | Purpose |
+|------|------|---------|
+| `Protocol` | `mod.rs` | Enum: `OpenAi`, `Anthropic`, `Gemini` |
+| `AuthMethod` | `mod.rs` | Authentication strategy (Bearer, ApiKeyHeader, GoogleApiKey, None, CustomHeader) |
+| `ProtocolVariant` | `mod.rs` | A vendor's specific protocol + defaults |
+| `ProviderDefinition` | `mod.rs` | A vendor with one or more protocol variants |
+| `ProviderInstanceConfig` | `mod.rs` | Fully-resolved runtime config passed to protocol providers |
+
+### Files
+
+```
+src/providers/
+├── mod.rs                  # Provider trait, types, shared models
+├── openai.rs               # OpenAI Chat Completions protocol (config-driven)
+├── anthropic.rs            # Anthropic Messages API protocol (config-driven)
+├── gemini.rs               # Google Gemini generateContent protocol
+├── fallback.rs             # Multi-provider fallback chain
+├── mock.rs                 # Programmable test provider
+├── preset.rs               # All builtin vendor definitions
+├── resolver.rs             # Config → provider dispatch
+├── stream_wrappers.rs      # Composable stream processing wrappers
+└── sdk.rs                  # Plugin SDK types
+```
+
+### Protocol Providers (3 implementations)
+
+| Protocol | File | SSE Format | Auth |
+|----------|------|------------|------|
+| OpenAI | `openai.rs` | `data: {delta: {content}}` + `[DONE]` | Bearer token |
+| Anthropic | `anthropic.rs` | `content_block_delta`, `message_stop` events | `x-api-key` |
+| Gemini | `gemini.rs` | Newline-delimited JSON (non-SSE) | `x-goog-api-key` |
+
+All three accept `ProviderInstanceConfig`, making them fully config-driven.
+Vendors like Moonshot/Minimax are variants of `OpenAiProvider` with different
+stream families, not separate provider files.
+
+### Builtin Presets (`preset.rs`)
+
+| Preset | Default Protocol | Default Base URL | Auth | Notes |
+|--------|-----------------|------------------|------|-------|
+| openai | OpenAI | `api.openai.com/v1` | Bearer | — |
+| deepseek | OpenAI | `api.deepseek.com/v1` | Bearer | — |
+| ollama | OpenAI | `localhost:11434/v1` | None | Local models |
+| qwen | OpenAI | `dashscope.aliyuncs.com/compatible-mode/v1` | Bearer | Alibaba Cloud |
+| kimi | OpenAI (v0) / Anthropic (v1) | `api.moonshot.cn/v1` / `api.moonshot.cn/anthropic` | Bearer / ApiKeyHeader | Dual-protocol |
+| anthropic | Anthropic | `api.anthropic.com` | ApiKeyHeader | — |
+| azure | OpenAI | `YOUR_RESOURCE.openai.azure.com` | Bearer | Requires base_url |
+| gemini | Gemini | `generativelanguage.googleapis.com/v1beta` | GoogleApiKey | — |
+| minimax | OpenAI | `api.minimax.chat/v1` | Bearer | — |
+
+### Resolver (`resolver.rs`)
+
+- `resolve_provider()` — Quick resolution: preset name + optional overrides → `Arc<dyn Provider>`
+- `resolve_from_config()` — Full resolution with all overrides (protocol, base_url, model,
+  max_context, vision/tools support, stream_family, auth_method)
+- Automatically selects the correct protocol variant (e.g. Kimi's Anthropic endpoint
+  when `protocol = "anthropic"`)
+- Custom providers fall through to manual configuration
 
 ## Design
 
@@ -17,19 +92,27 @@ LLM provider abstractions for OpenAI, Anthropic, and fallback chains.
 
 | Provider | File | Notes |
 |----------|------|-------|
-| OpenAI | `openai.rs` | Chat Completions API + streaming + tool calling + retry logic |
-| Anthropic | `anthropic.rs` | Messages API + streaming + thinking support |
+| OpenAI | `openai.rs` | Chat Completions API + streaming + tool calling + retry logic + config-driven |
+| Anthropic | `anthropic.rs` | Messages API + streaming + thinking support + config-driven |
+| Gemini | `gemini.rs` | Google Gemini via `generateContent` API + function calling + streaming |
 | Fallback | `fallback.rs` | Chains multiple providers with failover logic |
+| Mock | `mock.rs` | Programmable test provider with sequence/callback modes |
+
+All vendor-specific variants (Ollama, Moonshot, MiniMax, DeepSeek, Qwen) are
+now handled as `OpenAiProvider` instances configured via `resolver.rs` with
+different base URLs, models, and stream families. No separate files needed.
 
 ### Stream Wrappers
 
 `stream_wrappers.rs` defines `ProviderStreamFamily` for provider-specific payload adaptations:
 - Generic (default)
 - OpenAI Responses Defaults
+- OpenAiReasoning (o1/o3 series)
 - Anthropic Thinking
 - Google Thinking
-- Moonshot Thinking
-- Minimax Fast Mode
+- Moonshot
+- Minimax
+- OpenRouter
 
 ## Key Types
 
@@ -45,10 +128,47 @@ pub trait Provider: Send + Sync {
     async fn health_check(&self) -> Result<bool>;
     fn stream_family(&self) -> ProviderStreamFamily;
 }
+
+/// Supported API protocols (only 3 implementations)
+pub enum Protocol { OpenAi, Anthropic, Gemini }
+
+/// Authentication method for an API endpoint
+pub enum AuthMethod { Bearer, ApiKeyHeader, GoogleApiKey, None, CustomHeader { name: String } }
+
+/// A protocol variant within a vendor definition
+pub struct ProtocolVariant {
+    pub protocol: Protocol,
+    pub default_base_url: String,
+    pub default_model: String,
+    pub auth_method: AuthMethod,
+    pub default_max_context: usize,
+    pub default_supports_vision: bool,
+    pub default_supports_tools: bool,
+    pub default_stream_family: ProviderStreamFamily,
+}
+
+/// Resolved runtime config for a protocol provider
+pub struct ProviderInstanceConfig {
+    pub protocol: Protocol,
+    pub auth_method: AuthMethod,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub max_context: usize,
+    pub supports_vision: bool,
+    pub supports_tools: bool,
+    pub stream_family: ProviderStreamFamily,
+}
 ```
 
 ## Done / Implemented
 
+- **Done**: Protocol-driven architecture — 3 protocol implementations serve all vendors via `resolver.rs` + `preset.rs`.
+- **Done**: Vendor ≠ Protocol separation — Kimi supports both OpenAI and Anthropic protocols via `ProtocolVariant` selection.
+- **Done**: Config-driven providers — `OpenAiProvider::from_config()`, `AnthropicProvider::from_config()`, `GeminiProvider::from_config()`.
+- **Done**: Redundant files eliminated — `ollama.rs`, `moonshot.rs`, `minimax.rs` replaced by resolver-based dispatch.
+- **Done**: New OpenAI-compatible vendor = one line in `preset.rs` + nothing else.
+- **Done**: Full backward compatibility — existing `ProviderType` enum mapped to preset names.
 - **Done**: Auth profile store with SQLite persistence (`AuthProfileStore`) — key state metadata only (failure counts, cooldown, status); raw keys remain in config.
 - **Done**: API key rotation with `AuthProfile` / `AuthProfileManager` — automatic failover between multiple keys per provider.
 - **Done**: OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `syscity provider auth` command.
@@ -56,15 +176,10 @@ pub trait Provider: Send + Sync {
 - **Done**: Usage tracking (`ProviderUsageTracker`) — per-provider token consumption, cost estimation, time windows (today/this_hour/this_month), budget enforcement.
 - **Done**: Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list, `/v1/models` and `/api/v1/models` endpoints.
 - **Done**: Doctor diagnostic system (`syscity doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point.
-- **Done**: Stream family wrappers (`ProviderStreamFamily`) — OpenAI Responses, Anthropic Thinking, Google Thinking, Moonshot Thinking, Minimax Fast Mode.
-
-## Missing / TODO
-
-- **Missing**: Credential state machine (valid / expiring / expired / invalid_expires) with explicit reason codes.
-- **Missing**: Token auto-refresh for OAuth credentials (`refresh_if_needed` exists but may not be fully wired).
-- **Missing**: Model suppression — catalog has suppression list field but runtime disabling of known-broken models may not be fully wired.
-- **Missing**: Plugin-extensible provider — allow WASM plugins to register new providers with custom stream families and usage fetchers.
-- **Missing**: Smart routing — automatically select model based on request features (vision, tools, reasoning), fallback chains, load balancing.
-- **Missing**: Google Gemini, Moonshot, Minimax provider implementations (stream families exist but no providers).
-- **Missing**: Local model provider (llama.cpp, ollama).
-- **Missing**: Provider usage fetch from remote APIs — `UsageQuota` type exists but no live fetching from provider dashboards (Claude, Gemini, Codex, etc.).
+- **Done**: Credential state machine (`AuthProfile`) — Active→Cooldown→Disabled lifecycle with key rotation, SQLite persistence (`auth_profile.rs:13-270`).
+- **Done**: OAuth token auto-refresh (`refresh_if_needed()`) — called at the start of every `complete()` and `stream()` in both `openai.rs` and `anthropic.rs` providers.
+- **Done**: Model suppression (`ModelCatalog::suppress/unsuppress/is_suppressed`) — fully wired in `list()`, `find_by_capability()`, `find_by_provider()`; auto-suppress on `ModelNotFound` errors (`model_catalog.rs:350-368`).
+- **Done**: Plugin-extensible providers (`PluginProvider` + `PluginProviderRegistry`) — WASM-backed providers registered through `PluginManager::register_plugin_providers()` (`plugins/provider_extension.rs`).
+- **Done**: Smart routing (`resolve_alias_with_capabilities()`) — capability-based model selection (vision, tools, reasoning) in `model_router/mod.rs:1594`.
+- **Done**: Remote usage fetch (`UsageFetcher` trait) — `OpenAiUsageFetcher` hits OpenAI billing API, `LocalBudgetFetcher` reads config budget (`usage_fetcher.rs`).
+- **Done**: Stream family wrappers (`ProviderStreamFamily`) — OpenAi, OpenAiReasoning, Anthropic, AnthropicThinking, GoogleThinking, Moonshot, Minimax, OpenRouter, Generic.

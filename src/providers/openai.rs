@@ -3,8 +3,9 @@
 //! Supports GPT-4, GPT-3.5, and other OpenAI models.
 
 use super::{
-    CompletionChunk, CompletionRequest, CompletionResponse, CompletionStream, FunctionDefinition,
-    Message, Provider, Role, ToolCall, Usage,
+    stream_wrappers::ProviderStreamFamily, CompletionChunk, CompletionRequest,
+    CompletionResponse, CompletionStream, FunctionDefinition, Message, Provider,
+    ProviderInstanceConfig, Role, ToolCall, Usage,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -26,6 +27,8 @@ pub struct OpenAiProvider {
     default_model: String,
     /// HTTP client
     client: reqwest::Client,
+    /// Optional stream family override (for protocol-variant vendors like Moonshot/Minimax)
+    stream_family_override: Option<ProviderStreamFamily>,
 }
 
 impl OpenAiProvider {
@@ -68,7 +71,22 @@ impl OpenAiProvider {
             base_url: "https://api.openai.com/v1".to_string(),
             default_model: "gpt-4o-mini".to_string(),
             client,
+            stream_family_override: None,
         })
+    }
+
+    /// Create from a fully-resolved `ProviderInstanceConfig`.
+    ///
+    /// This is the primary constructor used by the resolver; it sets all fields
+    /// including protocol-variant-specific stream families.
+    pub fn from_config(config: ProviderInstanceConfig) -> crate::Result<Self> {
+        let credential =
+            crate::model_router::Credential::api_key(config.api_key.unwrap_or_default());
+        let mut this = Self::with_credential(credential)?;
+        this.base_url = config.base_url;
+        this.default_model = config.model;
+        this.stream_family_override = Some(config.stream_family);
+        Ok(this)
     }
 
     /// Set the default model
@@ -259,11 +277,14 @@ impl Provider for OpenAiProvider {
         }
     }
 
-    fn stream_family(&self) -> crate::providers::stream_wrappers::ProviderStreamFamily {
+    fn stream_family(&self) -> ProviderStreamFamily {
+        if let Some(family) = self.stream_family_override {
+            return family;
+        }
         if self.default_model.starts_with("o1") || self.default_model.starts_with("o3") {
-            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAiReasoning
+            ProviderStreamFamily::OpenAiReasoning
         } else {
-            crate::providers::stream_wrappers::ProviderStreamFamily::OpenAi
+            ProviderStreamFamily::OpenAi
         }
     }
 
