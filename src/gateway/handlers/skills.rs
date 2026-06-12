@@ -140,6 +140,70 @@ pub async fn disable_skill_handler(
     }
 }
 
+/// Request body for skill install
+#[derive(Debug, Deserialize)]
+pub struct InstallSkillRequest {
+    /// Name of the skill to install from registry
+    pub name: String,
+    /// Optional custom registry URL
+    pub registry_url: Option<String>,
+}
+
+/// Install a skill from the remote registry.
+pub async fn install_skill_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(body): Json<InstallSkillRequest>,
+) -> impl IntoResponse {
+    let skills_manager = state.skills_manager.read().await;
+    match skills_manager
+        .install_from_registry(&body.name, body.registry_url.as_deref())
+        .await
+    {
+        Ok(()) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Skill '{}' installed successfully", body.name),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to install skill: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
+/// Uninstall a skill.
+pub async fn uninstall_skill_handler(
+    Path(name): Path<String>,
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let skills_manager = state.skills_manager.read().await;
+    match skills_manager.uninstall_skill(&name).await {
+        Ok(true) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Skill '{}' uninstalled", name),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Ok(false) => {
+            let error = serde_json::json!({
+                "error": format!("Skill '{}' not found", name),
+            });
+            (StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": format!("Failed to uninstall skill: {}", e),
+            });
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub async fn run_skill_handler(
     Path(id): Path<String>,

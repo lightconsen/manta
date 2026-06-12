@@ -1427,11 +1427,17 @@ Your response:"#,
             if let Some(ref skill_manager) = self.skill_manager {
                 debug!("SkillManager is active, prefiltering skills");
                 let mgr = skill_manager.read().await;
-                let matching_skills = mgr.prefilter_skills(user_message, 5).await;
+                let max_skills = mgr.max_skills_in_prompt();
+                let max_chars = mgr.max_skills_prompt_chars();
+                let matching_skills = mgr
+                    .prefilter_skills(user_message, max_skills, max_chars)
+                    .await;
                 if !matching_skills.is_empty() {
+                    // Use token-optimised sections with individual char budget
+                    let budget_per_skill = max_chars / matching_skills.len().max(1);
                     let skills_text = matching_skills
                         .iter()
-                        .map(|s| s.to_prompt_section())
+                        .map(|s| s.to_prompt_section(Some(budget_per_skill)))
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     prompt = format!("{}\n\n## Active Skills\n\n{}", prompt, skills_text);

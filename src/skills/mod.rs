@@ -315,7 +315,10 @@ impl Skill {
     }
 
  /// Get the prompt section for this skill (for inclusion in system prompt)
-    pub fn to_prompt_section(&self) -> String {
+    ///
+    /// If `max_prompt_chars` is `Some(n)`, the full prompt body is truncated
+    /// so the complete section fits within `n` characters (with `…` suffix).
+    pub fn to_prompt_section(&self, max_prompt_chars: Option<usize>) -> String {
         let mut section = String::new();
 
  // Add emoji and name
@@ -327,15 +330,35 @@ impl Skill {
  // Add description
         section.push_str(&format!("{}\n\n", self.description));
 
- // Add the prompt content
-        section.push_str(&self.prompt);
+ // Add the prompt content with path compaction
+        let prompt_body = self.compact_prompt_body();
+        section.push_str(&prompt_body);
 
  // Add trigger info if it's a command
         if let Some(cmd) = self.is_command() {
             section.push_str(&format!("\n\n*Use with: /{}*", cmd));
         }
 
+ // Truncate to max chars if specified, preserving the command suffix
+        if let Some(max_chars) = max_prompt_chars {
+            if section.len() > max_chars {
+                section.truncate(max_chars.saturating_sub(1));
+                section.push('…');
+            }
+        }
+
         section
+    }
+
+    /// Return the prompt body with home-directory paths compacted to `~/`.
+    fn compact_prompt_body(&self) -> String {
+        let body = &self.prompt;
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy().to_string();
+            body.replace(&home_str, "~")
+        } else {
+            body.clone()
+        }
     }
 
  /// Check runtime eligibility
@@ -750,6 +773,16 @@ impl SkillManager {
         skills.values().cloned().collect()
     }
 
+    /// Get the maximum number of skills to include in a prompt.
+    pub fn max_skills_in_prompt(&self) -> usize {
+        self.config.limits.max_skills_in_prompt
+    }
+
+    /// Get the maximum total characters for the skills prompt section.
+    pub fn max_skills_prompt_chars(&self) -> usize {
+        self.config.limits.max_skills_prompt_chars
+    }
+
  /// List eligible skills only
     pub async fn list_eligible_skills(&self) -> Vec<Skill> {
         let skills = self.skills.read().await;
@@ -775,8 +808,18 @@ impl SkillManager {
  /// injection through an unbounded number of community-skill system
  /// prompts being injected into the agent context.
  ///
- /// Pass `max_skills = 0` to disable the cap (returns all matches).
-    pub async fn prefilter_skills(&self, input: &str, max_skills: usize) -> Vec<Skill> {
+ /// Pass `max_skills = 0` to disable the count cap.
+ ///
+ /// When `max_prompt_chars > 0`, the total combined prompt text of the
+ /// returned skills is pruned (lowest-trust skills removed first) until
+ /// it fits within the character budget. This is the token-optimisation
+ /// pass.
+    pub async fn prefilter_skills(
+        &self,
+        input: &str,
+        max_skills: usize,
+        max_prompt_chars: usize,
+    ) -> Vec<Skill> {
         let skills = self.skills.read().await;
         let mut matched: Vec<Skill> = skills
             .values()
@@ -789,6 +832,26 @@ impl SkillManager {
 
         if max_skills > 0 {
             matched.truncate(max_skills);
+        }
+
+ // Prune by total prompt character budget (token optimisation).
+ // Remove lowest-trust skills first until total fits.
+        if max_prompt_chars > 0 {
+            let mut total_chars: usize = matched.iter().map(|s| s.to_prompt_section(None).len()).sum();
+            while total_chars > max_prompt_chars && matched.len() > 1 {
+                // Remove the last (lowest-trust) skill.
+                if let Some(removed) = matched.pop() {
+                    total_chars = total_chars.saturating_sub(
+                        removed.to_prompt_section(None).len(),
+                    );
+                }
+            }
+            if total_chars > max_prompt_chars && !matched.is_empty() {
+                warn!(
+                    "Skills prompt ({} chars) still exceeds budget ({} chars) after pruning to {} skill(s)",
+                    total_chars, max_prompt_chars, matched.len()
+                );
+            }
         }
 
         matched
@@ -875,7 +938,137 @@ impl SkillManager {
         }
     }
 
- /// Install a skill's dependencies
+ /// Public reload: re-scan all skill directories and update in-memory map.
+    ///
+    /// Acquires a write lock on `self.skills`, clears the map, and
+    /// re-discovers all skills from every storage level (built-in, user,
+    /// workspace, project). This lets daemon processes pick up
+    /// registry-downloaded or locally-installed skills without a restart.
+    pub async fn reload(&self) -> crate::Result<usize> {
+        info!("Reloading all skills from storage");
+
+        // Re-discover from all storage levels (same logic as
+        // `load_all()` but works with `&self` by using the existing
+        // `self.storage` and `self.skills` write lock).
+        let mut total_count = 0;
+
+        {
+            let mut skills = self.skills.write().await;
+            skills.clear();
+
+            // 1. Built-in skills
+            let builtin_skills = builtin::get_builtin_skills();
+            for (name, skill) in builtin_skills {
+                info!(
+                    "Reloaded built-in skill: {} (eligible: {}, enabled: {})",
+                    name, skill.is_eligible, skill.enabled
+                );
+                skills.insert(name, skill);
+                total_count += 1;
+            }
+
+            // 2. Skills from storage (user, workspace, project)
+            let skill_files = self.storage.discover_all().await;
+            for skill_location in skill_files {
+                let path = &skill_location.skill_file;
+                match Self::load_skill_from_file_inner(path).await {
+                    Ok(mut skill) => {
+                        skill.check_eligibility();
+                        skill.enabled = self
+                            .config
+                            .entries
+                            .get(&skill.name)
+                            .map(|e| e.enabled)
+                            .unwrap_or(true);
+                        skill.source_level = skill_location.level;
+
+                        let is_override = skills.contains_key(&skill.name);
+                        if is_override {
+                            info!(
+                                "Overriding built-in skill: {} from {:?}",
+                                skill.name, skill_location.level
+                            );
+                        }
+                        info!(
+                            "Reloaded skill: {} (eligible: {}, enabled: {}, level: {:?})",
+                            skill.name, skill.is_eligible, skill.enabled, skill.source_level
+                        );
+                        skills.insert(skill.name.clone(), skill);
+                        total_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to reload skill from {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+
+        info!("Skill reload complete: {} skills loaded", total_count);
+        Ok(total_count)
+    }
+
+    /// Load a skill from file (static helper for reload).
+    async fn load_skill_from_file_inner(path: &Path) -> crate::Result<Skill> {
+        let content = tokio::fs::read_to_string(path).await?;
+        let (frontmatter, prompt) = frontmatter::parse_skill_md(&content)?;
+        let mut skill: Skill = serde_yaml::from_str(&frontmatter)?;
+        skill.prompt = prompt;
+        skill.source_path = path.to_path_buf();
+        let file_size = content.len();
+        if file_size > skill.metadata.max_size {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "Skill file too large: {} bytes (max: {})",
+                file_size, skill.metadata.max_size
+            )));
+        }
+        Ok(skill)
+    }
+
+    /// Install a skill from the remote registry and reload.
+    ///
+    /// Uses `SkillRegistry` to download the skill into `~/.syscity/skills/{name}/`,
+    /// then calls `reload()` so the new skill is picked up without a restart.
+    pub async fn install_from_registry(
+        &self,
+        name: &str,
+        registry_url: Option<&str>,
+    ) -> crate::Result<()> {
+        let registry = match registry_url {
+            Some(url) => registry::SkillRegistry::new(url)?,
+            None => registry::SkillRegistry::default_registry()?,
+        };
+
+        info!("Installing skill '{}' from registry", name);
+        registry.install(name).await?;
+
+        // Reload to pick up the newly installed skill
+        self.reload().await?;
+
+        info!("Skill '{}' installed and loaded", name);
+        Ok(())
+    }
+
+    /// Uninstall a skill and reload.
+    ///
+    /// Removes `~/.syscity/skills/{name}/`, then calls `reload()` to
+    /// remove it from the in-memory map.
+    pub async fn uninstall_skill(&self, name: &str) -> crate::Result<bool> {
+        let skill_dir = self.storage.user_dir().join(name);
+
+        if skill_dir.exists() {
+            tokio::fs::remove_dir_all(&skill_dir).await?;
+
+            // Reload to update in-memory map
+            self.reload().await?;
+
+            info!("Uninstalled skill: {}", name);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Install a skill's dependencies
     pub async fn install_skill(&self, name: &str) -> crate::Result<Vec<InstallResult>> {
         let skill =
             self.get_skill(name)
@@ -1102,7 +1295,7 @@ impl SkillManager {
 
         for (i, skill) in chain.skills.iter().enumerate() {
             combined_prompt.push_str(&format!("## Step {}: {}\n\n", i + 1, skill.name));
-            combined_prompt.push_str(&skill.to_prompt_section());
+            combined_prompt.push_str(&skill.to_prompt_section(None));
             combined_prompt.push_str("\n\n---\n\n");
         }
 
@@ -1182,7 +1375,7 @@ impl SkillChain {
 
         for (i, skill) in self.skills.iter().enumerate() {
             output.push_str(&format!("## Step {}: {}\n\n", i + 1, skill.name));
-            output.push_str(&skill.to_prompt_section());
+            output.push_str(&skill.to_prompt_section(None));
             output.push_str("\n\n---\n\n");
         }
 
@@ -1462,7 +1655,7 @@ mod tests {
         let skill = Skill::new("weather", "Get weather", "When asked about weather...")
             .with_emoji("🌤️")
             .with_trigger(TriggerType::Command, "weather");
-        let section = skill.to_prompt_section();
+        let section = skill.to_prompt_section(None);
         assert!(section.contains("🌤️"));
         assert!(section.contains("weather"));
         assert!(section.contains("Use with: /weather"));

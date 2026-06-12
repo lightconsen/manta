@@ -711,7 +711,7 @@ async fn handle_skill(req: &WsRequest, state: &Arc<GatewayState>, args: &str) ->
     let trimmed = args.trim();
     if trimmed.is_empty() {
         let mgr = state.skills_manager.read().await;
-        let skills = mgr.prefilter_skills("", 50).await;
+        let skills = mgr.prefilter_skills("", 50, 0).await;
         let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
         let text = format!("🎯 **Skills** ({} total): {}", names.len(), names.join(", "));
         return WsResponse::ok(&req.id, serde_json::json!({ "text": text }));

@@ -2525,6 +2525,14 @@ impl Gateway {
             .route("/api/v1/plugins/{name}/disable", post(disable_plugin_handler))
             .route("/api/v1/plugins/{name}/unload", delete(unload_plugin_handler))
             .route("/api/v1/plugins/{name}/reload", post(reload_plugin_handler))
+ // Skill management API
+            .route("/api/v1/skills", get(list_skills_handler))
+            .route("/api/v1/skills/install", post(install_skill_handler))
+            .route("/api/v1/skills/{name}", get(get_skill_handler))
+            .route("/api/v1/skills/{name}/enable", post(enable_skill_handler))
+            .route("/api/v1/skills/{name}/disable", post(disable_skill_handler))
+            .route("/api/v1/skills/{name}/run", post(run_skill_handler))
+            .route("/api/v1/skills/{name}/uninstall", post(uninstall_skill_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);

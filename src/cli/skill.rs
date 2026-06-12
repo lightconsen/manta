@@ -25,13 +25,16 @@ pub enum SkillCommands {
         /// Skill name
         name: String,
     },
-    /// Install a skill from a directory or git repo
+    /// Install a skill from a directory, git repo, or registry
     Install {
-        /// Path to skill directory or git URL
+        /// Path to skill directory or git URL, or skill name when --registry is set
         source: String,
         /// Skill name (optional, defaults to directory name)
         #[arg(short, long)]
         name: Option<String>,
+        /// Install from the remote skill registry instead of local/git
+        #[arg(short, long)]
+        registry: bool,
     },
     /// Uninstall a skill
     Uninstall {
@@ -127,23 +130,55 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 }
             }
         }
-        SkillCommands::Install { source, name } => {
-            install_skill_local(source, name.as_deref()).await?;
+        SkillCommands::Install { source, name, registry } => {
+            if *registry {
+                // Install from remote registry via daemon API
+                let url = format!("{}/api/v1/skills/install", DAEMON_URL);
+                let body = serde_json::json!({
+                    "name": name.clone().unwrap_or_else(|| source.clone()),
+                    "registry_url": null,
+                });
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let text = resp.text().await.unwrap_or_default();
+                        if status.is_success() {
+                            println!("Skill '{}' installed from registry", source);
+                        } else {
+                            eprintln!("Failed to install skill ({}): {}", status, text);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reach daemon: {}", e);
+                        return Err(SyscityError::Internal(e.to_string()));
+                    }
+                }
+            } else {
+                install_skill_local(source, name.as_deref()).await?;
+            }
         }
         SkillCommands::Uninstall { name, force } => {
             if !force {
                 println!("Uninstall skill '{}'? Use --force to confirm.", name);
                 return Ok(());
             }
-            let skill_dir = crate::dirs::skills_dir().join(name);
-            if !skill_dir.exists() {
-                eprintln!("Skill '{}' not found at {:?}", name, skill_dir);
-                return Err(SyscityError::Internal(format!("Skill '{}' not installed", name)));
+            // Uninstall via daemon API
+            let url = format!("{}/api/v1/skills/{}/uninstall", DAEMON_URL, name);
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Skill '{}' uninstalled", name);
+                    } else {
+                        eprintln!("Failed to uninstall skill ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(SyscityError::Internal(e.to_string()));
+                }
             }
-            tokio::fs::remove_dir_all(&skill_dir).await.map_err(|e| {
-                SyscityError::Internal(format!("Failed to remove skill directory: {}", e))
-            })?;
-            println!("Skill '{}' uninstalled", name);
         }
         SkillCommands::Enable { name } => {
             let url = format!("{}/api/v1/skills/{}/enable", DAEMON_URL, name);
