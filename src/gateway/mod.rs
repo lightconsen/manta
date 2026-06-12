@@ -344,7 +344,18 @@ pub struct SecurityConfig {
  /// Mention gating configuration
     #[serde(default)]
     pub mention_gating: crate::security::mention_gate::MentionGatingConfig,
+ /// Allowed Tailscale tailnets (empty = any tailnet allowed when auth_mode=tailscale)
+    #[serde(default)]
+    pub allowed_tailnets: Vec<String>,
+ /// Trusted proxy IPs for X-Forwarded-For header resolution
+    #[serde(default)]
+    pub trusted_proxies: Vec<std::net::IpAddr>,
+ /// Tailscale whois cache TTL in seconds (default 300)
+    #[serde(default = "default_tailscale_ttl")]
+    pub tailscale_auth_ttl_secs: u64,
 }
+
+fn default_tailscale_ttl() -> u64 { 300 }
 
 /// Rate limiting configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +418,9 @@ impl Default for SecurityConfig {
             cors: crate::gateway::auth::CorsConfig::default(),
             csp: crate::gateway::auth::CspConfig::default(),
             mention_gating: crate::security::mention_gate::MentionGatingConfig::default(),
+            allowed_tailnets: Vec::new(),
+            trusted_proxies: Vec::new(),
+            tailscale_auth_ttl_secs: 300,
         }
     }
 }
@@ -625,6 +639,8 @@ pub struct GatewayState {
     pub pairing_store: Arc<crate::security::pairing::PairingStore>,
  /// Device pairing store for WebSocket device auth
     pub device_pairing_store: Arc<crate::security::device_pairing::DevicePairingStore>,
+ /// Tailscale authenticator for whois-based identity verification
+    pub tailscale_authenticator: Option<Arc<crate::security::tailscale::TailscaleAuthenticator>>,
  /// Command gate for slash-command permission control
     pub command_gate: Arc<crate::tools::command_gate::CommandGate>,
  /// Mention gate for controlling which mentions trigger agent responses
@@ -1667,6 +1683,14 @@ impl Gateway {
             device_pairing_store: Arc::new(
                 crate::security::device_pairing::DevicePairingStore::new(),
             ),
+            tailscale_authenticator: {
+                let ttl = config.security.tailscale_auth_ttl_secs;
+                Some(Arc::new(
+                    crate::security::tailscale::TailscaleAuthenticator::new(
+                        std::time::Duration::from_secs(ttl),
+                    ),
+                ))
+            },
             command_gate: {
                 let gate = crate::tools::command_gate::CommandGate::new();
  // Web terminal and API users need User level for slash commands
@@ -2452,12 +2476,14 @@ impl Gateway {
         }
 
  // Run the server
-        axum::serve(listener, app).await.map_err(|e| {
-            crate::error::SyscityError::ExternalService {
-                source: "Gateway server error".to_string(),
-                cause: Some(Box::new(e)),
-            }
-        })?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await
+            .map_err(|e| {
+                crate::error::SyscityError::ExternalService {
+                    source: "Gateway server error".to_string(),
+                    cause: Some(Box::new(e)),
+                }
+            })?;
 
  // Stop dream scheduler on shutdown
         if let Some(mut scheduler) = self.state.dream_scheduler.write().await.take() {
@@ -2549,7 +2575,7 @@ impl Gateway {
         let admin_router = essential_router
             .layer(from_fn_with_state(state.clone(), middleware::rate_limit_middleware))
             .layer(from_fn_with_state(state.clone(), auth::session_cookie_middleware))
-            .layer(from_fn(middleware::tailscale_only_middleware))
+            .layer(from_fn_with_state(state.clone(), middleware::tailscale_auth_middleware))
             .layer(from_fn(middleware::security_headers_middleware))
             .with_state(state.clone());
 

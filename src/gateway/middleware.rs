@@ -2,18 +2,19 @@
 //!
 //! Provides middleware for restricting access to admin APIs:
 //! - Localhost-only (127.0.0.1, ::1)
-//! - Tailscale network detection
+//! - Tailscale whois identity verification
+//! - Trusted proxy IP header resolution
 //! - API key authentication (optional)
 //! - Rate limiting
 
 use axum::{
     body::Body,
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::StatusCode,
     middleware::Next,
     response::Response,
 };
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -76,34 +77,64 @@ fn is_private_ip(addr: IpAddr) -> bool {
     }
 }
 
-/// Extract client IP from request
-fn extract_client_ip(req: &Request) -> Option<IpAddr> {
-    // Check X-Forwarded-For header (if behind proxy)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(forwarded_str) = forwarded.to_str() {
-            // Take the first IP in the chain
-            if let Some(first_ip) = forwarded_str.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse() {
-                    debug!("Client IP from X-Forwarded-For: {}", ip);
+/// Extract client IP from request, respecting trusted proxies.
+///
+/// - If `trusted_proxies` contains the direct connection IP, trusts `X-Forwarded-For`.
+/// - If the direct connection IP is *not* a trusted proxy, ignores forwarded headers.
+/// - Falls back to `ConnectInfo<SocketAddr>` extension (TCP peer address).
+/// - Last resort: `X-Real-IP` header (no proxy verification — best-effort).
+pub fn extract_client_ip_with_trusted(
+    req: &Request,
+    trusted_proxies: &[IpAddr],
+) -> Option<IpAddr> {
+    // Try to get the direct connection IP from ConnectInfo extension
+    let direct_ip: Option<IpAddr> = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    // Only trust X-Forwarded-For if the direct connection is from a known proxy,
+    // OR if no ConnectInfo is available (backward compat: trust headers)
+    let should_trust_headers = direct_ip
+        .as_ref()
+        .map_or(true, |ip| trusted_proxies.contains(ip) || is_localhost(*ip));
+
+    if should_trust_headers {
+        if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+            if let Ok(forwarded_str) = forwarded.to_str() {
+                if let Some(first_ip) = forwarded_str.split(',').next() {
+                    if let Ok(ip) = first_ip.trim().parse() {
+                        debug!("Client IP from X-Forwarded-For: {}", ip);
+                        return Some(ip);
+                    }
+                }
+            }
+        }
+
+        // X-Real-IP fallback
+        if let Some(real_ip) = req.headers().get("x-real-ip") {
+            if let Ok(real_ip_str) = real_ip.to_str() {
+                if let Ok(ip) = real_ip_str.parse() {
+                    debug!("Client IP from X-Real-IP: {}", ip);
                     return Some(ip);
                 }
             }
         }
     }
 
-    // Check X-Real-IP header
-    if let Some(real_ip) = req.headers().get("x-real-ip") {
-        if let Ok(real_ip_str) = real_ip.to_str() {
-            if let Ok(ip) = real_ip_str.parse() {
-                debug!("Client IP from X-Real-IP: {}", ip);
-                return Some(ip);
-            }
-        }
+    // Fall back to direct connection IP
+    if let Some(ip) = direct_ip {
+        debug!("Client IP from ConnectInfo: {}", ip);
+        return Some(ip);
     }
 
-    // Get from connection info (if available in extensions)
-    // This requires the ConnectInfo extractor in Axum
     None
+}
+
+/// Legacy client IP extraction (no proxy verification).
+/// Used where trusted_proxies not available (e.g. rate limiter).
+fn extract_client_ip(req: &Request) -> Option<IpAddr> {
+    extract_client_ip_with_trusted(req, &[])
 }
 
 /// Middleware: Restrict to localhost only
@@ -129,7 +160,58 @@ pub async fn localhost_only_middleware(req: Request, next: Next) -> Result<Respo
     }
 }
 
-/// Middleware: Restrict to Tailscale network
+/// Middleware: Tailscale whois identity verification.
+///
+/// - Localhost connections are always allowed.
+/// - Tailscale IPs (100.64.0.0/10) are verified via `TailscaleAuthenticator::is_authorized()`.
+/// - Configured `allowed_tailnets` restricts which tailnets are permitted.
+/// - Uses `trusted_proxies` from config for X-Forwarded-For header resolution.
+pub async fn tailscale_auth_middleware(
+    State(state): State<Arc<GatewayState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let (trusted_proxies, allowed_tailnets) = {
+        let config = state.config.read().await;
+        (config.security.trusted_proxies.clone(), config.security.allowed_tailnets.clone())
+    };
+
+    let client_ip = extract_client_ip_with_trusted(&req, &trusted_proxies);
+
+    match client_ip {
+        Some(ip) if is_localhost(ip) => {
+            debug!("Localhost access granted for: {:?}", req.uri());
+            Ok(next.run(req).await)
+        }
+        Some(ip) if is_tailscale(ip) => {
+            // Tailscale IP: verify via whois
+            if let Some(ref auth) = state.tailscale_authenticator {
+                if auth.is_authorized(&ip.to_string(), &allowed_tailnets).await {
+                    debug!("Tailscale whois verified: {} - {:?}", ip, req.uri());
+                    Ok(next.run(req).await)
+                } else {
+                    warn!("Tailscale whois rejected: {} - {:?}", ip, req.uri());
+                    Err(StatusCode::FORBIDDEN)
+                }
+            } else {
+                // No authenticator configured — fall back to IP-range check
+                debug!("Tailscale authenticator not configured, allowing by IP range: {}", ip);
+                Ok(next.run(req).await)
+            }
+        }
+        Some(ip) => {
+            warn!("Non-Tailscale, non-localhost access attempt from: {} - {:?}", ip, req.uri());
+            Err(StatusCode::FORBIDDEN)
+        }
+        None => {
+            debug!("Cannot determine client IP, allowing (may be Unix socket)");
+            Ok(next.run(req).await)
+        }
+    }
+}
+
+/// Middleware: Restrict to Tailscale network (IP-range only, no whois).
+/// Kept for backward compatibility with non-whois setups.
 pub async fn tailscale_only_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
     let client_ip = extract_client_ip(&req);
 

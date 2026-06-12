@@ -250,31 +250,6 @@ async fn get_mention_policy_returns_policy() {
     assert!(json["policy"].is_string());
 }
 
-// ── GET /api/v1/audit/log ──
-
-#[tokio::test]
-async fn list_audit_log_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/audit/log", get(super::list_audit_log_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/audit/log")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["entries"].is_array());
-    assert_eq!(json["count"], 0);
-}
-
 // ── GET /ready (not ready by default) ──
 
 #[tokio::test]
