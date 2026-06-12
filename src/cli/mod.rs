@@ -30,7 +30,6 @@ mod security;
 mod session;
 mod setup;
 mod skill;
-mod team;
 
 pub use admin::AdminCommands;
 pub use agent::AgentCommands;
@@ -51,7 +50,6 @@ pub use provider::ProviderCommands;
 pub use security::{GateCommands, PairingCommands, SecurityCommands};
 pub use session::SessionCommands;
 pub use skill::SkillCommands;
-pub use team::TeamCommands;
 
 /// Syscity - Your AI assistant
 #[derive(Debug, Parser)]
@@ -123,12 +121,6 @@ pub enum Commands {
  /// Agent subcommand
         #[command(subcommand)]
         command: AgentCommands,
-    },
- /// Agent team management (create teams, assign roles, define hierarchies)
-    Team {
- /// Team subcommand
-        #[command(subcommand)]
-        command: TeamCommands,
     },
  /// Channel management (Telegram, Discord, Slack)
     Channel {
@@ -357,7 +349,6 @@ impl Cli {
             Commands::Cron { command } => cron::run_cron_command(command).await,
             Commands::Skill { command } => skill::run_skill_command(command).await,
             Commands::Agent { command } => agent::run_agent_command(command).await,
-            Commands::Team { command } => team::run_team_command(command).await,
             Commands::Channel { command } => channel::run_channel_command(command).await,
             Commands::Plugin { command } => plugin::run_plugin_command(command).await,
             Commands::Start {
