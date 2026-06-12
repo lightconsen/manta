@@ -3120,6 +3120,86 @@ impl Gateway {
             self.init_single_channel(name, config).await?;
         }
 
+        // Discover and start WASM plugin channels
+        #[cfg(feature = "plugins")]
+        self.init_plugin_channels().await?;
+
+        Ok(())
+    }
+
+    /// Discover and start WASM plugin channels.
+    #[cfg(feature = "plugins")]
+    async fn init_plugin_channels(&self) -> crate::Result<()> {
+        use crate::channels::plugin_host::{PluginChannel, PluginChannelRegistry};
+        use crate::dirs;
+        use std::path::PathBuf;
+
+        let plugin_dir = dirs::extensions_dir().join("channels");
+        if !plugin_dir.exists() {
+            info!("Plugin channel directory does not exist, skipping: {:?}", plugin_dir);
+            return Ok(());
+        }
+
+        // Create a shared inbound message channel for plugin channels.
+        // The receiver needs to be wired into the inbound pipeline (see TODO).
+        let (plugin_inbound_tx, _plugin_inbound_rx) =
+            tokio::sync::mpsc::unbounded_channel();
+
+        let registry = PluginChannelRegistry::new(plugin_dir, plugin_inbound_tx);
+        let available = registry.discover_plugins().await?;
+
+        if available.is_empty() {
+            info!("No WASM channel plugins found");
+            return Ok(());
+        }
+
+        for (name, path) in &available {
+            info!("Discovered WASM channel plugin '{}' at {:?}", name, path);
+        }
+
+        for (name, _path) in &available {
+            // Skip if a native channel with the same name is already running
+            if self.state.channels.read().await.contains_key(name) {
+                info!("Channel '{}' already running as native, skipping plugin", name);
+                continue;
+            }
+
+            match registry.load_plugin(name, None).await {
+                Ok(plugin) => {
+                    info!("Loaded WASM channel plugin '{}'", name);
+                    // Register in the channel map
+                    let channel: Arc<dyn crate::channels::Channel> = plugin.clone();
+                    self.state.channels.write().await.insert(name.clone(), channel.clone());
+
+                    // Start the plugin channel
+                    if let Err(e) = plugin.start().await {
+                        warn!("Failed to start WASM channel plugin '{}': {}", name, e);
+                        continue;
+                    }
+
+                    // Wire health monitoring
+                    if let Some(ref monitor) = self.state.health_monitor {
+                        let check_interval = std::time::Duration::from_secs(30);
+                        let transport_timeout = std::time::Duration::from_secs(10);
+                        monitor.monitor_channel_with_timeout(
+                            name, channel, check_interval, transport_timeout,
+                        );
+                    }
+
+                    // Record snapshot
+                    if let Some(ref store) = self.state.snapshot_store {
+                        let snap = crate::channels::snapshot::healthy_snapshot(name, None);
+                        store.store(snap).await;
+                    }
+
+                    info!("WASM channel plugin '{}' initialized successfully", name);
+                }
+                Err(e) => {
+                    warn!("Failed to load WASM channel plugin '{}': {}", name, e);
+                }
+            }
+        }
+
         Ok(())
     }
 

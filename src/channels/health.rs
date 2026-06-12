@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::{interval, Instant};
+use tokio::time::{interval, timeout, Instant};
 use tracing::warn;
 
 /// Health status of a channel
@@ -275,6 +275,58 @@ impl ChannelHealthMonitor {
                     }
                     _ => {
                         warn!("Health check failed for channel '{}'", name);
+                        monitor.record_failure(&name).await;
+                    }
+                }
+                tokio::time::sleep(check_interval).await;
+            }
+        })
+    }
+
+    /// Spawn a background task that periodically checks the channel's health
+    /// with a transport-level timeout. If the health check takes longer than
+    /// `transport_timeout`, it is treated as a failure — this catches socket
+    /// hangs and other transport-level stalls that a regular OK/Err check
+    /// would not detect in a timely manner.
+    pub fn monitor_channel_with_timeout(
+        self: &Arc<Self>,
+        channel_name: &str,
+        channel: Arc<dyn crate::channels::Channel>,
+        check_interval: Duration,
+        transport_timeout: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let monitor = self.clone();
+        let name = channel_name.to_string();
+        tokio::spawn(async move {
+            monitor.register_channel(&name).await;
+            loop {
+                let result = timeout(transport_timeout, channel.health_check()).await;
+                match result {
+                    Ok(Ok(true)) => {
+                        monitor.record_heartbeat(&name).await;
+                    }
+                    Ok(Ok(false)) => {
+                        warn!(
+                            "Health check returned unhealthy for channel '{}'",
+                            name
+                        );
+                        monitor.record_failure(&name).await;
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            "Health check error for channel '{}': {}",
+                            name, e
+                        );
+                        monitor.record_failure(&name).await;
+                    }
+                    Err(_) => {
+                        warn!(
+                            "Health check timed out after {:?} for channel '{}' — transport stall detected",
+                            transport_timeout, name,
+                        );
+                        // Timeout counts as a more severe failure (double-count
+                        // so it reaches unhealthy threshold faster)
+                        monitor.record_failure(&name).await;
                         monitor.record_failure(&name).await;
                     }
                 }
