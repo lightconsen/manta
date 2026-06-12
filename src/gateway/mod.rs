@@ -1474,6 +1474,44 @@ impl Gateway {
                 .await;
         }
 
+ // Create shared channels map early so plugin channel callbacks can capture it
+        let channels = Arc::new(RwLock::new(HashMap::<String, Arc<dyn Channel>>::new()));
+
+ // Wire plugin manager channel callbacks (plugin.json plugins with Channel capability)
+        #[cfg(feature = "plugins")]
+        {
+            use crate::channels::IncomingMessage;
+            use tokio::sync::mpsc;
+
+            let (plugin_inbound_tx, _plugin_inbound_rx) =
+                mpsc::unbounded_channel::<IncomingMessage>();
+
+            let channels_reg = channels.clone();
+            let channels_unreg = channels.clone();
+            plugin_manager
+                .set_channel_callbacks(
+                    Arc::new(
+                        move |name: String, channel: Arc<dyn crate::channels::Channel + Send + Sync>| {
+                            let ch = channels_reg.clone();
+                            tokio::spawn(async move {
+                                ch.write().await.insert(name.clone(), channel);
+                                info!("Registered plugin channel '{}'", name);
+                            });
+                        },
+                    ),
+                    Arc::new(move |name: String| {
+                        let ch = channels_unreg.clone();
+                        tokio::spawn(async move {
+                            ch.write().await.remove(&name);
+                            info!("Deregistered plugin channel '{}'", name);
+                        });
+                    }),
+                )
+                .await;
+
+            plugin_manager.set_channel_message_tx(plugin_inbound_tx).await;
+        }
+
  // Create skill manager early so it can be shared with ACP builder and GatewayState
         let skills_manager =
             Arc::new(tokio::sync::RwLock::new(crate::skills::SkillManager::new().await?));
@@ -1600,7 +1638,7 @@ impl Gateway {
             config: Arc::new(RwLock::new(config.clone())),
             start_time: Instant::now(),
             config_path: config_path.clone(),
-            channels: Arc::new(RwLock::new(HashMap::new())),
+            channels,
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_routing: Arc::new(RwLock::new(HashMap::new())),
             agent_router,

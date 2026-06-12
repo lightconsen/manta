@@ -131,6 +131,11 @@ pub fn teams_dir() -> PathBuf {
     syscity_dir().join("teams")
 }
 
+/// Get the plugins data directory (~/.syscity/plugins/data)
+pub fn plugins_data_dir() -> PathBuf {
+    syscity_dir().join("plugins").join("data")
+}
+
 /// Get the extensions directory (~/.syscity/extensions)
 pub fn extensions_dir() -> PathBuf {
     syscity_dir().join("extensions")
@@ -214,6 +219,7 @@ pub async fn init() -> crate::Result<PathBuf> {
         &artifacts_dir(),
         &budget_dir(),
         &groups_dir(),
+        &plugins_data_dir(),
     ];
 
     for dir in &dirs {
@@ -263,6 +269,7 @@ pub fn init_sync() -> crate::Result<PathBuf> {
         &artifacts_dir(),
         &budget_dir(),
         &groups_dir(),
+        &plugins_data_dir(),
     ];
 
     for dir in &dirs {
@@ -460,6 +467,13 @@ mod tests {
     #[test]
     fn test_extensions_dir() {
         assert!(extensions_dir().to_string_lossy().contains("extensions"));
+    }
+
+    #[test]
+    fn test_plugins_data_dir() {
+        let dir = plugins_data_dir();
+        assert!(dir.to_string_lossy().contains("plugins"));
+        assert!(dir.to_string_lossy().contains("data"));
     }
 
     #[test]

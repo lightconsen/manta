@@ -3,9 +3,11 @@
 //! Loads and executes plugins using Wasmtime for sandboxing.
 
 use super::manifest::PluginManifest;
+use crate::dirs;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
 
 /// Shared state accessible by all plugin instances.
@@ -159,6 +161,14 @@ impl PluginState {
     }
 }
 
+/// Serialisable snapshot of plugin state for disk persistence.
+#[cfg(feature = "plugins")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PluginPersistentState {
+    memory: HashMap<String, Vec<u8>>,
+    kv_store: HashMap<String, HashMap<String, String>>,
+}
+
 /// Plugin runtime - manages plugin lifecycle
 pub struct PluginRuntime {
     plugins: Arc<RwLock<HashMap<String, PluginInstance>>>,
@@ -168,6 +178,12 @@ pub struct PluginRuntime {
     linker: wasmtime::Linker<PluginState>,
     #[cfg(feature = "plugins")]
     shared_state: Arc<PluginSharedState>,
+    /// Event subscribers: plugin_id/wildcard → senders
+    #[cfg(feature = "plugins")]
+    event_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
+    /// Receiver side of the plugin event channel
+    #[cfg(feature = "plugins")]
+    event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
 }
 
 impl PluginRuntime {
@@ -177,16 +193,31 @@ impl PluginRuntime {
         {
             let engine = wasmtime::Engine::default();
             let mut linker = wasmtime::Linker::new(&engine);
-            let shared_state = Arc::new(PluginSharedState::new());
+            let (event_tx, event_rx) = mpsc::unbounded_channel::<PluginEvent>();
+            let shared_state = Arc::new(PluginSharedState::with_events(event_tx));
+            let event_subscribers: Arc<
+                RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>,
+            > = Arc::new(RwLock::new(HashMap::new()));
 
             // Define host functions for plugins
             Self::define_host_functions(&mut linker)?;
+
+            let subscribers_clone = event_subscribers.clone();
+
+            // Spawn event dispatch task (only if tokio runtime is active)
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let _ = handle.spawn(async move {
+                    Self::event_dispatch_loop(subscribers_clone, event_rx).await;
+                });
+            }
 
             Ok(Self {
                 plugins: Arc::new(RwLock::new(HashMap::new())),
                 engine,
                 linker,
                 shared_state,
+                event_subscribers,
+                event_rx: Arc::new(Mutex::new(None)),
             })
         }
 
@@ -722,6 +753,162 @@ impl PluginRuntime {
         Ok(())
     }
 
+    /// Subscribe to events from a specific plugin (or `"*"` for all).
+    #[cfg(feature = "plugins")]
+    pub async fn subscribe_events(
+        &self,
+        pattern: &str,
+    ) -> mpsc::UnboundedReceiver<PluginEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.event_subscribers
+            .write()
+            .await
+            .entry(pattern.to_string())
+            .or_default()
+            .push(tx);
+        rx
+    }
+
+    /// Unsubscribe events for a given pattern by dropping the receiver.
+    #[cfg(feature = "plugins")]
+    pub async fn unsubscribe_events(
+        &self,
+        pattern: &str,
+        rx: mpsc::UnboundedReceiver<PluginEvent>,
+    ) {
+        drop(rx);
+        self.event_subscribers.write().await.remove(pattern);
+    }
+
+    /// Background dispatch loop: receives events from the plugin channel
+    /// and forwards them to matching subscribers.
+    #[cfg(feature = "plugins")]
+    async fn event_dispatch_loop(
+        subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
+        mut rx: mpsc::UnboundedReceiver<PluginEvent>,
+    ) {
+        while let Some(event) = rx.recv().await {
+            let subs = subscribers.read().await;
+            // Dispatch to exact plugin_id subscribers
+            if let Some(senders) = subs.get(&event.plugin_id) {
+                for tx in senders {
+                    let _ = tx.send(event.clone());
+                }
+            }
+            // Dispatch to wildcard subscribers
+            if let Some(senders) = subs.get("*") {
+                for tx in senders {
+                    let _ = tx.send(event.clone());
+                }
+            }
+        }
+        warn!("Plugin event dispatch loop ended");
+    }
+
+    /// Save plugin state (memory + KV store) to disk (best-effort).
+    #[cfg(feature = "plugins")]
+    async fn save_plugin_state(
+        &self,
+        plugin_id: &str,
+        memory: &Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    ) {
+        let state_dir = dirs::plugins_data_dir().join(plugin_id);
+        let state_path = state_dir.join("state.json");
+
+        let memory = memory.read().await.clone();
+        let kv_store = self.shared_state.kv_store.read().await.clone();
+
+        let persistent = PluginPersistentState { memory, kv_store };
+
+        match serde_json::to_string_pretty(&persistent) {
+            Ok(json) => {
+                let tmp_path = state_path.with_extension("tmp");
+                if let Err(e) = std::fs::create_dir_all(&state_dir) {
+                    warn!("Failed to create plugin state dir for '{}': {}", plugin_id, e);
+                    return;
+                }
+                if let Err(e) = std::fs::write(&tmp_path, &json) {
+                    warn!("Failed to write plugin state for '{}': {}", plugin_id, e);
+                    return;
+                }
+                if let Err(e) = std::fs::rename(&tmp_path, &state_path) {
+                    warn!("Failed to atomically rename plugin state for '{}': {}", plugin_id, e);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize plugin state for '{}': {}", plugin_id, e);
+            }
+        }
+    }
+
+    /// Load plugin state from disk (best-effort).
+    #[cfg(feature = "plugins")]
+    async fn load_plugin_state(
+        &self,
+        plugin_id: &str,
+    ) -> (Option<HashMap<String, Vec<u8>>>, Option<HashMap<String, String>>) {
+        let state_path = dirs::plugins_data_dir().join(plugin_id).join("state.json");
+        if !state_path.exists() {
+            return (None, None);
+        }
+
+        match tokio::fs::read_to_string(&state_path).await {
+            Ok(content) => match serde_json::from_str::<PluginPersistentState>(&content) {
+                Ok(persistent) => {
+                    // Extract this plugin's kv entries from the outer map
+                    let kv = persistent.kv_store.get(plugin_id).cloned();
+                    (Some(persistent.memory), kv)
+                }
+                Err(e) => {
+                    warn!("Failed to deserialize plugin state for '{}': {}", plugin_id, e);
+                    (None, None)
+                }
+            },
+            Err(e) => {
+                warn!("Failed to read plugin state for '{}': {}", plugin_id, e);
+                (None, None)
+            }
+        }
+    }
+
+    /// Validate manifest version fields, logging warnings on issues (non-fatal).
+    #[cfg(feature = "plugins")]
+    fn validate_manifest_version(manifest: &PluginManifest) {
+        // Validate plugin's own version string
+        if let Err(e) = crate::skills::semver::Version::parse(&manifest.version) {
+            warn!(
+                "Plugin '{}' has invalid semver version '{}': {}",
+                manifest.id, manifest.version, e
+            );
+        }
+
+        // Check syscity_version constraint if present
+        if let Some(ref req_str) = manifest.syscity_version {
+            match req_str.parse::<crate::skills::semver::VersionReq>() {
+                Ok(req) => {
+                    let syscity_ver = crate::skills::semver::Version::new(0, 1, 2);
+                    if !req.matches(&syscity_ver) {
+                        warn!(
+                            "Plugin '{}' requires syscity version '{}' but current is '{}'",
+                            manifest.id, req_str, syscity_ver
+                        );
+                    } else {
+                        debug!(
+                            "Plugin '{}' syscity_version constraint '{}' satisfied",
+                            manifest.id, req_str
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Plugin '{}' has invalid syscity_version constraint '{}': {}",
+                        manifest.id, req_str, e
+                    );
+                }
+            }
+        }
+    }
+
     /// Load a plugin from a directory
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
         let manifest_path = path.join("plugin.json");
@@ -750,6 +937,10 @@ impl PluginRuntime {
 
         let plugin_id = manifest.id.clone();
 
+        // Validate manifest version fields (non-fatal warnings)
+        #[cfg(feature = "plugins")]
+        Self::validate_manifest_version(&manifest);
+
         info!("Loading plugin '{}' ({}) from {:?}", manifest.name, plugin_id, path);
 
         // Load config if present
@@ -765,10 +956,20 @@ impl PluginRuntime {
 
         #[cfg(feature = "plugins")]
         let (wasm_store, instance) = {
+            // Load persisted state from disk
+            let (preserved_memory, persisted_kv) = self.load_plugin_state(&plugin_id).await;
+            if let Some(kv_entries) = persisted_kv {
+                let mut store = self.shared_state.kv_store.write().await;
+                let plugin_store = store.entry(plugin_id.clone()).or_default();
+                for (k, v) in kv_entries {
+                    plugin_store.insert(k, v);
+                }
+            }
+
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), &plugin_id, None)
+                    self.load_wasm_plugin(&wasm_path, config.clone(), &plugin_id, preserved_memory)
                         .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
@@ -863,6 +1064,15 @@ impl PluginRuntime {
         let mut plugins = self.plugins.write().await;
 
         if let Some(plugin) = plugins.remove(plugin_id) {
+            // Save plugin state to disk before dropping (best-effort)
+            #[cfg(feature = "plugins")]
+            {
+                if let Some(store) = &plugin.wasm_store {
+                    let state = store.data();
+                    let memory = state.memory.clone();
+                    self.save_plugin_state(plugin_id, &memory).await;
+                }
+            }
             info!("Unloaded plugin '{}'", plugin.manifest.name);
             Ok(true)
         } else {
@@ -917,6 +1127,10 @@ impl PluginRuntime {
                 message: format!("Invalid plugin manifest: {}", e),
             }
         })?;
+
+        // Validate manifest version fields (non-fatal warnings)
+        #[cfg(feature = "plugins")]
+        Self::validate_manifest_version(&manifest);
 
         // Load config
         let config_path = path.join("config.json");
@@ -1411,7 +1625,16 @@ impl PluginRuntime {
     pub async fn shutdown(&self) -> crate::Result<()> {
         let mut plugins = self.plugins.write().await;
 
-        for (id, _plugin) in plugins.drain() {
+        for (id, plugin) in plugins.drain() {
+            // Save plugin state to disk before shutting down (best-effort)
+            #[cfg(feature = "plugins")]
+            {
+                if let Some(store) = &plugin.wasm_store {
+                    let state = store.data();
+                    let memory = state.memory.clone();
+                    self.save_plugin_state(&id, &memory).await;
+                }
+            }
             info!("Shutting down plugin '{}'", id);
         }
 
@@ -1450,6 +1673,7 @@ mod tests {
             id: id.to_string(),
             name: format!("Test Plugin {}", id),
             version: "1.0.0".to_string(),
+            syscity_version: None,
             description: "A test plugin".to_string(),
             author: None,
             main: None,

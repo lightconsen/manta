@@ -42,6 +42,7 @@ pub use config_cmd::ConfigCommands;
 pub use cron::CronCommands;
 pub use device::DeviceCommands;
 pub use doctor::DoctorCommands;
+pub use doctor::{DiagnosticHint, HintSeverity};
 pub use entity::EntityCommands;
 pub use export::ExportCommands;
 pub use mcp::McpCommands;

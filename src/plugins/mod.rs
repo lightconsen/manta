@@ -28,6 +28,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::cli::{DiagnosticHint, HintSeverity};
 use crate::tools::ToolRegistry;
 
 /// Callback type for registering a plugin-backed provider with the system.
@@ -36,6 +37,15 @@ pub type ProviderRegisterFn =
 
 /// Callback type for unregistering a plugin-backed provider.
 pub type ProviderUnregisterFn = Arc<dyn Fn(String) + Send + Sync>;
+
+/// Callback type for registering a plugin-backed channel with the system.
+#[cfg(feature = "plugins")]
+pub type ChannelRegisterFn =
+    Arc<dyn Fn(String, Arc<dyn crate::channels::Channel + Send + Sync>) + Send + Sync>;
+
+/// Callback type for unregistering a plugin-backed channel.
+#[cfg(feature = "plugins")]
+pub type ChannelUnregisterFn = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Plugin manager - high-level interface for plugin operations
 #[allow(dead_code)]
@@ -48,6 +58,14 @@ pub struct PluginManager {
     trace_enabled: Arc<AtomicBool>,
     provider_register: RwLock<Option<ProviderRegisterFn>>,
     provider_unregister: RwLock<Option<ProviderUnregisterFn>>,
+    /// Callbacks for registering/unregistering plugin channels
+    #[cfg(feature = "plugins")]
+    channel_register: RwLock<Option<ChannelRegisterFn>>,
+    #[cfg(feature = "plugins")]
+    channel_unregister: RwLock<Option<ChannelUnregisterFn>>,
+    /// Message sender used to construct PluginChannel instances
+    #[cfg(feature = "plugins")]
+    channel_message_tx: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>>,
 }
 
 impl PluginManager {
@@ -68,6 +86,12 @@ impl PluginManager {
             trace_enabled: Arc::new(AtomicBool::new(false)),
             provider_register: RwLock::new(None),
             provider_unregister: RwLock::new(None),
+            #[cfg(feature = "plugins")]
+            channel_register: RwLock::new(None),
+            #[cfg(feature = "plugins")]
+            channel_unregister: RwLock::new(None),
+            #[cfg(feature = "plugins")]
+            channel_message_tx: RwLock::new(None),
         })
     }
 
@@ -81,6 +105,29 @@ impl PluginManager {
         *reg = Some(register);
         let mut unreg = self.provider_unregister.write().await;
         *unreg = Some(unregister);
+    }
+
+    /// Set callbacks for registering / unregistering plugin-backed channels.
+    #[cfg(feature = "plugins")]
+    pub async fn set_channel_callbacks(
+        &self,
+        register: ChannelRegisterFn,
+        unregister: ChannelUnregisterFn,
+    ) {
+        let mut reg = self.channel_register.write().await;
+        *reg = Some(register);
+        let mut unreg = self.channel_unregister.write().await;
+        *unreg = Some(unregister);
+    }
+
+    /// Set the channel message sender used to construct PluginChannel instances.
+    #[cfg(feature = "plugins")]
+    pub async fn set_channel_message_tx(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>,
+    ) {
+        let mut mt = self.channel_message_tx.write().await;
+        *mt = Some(tx);
     }
 
  /// Attach a `ToolRegistry` so that plugin tools are automatically
@@ -120,21 +167,25 @@ impl PluginManager {
         Ok(count)
     }
 
- /// Load a plugin from a directory and register its tools and providers.
+ /// Load a plugin from a directory and register its tools, providers, and channels.
     pub async fn load_plugin(&self, path: &std::path::Path) -> crate::Result<String> {
         let plugin_id = self.runtime.load_plugin(path).await?;
 
         if let Some(plugin) = self.runtime.get_plugin(&plugin_id).await {
             self.register_plugin_tools(&plugin).await;
             self.register_plugin_providers(&plugin).await;
+            #[cfg(feature = "plugins")]
+            self.register_plugin_channels(&plugin).await;
         }
 
         Ok(plugin_id)
     }
 
- /// Unload a plugin, unregistering its tools, providers, and hooks.
+ /// Unload a plugin, unregistering its tools, providers, channels, and hooks.
     pub async fn unload_plugin(&self, plugin_id: &str) -> crate::Result<bool> {
         self.deregister_plugin_tools(plugin_id).await;
+        #[cfg(feature = "plugins")]
+        self.deregister_plugin_channels(plugin_id).await;
         self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
         self.runtime.unload_plugin(plugin_id).await
@@ -148,6 +199,8 @@ impl PluginManager {
         info!("Reloading plugin '{}'...", plugin_id);
 
         self.deregister_plugin_tools(plugin_id).await;
+        #[cfg(feature = "plugins")]
+        self.deregister_plugin_channels(plugin_id).await;
         self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
 
@@ -155,6 +208,8 @@ impl PluginManager {
 
         if let Some(plugin) = self.runtime.get_plugin(&reloaded_id).await {
             self.register_plugin_tools(&plugin).await;
+            #[cfg(feature = "plugins")]
+            self.register_plugin_channels(&plugin).await;
             self.register_plugin_providers(&plugin).await;
         }
 
@@ -254,9 +309,195 @@ impl PluginManager {
         }
     }
 
+    /// Register a plugin's channel capabilities with the system.
+    #[cfg(feature = "plugins")]
+    async fn register_plugin_channels(&self, plugin: &PluginInstance) {
+        use crate::channels::PluginChannel;
+
+        let register_fn = self.channel_register.read().await;
+        let message_tx = self.channel_message_tx.read().await;
+
+        let register = match *register_fn {
+            Some(ref r) => r,
+            None => return,
+        };
+        let tx = match *message_tx {
+            Some(ref t) => t.clone(),
+            None => return,
+        };
+
+        if let Some(ref capabilities) = plugin.manifest.capabilities {
+            for cap in capabilities {
+                if let PluginCapability::Channel { channel_type: _, name } = cap {
+                    let wasm_path = match plugin.manifest.main {
+                        Some(ref main) => plugin.path.join(main),
+                        None => {
+                            warn!(
+                                "Plugin '{}' declares Channel capability but no WASM main file",
+                                plugin.id()
+                            );
+                            continue;
+                        }
+                    };
+
+                    if !wasm_path.exists() {
+                        warn!(
+                            "Plugin '{}' channel WASM not found: {:?}",
+                            plugin.id(),
+                            wasm_path
+                        );
+                        continue;
+                    }
+
+                    match PluginChannel::load(&wasm_path, plugin.config.clone(), tx.clone()).await
+                    {
+                        Ok(channel) => {
+                            let channel: Arc<dyn crate::channels::Channel> = Arc::new(channel);
+                            register(name.clone(), channel);
+                            info!(
+                                "Registered plugin channel '{}' from plugin '{}'",
+                                name,
+                                plugin.id()
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to load PluginChannel from {:?}: {}",
+                                wasm_path, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Deregister a plugin's channels from the system.
+    #[cfg(feature = "plugins")]
+    async fn deregister_plugin_channels(&self, plugin_id: &str) {
+        let unregister_fn = self.channel_unregister.read().await;
+        if let Some(ref unregister) = *unregister_fn {
+            if let Some(plugin) = self.runtime.get_plugin(plugin_id).await {
+                if let Some(ref capabilities) = plugin.manifest.capabilities {
+                    for cap in capabilities {
+                        if let PluginCapability::Channel { name, .. } = cap {
+                            unregister(name.clone());
+                            debug!(
+                                "Deregistered plugin channel '{}' from plugin '{}'",
+                                name, plugin_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
  /// Get a plugin instance
     pub async fn get_plugin(&self, plugin_id: &str) -> Option<PluginInstance> {
         self.runtime.get_plugin(plugin_id).await
+    }
+
+    /// Run diagnostics on all loaded plugins.
+    ///
+    /// Checks: valid semver, syscity_version compatibility, WASM file existence,
+    /// WASM compilation status. Returns a list of `DiagnosticHint` entries.
+    pub async fn diagnose(&self) -> Vec<DiagnosticHint> {
+        let mut hints = Vec::new();
+        let plugins = self.runtime.list_plugins().await;
+
+        for plugin in &plugins {
+            // Check 1: valid semver version
+            if let Err(e) = crate::skills::semver::Version::parse(&plugin.manifest.version) {
+                hints.push(DiagnosticHint {
+                    category: format!("plugin:{}", plugin.manifest.id),
+                    message: format!(
+                        "Plugin '{}' has invalid semver version '{}': {}",
+                        plugin.manifest.name, plugin.manifest.version, e
+                    ),
+                    severity: HintSeverity::Warning,
+                });
+            }
+
+            // Check 2: syscity_version constraint
+            if let Some(ref req_str) = plugin.manifest.syscity_version {
+                match req_str.parse::<crate::skills::semver::VersionReq>() {
+                    Ok(req) => {
+                        let syscity_ver = crate::skills::semver::Version::new(0, 1, 2);
+                        if !req.matches(&syscity_ver) {
+                            hints.push(DiagnosticHint {
+                                category: format!("plugin:{}", plugin.manifest.id),
+                                message: format!(
+                                    "Plugin '{}' requires syscity_version '{}' but current is '{}'",
+                                    plugin.manifest.name, req_str, syscity_ver
+                                ),
+                                severity: HintSeverity::Warning,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        hints.push(DiagnosticHint {
+                            category: format!("plugin:{}", plugin.manifest.id),
+                            message: format!(
+                                "Plugin '{}' has invalid syscity_version constraint '{}': {}",
+                                plugin.manifest.name, req_str, e
+                            ),
+                            severity: HintSeverity::Warning,
+                        });
+                    }
+                }
+            }
+
+            // Check 3: WASM file exists and compiles
+            #[cfg(feature = "plugins")]
+            if let Some(ref main) = plugin.manifest.main {
+                let wasm_path = plugin.path.join(main);
+                if !wasm_path.exists() {
+                    hints.push(DiagnosticHint {
+                        category: format!("plugin:{}", plugin.manifest.id),
+                        message: format!(
+                            "Plugin '{}' WASM file not found: {:?}",
+                            plugin.manifest.name, wasm_path
+                        ),
+                        severity: HintSeverity::Error,
+                    });
+                } else if plugin.wasm_store.is_none() {
+                    hints.push(DiagnosticHint {
+                        category: format!("plugin:{}", plugin.manifest.id),
+                        message: format!(
+                            "Plugin '{}' WASM not compiled (failed at load time)",
+                            plugin.manifest.name
+                        ),
+                        severity: HintSeverity::Warning,
+                    });
+                }
+            }
+
+            // Check 4: plugin has no main but has Tool capabilities
+            if plugin.manifest.main.is_none()
+                && plugin.manifest.capabilities.is_some()
+            {
+                let has_wasm_cap = plugin
+                    .manifest
+                    .capabilities
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|c| matches!(c, crate::plugins::manifest::PluginCapability::Tools { .. }));
+                if has_wasm_cap {
+                    hints.push(DiagnosticHint {
+                        category: format!("plugin:{}", plugin.manifest.id),
+                        message: format!(
+                            "Plugin '{}' declares Tools capability but no WASM main file",
+                            plugin.manifest.name
+                        ),
+                        severity: HintSeverity::Warning,
+                    });
+                }
+            }
+        }
+
+        hints
     }
 
  /// List all plugins
@@ -309,6 +550,7 @@ impl PluginManager {
             id: format!("com.example.{}", name),
             name: name.to_string(),
             version: "0.1.0".to_string(),
+            syscity_version: None,
             description: description.to_string(),
             author: Some("Your Name".to_string()),
             main: None,

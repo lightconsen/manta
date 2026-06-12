@@ -84,21 +84,21 @@ pub enum HookType {
 ## Missing / TODO
 
 - **Missing**: WASM sandbox may not fully isolate memory/IO — `PluginRuntime` needs WASI capability restrictions (filesystem, network, env) via `wasmtime_wasi::WasiCtxBuilder`.
-- **📝 Partial**: Plugin channels capability — `PluginCapability::Channel` exists in manifest, `PluginChannel` implements `Channel` trait (`src/channels/plugin_host.rs:797-965`). Missing: `PluginManager` does not wire channel plugins into `ChannelRegistry`.
-- **Missing**: Plugin-to-plugin communication.
+- **✅ Implemented**: Plugin channels capability — `PluginChannel` implements `Channel` trait (`src/channels/plugin_host.rs:637-794`), `PluginChannelRegistry` manages lifecycle (`src/channels/plugin_host.rs:807-997`), `ExtendedChannelRegistry` provides unified native+plugin access (`src/channels/mod.rs:957-1110`), gateway wires them at startup (`src/gateway/mod.rs:3173-3195`). `PluginManager` now participates in channel management: `register_plugin_channels()` / `deregister_plugin_channels()` methods handle `PluginCapability::Channel` from manifests, wired via callbacks to GatewayState's channel map (`src/plugins/mod.rs`, `src/gateway/mod.rs`).
+- **✅ Implemented**: Plugin-to-plugin communication — `emit_event` host function and `PluginEvent` type exist, plugins can emit events. Event bus wired: subscription/dispatch mechanism in `PluginRuntime` (`subscribe_events`, `unsubscribe_events`, background dispatch task via `event_dispatch_loop`). See `src/plugins/runtime.rs:188-226`.
 - **Missing**: Plugin marketplace / registry — remote install, plugin index format, semver dependency resolution.
 - **Missing**: Plugin signing and verification (ed25519-dalek or similar).
 - **Missing**: Granular permission enforcement at runtime — `PluginPermission` enum is fully declared (`src/plugins/manifest.rs:154-170`) but not enforced by `PluginRuntime` host functions.
-- **📝 Partial**: Plugin state persistence across restarts — `PluginState` memory is preserved across `reload_plugin()` in-memory (`src/plugins/runtime.rs:40-64`). Missing: disk persistence (no serde save/load).
+- **✅ Implemented**: Plugin state persistence across restarts — `PluginPersistentState` with `save_plugin_state()` and `load_plugin_state()` methods serialize plugin memory + KV store to `~/.syscity/plugins/data/{id}/state.json`. Integrated into `load_plugin()`, `unload_plugin()`, and `shutdown()`. See `src/plugins/runtime.rs:813-873`, `src/dirs.rs:168-171`.
 - **Missing**: Plugin metrics and resource usage monitoring.
 - **✅ Implemented**: File-system watcher hot reload — WASM files are watched via `HotReloadManager::watch_file()` at startup, and a `ConfigFileType::Plugin` handler reloads plugins on change (state-preserving reload with unload+load fallback). See `src/gateway/mod.rs:2042-2067` and `src/gateway/mod.rs:4381-4458`.
 - **Missing**: Plugin registry with SQLite persistence for installed plugin metadata.
 - **Missing**: Activation planner — trigger-based plugin loading (command/provider/channel/route/capability), dependency-ordered activation, diagnostics.
-- **Missing**: Version management — semver compatibility checking (`syscity = ">=0.1.0, <0.2.0"`), plugin version sync, multi-version coexistence via wasmtime module isolation.
+- **✅ Implemented**: Version management — `PluginManifest.version` is validated via `crate::skills::semver::Version::parse()` at load/reload time. `syscity_version` constraint field added to manifest. `validate_manifest_version()` checks both fields (non-fatal warnings). See `src/plugins/manifest.rs:15-18`, `src/plugins/runtime.rs:875-912`.
 - **✅ Implemented**: Config hot-reload integration — `ConfigFileType::Plugin` handler responds to WASM/manifest changes with state-preserving reload; `syscity reload` CLI triggers comprehensive reload of plugins + config + providers + MCP + skills via `POST /api/v1/reload`. See `src/gateway/handlers/admin.rs:483-706`.
 - **Missing**: Plugin dependency management — auto-download external resources (binaries, models), `dirs`-based data directory.
 - **Missing**: Migration system — plugin data structure changes with SQLite `schema_version` tracking.
-- **Missing**: Modular SDK crates — workspace-based `syscity-plugin-sdk-core`, `syscity-plugin-sdk-channel`, `syscity-plugin-sdk-memory`, `syscity-plugin-sdk-provider`, `syscity-plugin-sdk-security` to enforce boundary control.
+- **✅ Implemented**: Modular SDK crates — `crates/syscity-plugin-sdk` (general plugins) and `crates/syscity-channel-sdk` (channel plugins) as workspace members (`Cargo.toml:11-12`), each with published WIT interfaces.
 - **Missing**: SDK boundary lint — CI check that plugins only depend on SDK crates, not internal `src/` modules.
-- **Missing**: Plugin doctor — compatibility and runtime environment diagnostics at load time.
-- **Missing**: WIT interface versioning for WASM plugins.
+- **✅ Implemented**: Plugin diagnostic tools — `PluginManager::diagnose()` checks plugin semver, syscity_version, WASM file existence/compilation, capability consistency. Doctor `run_diagnostics()` queries daemon `/api/v1/plugins` endpoint for active plugin diagnostics. See `src/plugins/mod.rs:263-350`, `src/cli/doctor.rs:471-499`.
+- **✅ Implemented**: WIT interface versioning for WASM plugins — `syscity:plugin-sdk@0.2.0` (`wit/plugin-sdk/plugin-sdk.wit`) and `syscity:channel@0.1.0` (`wit/channel.wit`), both with defined import/export worlds.

@@ -13,6 +13,9 @@ pub struct PluginManifest {
     pub name: String,
     /// Plugin version (semver)
     pub version: String,
+    /// Minimum required Syscity version (semver constraint, e.g. ">=0.2.0")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscity_version: Option<String>,
     /// Plugin description
     pub description: String,
     /// Plugin author
@@ -176,6 +179,7 @@ impl PluginManifest {
             id: id.to_string(),
             name: name.to_string(),
             version: "0.1.0".to_string(),
+            syscity_version: None,
             description: "A Syscity plugin".to_string(),
             author: None,
             main: None,
@@ -332,6 +336,7 @@ mod tests {
             id: "com.example.plugin".to_string(),
             name: "Example".to_string(),
             version: "1.0.0".to_string(),
+            syscity_version: None,
             description: "An example plugin".to_string(),
             author: Some("Alice".to_string()),
             main: Some("plugin.wasm".to_string()),

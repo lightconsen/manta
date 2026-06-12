@@ -468,13 +468,42 @@ async fn run_diagnostics(
         }
     }
 
-    // Plugin diagnostics (extension point — empty by default)
-    let plugin_registry: Vec<Box<dyn DoctorPlugin>> = Vec::new();
-    for plugin in &plugin_registry {
-        for provider_diag in &provider_diagnostics {
-            let hints = plugin.diagnose(&provider_diag.provider).await;
-            for hint in hints {
-                plugin_hints.push(hint);
+    // Plugin diagnostics — query daemon for plugin list
+    let plugins_resp = client
+        .get(format!("{}/api/v1/plugins", DAEMON_URL))
+        .send()
+        .await;
+
+    if let Ok(resp) = plugins_resp {
+        if let Ok(body) = resp.json::<serde_json::Value>().await {
+            if let Some(plugins) = body.get("plugins").and_then(|v| v.as_array()) {
+                for p in plugins {
+                    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                    let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    if !enabled {
+                        plugin_hints.push(DiagnosticHint {
+                            category: format!("plugin:{}", id),
+                            message: format!("Plugin '{}' ({}) is disabled", name, id),
+                            severity: HintSeverity::Warning,
+                        });
+                    }
+
+                    // Check for version info if available
+                    if let Some(version) = p.get("version").and_then(|v| v.as_str()) {
+                        if crate::skills::semver::Version::parse(version).is_err() {
+                            plugin_hints.push(DiagnosticHint {
+                                category: format!("plugin:{}", id),
+                                message: format!(
+                                    "Plugin '{}' has invalid semver version '{}'",
+                                    name, version
+                                ),
+                                severity: HintSeverity::Warning,
+                            });
+                        }
+                    }
+                }
             }
         }
     }
