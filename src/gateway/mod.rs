@@ -2533,6 +2533,13 @@ impl Gateway {
             .route("/api/v1/skills/{name}/disable", post(disable_skill_handler))
             .route("/api/v1/skills/{name}/run", post(run_skill_handler))
             .route("/api/v1/skills/{name}/uninstall", post(uninstall_skill_handler))
+ // Device pairing API
+            .route("/api/v1/device/pairing/pending", get(list_device_pending_handler))
+            .route("/api/v1/device/pairing/authorized", get(list_device_authorized_handler))
+            .route("/api/v1/device/pairing/approve", post(approve_device_handler))
+            .route("/api/v1/device/pairing/reject", post(reject_device_handler))
+            .route("/api/v1/device/pairing/revoke", post(revoke_device_handler))
+            .route("/api/v1/device/pairing/qr/{code}", get(device_qr_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);

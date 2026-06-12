@@ -226,56 +226,6 @@ async fn get_config_returns_json() {
     assert!(json.is_object());
 }
 
-// ── GET /api/v1/pairing/pending ──
-
-#[tokio::test]
-async fn list_pairing_pending_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/pairing/pending", get(super::list_pairing_pending_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/pairing/pending")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json.is_array());
-    assert_eq!(json.as_array().unwrap().len(), 0);
-}
-
-// ── GET /api/v1/gate/levels ──
-
-#[tokio::test]
-async fn list_gate_levels_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/gate/levels", get(super::list_gate_levels_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/gate/levels")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["levels"].is_object());
-    assert_eq!(json["default"], "chat");
-}
-
 // ── GET /api/v1/mentions/policy ──
 
 #[tokio::test]

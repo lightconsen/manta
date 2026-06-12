@@ -160,6 +160,9 @@ ort = { version = "2.0.0-rc.12", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 ndarray = { version = "0.17", optional = true }
 
+# QR code generation for device pairing
+qrcode = "0.14"
+
 # Channels (optional)
 teloxide = { version = "0.17", features = ["macros"], optional = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"], optional = true }

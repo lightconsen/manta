@@ -18,7 +18,7 @@ use tracing::{info, warn};
 /// A pending device pairing request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingDeviceRequest {
-    /// Short pairing code (e.g., "A3F7K").
+    /// Short pairing code (e.g., "A3F7K2X9").
     pub code: String,
     /// Device unique ID.
     pub device_id: String,
@@ -71,21 +71,35 @@ pub struct DevicePairingStore {
     pending_index: Arc<RwLock<HashMap<String, String>>>,
     authorized: Arc<RwLock<HashMap<String, AuthorizedDevice>>>,
     default_ttl: Duration,
+    /// Max total pending requests allowed (across all devices).
+    max_pending: usize,
 }
 
 impl Default for DevicePairingStore {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DevicePairingStore {
-    pub fn new() -> Self {
         Self {
             pending: Arc::new(RwLock::new(HashMap::new())),
             pending_index: Arc::new(RwLock::new(HashMap::new())),
             authorized: Arc::new(RwLock::new(HashMap::new())),
             default_ttl: Duration::from_secs(3600),
+            max_pending: 100,
+        }
+    }
+}
+
+impl DevicePairingStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with custom configuration.
+    pub fn with_config(default_ttl: Duration, max_pending: usize) -> Self {
+        Self {
+            pending: Arc::new(RwLock::new(HashMap::new())),
+            pending_index: Arc::new(RwLock::new(HashMap::new())),
+            authorized: Arc::new(RwLock::new(HashMap::new())),
+            default_ttl,
+            max_pending,
         }
     }
 
@@ -114,6 +128,18 @@ impl DevicePairingStore {
                         return DeviceAccessResult::AlreadyPending { code: code.clone() };
                     }
                 }
+            }
+        }
+
+        // Enforce max pending limit
+        {
+            let pending = self.pending.read().await;
+            if pending.len() >= self.max_pending {
+                warn!(
+                    "Device pairing max pending limit reached ({}), rejecting request for {}",
+                    self.max_pending, device_id
+                );
+                return DeviceAccessResult::RateLimited;
             }
         }
 
@@ -185,6 +211,23 @@ impl DevicePairingStore {
         Some(token)
     }
 
+    /// Reject/deny a pending request by code.
+    pub async fn reject(&self, code: &str) -> Option<PendingDeviceRequest> {
+        let req = {
+            let mut pending = self.pending.write().await;
+            pending.remove(code)?
+        };
+        {
+            let mut index = self.pending_index.write().await;
+            index.remove(&req.device_id);
+        }
+        info!(
+            "Device pairing rejected: code={} device_id={}",
+            code, req.device_id
+        );
+        Some(req)
+    }
+
     /// Revoke an authorized device.
     pub async fn revoke(&self, device_id: &str) -> bool {
         let mut auth = self.authorized.write().await;
@@ -224,9 +267,26 @@ impl DevicePairingStore {
         use rand::Rng;
         const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         let mut rng = rand::thread_rng();
-        (0..5)
+        (0..8)
             .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
             .collect()
+    }
+
+    /// Generate a pairing URI suitable for QR encoding.
+    /// Format: syscity://pair/{code}
+    pub fn pairing_uri(code: &str) -> String {
+        format!("syscity://pair/{}", code)
+    }
+
+    /// Generate an SVG string of a QR code encoding the given text.
+    pub fn generate_qr_svg(data: &str) -> Result<String, String> {
+        use qrcode::QrCode;
+        let code = QrCode::new(data.as_bytes()).map_err(|e| e.to_string())?;
+        let svg = code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(3, 3)
+            .build();
+        Ok(svg)
     }
 }
 
@@ -244,7 +304,7 @@ mod tests {
             DeviceAccessResult::PairingRequired { code } => code,
             _ => panic!("Expected PairingRequired"),
         };
-        assert_eq!(code.len(), 5);
+        assert_eq!(code.len(), 8);
 
         // Same device returns same pending code
         let result2 = store.request_access("dev_1", None, None).await;
@@ -272,5 +332,45 @@ mod tests {
             store.request_access("dev_1", None, None).await,
             DeviceAccessResult::PairingRequired { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn test_max_pending_limit() {
+        let store = DevicePairingStore::with_config(Duration::from_secs(3600), 3);
+
+        // Should work: 3 requests
+        for i in 0..3 {
+            let result = store.request_access(&format!("dev_{}", i), None, None).await;
+            assert!(matches!(result, DeviceAccessResult::PairingRequired { .. }));
+        }
+
+        // 4th should be rate limited
+        let result = store.request_access("dev_overflow", None, None).await;
+        assert!(matches!(result, DeviceAccessResult::RateLimited));
+    }
+
+    #[test]
+    fn test_qr_svg_generation() {
+        let svg = DevicePairingStore::generate_qr_svg("syscity://pair/ABC12345").unwrap();
+        assert!(svg.contains("<svg"), "SVG should contain svg tag");
+        assert!(svg.contains("</svg>"));
+        assert!(svg.contains("xmlns"), "SVG should contain xmlns");
+    }
+
+    #[test]
+    fn test_pairing_uri_format() {
+        let uri = DevicePairingStore::pairing_uri("ABC12345");
+        assert_eq!(uri, "syscity://pair/ABC12345");
+    }
+
+    #[test]
+    fn test_code_unambiguous_chars() {
+        let code = DevicePairingStore::generate_code();
+        assert_eq!(code.len(), 8);
+        assert!(!code.contains('0'));
+        assert!(!code.contains('O'));
+        assert!(!code.contains('1'));
+        assert!(!code.contains('I'));
+        assert!(!code.contains('l'));
     }
 }
