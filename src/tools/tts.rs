@@ -285,6 +285,17 @@ mod tests {
             .await
             .unwrap();
 
+        // Clean up any generated TTS audio files from the working directory
+        if let Ok(dir) = std::fs::read_dir(&ctx.working_directory) {
+            for entry in dir.flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("tts_") && (name.ends_with(".mp3") || name.ends_with(".aiff")) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+
  // On macOS, the `say` fallback may succeed even without API key.
  // On other platforms without espeak, this would fail.
  // We just verify the result is well-formed.
