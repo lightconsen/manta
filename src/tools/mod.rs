@@ -15,8 +15,8 @@ pub mod approval;
 
 // Re-export approval types for convenience
 pub use approval::{
-    ApprovalDecision, ApprovalFilter, ApprovalQueue, ApprovalRequiredEvent, PendingApproval,
-    PendingApprovalSummary, RiskLevel,
+    ApprovalDecision, ApprovalFilter, ApprovalLevel, ApprovalQueue, ApprovalRequiredEvent,
+    PendingApproval, PendingApprovalSummary, RiskLevel,
 };
 
 /// Skill trust level for tool access control.
@@ -576,6 +576,7 @@ pub mod sandbox;
 pub mod sandbox_interceptor;
 pub mod sdk;
 pub mod session;
+pub mod shell_safety;
 pub mod shell;
 pub mod team_communicate_tool;
 pub mod time;
@@ -607,7 +608,7 @@ pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
 pub use process::ProcessTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
-pub use sdk::{ToolCapabilities, ToolMetadata, ToolPack, ToolSdk};
+pub use sdk::{CapabilityFilter, SyncResult, ToolCapabilities, ToolMetadata, ToolPack, ToolSdk, ToolSdkError};
 pub use session::{
     SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
 };
@@ -1096,6 +1097,7 @@ impl ToolRegistry {
                 tool_name,
                 args: approval_args,
                 risk_level,
+                approval_level,
                 requested_by,
                 message,
             } => {
@@ -1119,6 +1121,7 @@ impl ToolRegistry {
                     approval_args,
                     requested_by,
                     risk_level,
+                    approval_level,
                     message,
                     tx,
                 );

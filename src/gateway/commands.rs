@@ -118,6 +118,11 @@ impl CommandDef {
         self.tier = CommandTier::Essential;
         self
     }
+
+    fn power(mut self) -> Self {
+        self.tier = CommandTier::Power;
+        self
+    }
 }
 
 /// Built-in command catalog
@@ -235,22 +240,83 @@ pub fn built_in_commands() -> Vec<CommandDef> {
  // Admin (owner-only)
         CommandDef::new("config", "config", "Read or write config", CommandCategory::Admin)
             .with_args("show|get|set|unset")
-            .admin(),
+            .admin()
+            .power(),
         CommandDef::new("plugins", "plugins", "Inspect or toggle plugins", CommandCategory::Admin)
             .with_args("list|install|enable|disable")
-            .admin(),
+            .admin()
+            .power(),
         CommandDef::new("mcp", "mcp", "Manage MCP server connections", CommandCategory::Admin)
             .with_args("show|get|set|unset")
-            .admin(),
+            .admin()
+            .power(),
         CommandDef::new("debug", "debug", "Runtime debug overrides", CommandCategory::Admin)
             .with_args("show|set|unset|reset")
-            .admin(),
+            .admin()
+            .power(),
         CommandDef::new("restart", "restart", "Restart the gateway", CommandCategory::Admin)
-            .admin(),
+            .admin()
+            .power(),
         CommandDef::new("bash", "bash", "Run a host shell command", CommandCategory::Admin)
             .with_args("<command>")
-            .admin(),
+            .admin()
+            .power(),
     ]
+}
+
+/// Parsed arguments for the `/help` command
+#[derive(Debug, Default)]
+struct HelpArgs {
+    page: usize,
+    tier: Option<CommandTier>,
+}
+
+impl HelpArgs {
+    fn parse(args: &str) -> Self {
+        let mut page = 1usize;
+        let mut tier = None;
+
+        // Handle `--tier <value>` (space-separated) and `--tier=<value>` patterns
+        let tokens: Vec<&str> = args.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            let t = tokens[i];
+            if let Some(val) = t.strip_prefix("--tier=") {
+                tier = Self::parse_tier(val);
+            } else if t == "--tier" {
+                if let Some(val) = tokens.get(i + 1) {
+                    tier = Self::parse_tier(val);
+                    i += 1; // skip next token
+                }
+            } else if let Ok(n) = t.parse::<usize>() {
+                page = n;
+            }
+            i += 1;
+        }
+        if page == 0 {
+            page = 1;
+        }
+        Self { page, tier }
+    }
+
+    fn parse_tier(s: &str) -> Option<CommandTier> {
+        match s.to_lowercase().as_str() {
+            "essential" => Some(CommandTier::Essential),
+            "standard" => Some(CommandTier::Standard),
+            "power" => Some(CommandTier::Power),
+            _ => None,
+        }
+    }
+}
+
+/// Structured help response payload
+#[derive(Debug, Serialize)]
+struct HelpPayload {
+    text: String,
+    page: usize,
+    total_pages: usize,
+    total_commands: usize,
+    tier: Option<CommandTier>,
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -351,7 +417,7 @@ pub async fn handle_commands_execute(
 
  // Dispatch by canonical key so aliases resolve to the same handler
         match def.key.as_str() {
-            "help" | "commands" => handle_help(req),
+            "help" | "commands" => handle_help(req, &params.args),
             "status" => handle_status(req, state).await,
             "whoami" => handle_whoami(req, conn).await,
             "stop" => handle_stop(req, conn, state).await,
@@ -429,8 +495,25 @@ pub async fn handle_commands_execute(
 
 // ── Individual command handlers ───────────────────────────────────────────────
 
-fn handle_help(req: &WsRequest) -> WsResponse {
-    let commands = built_in_commands();
+fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
+    let help_args = HelpArgs::parse(args);
+    let all_commands = built_in_commands();
+
+    // Apply tier filter
+    let filtered: Vec<&CommandDef> = if let Some(tier) = help_args.tier {
+        all_commands.iter().filter(|c| c.tier == tier).collect()
+    } else {
+        all_commands.iter().collect()
+    };
+
+    let total_commands = filtered.len();
+    let page_size = 8usize;
+    let total_pages = total_commands.div_ceil(page_size).max(1);
+    let page = help_args.page.clamp(1, total_pages);
+    let start = (page - 1) * page_size;
+    let end = start + page_size.min(total_commands.saturating_sub(start));
+    let page_commands: Vec<&CommandDef> = filtered.into_iter().skip(start).take(page_size).collect();
+
     let mut lines = vec!["📋 **Syscity Commands**".to_string(), "".to_string()];
 
     let categories = [
@@ -443,7 +526,7 @@ fn handle_help(req: &WsRequest) -> WsResponse {
     ];
 
     for (cat, title) in &categories {
-        let cat_cmds: Vec<&CommandDef> = commands.iter().filter(|c| c.category == *cat).collect();
+        let cat_cmds: Vec<&&CommandDef> = page_commands.iter().filter(|c| c.category == *cat).collect();
         if cat_cmds.is_empty() {
             continue;
         }
@@ -470,7 +553,18 @@ fn handle_help(req: &WsRequest) -> WsResponse {
         lines.push("".to_string());
     }
 
-    WsResponse::ok(&req.id, serde_json::json!({ "text": lines.join("\n") }))
+    let tier_display = help_args.tier.map(|t| format!("{:?}", t));
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!(HelpPayload {
+            text: lines.join("\n"),
+            page,
+            total_pages,
+            total_commands,
+            tier: help_args.tier,
+        }),
+    )
 }
 
 async fn handle_status(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
@@ -1720,5 +1814,85 @@ fn parse_params<T: serde::de::DeserializeOwned>(req: &WsRequest) -> Result<T, Ws
             )),
         },
         None => Err(WsResponse::err(&req.id, "INVALID_PARAMS", "Missing parameters")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_help_args_default() {
+        let args = HelpArgs::parse("");
+        assert_eq!(args.page, 1);
+        assert!(args.tier.is_none());
+    }
+
+    #[test]
+    fn test_help_args_page_number() {
+        let args = HelpArgs::parse("3");
+        assert_eq!(args.page, 3);
+    }
+
+    #[test]
+    fn test_help_args_page_zero_clamped() {
+        let args = HelpArgs::parse("0");
+        assert_eq!(args.page, 1);
+    }
+
+    #[test]
+    fn test_help_args_tier_flag() {
+        let args = HelpArgs::parse("--tier essential");
+        assert_eq!(args.page, 1);
+        assert_eq!(args.tier, Some(CommandTier::Essential));
+    }
+
+    #[test]
+    fn test_help_args_tier_equals() {
+        let args = HelpArgs::parse("--tier=power");
+        assert_eq!(args.page, 1);
+        assert_eq!(args.tier, Some(CommandTier::Power));
+    }
+
+    #[test]
+    fn test_help_args_page_and_tier() {
+        let args = HelpArgs::parse("2 --tier standard");
+        assert_eq!(args.page, 2);
+        assert_eq!(args.tier, Some(CommandTier::Standard));
+    }
+
+    #[test]
+    fn test_help_args_invalid_tier_ignored() {
+        let args = HelpArgs::parse("--tier invalid");
+        assert!(args.tier.is_none());
+        assert_eq!(args.page, 1);
+    }
+
+    #[test]
+    fn test_help_pagination_page_count() {
+        let cmds = built_in_commands();
+        let total = cmds.len();
+        let expected_pages = total.div_ceil(8).max(1);
+        let page1_slice: Vec<&CommandDef> = cmds.iter().take(8).collect();
+        assert_eq!(page1_slice.len(), 8.min(total));
+        assert!(expected_pages >= 1);
+    }
+
+    #[test]
+    fn test_tier_filter_essential() {
+        let cmds = built_in_commands();
+        let essential: Vec<&CommandDef> = cmds.iter().filter(|c| c.tier == CommandTier::Essential).collect();
+        assert!(!essential.is_empty());
+        assert!(essential.iter().any(|c| c.key == "help"));
+        assert!(essential.iter().any(|c| c.key == "new"));
+    }
+
+    #[test]
+    fn test_tier_filter_power() {
+        let cmds = built_in_commands();
+        let power: Vec<&CommandDef> = cmds.iter().filter(|c| c.tier == CommandTier::Power).collect();
+        assert!(!power.is_empty());
+        assert!(power.iter().any(|c| c.key == "config"));
+        assert!(power.iter().any(|c| c.key == "bash"));
     }
 }

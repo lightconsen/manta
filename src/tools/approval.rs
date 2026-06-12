@@ -45,6 +45,21 @@ impl RiskLevel {
     }
 }
 
+/// Who can approve a tool execution request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalLevel {
+    /// The requesting user / conversation participant can approve.
+    #[serde(alias = "ask")]
+    Ask = 0,
+    /// A host or room admin must approve.
+    #[serde(alias = "host")]
+    Host = 1,
+    /// Security-critical — needs designated security approval.
+    #[serde(alias = "security")]
+    Security = 2,
+}
+
 /// Decision from human reviewer
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
@@ -69,6 +84,8 @@ pub struct PendingApproval {
     pub requested_by: String,
     /// Risk level assessment
     pub risk_level: RiskLevel,
+    /// Approval level (who can approve)
+    pub approval_level: ApprovalLevel,
     /// Human-readable message explaining the request
     pub message: String,
     /// Channel to send resolution back to suspended execution
@@ -83,6 +100,7 @@ impl PendingApproval {
         args: serde_json::Value,
         requested_by: impl Into<String>,
         risk_level: RiskLevel,
+        approval_level: ApprovalLevel,
         message: impl Into<String>,
         response_tx: oneshot::Sender<ApprovalDecision>,
     ) -> Self {
@@ -93,6 +111,7 @@ impl PendingApproval {
             requested_at: Instant::now(),
             requested_by: requested_by.into(),
             risk_level,
+            approval_level,
             message: message.into(),
             response_tx: Some(response_tx),
         }
@@ -113,6 +132,7 @@ pub struct PendingApprovalSummary {
     pub requested_at: chrono::DateTime<chrono::Utc>,
     pub requested_by: String,
     pub risk_level: RiskLevel,
+    pub approval_level: ApprovalLevel,
     pub message: String,
     pub age_seconds: u64,
 }
@@ -127,6 +147,7 @@ impl From<&PendingApproval> for PendingApprovalSummary {
                 + chrono::Duration::from_std(pa.requested_at.elapsed()).unwrap_or_default(),
             requested_by: pa.requested_by.clone(),
             risk_level: pa.risk_level,
+            approval_level: pa.approval_level,
             message: pa.message.clone(),
             age_seconds: pa.age().as_secs(),
         }
@@ -140,6 +161,7 @@ pub struct ApprovalRequiredEvent {
     pub tool_name: String,
     pub requested_by: String,
     pub risk_level: RiskLevel,
+    pub approval_level: ApprovalLevel,
     pub message: String,
 }
 
@@ -147,6 +169,7 @@ pub struct ApprovalRequiredEvent {
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalFilter {
     pub min_risk_level: Option<RiskLevel>,
+    pub min_approval_level: Option<ApprovalLevel>,
     pub tool_name: Option<String>,
     pub requested_by: Option<String>,
     pub max_age: Option<Duration>,
@@ -160,6 +183,8 @@ pub struct ApprovalQueue {
     pub event_tx: broadcast::Sender<ApprovalRequiredEvent>,
     /// Default timeout for approvals
     pub default_timeout: Duration,
+    /// Default approval level
+    pub default_approval_level: ApprovalLevel,
 }
 
 impl ApprovalQueue {
@@ -170,6 +195,7 @@ impl ApprovalQueue {
             pending: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             default_timeout: Duration::from_secs(300), // 5 minutes
+            default_approval_level: ApprovalLevel::Ask,
         }
     }
 
@@ -184,6 +210,7 @@ impl ApprovalQueue {
             tool_name: approval.tool_name.clone(),
             requested_by: approval.requested_by.clone(),
             risk_level: approval.risk_level,
+            approval_level: approval.approval_level,
             message: approval.message.clone(),
         };
 
@@ -253,6 +280,11 @@ impl ApprovalQueue {
             .filter(|pa| {
                 if let Some(min_risk) = filter.min_risk_level {
                     if pa.risk_level < min_risk {
+                        return false;
+                    }
+                }
+                if let Some(min_al) = filter.min_approval_level {
+                    if pa.approval_level < min_al {
                         return false;
                     }
                 }
@@ -373,6 +405,7 @@ mod tests {
             serde_json::json!({"command": "ls"}),
             "user123",
             RiskLevel::High,
+            ApprovalLevel::Ask,
             "Shell command requires approval",
             tx,
         );
@@ -402,6 +435,7 @@ mod tests {
             serde_json::json!({"path": "/tmp/test"}),
             "user456",
             RiskLevel::Critical,
+            ApprovalLevel::Ask,
             "File deletion requires approval",
             tx,
         );
@@ -444,6 +478,7 @@ mod tests {
                 } else {
                     RiskLevel::Medium
                 },
+                ApprovalLevel::Ask,
                 "Test",
                 tx,
             );
@@ -484,6 +519,7 @@ mod tests {
                 serde_json::json!({}),
                 "user1",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "Test",
                 tx1,
             ))
@@ -496,6 +532,7 @@ mod tests {
                 serde_json::json!({}),
                 "user2",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "Test",
                 tx2,
             ))
@@ -545,6 +582,7 @@ mod tests {
                 serde_json::json!({}),
                 "user",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "msg",
                 tx,
             ))
@@ -570,6 +608,7 @@ mod tests {
                 serde_json::json!({}),
                 "u",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "m",
                 tx,
             ))
@@ -593,6 +632,7 @@ mod tests {
                 serde_json::json!({}),
                 "u",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "m",
                 tx,
             ))
@@ -626,6 +666,7 @@ mod tests {
             serde_json::json!({}),
             "user",
             RiskLevel::Low,
+            ApprovalLevel::Ask,
             "test",
             tx,
         );
@@ -640,6 +681,7 @@ mod tests {
             tool_name: "shell".to_string(),
             requested_by: "user".to_string(),
             risk_level: RiskLevel::High,
+            approval_level: ApprovalLevel::Ask,
             message: "Approve?".to_string(),
         };
         let json = serde_json::to_string(&event).unwrap();
@@ -659,6 +701,7 @@ mod tests {
                 serde_json::json!({}),
                 "user",
                 RiskLevel::Low,
+                ApprovalLevel::Ask,
                 "test",
                 tx,
             ))
