@@ -2514,6 +2514,17 @@ impl Gateway {
             .route("/api/v1/channels", get(channel_list_handler))
             .route("/api/v1/channels/{name}/enable", post(enable_channel_handler))
             .route("/api/v1/channels/{name}/disable", post(disable_channel_handler))
+ // Plugin management API
+            .route("/api/v1/plugins", get(list_plugins_handler))
+            .route("/api/v1/plugins/install", post(install_plugin_handler))
+            .route("/api/v1/plugins/uninstall", post(uninstall_plugin_handler))
+            .route("/api/v1/plugins/search", get(search_plugins_handler))
+            .route("/api/v1/plugins/sign", post(sign_plugin_handler))
+            .route("/api/v1/plugins/reload", post(reload_plugins_handler))
+            .route("/api/v1/plugins/{name}/enable", post(enable_plugin_handler))
+            .route("/api/v1/plugins/{name}/disable", post(disable_plugin_handler))
+            .route("/api/v1/plugins/{name}/unload", delete(unload_plugin_handler))
+            .route("/api/v1/plugins/{name}/reload", post(reload_plugin_handler))
             .layer(from_fn_with_state(state.clone(), middleware::auth_middleware));
 
         let essential_router = essential_public_router.merge(essential_auth_router);

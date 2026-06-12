@@ -37,9 +37,9 @@ fn planner_mock_provider(subtasks_json: &str) -> MockProvider {
         }
 
         // 2. Decomposition request from GoalPlanner
-        let is_decompose = messages.iter().any(|m| {
-            m.role == Role::System && m.content.contains("task-decomposition engine")
-        });
+        let is_decompose = messages
+            .iter()
+            .any(|m| m.role == Role::System && m.content.contains("task-decomposition engine"));
         if is_decompose {
             eprintln!("[MOCK] -> DECOMPOSE (returning subtasks JSON)");
             return ProviderMessage::assistant(subtasks.clone());
@@ -78,10 +78,7 @@ async fn goal_planner_triggered_by_complex_task_keyword() {
 
     // "deploy" is in the `is_complex_task()` keyword list.
     client
-        .send_chat(
-            &sid,
-            "Deploy test config to /tmp/syscity-planner-e2e",
-        )
+        .send_chat(&sid, "Deploy test config to /tmp/syscity-planner-e2e")
         .await;
 
     let result = timeout(Duration::from_secs(30), async {
@@ -91,9 +88,7 @@ async fn goal_planner_triggered_by_complex_task_keyword() {
                 eprintln!("[EVENT] {}", text);
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
                     if event.get("type").and_then(|v| v.as_str()) == Some("event") {
-                        if event.get("event").and_then(|v| v.as_str())
-                            == Some("chat.final")
-                        {
+                        if event.get("event").and_then(|v| v.as_str()) == Some("chat.final") {
                             return event.get("payload").cloned();
                         }
                     }
@@ -150,10 +145,7 @@ async fn goal_planner_multi_step_dag() {
 
     // "configure" is also in `is_complex_task()`.
     client
-        .send_chat(
-            &sid,
-            "Configure the system for testing",
-        )
+        .send_chat(&sid, "Configure the system for testing")
         .await;
 
     let result = timeout(Duration::from_secs(30), async {
@@ -162,9 +154,7 @@ async fn goal_planner_multi_step_dag() {
             if let Message::Text(text) = msg {
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
                     if event.get("type").and_then(|v| v.as_str()) == Some("event") {
-                        if event.get("event").and_then(|v| v.as_str())
-                            == Some("chat.final")
-                        {
+                        if event.get("event").and_then(|v| v.as_str()) == Some("chat.final") {
                             return event.get("payload").cloned();
                         }
                     }
@@ -240,12 +230,7 @@ async fn goal_planner_fallback_when_no_adapter() {
     let sid = client.create_session().await;
     client.subscribe(vec![sid.clone()]).await;
 
-    client
-        .send_chat(
-            &sid,
-            "Build and deploy the project",
-        )
-        .await;
+    client.send_chat(&sid, "Build and deploy the project").await;
 
     let result = timeout(Duration::from_secs(30), async {
         while let Some(msg) = client.read.next().await {
@@ -253,9 +238,7 @@ async fn goal_planner_fallback_when_no_adapter() {
             if let Message::Text(text) = msg {
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
                     if event.get("type").and_then(|v| v.as_str()) == Some("event") {
-                        if event.get("event").and_then(|v| v.as_str())
-                            == Some("chat.final")
-                        {
+                        if event.get("event").and_then(|v| v.as_str()) == Some("chat.final") {
                             return event.get("payload").cloned();
                         }
                     }
@@ -276,8 +259,5 @@ async fn goal_planner_fallback_when_no_adapter() {
         .unwrap_or("");
 
     // Fallback to normal chat should still produce a response.
-    assert!(
-        !response.is_empty(),
-        "Expected non-empty fallback response, got empty"
-    );
+    assert!(!response.is_empty(), "Expected non-empty fallback response, got empty");
 }

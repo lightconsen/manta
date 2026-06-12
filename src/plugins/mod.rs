@@ -7,20 +7,35 @@
 //! - Hooks system for extending behavior
 //! - Hot loading/unloading
 
+pub mod activation;
+pub mod deps;
 pub mod hooks;
+pub mod installer;
 pub mod manifest;
+pub mod metrics;
 pub mod provider_extension;
+pub mod registry;
 pub mod runtime;
+pub mod sqlite_registry;
+pub mod verification;
 
+pub use activation::{ActivationPlan, ActivationPlanner, PluginTrigger};
+pub use deps::{DependencyResolver, ResolvedDependency};
 pub use hooks::{
     HookExecutionResult, HookHandler, HookHandlerBuilder, HookPayload, HookRegistry, HookResult,
     HookType,
 };
+pub use installer::PluginInstaller;
 pub use manifest::{
-    PluginArg, PluginCapability, PluginCommand, PluginManifest, PluginPermission, PluginTool,
+    ExternalResource, PluginArg, PluginCapability, PluginCommand, PluginManifest, PluginPermission,
+    PluginTool,
 };
+pub use metrics::{MetricsSnapshot, PluginMetrics, PluginMetricsRegistry};
 pub use provider_extension::{PluginProvider, PluginProviderRegistry};
+pub use registry::{RegistryClient, RegistryIndex, RegistryPluginEntry};
 pub use runtime::{PluginInstance, PluginRuntime};
+pub use sqlite_registry::{PluginDbEntry, PluginSqliteRegistry};
+pub use verification::{verify_manifest, VerificationResult};
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -66,6 +81,10 @@ pub struct PluginManager {
     /// Message sender used to construct PluginChannel instances
     #[cfg(feature = "plugins")]
     channel_message_tx: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::channels::IncomingMessage>>>,
+    /// Optional SQLite plugin registry for persistent metadata
+    sqlite_registry: RwLock<Option<PluginSqliteRegistry>>,
+    /// Optional activation planner for lazy loading / dependency ordering
+    activation_planner: RwLock<Option<ActivationPlanner>>,
 }
 
 impl PluginManager {
@@ -92,6 +111,8 @@ impl PluginManager {
             channel_unregister: RwLock::new(None),
             #[cfg(feature = "plugins")]
             channel_message_tx: RwLock::new(None),
+            sqlite_registry: RwLock::new(None),
+            activation_planner: RwLock::new(None),
         })
     }
 
@@ -163,6 +184,9 @@ impl PluginManager {
             }
         }
 
+        // Sync filesystem plugins into SQLite registry if available
+        self.sync_filesystem_to_registry().await;
+
         info!("Loaded {} plugin(s)", count);
         Ok(count)
     }
@@ -176,6 +200,17 @@ impl PluginManager {
             self.register_plugin_providers(&plugin).await;
             #[cfg(feature = "plugins")]
             self.register_plugin_channels(&plugin).await;
+
+            // Sync to SQLite registry if available
+            let registry = self.sqlite_registry.read().await;
+            if let Some(ref reg) = *registry {
+                if let Err(e) = reg
+                    .register_plugin(&plugin.manifest, path, None)
+                    .await
+                {
+                    warn!("Failed to register plugin '{}' in SQLite registry: {}", plugin_id, e);
+                }
+            }
         }
 
         Ok(plugin_id)
@@ -188,6 +223,18 @@ impl PluginManager {
         self.deregister_plugin_channels(plugin_id).await;
         self.deregister_plugin_providers(plugin_id).await;
         self.hook_registry.unregister_plugin(plugin_id).await;
+
+        // Unregister from SQLite registry if available
+        let registry = self.sqlite_registry.read().await;
+        if let Some(ref reg) = *registry {
+            if let Err(e) = reg.unregister_plugin(plugin_id).await {
+                warn!(
+                    "Failed to unregister plugin '{}' from SQLite registry: {}",
+                    plugin_id, e
+                );
+            }
+        }
+
         self.runtime.unload_plugin(plugin_id).await
     }
 
@@ -540,6 +587,137 @@ impl PluginManager {
         self.runtime.shutdown().await
     }
 
+    /// Get the metrics registry.
+    pub fn metrics(&self) -> &Arc<PluginMetricsRegistry> {
+        self.runtime.metrics()
+    }
+
+    /// Set the SQLite plugin registry for persistent metadata storage.
+    pub async fn set_sqlite_registry(&self, pool: sqlx::sqlite::SqlitePool) {
+        let registry = PluginSqliteRegistry::new(pool);
+        // Create the table (best-effort)
+        if let Err(e) = registry.create_table().await {
+            warn!("Failed to create plugin_registry table: {}", e);
+        }
+        *self.sqlite_registry.write().await = Some(registry);
+    }
+
+    /// Set the activation planner for dependency-based loading.
+    pub async fn set_activation_planner(&self) {
+        let planner = ActivationPlanner::new(self.plugins_dir.clone());
+        *self.activation_planner.write().await = Some(planner);
+    }
+
+    /// Initialize plugins using the activation planner for dependency ordering.
+    ///
+    /// Falls back to flat scanning if no activation planner is set.
+    pub async fn initialize_with_planner(&self) -> crate::Result<usize> {
+        let planner = self.activation_planner.read().await;
+
+        if let Some(ref planner) = *planner {
+            let plan = planner.plan_activation().await?;
+
+            // Warn about cycle and missing deps
+            if !plan.cycles.is_empty() {
+                warn!("Detected {} plugin dependency cycle(s)", plan.cycles.len());
+                for cycle in &plan.cycles {
+                    warn!("  Cycle: {}", cycle.join(" -> "));
+                }
+            }
+            for (plugin_id, dep_name, constraint) in &plan.missing_deps {
+                warn!(
+                    "Plugin '{}' has missing dependency '{}' ({})",
+                    plugin_id, dep_name, constraint
+                );
+            }
+
+            let mut count = 0;
+            for plugin_id in &plan.load_order {
+                let path = self.plugins_dir.join(plugin_id);
+                if !path.is_dir() {
+                    continue;
+                }
+                match self.load_plugin(&path).await {
+                    Ok(id) => {
+                        debug!("Activation planner loaded plugin '{}'", id);
+                        count += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to load plugin '{}': {}", plugin_id, e);
+                    }
+                }
+            }
+            info!("Loaded {} plugin(s) via activation planner", count);
+            Ok(count)
+        } else {
+            // Fall back to flat scan
+            self.initialize().await
+        }
+    }
+
+    /// Sync filesystem plugins into the SQLite registry.
+    async fn sync_filesystem_to_registry(&self) {
+        let registry = self.sqlite_registry.read().await;
+        let Some(ref registry) = *registry else { return };
+        let _ = registry;
+
+        let mut entries = match tokio::fs::read_dir(&self.plugins_dir).await {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        while let Some(entry) = entries.next_entry().await.ok().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let manifest_path = path.join("plugin.json");
+            if !manifest_path.exists() {
+                continue;
+            }
+
+            let content = match tokio::fs::read_to_string(&manifest_path).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let manifest: PluginManifest = match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            let registry = self.sqlite_registry.read().await;
+            if let Some(ref reg) = *registry {
+                if let Err(e) = reg
+                    .register_plugin(&manifest, &path, None)
+                    .await
+                {
+                    warn!(
+                        "Failed to sync plugin '{}' to registry: {}",
+                        manifest.id, e
+                    );
+                }
+            }
+        }
+    }
+
+    /// Get a plugin from the SQLite registry by ID.
+    pub async fn get_registry_plugin(&self, id: &str) -> Option<PluginDbEntry> {
+        let registry = self.sqlite_registry.read().await;
+        match *registry {
+            Some(ref reg) => reg.get_plugin(id).await.ok().flatten(),
+            None => None,
+        }
+    }
+
+    /// List all plugins from the SQLite registry.
+    pub async fn list_registry_plugins(&self) -> Vec<PluginDbEntry> {
+        let registry = self.sqlite_registry.read().await;
+        match *registry {
+            Some(ref reg) => reg.list_plugins().await.unwrap_or_default(),
+            None => vec![],
+        }
+    }
+
  /// Create a sample plugin template
     pub async fn create_template(&self, name: &str, description: &str) -> crate::Result<PathBuf> {
         let plugin_dir = self.plugins_dir.join(name);
@@ -561,6 +739,13 @@ impl PluginManager {
             config: Some(serde_json::json!({
                 "example_setting": "value"
             })),
+            triggers: None,
+            dependencies: None,
+            repository: None,
+            registry: None,
+            signature: None,
+            signer_public_key: None,
+            external_resources: None,
         };
 
         let manifest_json = serde_json::to_string_pretty(&manifest)?;
@@ -603,6 +788,29 @@ Edit `config.json` to customize settings.
 
         info!("Created plugin template at {:?}", plugin_dir);
         Ok(plugin_dir)
+    }
+
+    /// Install a plugin from a remote registry.
+    pub async fn install_plugin(&self, name: &str, registry_url: Option<&str>) -> crate::Result<()> {
+        let installer = PluginInstaller::new(self.plugins_dir.clone());
+        installer.install(name, registry_url).await
+    }
+
+    /// Uninstall a plugin (remove from disk).
+    pub async fn uninstall_plugin(&self, name: &str) -> crate::Result<()> {
+        let installer = PluginInstaller::new(self.plugins_dir.clone());
+        installer.uninstall(name).await
+    }
+
+    /// Search for plugins in a remote registry.
+    pub async fn search_registry(
+        &self,
+        query: &str,
+        registry_url: Option<&str>,
+    ) -> crate::Result<Vec<registry::RegistryPluginEntry>> {
+        let url = registry_url.unwrap_or("https://plugins.syscity.dev");
+        let client = registry::RegistryClient::new(url);
+        client.search(query).await
     }
 }
 
@@ -852,6 +1060,7 @@ impl Tool for PluginToolWrapper {
         _context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult> {
         let start = std::time::Instant::now();
+        let plugin_id = self.plugin_id.clone();
 
         if self
             .trace_enabled
@@ -859,14 +1068,28 @@ impl Tool for PluginToolWrapper {
         {
             debug!(
                 "[trace] Plugin tool '{}' from '{}' called with args: {}",
-                self.tool_name, self.plugin_id, args
+                self.tool_name, plugin_id, args
             );
+        }
+
+        // Record tool call metric
+        if let Some(metrics) = self.runtime.metrics().get(&plugin_id).await {
+            metrics.record_tool_call();
+            metrics.touch();
         }
 
         let result = self
             .runtime
-            .call_tool(&self.plugin_id, &self.tool_name, args)
+            .call_tool(&plugin_id, &self.tool_name, args)
             .await;
+
+        // Record tool error metric on failure
+        if result.is_err() {
+            if let Some(metrics) = self.runtime.metrics().get(&plugin_id).await {
+                metrics.record_tool_error();
+                metrics.set_last_error(result.as_ref().unwrap_err().to_string());
+            }
+        }
 
         if self
             .trace_enabled
@@ -875,7 +1098,7 @@ impl Tool for PluginToolWrapper {
             debug!(
                 "[trace] Plugin tool '{}' from '{}' result: {:?} (elapsed: {:?})",
                 self.tool_name,
-                self.plugin_id,
+                plugin_id,
                 result.is_ok(),
                 start.elapsed()
             );

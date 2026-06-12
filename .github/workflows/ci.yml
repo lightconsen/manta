@@ -358,3 +358,13 @@ jobs:
           files: ./tarpaulin-report.xml
           fail_ci_if_error: false
           verbose: true
+
+  plugin-boundary:
+    name: Plugin SDK Boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check plugin SDK boundary
+        run: |
+          chmod +x scripts/check-plugin-boundary.sh
+          SYSCITY_PLUGIN_DIRS="./plugins" ./scripts/check-plugin-boundary.sh

@@ -634,8 +634,8 @@ pub async fn run_tool_chat_test(
 mod agent_tests;
 #[cfg(feature = "browser")]
 mod browser_chat_tests;
-mod computer_tests;
 mod command_tests;
+mod computer_tests;
 mod health_tests;
 mod llm_chat_tests;
 mod mock_chat_tests;

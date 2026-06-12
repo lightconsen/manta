@@ -2,10 +2,11 @@
 //!
 //! Loads and executes plugins using Wasmtime for sandboxing.
 
-use super::manifest::PluginManifest;
+use super::manifest::{PluginManifest, PluginPermission};
+use super::metrics::PluginMetricsRegistry;
 use crate::dirs;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
@@ -15,7 +16,6 @@ use tracing::{debug, info, warn};
 /// Provides async-capable primitives (KV store, HTTP client, event bridge)
 /// that synchronous WASM host functions delegate to via `block_on`.
 #[cfg(feature = "plugins")]
-#[derive(Default)]
 pub struct PluginSharedState {
     /// Persistent per-plugin KV store
     pub kv_store: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
@@ -27,6 +27,8 @@ pub struct PluginSharedState {
     pub session_id: Arc<RwLock<Option<String>>>,
     /// Arbitrary context map (set by Syscity)
     pub context: Arc<RwLock<HashMap<String, String>>>,
+    /// Per-plugin metrics registry
+    pub metrics: Arc<PluginMetricsRegistry>,
 }
 
 #[cfg(feature = "plugins")]
@@ -39,17 +41,22 @@ impl PluginSharedState {
             http_client: reqwest::Client::new(),
             session_id: Arc::new(RwLock::new(None)),
             context: Arc::new(RwLock::new(HashMap::new())),
+            metrics: Arc::new(PluginMetricsRegistry::new()),
         }
     }
 
-    /// Create shared state with an event channel
-    pub fn with_events(event_tx: tokio::sync::mpsc::UnboundedSender<PluginEvent>) -> Self {
+    /// Create shared state with an event channel and metrics registry.
+    pub fn with_events(
+        event_tx: tokio::sync::mpsc::UnboundedSender<PluginEvent>,
+        metrics: Arc<PluginMetricsRegistry>,
+    ) -> Self {
         Self {
             kv_store: Arc::new(RwLock::new(HashMap::new())),
             event_tx: Some(event_tx),
             http_client: reqwest::Client::new(),
             session_id: Arc::new(RwLock::new(None)),
             context: Arc::new(RwLock::new(HashMap::new())),
+            metrics,
         }
     }
 
@@ -129,6 +136,10 @@ pub struct PluginState {
     pub shared_state: Arc<PluginSharedState>,
     /// Plugin ID (for event emission, store scoping)
     pub plugin_id: String,
+    /// Permissions granted to this plugin
+    pub permissions: Vec<PluginPermission>,
+    /// WASI context for sandboxed I/O (wrapped in StdMutex for Sync safety)
+    pub wasi_ctx: StdMutex<wasmtime_wasi::p1::WasiP1Ctx>,
 }
 
 #[cfg(feature = "plugins")]
@@ -137,12 +148,15 @@ impl PluginState {
         config: serde_json::Value,
         shared_state: Arc<PluginSharedState>,
         plugin_id: String,
+        permissions: Vec<PluginPermission>,
     ) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(HashMap::new())),
             shared_state,
             plugin_id,
+            permissions,
+            wasi_ctx: StdMutex::new(wasmtime_wasi::WasiCtxBuilder::new().build_p1()),
         }
     }
 
@@ -151,22 +165,61 @@ impl PluginState {
         memory: HashMap<String, Vec<u8>>,
         shared_state: Arc<PluginSharedState>,
         plugin_id: String,
+        permissions: Vec<PluginPermission>,
     ) -> Self {
         Self {
             config,
             memory: Arc::new(RwLock::new(memory)),
             shared_state,
             plugin_id,
+            permissions,
+            wasi_ctx: StdMutex::new(wasmtime_wasi::WasiCtxBuilder::new().build_p1()),
         }
     }
+}
+
+/// Current schema version for plugin persistent state.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// Migration record tracking applied schema migrations.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MigrationRecord {
+    pub from_version: u32,
+    pub to_version: u32,
+    pub migrated_at: String,
+}
+
+/// Migration function type.
+type MigrationFn = fn(&mut PluginPersistentState) -> crate::Result<()>;
+
+/// All registered migrations: (from, to, migrate_fn)
+fn get_migrations() -> Vec<(u32, u32, MigrationFn)> {
+    vec![
+        // v0 -> v1: bump schema version, add migration history
+        (0, 1, migrate_v0_to_v1),
+    ]
+}
+
+/// Migration from v0 (pre-schema-version format) to v1.
+///
+/// This just bumps the schema version and records the migration.
+fn migrate_v0_to_v1(state: &mut PluginPersistentState) -> crate::Result<()> {
+    state.schema_version = 1;
+    Ok(())
 }
 
 /// Serialisable snapshot of plugin state for disk persistence.
 #[cfg(feature = "plugins")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PluginPersistentState {
+    /// Schema version for migration support. Defaults to 0 for backward compat.
+    #[serde(default)]
+    schema_version: u32,
     memory: HashMap<String, Vec<u8>>,
     kv_store: HashMap<String, HashMap<String, String>>,
+    /// History of applied migrations.
+    #[serde(default)]
+    migration_history: Vec<MigrationRecord>,
 }
 
 /// Plugin runtime - manages plugin lifecycle
@@ -184,6 +237,8 @@ pub struct PluginRuntime {
     /// Receiver side of the plugin event channel
     #[cfg(feature = "plugins")]
     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
+    /// Per-plugin metrics registry
+    metrics: Arc<PluginMetricsRegistry>,
 }
 
 impl PluginRuntime {
@@ -191,10 +246,15 @@ impl PluginRuntime {
     pub fn new() -> crate::Result<Self> {
         #[cfg(feature = "plugins")]
         {
-            let engine = wasmtime::Engine::default();
+            let mut config = wasmtime::Config::default();
+            config.consume_fuel(true);
+            config.max_wasm_stack(512 * 1024);
+            let engine = wasmtime::Engine::new(&config)
+                .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
             let mut linker = wasmtime::Linker::new(&engine);
             let (event_tx, event_rx) = mpsc::unbounded_channel::<PluginEvent>();
-            let shared_state = Arc::new(PluginSharedState::with_events(event_tx));
+            let metrics = Arc::new(PluginMetricsRegistry::new());
+            let shared_state = Arc::new(PluginSharedState::with_events(event_tx, metrics.clone()));
             let event_subscribers: Arc<
                 RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>,
             > = Arc::new(RwLock::new(HashMap::new()));
@@ -218,6 +278,7 @@ impl PluginRuntime {
                 shared_state,
                 event_subscribers,
                 event_rx: Arc::new(Mutex::new(None)),
+                metrics: Arc::new(PluginMetricsRegistry::new()),
             })
         }
 
@@ -225,6 +286,7 @@ impl PluginRuntime {
         {
             Ok(Self {
                 plugins: Arc::new(RwLock::new(HashMap::new())),
+                metrics: Arc::new(PluginMetricsRegistry::new()),
             })
         }
     }
@@ -232,6 +294,13 @@ impl PluginRuntime {
     #[cfg(feature = "plugins")]
     fn define_host_functions(linker: &mut wasmtime::Linker<PluginState>) -> crate::Result<()> {
         use wasmtime::Memory;
+
+        // Register WASI in the linker so plugins can use WASI APIs
+        wasmtime_wasi::p1::add_to_linker_sync(
+            linker,
+            |state: &mut PluginState| state.wasi_ctx.get_mut().unwrap(),
+        )
+        .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
 
         // Helper: read a UTF-8 string from WASM memory
         fn read_memory_string(
@@ -247,6 +316,46 @@ impl PluginRuntime {
                 .to_string())
         }
 
+        // Permission-check helpers
+        fn check_store_permission(
+            caller: &wasmtime::Caller<'_, PluginState>,
+            required: &PluginPermission,
+        ) -> bool {
+            let permissions = &caller.data().permissions;
+            if permissions.is_empty() {
+                return false;
+            }
+            permissions.iter().any(|p| matches_permission(p, required))
+        }
+
+        fn matches_permission(declared: &PluginPermission, required: &PluginPermission) -> bool {
+            match (declared, required) {
+                (PluginPermission::Memory, PluginPermission::Memory) => true,
+                (PluginPermission::Config, PluginPermission::Config) => true,
+                (PluginPermission::Network { hosts }, PluginPermission::Network { .. }) => {
+                    hosts.is_empty() || hosts.contains(&"*".to_string())
+                }
+                (PluginPermission::Filesystem { paths }, PluginPermission::Filesystem { .. }) => {
+                    paths.is_empty() || paths.contains(&"*".to_string())
+                }
+                (PluginPermission::Env { vars }, PluginPermission::Env { .. }) => {
+                    vars.is_empty() || vars.contains(&"*".to_string())
+                }
+                (PluginPermission::System { commands }, PluginPermission::System { .. }) => {
+                    commands.is_empty() || commands.contains(&"*".to_string())
+                }
+                _ => false,
+            }
+        }
+
+        // Consume fuel (non-fatal) on host calls
+        fn consume_fuel(caller: &mut wasmtime::Caller<'_, PluginState>, amount: u64) {
+            let current = caller.get_fuel().ok();
+            if let Some(current) = current {
+                let _ = caller.set_fuel(current.saturating_sub(amount));
+            }
+        }
+
         // --- Logging ---
 
         // log(ptr, len)
@@ -258,6 +367,7 @@ impl PluginRuntime {
                  ptr: i32,
                  len: i32|
                  -> wasmtime::Result<()> {
+                    consume_fuel(&mut caller, 10);
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -286,6 +396,10 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Config) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -318,6 +432,10 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Config) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -350,6 +468,10 @@ impl PluginRuntime {
                  val_ptr: i32,
                  val_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Memory) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -382,6 +504,10 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Memory) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -420,6 +546,10 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Memory) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -465,6 +595,10 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Memory) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -508,6 +642,10 @@ impl PluginRuntime {
                  val_ptr: i32,
                  val_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Memory) {
+                        return Ok(0);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -545,6 +683,21 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Network { hosts: vec![] }) {
+                        let err = r#"{"error":"Permission denied: Network access not granted in plugin manifest"}"#;
+                        let bytes = err.as_bytes();
+                        let to_write = bytes.len().min(out_len as usize);
+                        let memory = caller
+                            .get_export("memory")
+                            .and_then(|e| e.into_memory())
+                            .ok_or_else(|| {
+                                wasmtime::Error::msg("Plugin does not export a memory segment")
+                            })?;
+                        memory.data_mut(&mut caller)[out_ptr as usize..out_ptr as usize + to_write]
+                            .copy_from_slice(&bytes[..to_write]);
+                        return Ok(to_write as i32);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -554,9 +707,29 @@ impl PluginRuntime {
                     let url = read_memory_string(&memory, &mut caller, url_ptr, url_len)?;
                     let out_ptr = out_ptr as usize;
                     let out_len = out_len as usize;
+
+                    // Record metrics
+                    let plugin_id = caller.data().plugin_id.clone();
+                    let metrics_registry = caller.data().shared_state.metrics.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(async {
+                        if let Some(m) = metrics_registry.get(&plugin_id).await {
+                            m.record_http_request();
+                            m.touch();
+                        }
+                    });
+
                     let body = reqwest::blocking::get(&url)
                         .and_then(|r| r.text())
-                        .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+                        .unwrap_or_else(|e| {
+                            let rt = tokio::runtime::Handle::current();
+                            let _ = rt.block_on(async {
+                                if let Some(m) = metrics_registry.get(&plugin_id).await {
+                                    m.record_http_error();
+                                }
+                            });
+                            format!("{{\"error\":\"{}\"}}", e)
+                        });
                     let bytes = body.as_bytes();
                     let to_write = bytes.len().min(out_len);
                     let mem_data = memory.data_mut(&mut caller);
@@ -581,6 +754,21 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
+                    if !check_store_permission(&caller, &PluginPermission::Network { hosts: vec![] }) {
+                        let err = r#"{"error":"Permission denied: Network access not granted in plugin manifest"}"#;
+                        let bytes = err.as_bytes();
+                        let to_write = bytes.len().min(out_len as usize);
+                        let memory = caller
+                            .get_export("memory")
+                            .and_then(|e| e.into_memory())
+                            .ok_or_else(|| {
+                                wasmtime::Error::msg("Plugin does not export a memory segment")
+                            })?;
+                        memory.data_mut(&mut caller)[out_ptr as usize..out_ptr as usize + to_write]
+                            .copy_from_slice(&bytes[..to_write]);
+                        return Ok(to_write as i32);
+                    }
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -592,13 +780,33 @@ impl PluginRuntime {
                     let content_type = read_memory_string(&memory, &mut caller, ct_ptr, ct_len)?;
                     let out_ptr = out_ptr as usize;
                     let out_len = out_len as usize;
+
+                    // Record metrics
+                    let plugin_id = caller.data().plugin_id.clone();
+                    let metrics_registry = caller.data().shared_state.metrics.clone();
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(async {
+                        if let Some(m) = metrics_registry.get(&plugin_id).await {
+                            m.record_http_request();
+                            m.touch();
+                        }
+                    });
+
                     let response = reqwest::blocking::Client::new()
                         .post(&url)
                         .header("Content-Type", &content_type)
                         .body(body)
                         .send()
                         .and_then(|r| r.text())
-                        .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+                        .unwrap_or_else(|e| {
+                            let rt = tokio::runtime::Handle::current();
+                            let _ = rt.block_on(async {
+                                if let Some(m) = metrics_registry.get(&plugin_id).await {
+                                    m.record_http_error();
+                                }
+                            });
+                            format!("{{\"error\":\"{}\"}}", e)
+                        });
                     let bytes = response.as_bytes();
                     let to_write = bytes.len().min(out_len);
                     let mem_data = memory.data_mut(&mut caller);
@@ -621,6 +829,7 @@ impl PluginRuntime {
                  payload_ptr: i32,
                  payload_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -657,6 +866,7 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -694,6 +904,7 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -732,6 +943,7 @@ impl PluginRuntime {
                  out_ptr: i32,
                  out_len: i32|
                  -> wasmtime::Result<i32> {
+                    consume_fuel(&mut caller, 10);
                     let memory = caller
                         .get_export("memory")
                         .and_then(|e| e.into_memory())
@@ -818,7 +1030,12 @@ impl PluginRuntime {
         let memory = memory.read().await.clone();
         let kv_store = self.shared_state.kv_store.read().await.clone();
 
-        let persistent = PluginPersistentState { memory, kv_store };
+        let persistent = PluginPersistentState {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            memory,
+            kv_store,
+            migration_history: Vec::new(),
+        };
 
         match serde_json::to_string_pretty(&persistent) {
             Ok(json) => {
@@ -854,7 +1071,43 @@ impl PluginRuntime {
 
         match tokio::fs::read_to_string(&state_path).await {
             Ok(content) => match serde_json::from_str::<PluginPersistentState>(&content) {
-                Ok(persistent) => {
+                Ok(mut persistent) => {
+                    // Apply migrations if needed
+                    let current_ver = persistent.schema_version;
+                    if current_ver > CURRENT_SCHEMA_VERSION {
+                        warn!(
+                            "Plugin state for '{}' has schema v{} which is newer than supported v{}. Ignoring.",
+                            plugin_id, current_ver, CURRENT_SCHEMA_VERSION
+                        );
+                        return (None, None);
+                    }
+
+                    let migrations = get_migrations();
+                    for (from, to, migrate_fn) in &migrations {
+                        if persistent.schema_version == *from {
+                            info!(
+                                "Migrating plugin '{}' state from v{} to v{}",
+                                plugin_id, from, to
+                            );
+                            match migrate_fn(&mut persistent) {
+                                Ok(()) => {
+                                    persistent.migration_history.push(MigrationRecord {
+                                        from_version: *from,
+                                        to_version: *to,
+                                        migrated_at: chrono::Utc::now().to_rfc3339(),
+                                    });
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to migrate plugin '{}' state from v{} to v{}: {}",
+                                        plugin_id, from, to, e
+                                    );
+                                    return (None, None);
+                                }
+                            }
+                        }
+                    }
+
                     // Extract this plugin's kv entries from the outer map
                     let kv = persistent.kv_store.get(plugin_id).cloned();
                     (Some(persistent.memory), kv)
@@ -969,8 +1222,15 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), &plugin_id, preserved_memory)
-                        .await?
+                    let permissions = manifest.permissions.clone().unwrap_or_default();
+                    self.load_wasm_plugin(
+                        &wasm_path,
+                        config.clone(),
+                        &plugin_id,
+                        preserved_memory,
+                        permissions,
+                    )
+                    .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
                     (None, None)
@@ -994,6 +1254,9 @@ impl PluginRuntime {
         let mut plugins = self.plugins.write().await;
         plugins.insert(plugin_id.clone(), instance);
 
+        // Register metrics for this plugin
+        self.metrics.register(&plugin_id).await;
+
         info!("Plugin '{}' loaded successfully", plugin_id);
 
         Ok(plugin_id)
@@ -1006,6 +1269,7 @@ impl PluginRuntime {
         config: serde_json::Value,
         plugin_id: &str,
         preserved_memory: Option<HashMap<String, Vec<u8>>>,
+        permissions: Vec<PluginPermission>,
     ) -> crate::Result<(Option<wasmtime::Store<PluginState>>, Option<wasmtime::Instance>)> {
         use wasmtime::Module;
 
@@ -1026,11 +1290,24 @@ impl PluginRuntime {
                 memory,
                 self.shared_state.clone(),
                 plugin_id.to_string(),
+                permissions,
             )
         } else {
-            PluginState::new(config, self.shared_state.clone(), plugin_id.to_string())
+            PluginState::new(config, self.shared_state.clone(), plugin_id.to_string(), permissions)
         };
         let mut store = wasmtime::Store::new(&self.engine, state);
+
+        // Set initial fuel for WASM execution
+        store.set_fuel(100_000_000)
+            .map_err(|e| crate::error::SyscityError::Internal(e.to_string()))?;
+
+        // Set up WASI context with inherited stdio
+        {
+            let wasi_ctx = wasmtime_wasi::WasiCtxBuilder::new()
+                .inherit_stdio()
+                .build_p1();
+            store.data_mut().wasi_ctx = StdMutex::new(wasi_ctx);
+        }
 
         let instance = self.linker.instantiate(&mut store, &module).map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to instantiate WASM: {}", e))
@@ -1073,6 +1350,8 @@ impl PluginRuntime {
                     self.save_plugin_state(plugin_id, &memory).await;
                 }
             }
+            // Unregister metrics for this plugin
+            self.metrics.unregister(plugin_id).await;
             info!("Unloaded plugin '{}'", plugin.manifest.name);
             Ok(true)
         } else {
@@ -1149,8 +1428,15 @@ impl PluginRuntime {
             if let Some(ref main) = manifest.main {
                 let wasm_path = path.join(main);
                 if wasm_path.exists() {
-                    self.load_wasm_plugin(&wasm_path, config.clone(), plugin_id, preserved_memory)
-                        .await?
+                    let permissions = manifest.permissions.clone().unwrap_or_default();
+                    self.load_wasm_plugin(
+                        &wasm_path,
+                        config.clone(),
+                        plugin_id,
+                        preserved_memory,
+                        permissions,
+                    )
+                    .await?
                 } else {
                     warn!("WASM file not found: {:?}", wasm_path);
                     (None, None)
@@ -1648,6 +1934,13 @@ impl Default for PluginRuntime {
     }
 }
 
+impl PluginRuntime {
+    /// Get the metrics registry for this runtime.
+    pub fn metrics(&self) -> &Arc<PluginMetricsRegistry> {
+        &self.metrics
+    }
+}
+
 impl Clone for PluginInstance {
     fn clone(&self) -> Self {
         // Note: WASM stores can't be cloned, so we skip them
@@ -1680,6 +1973,13 @@ mod tests {
             capabilities: None,
             permissions: None,
             config: None,
+            triggers: None,
+            dependencies: None,
+            repository: None,
+            registry: None,
+            signature: None,
+            signer_public_key: None,
+            external_resources: None,
         }
     }
 
@@ -1898,6 +2198,7 @@ mod tests {
             serde_json::json!({"key": "value"}),
             shared_state,
             "test.plugin".to_string(),
+            vec![],
         );
         assert_eq!(state.config["key"], "value");
     }
@@ -1912,6 +2213,7 @@ mod tests {
             memory,
             shared_state,
             "test.plugin".to_string(),
+            vec![],
         );
         let rt = tokio::runtime::Runtime::new().unwrap();
         let stored = rt.block_on(async {

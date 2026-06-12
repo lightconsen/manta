@@ -51,6 +51,30 @@ pub enum PluginCommands {
     },
     /// Reload plugins (lists current state; full reload requires daemon restart)
     Reload,
+    /// Install a plugin from a remote registry
+    RegistryInstall {
+        /// Plugin name or ID
+        name: String,
+        /// Registry URL (defaults to https://plugins.syscity.dev)
+        #[arg(short, long)]
+        registry: Option<String>,
+    },
+    /// Search for plugins in the registry
+    Search {
+        /// Search query
+        query: String,
+        /// Registry URL (defaults to https://plugins.syscity.dev)
+        #[arg(short, long)]
+        registry: Option<String>,
+    },
+    /// Sign a plugin manifest with an ed25519 key
+    Sign {
+        /// Plugin directory name (within plugins directory)
+        name: String,
+        /// Path to file containing base64-encoded ed25519 secret key
+        #[arg(short, long)]
+        key_file: PathBuf,
+    },
 }
 
 /// Run plugin commands
@@ -229,6 +253,109 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                         }
                     } else {
                         eprintln!("Reload failed ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(SyscityError::Internal(e.to_string()));
+                }
+            }
+        }
+
+        PluginCommands::RegistryInstall { name, registry } => {
+            let url = format!("{}/api/v1/plugins/install", DAEMON_URL);
+            let body = serde_json::json!({
+                "name": name,
+                "registry": registry,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Plugin '{}' installed successfully.", name);
+                        if !text.is_empty() && text != "null" {
+                            println!("{}", text);
+                        }
+                    } else {
+                        eprintln!("Failed to install plugin ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(SyscityError::Internal(e.to_string()));
+                }
+            }
+        }
+
+        PluginCommands::Search { query, registry } => {
+            let registry_param = registry
+                .as_ref()
+                .map(|r| format!("&registry={}", r))
+                .unwrap_or_default();
+            let url = format!(
+                "{}/api/v1/plugins/search?q={}{}",
+                DAEMON_URL, query, registry_param
+            );
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        if let Ok(json) =
+                            serde_json::from_str::<serde_json::Value>(&text)
+                        {
+                            let empty = vec![];
+                            let plugins = json["results"].as_array().unwrap_or(&empty);
+                            println!("Search results for '{}' ({}):", query, plugins.len());
+                            for p in plugins {
+                                let id = p["id"].as_str().unwrap_or("?");
+                                let name = p["name"].as_str().unwrap_or("?");
+                                let version = p["version"].as_str().unwrap_or("?");
+                                let desc = p["description"].as_str().unwrap_or("");
+                                println!("  {} ({}) v{} - {}", name, id, version, desc);
+                            }
+                        } else {
+                            println!("{}", text);
+                        }
+                    } else {
+                        eprintln!("Search failed ({}): {}", status, text);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to reach daemon: {}", e);
+                    return Err(SyscityError::Internal(e.to_string()));
+                }
+            }
+        }
+
+        PluginCommands::Sign { name, key_file } => {
+            let url = format!("{}/api/v1/plugins/sign", DAEMON_URL);
+            let key_content = match tokio::fs::read_to_string(key_file).await {
+                Ok(c) => c.trim().to_string(),
+                Err(e) => {
+                    eprintln!("Failed to read key file {:?}: {}", key_file, e);
+                    return Err(SyscityError::Internal(format!(
+                        "Cannot read key file {:?}: {}",
+                        key_file, e
+                    )));
+                }
+            };
+            let body = serde_json::json!({
+                "name": name,
+                "secret_key": key_content,
+            });
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        println!("Plugin '{}' signed successfully.", name);
+                        if !text.is_empty() && text != "null" {
+                            println!("{}", text);
+                        }
+                    } else {
+                        eprintln!("Failed to sign plugin ({}): {}", status, text);
                     }
                 }
                 Err(e) => {

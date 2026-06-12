@@ -269,6 +269,56 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         );
     }
 
+    // Per-plugin metrics
+    let plugin_snapshots = state.plugin_manager.metrics().all_snapshots().await;
+    for (plugin_id, snap) in &plugin_snapshots {
+        let plugin_label = &plugin_id.replace('"', "");
+        lines.push(format!(
+            "# HELP syscity_plugin_tool_calls_total Total tool calls per plugin"
+        ));
+        lines.push(format!("# TYPE syscity_plugin_tool_calls_total counter"));
+        lines.push(format!(
+            "syscity_plugin_tool_calls_total{{plugin=\"{}\"}} {}",
+            plugin_label, snap.tool_calls
+        ));
+
+        lines.push(format!(
+            "# HELP syscity_plugin_tool_errors_total Total tool errors per plugin"
+        ));
+        lines.push(format!("# TYPE syscity_plugin_tool_errors_total counter"));
+        lines.push(format!(
+            "syscity_plugin_tool_errors_total{{plugin=\"{}\"}} {}",
+            plugin_label, snap.tool_errors
+        ));
+
+        lines.push(format!(
+            "# HELP syscity_plugin_http_requests_total Total HTTP requests per plugin"
+        ));
+        lines.push(format!("# TYPE syscity_plugin_http_requests_total counter"));
+        lines.push(format!(
+            "syscity_plugin_http_requests_total{{plugin=\"{}\"}} {}",
+            plugin_label, snap.http_requests
+        ));
+
+        lines.push(format!(
+            "# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin"
+        ));
+        lines.push(format!("# TYPE syscity_plugin_http_errors_total counter"));
+        lines.push(format!(
+            "syscity_plugin_http_errors_total{{plugin=\"{}\"}} {}",
+            plugin_label, snap.http_errors
+        ));
+
+        lines.push(format!(
+            "# HELP syscity_plugin_memory_bytes Current memory usage per plugin"
+        ));
+        lines.push(format!("# TYPE syscity_plugin_memory_bytes gauge"));
+        lines.push(format!(
+            "syscity_plugin_memory_bytes{{plugin=\"{}\"}} {}",
+            plugin_label, snap.memory_usage_bytes
+        ));
+    }
+
     lines.push(String::new());
     lines.join("\n")
 }

@@ -401,7 +401,10 @@ async fn tool_combo_folder_and_screenshot() {
     }
     // Cleanup
     let _ = std::process::Command::new("rm")
-        .args(["-rf", &format!("{}/Desktop/test_output", std::env::var("HOME").unwrap_or_default())])
+        .args([
+            "-rf",
+            &format!("{}/Desktop/test_output", std::env::var("HOME").unwrap_or_default()),
+        ])
         .output();
 }
 

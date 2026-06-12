@@ -3,6 +3,7 @@
 //! Defines the structure of plugin.json/manifest.json files
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Plugin manifest - describes a plugin's metadata and capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,27 @@ pub struct PluginManifest {
     /// Default configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
+    /// Activation triggers (for lazy loading)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triggers: Option<Vec<super::activation::PluginTrigger>>,
+    /// Plugin dependencies (plugin IDs -> version constraints)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependencies: Option<HashMap<String, String>>,
+    /// Repository URL for the plugin source code
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Registry URL where this plugin was published
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
+    /// Base64-encoded ed25519 signature over canonical manifest fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Base64-encoded ed25519 public key of the signer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_public_key: Option<String>,
+    /// External resources that must be downloaded at install/load time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_resources: Option<Vec<ExternalResource>>,
 }
 
 /// Plugin capability - what the plugin can do
@@ -172,6 +194,20 @@ pub enum PluginPermission {
     Config,
 }
 
+/// External resource that a plugin requires at runtime
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalResource {
+    /// URL to download the resource from
+    pub url: String,
+    /// Relative path within the plugin directory to place the resource
+    pub path: String,
+    /// Optional SHA-256 checksum for verification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum_sha256: Option<String>,
+    /// Whether this resource is required (load fails if missing)
+    pub required: bool,
+}
+
 impl PluginManifest {
     /// Create a minimal manifest for testing
     pub fn minimal(id: &str, name: &str) -> Self {
@@ -186,6 +222,13 @@ impl PluginManifest {
             capabilities: None,
             permissions: None,
             config: None,
+            triggers: None,
+            dependencies: None,
+            repository: None,
+            registry: None,
+            signature: None,
+            signer_public_key: None,
+            external_resources: None,
         }
     }
 
@@ -350,6 +393,13 @@ mod tests {
             }]),
             permissions: Some(vec![PluginPermission::Memory]),
             config: Some(serde_json::json!({"timeout": 30})),
+            triggers: None,
+            dependencies: None,
+            repository: None,
+            registry: None,
+            signature: None,
+            signer_public_key: None,
+            external_resources: None,
         };
         let json = serde_json::to_string(&manifest).unwrap();
         let decoded: PluginManifest = serde_json::from_str(&json).unwrap();
