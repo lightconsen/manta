@@ -178,6 +178,17 @@ impl DelegationTracker {
     }
 }
 
+/// Trait for looking up running agents by name/type.
+///
+/// Used by [`DelegateTool`] to route child tasks to specific agents
+/// based on the `target_agent` field in [`TaskSpec`].
+#[async_trait]
+pub trait AgentResolver: Send + Sync {
+    /// Resolve a running agent by name (e.g. "coder", "reviewer").
+    /// Returns `None` if no agent with that name is available.
+    async fn resolve(&self, name: &str) -> Option<Arc<crate::agent::Agent>>;
+}
+
 /// Delegate tool for spawning child agents
 pub struct DelegateTool {
     tracker: DelegationTracker,
@@ -187,6 +198,9 @@ pub struct DelegateTool {
     registry: Arc<SubagentRegistry>,
     /// Optional hooks for pre/post execution observability
     hooks: ToolHooks,
+    /// Optional resolver for `target_agent` routing — when set, children
+    /// are routed to the named agent instead of `self.agent`.
+    agent_resolver: Option<Arc<dyn AgentResolver>>,
 }
 
 impl std::fmt::Debug for DelegateTool {
@@ -207,6 +221,7 @@ impl DelegateTool {
             agent: None,
             registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
             hooks: ToolHooks::new(),
+            agent_resolver: None,
         }
     }
 
@@ -217,6 +232,7 @@ impl DelegateTool {
             agent: Some(agent),
             registry: Arc::new(SubagentRegistry::new(MAX_DEPTH as u32, MAX_CHILDREN)),
             hooks: ToolHooks::new(),
+            agent_resolver: None,
         }
     }
 
@@ -234,6 +250,16 @@ impl DelegateTool {
     /// Attach execution hooks.
     pub fn with_hooks(mut self, hooks: ToolHooks) -> Self {
         self.hooks = hooks;
+        self
+    }
+
+    /// Attach an [`AgentResolver`] for `target_agent` routing.
+    ///
+    /// When set, the `target_agent` field in [`TaskSpec`] is used to look
+    /// up the appropriate agent. Falls back to `self.agent` when the target
+    /// is not found or not specified.
+    pub fn with_agent_resolver(mut self, resolver: Arc<dyn AgentResolver>) -> Self {
+        self.agent_resolver = Some(resolver);
         self
     }
 
@@ -281,12 +307,25 @@ impl DelegateTool {
             task.prompt.chars().take(50).collect::<String>()
         );
 
+        // Determine which agent to use for child execution:
+        // 1. If target_agent is set and we have a resolver, look it up
+        // 2. Fall back to self.agent if not found or no target specified
+        let child_agent = if let Some(ref resolver) = self.agent_resolver {
+            if let Some(target) = &task.target_agent {
+                resolver.resolve(target).await
+                    .or_else(|| self.agent.clone())
+            } else {
+                self.agent.clone()
+            }
+        } else {
+            self.agent.clone()
+        };
+
         // Also register with the SubagentRegistry for cross-cutting tracking
         let registry = Arc::clone(&self.registry);
         let reg_child_id = child_id.clone();
         let reg_task = task.clone();
         let reg_tracker = self.tracker.clone();
-        let agent = self.agent.clone();
         let iterations_bg = iterations.clone();
 
         // Spawn via the registry so it participates in depth/metrics tracking.
@@ -303,7 +342,7 @@ impl DelegateTool {
                     reg_task,
                     reg_tracker,
                     iterations_bg,
-                    agent,
+                    child_agent,
                     Arc::clone(&registry),
                     run_id,
                 )

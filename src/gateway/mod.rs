@@ -50,7 +50,9 @@ use crate::memory::vector::{
 use crate::model_router::ModelRouter;
 use crate::plugins::PluginManager;
 use crate::security::pairing::DmPolicy;
+use async_trait::async_trait;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
+use crate::tools::delegate_tool::AgentResolver;
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
 
@@ -868,6 +870,23 @@ pub struct AgentHandle {
     pub busy: bool,
  /// Reference to the agent for ACP orchestration
     pub agent: Arc<Agent>,
+}
+
+/// Wraps the Gateway agent map for [`AgentResolver`] lookups.
+///
+/// When [`DelegateTool`] receives a `target_agent` field, this resolver
+/// looks up the corresponding running agent from the Gateway's agent pool
+/// so the child task is routed to the specialised agent.
+struct GatewayAgentResolver {
+    agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
+}
+
+#[async_trait]
+impl AgentResolver for GatewayAgentResolver {
+    async fn resolve(&self, name: &str) -> Option<Arc<Agent>> {
+        let agents = self.agents.read().await;
+        agents.get(name).map(|h| h.agent.clone())
+    }
 }
 
 /// Commands sent to agents
@@ -2160,7 +2179,29 @@ impl Gateway {
             }
         }
 
- // Auto-connect MCP servers (9.1, 9.2)
+        // Register delegation tool with agent resolver for target_agent routing.
+        // The resolver consults the running agents map so that `target_agent`
+        // in TaskSpec routes children to the appropriate specialised agent.
+        {
+            use crate::tools::DelegateTool;
+            let resolver =
+                Arc::new(GatewayAgentResolver { agents: self.state.agents.clone() });
+            let default_agent = {
+                let agents = self.state.agents.read().await;
+                agents.get("default").map(|h| h.agent.clone())
+            };
+            let delegate = if let Some(agent) = default_agent {
+                DelegateTool::with_agent(0, agent).with_agent_resolver(resolver)
+            } else {
+                DelegateTool::root().with_agent_resolver(resolver)
+            };
+            self.state
+                .tool_registry
+                .register_dynamic(Arc::new(delegate));
+            info!("DelegateTool registered with agent resolver for target_agent routing");
+        }
+
+        // Auto-connect MCP servers (9.1, 9.2)
         self.init_mcp_servers().await;
 
  // Initialize configured channels
@@ -4749,9 +4790,6 @@ async fn create_default_tool_registry(
             warn!("Failed to initialize MemoryGetTool: {}. Memory CRUD unavailable.", e);
         }
     }
-
- // Register delegation tool for agent-to-agent task delegation
-    registry.register(Box::new(DelegateTool::root()));
 
  // Register MCP (Model Context Protocol) connection tool (uses shared manager)
     registry.register(Box::new(McpConnectionTool::with_manager(mcp_manager)));

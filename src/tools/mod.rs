@@ -591,7 +591,7 @@ pub use browser::BrowserTool;
 pub use canvas::CanvasTool;
 pub use code_exec::CodeExecutionTool;
 pub use cron_tool::CronTool;
-pub use delegate_tool::DelegateTool;
+pub use delegate_tool::{AgentResolver, DelegateTool};
 pub use file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
 pub use gateway::GatewayTool;
 pub use grep::GrepTool;
