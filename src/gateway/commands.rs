@@ -37,6 +37,19 @@ pub enum CommandTier {
     Power,
 }
 
+/// Where a command is valid
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandScope {
+    /// Works everywhere (default)
+    #[default]
+    Global,
+    /// DM only
+    DirectMessage,
+    /// Channel only
+    Channel,
+}
+
 /// Metadata for a single slash command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDef {
@@ -49,6 +62,10 @@ pub struct CommandDef {
     pub tier: CommandTier,
     pub local: bool,
     pub requires_admin: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub scope: CommandScope,
 }
 
 impl CommandDef {
@@ -62,11 +79,28 @@ impl CommandDef {
             tier: CommandTier::Standard,
             local: false,
             requires_admin: false,
+            aliases: Vec::new(),
+            scope: CommandScope::Global,
         }
     }
 
     fn with_args(mut self, args: &str) -> Self {
         self.args = Some(args.to_string());
+        self
+    }
+
+    fn with_aliases(mut self, aliases: &[&str]) -> Self {
+        self.aliases = aliases.iter().map(|a| a.to_string()).collect();
+        self
+    }
+
+    fn dm(mut self) -> Self {
+        self.scope = CommandScope::DirectMessage;
+        self
+    }
+
+    fn channel(mut self) -> Self {
+        self.scope = CommandScope::Channel;
         self
     }
 
@@ -92,6 +126,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
  // Session
         CommandDef::new("new", "new", "Start a new session", CommandCategory::Session)
             .with_args("[model]")
+            .with_aliases(&["clear"])
             .local()
             .essential(),
         CommandDef::new("reset", "reset", "Reset the current session", CommandCategory::Session)
@@ -113,7 +148,6 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Session,
         )
         .with_args("[path]"),
-        CommandDef::new("clear", "clear", "Clear chat history", CommandCategory::Session).local(),
  // Model
         CommandDef::new(
             "model",
@@ -140,14 +174,9 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         CommandDef::new("queue", "queue", "Set queue behavior", CommandCategory::Model)
             .with_args("<mode>"),
  // Status / Query
-        CommandDef::new("help", "help", "Show help summary", CommandCategory::Status).essential(),
-        CommandDef::new(
-            "commands",
-            "commands",
-            "Show full command catalog",
-            CommandCategory::Status,
-        )
-        .essential(),
+        CommandDef::new("help", "help", "Show help summary", CommandCategory::Status)
+            .with_aliases(&["commands"])
+            .essential(),
         CommandDef::new("status", "status", "Show runtime status", CommandCategory::Status)
             .essential(),
         CommandDef::new("tools", "tools", "Show available tools", CommandCategory::Status)
@@ -175,12 +204,11 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         CommandDef::new("kill", "kill", "Abort sub-agent runs", CommandCategory::Agents)
             .with_args("<id|#|all>"),
         CommandDef::new("steer", "steer", "Send steering to a sub-agent", CommandCategory::Agents)
-            .with_args("<id> <message>"),
+            .with_args("<id> <message>")
+            .with_aliases(&["tell"]),
         CommandDef::new("focus", "focus", "Bind thread to session target", CommandCategory::Agents)
             .with_args("<target>"),
         CommandDef::new("unfocus", "unfocus", "Remove thread binding", CommandCategory::Agents),
-        CommandDef::new("tell", "tell", "Alias for steer", CommandCategory::Agents)
-            .with_args("<id> <message>"),
  // Skills / Approval
         CommandDef::new(
             "allowlist",
@@ -195,7 +223,8 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             "Resolve an approval prompt",
             CommandCategory::Agents,
         )
-        .with_args("<id> <decision>"),
+        .with_args("<id> <decision>")
+        .with_aliases(&["y"]),
         CommandDef::new(
             "btw",
             "btw",
@@ -299,7 +328,7 @@ pub async fn handle_commands_execute(
         let commands = built_in_commands();
         let def = match commands
             .iter()
-            .find(|c| c.key == normalized || c.name == normalized)
+            .find(|c| c.key == normalized || c.name == normalized || c.aliases.contains(&normalized))
         {
             Some(d) => d.clone(),
             None => {
@@ -320,8 +349,8 @@ pub async fn handle_commands_execute(
             }
         }
 
- // Dispatch to handler
-        match normalized.as_str() {
+ // Dispatch by canonical key so aliases resolve to the same handler
+        match def.key.as_str() {
             "help" | "commands" => handle_help(req),
             "status" => handle_status(req, state).await,
             "whoami" => handle_whoami(req, conn).await,
@@ -358,8 +387,8 @@ pub async fn handle_commands_execute(
             "bash" => handle_bash(req, &params.args).await,
             _ => WsResponse::err(
                 &req.id,
-                "NOT_IMPLEMENTED",
-                format!("Command /{} is not yet implemented", normalized),
+                "NOT_HANDLED",
+                format!("Command /{} is not handled server-side", def.key),
             ),
         }
     }
@@ -427,8 +456,16 @@ fn handle_help(req: &WsRequest) -> WsResponse {
             } else {
                 format!(" `{}`", args)
             };
-            lines
-                .push(format!("- `/{}{}` — {}{}", c.name, args_display, c.description, admin_mark));
+            let alias_display = if c.aliases.is_empty() {
+                "".to_string()
+            } else {
+                let aliases: Vec<String> = c.aliases.iter().map(|a| format!("/{}", a)).collect();
+                format!(" (alias: {})", aliases.join(", "))
+            };
+            lines.push(format!(
+                "- `/{}{}`{}{}{}",
+                c.name, args_display, alias_display, c.description, admin_mark
+            ));
         }
         lines.push("".to_string());
     }

@@ -57,13 +57,13 @@ Capabilities the AI assistant can use to interact with the world.
 
 - **✅ Implemented**: Full sandbox on non-Unix — `#[cfg(not(unix))]` `apply_resource_limits()` is explicitly a no-op. Unix uses `setrlimit`. See `src/tools/sandbox.rs:265-269`.
 - **✅ Implemented**: Tool execution audit log — `RuntimeAuditLog` with in-memory ring buffer and `PersistentAuditLog` with SQLite backend. `AuditEventType::ToolInvocation` and `ToolDeny` are recorded. See `src/security/runtime_audit.rs` and `src/security/persistent_audit.rs`.
-- **📝 Partial**: Command registry — `CommandDef` exists with key, name, description, args, category, tier (`src/gateway/commands.rs:1-1678`). Missing: aliases, scope. Has `local` and `requires_admin` instead.
+- **✅ Implemented**: Command registry — `CommandDef` with key, name, description, args, category, tier, aliases, scope, `local`, `requires_admin`. See `src/gateway/commands.rs`.
 - **📝 Partial**: Help system — `handle_help()` builds dynamic help with category grouping. Missing: pagination (8 per page), feature flags. See `src/gateway/commands.rs:399-433`.
 - **📝 Partial**: Exec approvals — `ApprovalQueue` with human-in-the-loop exists, including risk levels and oneshot resolution. Missing: `ask`/`host`/`security` levels, shell command safety analysis, safe bin policy. See `src/tools/approval.rs`.
 - **📝 Partial**: Tool SDK — `ToolSdk` with `ToolPack`, `ToolCapabilities`, `ToolMetadata` exists for dynamic pack registration. Not a full external SDK. See `src/tools/sdk.rs`.
 - **❌ Missing**: Command detection — three-layer detection (control command / command message / inline token).
 - **❌ Missing**: Command authorization — provider inference, AllowFrom resolution, owner state machine, sender candidate matching.
-- **❌ Missing**: Command gating — access groups, multi-authorizer OR logic, dual authorizer support, `resolveControlCommandGate()`.
+- **✅ Implemented**: Command gating — access groups with `AccessGroup`, multi-authorizer OR/AND logic via `Authorizer` enum and `AuthorizerMode`, dual authorizer support via `check()`/`check_dual()`. See `src/channels/command_gate.rs`.
 - **❌ Missing**: Tool gating — 30+ option gating (plugin_tool_allowlist, model_has_vision, sender_is_owner, model/provider gating, sandbox policy).
 - **❌ Missing**: Tool result streaming for long-running operations.
 - **❌ Missing**: Fine-grained RBAC beyond Community/Trusted trust levels.
