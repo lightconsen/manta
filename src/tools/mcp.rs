@@ -14,14 +14,14 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn};
 
-use super::{Tool, ToolContext, ToolExecutionResult};
+use super::{Tool, ToolContext, ToolExecutionChunk, ToolExecutionResult};
 
 // ─────────────────────────────────────────────
 // Transport selection
@@ -74,6 +74,23 @@ pub struct McpServerConfig {
     /// Auto-connect on gateway startup
     #[serde(default = "default_true")]
     pub auto_connect: bool,
+    /// Health-check interval in seconds (0 disables health checks).
+    #[serde(default = "default_health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+    /// Automatically reconnect when a connection is marked unhealthy.
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
+    /// Maximum reconnect attempts after a connection failure.
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_reconnect_attempts: u32,
+}
+
+fn default_health_check_interval_secs() -> u64 {
+    30
+}
+
+fn default_max_reconnect_attempts() -> u32 {
+    5
 }
 
 fn default_timeout_secs() -> u64 {
@@ -95,6 +112,9 @@ impl Default for McpServerConfig {
             timeout_secs: default_timeout_secs(),
             max_tools: 0,
             auto_connect: true,
+            health_check_interval_secs: default_health_check_interval_secs(),
+            auto_reconnect: true,
+            max_reconnect_attempts: default_max_reconnect_attempts(),
         }
     }
 }
@@ -130,6 +150,10 @@ struct McpResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<McpJsonRpcError>,
@@ -149,19 +173,49 @@ struct McpServerInfo {
     version: String,
 }
 
+/// Tool capability details returned in the MCP `initialize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpToolsCapability {
+    /// The server supports `notifications/tools/list_changed`.
+    #[serde(default, rename = "listChanged")]
+    pub list_changed: bool,
+}
+
+/// Resource capability details returned in the MCP `initialize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpResourcesCapability {
+    /// The server supports `resources/subscribe` and resource update notifications.
+    #[serde(default)]
+    pub subscribe: bool,
+    /// The server supports `notifications/resources/list_changed`.
+    #[serde(default, rename = "listChanged")]
+    pub list_changed: bool,
+}
+
+/// Prompt capability details returned in the MCP `initialize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpPromptsCapability {
+    /// The server supports `notifications/prompts/list_changed`.
+    #[serde(default, rename = "listChanged")]
+    pub list_changed: bool,
+}
+
 /// Server capabilities returned in the MCP `initialize` response.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerCapabilities {
-    /// Tool support (presence of `tools` key means tools are supported)
+    /// Tool support and sub-capabilities.
     #[serde(default)]
-    pub tools: Option<serde_json::Value>,
-    /// Resource support
+    pub tools: Option<McpToolsCapability>,
+    /// Resource support and sub-capabilities.
     #[serde(default)]
-    pub resources: Option<serde_json::Value>,
-    /// Prompt support
+    pub resources: Option<McpResourcesCapability>,
+    /// Prompt support and sub-capabilities.
     #[serde(default)]
-    pub prompts: Option<serde_json::Value>,
-    /// Any additional capabilities
+    pub prompts: Option<McpPromptsCapability>,
+    /// Logging support (e.g. `setLevel`).
+    #[serde(default)]
+    pub logging: Option<serde_json::Value>,
+    /// Any additional capabilities.
     #[serde(default, flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -172,14 +226,34 @@ impl McpServerCapabilities {
         self.tools.is_some()
     }
 
+    /// Returns true if the server supports tool list-change notifications.
+    pub fn supports_tool_list_changed(&self) -> bool {
+        self.tools.as_ref().map(|c| c.list_changed).unwrap_or(false)
+    }
+
     /// Returns true if the server supports resources.
     pub fn supports_resources(&self) -> bool {
         self.resources.is_some()
     }
 
+    /// Returns true if the server supports resource subscriptions.
+    pub fn supports_resource_subscribe(&self) -> bool {
+        self.resources.as_ref().map(|c| c.subscribe).unwrap_or(false)
+    }
+
+    /// Returns true if the server supports resource list-change notifications.
+    pub fn supports_resource_list_changed(&self) -> bool {
+        self.resources.as_ref().map(|c| c.list_changed).unwrap_or(false)
+    }
+
     /// Returns true if the server supports prompts.
     pub fn supports_prompts(&self) -> bool {
         self.prompts.is_some()
+    }
+
+    /// Returns true if the server supports prompt list-change notifications.
+    pub fn supports_prompt_list_changed(&self) -> bool {
+        self.prompts.as_ref().map(|c| c.list_changed).unwrap_or(false)
     }
 }
 
@@ -234,6 +308,98 @@ pub struct McpResourceContent {
 }
 
 // ─────────────────────────────────────────────
+// Prompt types (2024-11-05 spec)
+// ─────────────────────────────────────────────
+
+/// Argument schema for an MCP prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPromptArgument {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// MCP prompt descriptor returned by `prompts/list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPrompt {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<McpPromptArgument>>,
+}
+
+/// A single message inside a rendered prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPromptMessage {
+    pub role: String,
+    pub content: serde_json::Value,
+}
+
+/// Result of `prompts/get`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpGetPromptResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub messages: Vec<McpPromptMessage>,
+}
+
+// ─────────────────────────────────────────────
+// Sampling types (2024-11-05 spec)
+// ─────────────────────────────────────────────
+
+/// A sampling message sent to the server via `sampling/createMessage`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSamplingMessage {
+    pub role: String,
+    pub content: serde_json::Value,
+}
+
+/// Result of `sampling/createMessage`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSamplingResult {
+    pub role: String,
+    pub content: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+}
+
+// ─────────────────────────────────────────────
+// Server-initiated notifications (2024-11-05 spec)
+// ─────────────────────────────────────────────
+
+/// A server-initiated MCP notification.
+#[derive(Debug, Clone)]
+pub enum McpNotification {
+    /// `notifications/resources/updated`
+    ResourceUpdated { uri: String },
+    /// `notifications/resources/list_changed`
+    ResourceListChanged,
+    /// `notifications/tools/list_changed`
+    ToolListChanged,
+    /// `notifications/progress`
+    Progress {
+        progress_token: serde_json::Value,
+        progress: f64,
+        total: Option<f64>,
+    },
+    /// `notifications/message`
+    Message {
+        level: String,
+        data: serde_json::Value,
+    },
+    /// Any other notification, preserved as raw JSON.
+    Other {
+        method: String,
+        params: Option<serde_json::Value>,
+    },
+}
+
+// ─────────────────────────────────────────────
 // McpClient (9.1, 9.3, 9.4, 9.6, 9.8)
 // ─────────────────────────────────────────────
 
@@ -244,6 +410,10 @@ pub struct McpClient {
     process: Option<Child>,
     /// Request sender channel (present when connected)
     request_tx: Option<mpsc::UnboundedSender<McpRequest>>,
+    /// Notification sender channel for server-pushed messages.
+    notification_tx: Option<mpsc::UnboundedSender<McpNotification>>,
+    /// Broadcast channel for progress notifications used during streaming tool calls.
+    progress_tx: Option<broadcast::Sender<McpNotification>>,
     /// Server metadata returned during `initialize`
     server_info: Option<McpServerInfo>,
     /// Server capabilities returned during `initialize`
@@ -268,6 +438,8 @@ impl McpClient {
         Self {
             process: None,
             request_tx: None,
+            notification_tx: None,
+            progress_tx: None,
             server_info: None,
             server_capabilities: None,
             tools: Vec::new(),
@@ -299,6 +471,77 @@ impl McpClient {
                 (k.clone(), resolved)
             })
             .collect()
+    }
+
+    /// Set the notification sender channel for server-pushed messages.
+    pub fn set_notification_tx(&mut self, tx: mpsc::UnboundedSender<McpNotification>) {
+        self.notification_tx = Some(tx);
+    }
+
+    /// Set the broadcast channel used to distribute progress notifications.
+    pub fn set_progress_tx(&mut self, tx: broadcast::Sender<McpNotification>) {
+        self.progress_tx = Some(tx);
+    }
+
+    /// Parse a server-initiated JSON-RPC message into an `McpNotification`.
+    fn parse_notification(response: &McpResponse) -> Option<McpNotification> {
+        let method = response.method.as_deref()?;
+        match method {
+            "notifications/resources/updated" => {
+                let uri = response
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("uri"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)?;
+                Some(McpNotification::ResourceUpdated { uri })
+            }
+            "notifications/resources/list_changed" => Some(McpNotification::ResourceListChanged),
+            "notifications/tools/list_changed" => Some(McpNotification::ToolListChanged),
+            "notifications/progress" => {
+                let params = response.params.as_ref()?;
+                let progress_token = params.get("progressToken").cloned()?;
+                let progress = params.get("progress").and_then(|v| v.as_f64())?;
+                let total = params.get("total").and_then(|v| v.as_f64());
+                Some(McpNotification::Progress {
+                    progress_token,
+                    progress,
+                    total,
+                })
+            }
+            "notifications/message" => {
+                let params = response.params.as_ref()?;
+                let level = params
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("info")
+                    .to_string();
+                Some(McpNotification::Message {
+                    level,
+                    data: params.clone(),
+                })
+            }
+            method => Some(McpNotification::Other {
+                method: method.to_string(),
+                params: response.params.clone(),
+            }),
+        }
+    }
+
+    /// Forward a notification to the manager channel and the progress broadcast channel.
+    fn emit_notification(
+        notification: McpNotification,
+        notification_tx: &Option<mpsc::UnboundedSender<McpNotification>>,
+        progress_tx: &Option<broadcast::Sender<McpNotification>>,
+    ) {
+        if matches!(&notification, McpNotification::Progress { .. }) {
+            if let Some(tx) = progress_tx {
+                let _ = tx.send(notification.clone());
+            }
+        }
+        if let Some(tx) = notification_tx {
+            let _ = tx.send(notification);
+        }
     }
 
     // ── Stdio transport ──────────────────────────────────────────────────────
@@ -372,6 +615,8 @@ impl McpClient {
 
         // Reader task
         let response_channels = self.response_channels.clone();
+        let notification_tx = self.notification_tx.clone();
+        let progress_tx = self.progress_tx.clone();
         let stdout_reader = BufReader::new(stdout);
         tokio::spawn(async move {
             let mut lines = stdout_reader.lines();
@@ -381,6 +626,14 @@ impl McpClient {
                         let channels = response_channels.read().await;
                         if let Some(tx) = channels.get(&id) {
                             let _ = tx.send(response);
+                        }
+                    } else {
+                        if let Some(notification) = McpClient::parse_notification(&response) {
+                            McpClient::emit_notification(
+                                notification,
+                                &notification_tx,
+                                &progress_tx,
+                            );
                         }
                     }
                 }
@@ -454,6 +707,8 @@ impl McpClient {
         // SSE reader task: open a GET to `url`, read `data:` lines
         let get_url = url.to_string();
         let response_channels_sse = response_channels.clone();
+        let notification_tx_sse = self.notification_tx.clone();
+        let progress_tx_sse = self.progress_tx.clone();
         tokio::spawn(async move {
             let mut builder = client.get(&get_url).header("Accept", "text/event-stream");
             for (k, v) in &env_headers {
@@ -490,6 +745,14 @@ impl McpClient {
                                             let channels = response_channels_sse.read().await;
                                             if let Some(tx) = channels.get(&id) {
                                                 let _ = tx.send(response);
+                                            }
+                                        } else {
+                                            if let Some(notification) = McpClient::parse_notification(&response) {
+                                                McpClient::emit_notification(
+                                                    notification,
+                                                    &notification_tx_sse,
+                                                    &progress_tx_sse,
+                                                );
                                             }
                                         }
                                     }
@@ -562,6 +825,8 @@ impl McpClient {
         let post_url = url.to_string();
         let timeout_secs = self.timeout_secs;
         let env_headers = resolved_env.clone();
+        let notification_tx_http = self.notification_tx.clone();
+        let progress_tx_http = self.progress_tx.clone();
 
         tokio::spawn(async move {
             let client = match reqwest::Client::builder()
@@ -622,6 +887,14 @@ impl McpClient {
                                                 if let Some(tx) = channels.get(&id) {
                                                     let _ = tx.send(response);
                                                 }
+                                            } else {
+                                                if let Some(notification) = McpClient::parse_notification(&response) {
+                                                    McpClient::emit_notification(
+                                                        notification,
+                                                        &notification_tx_http,
+                                                        &progress_tx_http,
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -661,7 +934,11 @@ impl McpClient {
             params: Some(json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
-                    "resources": {}
+                    "tools": { "listChanged": true },
+                    "resources": { "subscribe": true, "listChanged": true },
+                    "prompts": { "listChanged": true },
+                    "sampling": {},
+                    "roots": { "listChanged": true },
                 },
                 "clientInfo": {
                     "name": "syscity",
@@ -683,7 +960,28 @@ impl McpClient {
             }
         }
 
-        self.list_tools().await?;
+        // Only list tools if the server advertises tool support.
+        if self
+            .server_capabilities
+            .as_ref()
+            .map(|c| c.supports_tools())
+            .unwrap_or(true)
+        {
+            self.list_tools().await?;
+        } else {
+            info!("MCP server does not advertise tool support; skipping tools/list");
+        }
+
+        // Discover resources if supported.
+        if self
+            .server_capabilities
+            .as_ref()
+            .map(|c| c.supports_resources())
+            .unwrap_or(false)
+        {
+            // Keep resource discovery lazy; list_resources() is available on demand.
+        }
+
         Ok(())
     }
 
@@ -731,7 +1029,7 @@ impl McpClient {
     }
 
     /// Refresh the tool list from the server.
-    async fn list_tools(&mut self) -> crate::Result<()> {
+    pub async fn list_tools(&mut self) -> crate::Result<()> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -770,6 +1068,136 @@ impl McpClient {
                 "name": name,
                 "arguments": params,
             })),
+        };
+
+        let response = self.send_request(request).await?;
+        response.result.ok_or_else(|| {
+            crate::error::SyscityError::Internal("No result from tool call".to_string())
+        })
+    }
+
+    /// List prompts available from the MCP server.
+    pub async fn list_prompts(&self) -> crate::Result<Vec<McpPrompt>> {
+        if !self
+            .server_capabilities
+            .as_ref()
+            .map(|c| c.supports_prompts())
+            .unwrap_or(false)
+        {
+            return Ok(Vec::new());
+        }
+
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "prompts/list".to_string(),
+            params: None,
+        };
+
+        let response = self.send_request(request).await?;
+        if let Some(result) = response.result {
+            let prompts: Vec<McpPrompt> = if let Some(arr) = result.get("prompts") {
+                serde_json::from_value(arr.clone()).unwrap_or_default()
+            } else {
+                serde_json::from_value(result).unwrap_or_default()
+            };
+            return Ok(prompts);
+        }
+        Ok(Vec::new())
+    }
+
+    /// Render a prompt by name with optional arguments.
+    pub async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: Option<HashMap<String, String>>,
+    ) -> crate::Result<McpGetPromptResult> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let mut params = json!({ "name": name });
+        if let Some(args) = arguments {
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert("arguments".to_string(), json!(args));
+            }
+        }
+
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "prompts/get".to_string(),
+            params: Some(params),
+        };
+
+        let response = self.send_request(request).await?;
+        let result = response.result.ok_or_else(|| {
+            crate::error::SyscityError::Internal("No result from prompts/get".to_string())
+        })?;
+        serde_json::from_value::<McpGetPromptResult>(result).map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse prompt result: {}", e))
+        })
+    }
+
+    /// Ask the MCP server to sample a message (server-initiated LLM call).
+    pub async fn sampling_create_message(
+        &self,
+        messages: Vec<McpSamplingMessage>,
+        max_tokens: i64,
+        model_hints: Option<Vec<String>>,
+    ) -> crate::Result<McpSamplingResult> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let mut params = json!({
+            "messages": messages,
+            "maxTokens": max_tokens,
+        });
+        if let Some(hints) = model_hints {
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert(
+                    "modelPreferences".to_string(),
+                    json!({ "hints": hints }),
+                );
+            }
+        }
+
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "sampling/createMessage".to_string(),
+            params: Some(params),
+        };
+
+        let response = self.send_request(request).await?;
+        let result = response.result.ok_or_else(|| {
+            crate::error::SyscityError::Internal("No result from sampling/createMessage".to_string())
+        })?;
+        serde_json::from_value::<McpSamplingResult>(result).map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to parse sampling result: {}", e))
+        })
+    }
+
+    /// Call an MCP tool by name with a progress token for streaming notifications.
+    pub async fn call_tool_with_progress(
+        &self,
+        name: &str,
+        params: serde_json::Value,
+        progress_token: &str,
+    ) -> crate::Result<serde_json::Value> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let mut request_params = json!({
+            "name": name,
+            "arguments": params,
+        });
+        if let Some(obj) = request_params.as_object_mut() {
+            obj.insert(
+                "_meta".to_string(),
+                json!({ "progressToken": progress_token }),
+            );
+        }
+
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "tools/call".to_string(),
+            params: Some(request_params),
         };
 
         let response = self.send_request(request).await?;
@@ -822,6 +1250,63 @@ impl McpClient {
             return Ok(contents);
         }
         Ok(Vec::new())
+    }
+
+    /// Subscribe to resource change notifications for a URI.
+    pub async fn subscribe_resource(&self, uri: &str) -> crate::Result<()> {
+        if !self
+            .server_capabilities
+            .as_ref()
+            .map(|c| c.supports_resource_subscribe())
+            .unwrap_or(false)
+        {
+            return Err(crate::error::SyscityError::Internal(
+                "MCP server does not support resource subscriptions".to_string(),
+            ));
+        }
+
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "resources/subscribe".to_string(),
+            params: Some(json!({ "uri": uri })),
+        };
+
+        let response = self.send_request(request).await?;
+        if response.error.is_some() {
+            return Err(crate::error::SyscityError::ExternalService {
+                source: "resources/subscribe failed".to_string(),
+                cause: response.error.map(|e| {
+                    Box::new(std::io::Error::other(e.message))
+                        as Box<dyn std::error::Error + Send + Sync>
+                }),
+            });
+        }
+        Ok(())
+    }
+
+    /// Unsubscribe from resource change notifications for a URI.
+    pub async fn unsubscribe_resource(&self, uri: &str) -> crate::Result<()> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(id),
+            method: "resources/unsubscribe".to_string(),
+            params: Some(json!({ "uri": uri })),
+        };
+
+        let response = self.send_request(request).await?;
+        if response.error.is_some() {
+            return Err(crate::error::SyscityError::ExternalService {
+                source: "resources/unsubscribe failed".to_string(),
+                cause: response.error.map(|e| {
+                    Box::new(std::io::Error::other(e.message))
+                        as Box<dyn std::error::Error + Send + Sync>
+                }),
+            });
+        }
+        Ok(())
     }
 
     // ── Accessors ─────────────────────────────────────────────────────────────
@@ -918,22 +1403,285 @@ impl Tool for McpToolWrapper {
         let result = client.call_tool(&self.tool_name, args).await?;
         Ok(ToolExecutionResult::success(format!("MCP tool result: {}", result)).with_data(result))
     }
+
+    fn execute_stream<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _context: &'a ToolContext,
+    ) -> std::pin::Pin<Box<dyn tokio_stream::Stream<Item = ToolExecutionChunk> + Send + 'a>> {
+        let client = self.client.clone();
+        let tool_name = self.tool_name.clone();
+        Box::pin(async_stream::stream! {
+            let progress_token = uuid::Uuid::new_v4().to_string();
+            let (result_tx, mut result_rx) = mpsc::unbounded_channel::<crate::Result<serde_json::Value>>();
+
+            // Subscribe to progress notifications before issuing the call.
+            let mut progress_rx = {
+                let c = client.read().await;
+                match c.progress_tx.as_ref() {
+                    Some(tx) => tx.subscribe(),
+                    None => {
+                        // Progress streaming not wired; fall back to buffered execution.
+                        match c.call_tool(&tool_name, args).await {
+                            Ok(result) => {
+                                yield ToolExecutionChunk::Output(format!("MCP tool result: {}", result));
+                                yield ToolExecutionChunk::Data(result);
+                            }
+                            Err(e) => yield ToolExecutionChunk::Error(e.to_string()),
+                        }
+                        return;
+                    }
+                }
+            };
+
+            // Spawn the actual tool call with a progress token.
+            let token = progress_token.clone();
+            let call_client = client.clone();
+            tokio::spawn(async move {
+                let c = call_client.read().await;
+                let result = c.call_tool_with_progress(&tool_name, args, &token).await;
+                let _ = result_tx.send(result);
+            });
+
+            loop {
+                tokio::select! {
+                    maybe_notification = progress_rx.recv() => {
+                        match maybe_notification {
+                            Ok(McpNotification::Progress { progress_token: token, progress, total }) => {
+                                if token.as_str() == Some(progress_token.as_str()) {
+                                    let msg = match total {
+                                        Some(t) => format!("Progress: {}/{}", progress, t),
+                                        None => format!("Progress: {}", progress),
+                                    };
+                                    yield ToolExecutionChunk::Output(msg);
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(_) => break,
+                        }
+                    }
+                    maybe_result = result_rx.recv() => {
+                        match maybe_result {
+                            Some(Ok(result)) => {
+                                yield ToolExecutionChunk::Output(format!("MCP tool result: {}", result));
+                                yield ToolExecutionChunk::Data(result);
+                                yield ToolExecutionChunk::Done;
+                                break;
+                            }
+                            Some(Err(e)) => {
+                                yield ToolExecutionChunk::Error(e.to_string());
+                                break;
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+// ─────────────────────────────────────────────
+// McpPromptTool – implements Tool for MCP prompts
+// ─────────────────────────────────────────────
+
+/// Wraps a single MCP prompt so the agent can render it through `ToolRegistry`.
+/// Prompt names are registered as `mcp__{server_id}__prompt__{prompt_name}`.
+#[derive(Debug)]
+pub struct McpPromptTool {
+    /// Shared client for the originating server
+    client: Arc<RwLock<McpClient>>,
+    /// Fully-qualified tool name
+    qualified_name: String,
+    /// Original MCP prompt name
+    prompt_name: String,
+    prompt_description: String,
+    /// JSON schema for the prompt arguments.
+    parameters_schema: serde_json::Value,
+}
+
+impl McpPromptTool {
+    /// Create a wrapper.  `server_id` is the key from `mcp.servers.*`.
+    pub fn new(client: Arc<RwLock<McpClient>>, server_id: &str, prompt: &McpPrompt) -> Self {
+        let qualified_name = format!("mcp__{}__prompt__{}", server_id, prompt.name);
+
+        // Build a JSON schema from the prompt arguments.
+        let properties = prompt
+            .arguments
+            .as_ref()
+            .map(|args| {
+                let mut props = serde_json::Map::new();
+                let mut required = Vec::new();
+                for arg in args {
+                    let mut prop = serde_json::Map::new();
+                    prop.insert("type".to_string(), json!("string"));
+                    if let Some(desc) = &arg.description {
+                        prop.insert("description".to_string(), json!(desc));
+                    }
+                    props.insert(arg.name.clone(), serde_json::Value::Object(prop));
+                    if arg.required {
+                        required.push(arg.name.clone());
+                    }
+                }
+                let mut schema = serde_json::Map::new();
+                schema.insert("type".to_string(), json!("object"));
+                schema.insert("properties".to_string(), serde_json::Value::Object(props));
+                if !required.is_empty() {
+                    schema.insert("required".to_string(), json!(required));
+                }
+                serde_json::Value::Object(schema)
+            })
+            .unwrap_or_else(|| json!({ "type": "object" }));
+
+        Self {
+            client,
+            qualified_name,
+            prompt_name: prompt.name.clone(),
+            prompt_description: prompt.description.clone().unwrap_or_default(),
+            parameters_schema: properties,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for McpPromptTool {
+    fn name(&self) -> &str {
+        &self.qualified_name
+    }
+
+    fn description(&self) -> &str {
+        &self.prompt_description
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.parameters_schema.clone()
+    }
+
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+        _context: &ToolContext,
+    ) -> crate::Result<ToolExecutionResult> {
+        let arguments = args.as_object().map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                .collect::<HashMap<_, _>>()
+        });
+        let client = self.client.read().await;
+        let result = client.get_prompt(&self.prompt_name, arguments).await?;
+        Ok(ToolExecutionResult::success(format!("MCP prompt result: {:?}", result)).with_data(
+            serde_json::to_value(result).unwrap_or_default(),
+        ))
+    }
 }
 
 // ─────────────────────────────────────────────
 // McpManager – owns all clients (9.1, 9.2, 9.4)
 // ─────────────────────────────────────────────
 
+/// Lifecycle events emitted by `McpManager`.
+#[derive(Debug, Clone)]
+pub enum McpEvent {
+    /// A server connected successfully.
+    Connected {
+        server_id: String,
+        tools: usize,
+        prompts: usize,
+        resources: usize,
+    },
+    /// A server disconnected or was marked unhealthy.
+    Disconnected {
+        server_id: String,
+        reason: String,
+    },
+    /// A server recovered after an automatic reconnect.
+    Recovered {
+        server_id: String,
+        attempt: u32,
+    },
+    /// A subscribed resource changed on the server.
+    ResourceChanged {
+        server_id: String,
+        uri: String,
+    },
+}
+
+/// Health status of a single MCP server connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpHealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
+
+/// Mutable health record for one MCP connection.
+#[derive(Debug)]
+pub struct McpHealth {
+    pub status: McpHealthStatus,
+    pub last_heartbeat: chrono::DateTime<chrono::Utc>,
+    pub consecutive_failures: u32,
+}
+
+impl McpHealth {
+    pub fn new() -> Self {
+        Self {
+            status: McpHealthStatus::Healthy,
+            last_heartbeat: chrono::Utc::now(),
+            consecutive_failures: 0,
+        }
+    }
+}
+
+impl Default for McpHealth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Metadata kept for each connected MCP server.
+#[derive(Debug)]
+pub struct McpConnectionMeta {
+    client: Arc<RwLock<McpClient>>,
+    config: McpServerConfig,
+    health: Arc<RwLock<McpHealth>>,
+    crash_count: AtomicU32,
+}
+
+impl McpConnectionMeta {
+    fn new(client: Arc<RwLock<McpClient>>, config: McpServerConfig) -> Self {
+        Self {
+            client,
+            config,
+            health: Arc::new(RwLock::new(McpHealth::new())),
+            crash_count: AtomicU32::new(0),
+        }
+    }
+}
+
 /// Manages all MCP server connections.  Lives in `GatewayState`.
 #[derive(Debug, Default)]
 pub struct McpManager {
-    clients: Arc<RwLock<HashMap<String, Arc<RwLock<McpClient>>>>>,
+    clients: Arc<RwLock<HashMap<String, McpConnectionMeta>>>,
+    event_tx: Arc<RwLock<Option<mpsc::UnboundedSender<McpEvent>>>>,
 }
 
 impl McpManager {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
+            event_tx: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Set the event sender used to emit MCP lifecycle events.
+    pub fn with_event_tx(self, tx: mpsc::UnboundedSender<McpEvent>) -> Self {
+        *self.event_tx.blocking_write() = Some(tx);
+        self
+    }
+
+    async fn emit_event(&self, event: McpEvent) {
+        if let Some(tx) = self.event_tx.read().await.as_ref() {
+            let _ = tx.send(event);
         }
     }
 
@@ -944,31 +1692,112 @@ impl McpManager {
         config: McpServerConfig,
     ) -> crate::Result<Vec<McpToolDefinition>> {
         let mut client = McpClient::new().with_timeout(config.timeout_secs);
-        client.connect(config).await?;
+        client.connect(config.clone()).await?;
 
         let tools = client.get_tools().to_vec();
+        let prompts = client.list_prompts().await.unwrap_or_default();
+        let resources = client.list_resources().await.unwrap_or_default();
 
         let client_arc = Arc::new(RwLock::new(client));
+        let meta = McpConnectionMeta::new(client_arc.clone(), config.clone());
+
+        // Wire notification and progress channels.
+        let (notification_tx, mut notification_rx) =
+            mpsc::unbounded_channel::<McpNotification>();
+        let (progress_tx, _progress_rx) =
+            broadcast::channel::<McpNotification>(128);
+        {
+            let mut c = client_arc.write().await;
+            c.set_notification_tx(notification_tx);
+            c.set_progress_tx(progress_tx);
+        }
+
+        let server_id_owned = server_id.to_string();
+        let clients_for_notifications = self.clients.clone();
+        let event_tx_for_notifications = self.event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(notification) = notification_rx.recv().await {
+                match notification {
+                    McpNotification::ResourceUpdated { uri } => {
+                        if let Some(tx) = event_tx_for_notifications.read().await.as_ref() {
+                            let _ = tx.send(McpEvent::ResourceChanged {
+                                server_id: server_id_owned.clone(),
+                                uri,
+                            });
+                        }
+                    }
+                    McpNotification::ToolListChanged => {
+                        // Refresh tool list in the background.
+                        if let Some(meta) = clients_for_notifications.read().await.get(&server_id_owned) {
+                            let c = meta.client.read().await;
+                            if c.server_capabilities().map(|c| c.supports_tools()).unwrap_or(false) {
+                                // list_tools requires &mut self; spawn a short task with a clone of the Arc.
+                                let client_clone = meta.client.clone();
+                                let sid = server_id_owned.clone();
+                                tokio::spawn(async move {
+                                    let mut c = client_clone.write().await;
+                                    if let Err(e) = c.list_tools().await {
+                                        warn!("Failed to refresh tools for '{}': {}", sid, e);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    McpNotification::ResourceListChanged => {
+                        // Nothing automatic to do; consumers can re-list on demand.
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         self.clients
             .write()
             .await
-            .insert(server_id.to_string(), client_arc);
+            .insert(server_id.to_string(), meta);
+
+        self.emit_event(McpEvent::Connected {
+            server_id: server_id.to_string(),
+            tools: tools.len(),
+            prompts: prompts.len(),
+            resources: resources.len(),
+        }).await;
+
+        // Start health monitor for this connection.
+        self.start_health_monitor(server_id);
 
         Ok(tools)
     }
 
-    /// Disconnect a server and return its tools so callers can deregister them.
+    /// Disconnect a server.
     pub async fn disconnect(&self, server_id: &str) -> crate::Result<()> {
         let removed = self.clients.write().await.remove(server_id);
-        if let Some(client_arc) = removed {
-            client_arc.write().await.disconnect().await?;
+        if let Some(meta) = removed {
+            meta.client.write().await.disconnect().await?;
+            self.emit_event(McpEvent::Disconnected {
+                server_id: server_id.to_string(),
+                reason: "manual_disconnect".to_string(),
+            }).await;
         }
         Ok(())
     }
 
     /// Get the `Arc<RwLock<McpClient>>` for a server.
     pub async fn get_client(&self, server_id: &str) -> Option<Arc<RwLock<McpClient>>> {
-        self.clients.read().await.get(server_id).cloned()
+        self.clients
+            .read()
+            .await
+            .get(server_id)
+            .map(|m| m.client.clone())
+    }
+
+    /// Get the health record for a server.
+    pub async fn get_health(&self, server_id: &str) -> Option<Arc<RwLock<McpHealth>>> {
+        self.clients
+            .read()
+            .await
+            .get(server_id)
+            .map(|m| m.health.clone())
     }
 
     /// List connected server IDs.
@@ -982,13 +1811,34 @@ impl McpManager {
         server_id: &str,
         config: McpServerConfig,
     ) -> crate::Result<Vec<McpToolDefinition>> {
-        let delays: &[u64] = &[5, 10, 20, 40, 80];
-        for &secs in delays {
-            warn!("Reconnecting to MCP server '{}' in {}s …", server_id, secs);
+        let max_attempts = config.max_reconnect_attempts.max(1) as usize;
+        let base_delays: &[u64] = &[5, 10, 20, 40, 80];
+        let delays: Vec<u64> = base_delays
+            .iter()
+            .cycle()
+            .take(max_attempts)
+            .copied()
+            .collect();
+
+        for (attempt, &secs) in delays.iter().enumerate() {
+            warn!(
+                "Reconnecting to MCP server '{}' in {}s (attempt {}/{}) …",
+                server_id,
+                secs,
+                attempt + 1,
+                delays.len()
+            );
             tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
             match self.connect(server_id, config.clone()).await {
                 Ok(tools) => {
                     info!("Reconnected to MCP server '{}'", server_id);
+                    if let Some(meta) = self.clients.read().await.get(server_id) {
+                        meta.crash_count.store(0, Ordering::SeqCst);
+                    }
+                    self.emit_event(McpEvent::Recovered {
+                        server_id: server_id.to_string(),
+                        attempt: (attempt + 1) as u32,
+                    }).await;
                     return Ok(tools);
                 }
                 Err(e) => {
@@ -998,9 +1848,104 @@ impl McpManager {
         }
         Err(crate::error::SyscityError::Internal(format!(
             "Failed to reconnect to MCP server '{}' after {} attempts",
-            server_id,
-            delays.len()
+            server_id, delays.len()
         )))
+    }
+
+    /// Spawn a background health monitor for a single server connection.
+    fn start_health_monitor(
+        &self,
+        server_id: &str,
+    ) -> tokio::task::JoinHandle<()> {
+        let server_id = server_id.to_string();
+        let clients = self.clients.clone();
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let interval_secs = {
+                    let guard = clients.read().await;
+                    guard
+                        .get(&server_id)
+                        .map(|m| m.config.health_check_interval_secs.max(5))
+                        .unwrap_or(0)
+                };
+                if interval_secs == 0 {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+
+                let reconnect_config = {
+                    let mut guard = clients.write().await;
+                    let Some(meta) = guard.get_mut(&server_id) else {
+                        break;
+                    };
+
+                    let client = meta.client.read().await;
+                    let healthy = client.is_connected() && !client.has_child_exited();
+                    drop(client);
+
+                    let mut health = meta.health.write().await;
+                    if healthy {
+                        health.status = McpHealthStatus::Healthy;
+                        health.last_heartbeat = chrono::Utc::now();
+                        health.consecutive_failures = 0;
+                        None
+                    } else {
+                        health.consecutive_failures += 1;
+                        health.status = if health.consecutive_failures == 1 {
+                            McpHealthStatus::Degraded
+                        } else {
+                            McpHealthStatus::Unhealthy
+                        };
+                        let failures = health.consecutive_failures;
+                        drop(health);
+                        let auto_reconnect = meta.config.auto_reconnect;
+                        let config = meta.config.clone();
+                        drop(guard);
+
+                        warn!(
+                            "MCP server '{}' health check failed ({} consecutive)",
+                            server_id, failures
+                        );
+
+                        if failures >= 2 && auto_reconnect {
+                            Some(config)
+                        } else {
+                            None
+                        }
+                    }
+                };
+
+                if let Some(config) = reconnect_config {
+                    if let Some(tx) = event_tx.read().await.as_ref() {
+                        let _ = tx.send(McpEvent::Disconnected {
+                            server_id: server_id.clone(),
+                            reason: "health_check_failed".to_string(),
+                        });
+                    }
+
+                    warn!(
+                        "MCP server '{}' marked unhealthy; attempting recovery",
+                        server_id
+                    );
+
+                    let _ = clients.write().await.remove(&server_id);
+
+                    let manager = McpManager {
+                        clients: clients.clone(),
+                        event_tx: event_tx.clone(),
+                    };
+                    if let Err(e) = manager
+                        .reconnect_with_backoff(&server_id, config)
+                        .await
+                    {
+                        error!("MCP server '{}' recovery failed: {}", server_id, e);
+                    }
+                    break;
+                }
+            }
+        })
     }
 }
 
@@ -1048,7 +1993,12 @@ Actions:
 - list: List connected MCP servers
 - tools: List available tools from a server
 - resources: List resources available from a server
-- resource_read: Read a resource by URI"#
+- resource_read: Read a resource by URI
+- subscribe: Subscribe to resource change notifications
+- unsubscribe: Unsubscribe from resource change notifications
+- prompts: List available prompts from a server
+- prompt_get: Render a prompt by name
+- sampling: Create a sampling message through the server"#
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1057,7 +2007,7 @@ Actions:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read"],
+                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read", "subscribe", "unsubscribe", "prompts", "prompt_get", "sampling"],
                     "description": "Action to perform"
                 },
                 "server_id": {
@@ -1084,7 +2034,29 @@ Actions:
                 },
                 "uri": {
                     "type": "string",
-                    "description": "Resource URI (for resource_read)"
+                    "description": "Resource URI (for resource_read / subscribe / unsubscribe)"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Prompt name (for prompt_get)"
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Prompt arguments (for prompt_get)"
+                },
+                "messages": {
+                    "type": "array",
+                    "description": "Sampling messages (for sampling)"
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Maximum tokens for sampling (for sampling)",
+                    "default": 1024
+                },
+                "model_hints": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Model hints for sampling (for sampling)"
                 }
             },
             "required": ["action"]
@@ -1240,6 +2212,150 @@ Actions:
                 }
             }
 
+            "subscribe" => {
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "server_id is required for subscribe".to_string(),
+                    )
+                })?;
+                let uri = args["uri"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "uri is required for subscribe".to_string(),
+                    )
+                })?;
+                match self.manager.get_client(server_id).await {
+                    Some(client_arc) => {
+                        let client = client_arc.read().await;
+                        client.subscribe_resource(uri).await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "Subscribed to resource updates for '{}' on '{}'",
+                            uri, server_id
+                        )))
+                    }
+                    None => Ok(ToolExecutionResult::error(format!(
+                        "MCP server not found: {}",
+                        server_id
+                    ))),
+                }
+            }
+
+            "unsubscribe" => {
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "server_id is required for unsubscribe".to_string(),
+                    )
+                })?;
+                let uri = args["uri"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "uri is required for unsubscribe".to_string(),
+                    )
+                })?;
+                match self.manager.get_client(server_id).await {
+                    Some(client_arc) => {
+                        let client = client_arc.read().await;
+                        client.unsubscribe_resource(uri).await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "Unsubscribed from resource updates for '{}' on '{}'",
+                            uri, server_id
+                        )))
+                    }
+                    None => Ok(ToolExecutionResult::error(format!(
+                        "MCP server not found: {}",
+                        server_id
+                    ))),
+                }
+            }
+
+            "prompts" => {
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "server_id is required for prompts".to_string(),
+                    )
+                })?;
+                match self.manager.get_client(server_id).await {
+                    Some(client_arc) => {
+                        let client = client_arc.read().await;
+                        let prompts = client.list_prompts().await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "{} prompts from '{}'",
+                            prompts.len(),
+                            server_id
+                        ))
+                        .with_data(json!({ "prompts": prompts })))
+                    }
+                    None => Ok(ToolExecutionResult::error(format!(
+                        "MCP server not found: {}",
+                        server_id
+                    ))),
+                }
+            }
+
+            "prompt_get" => {
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "server_id is required for prompt_get".to_string(),
+                    )
+                })?;
+                let prompt_name = args["prompt"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "prompt is required for prompt_get".to_string(),
+                    )
+                })?;
+                let arguments = args["arguments"].as_object().map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                        .collect::<HashMap<_, _>>()
+                });
+                match self.manager.get_client(server_id).await {
+                    Some(client_arc) => {
+                        let client = client_arc.read().await;
+                        let result = client.get_prompt(prompt_name, arguments).await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "Rendered prompt '{}' from '{}'",
+                            prompt_name, server_id
+                        ))
+                        .with_data(json!(result)))
+                    }
+                    None => Ok(ToolExecutionResult::error(format!(
+                        "MCP server not found: {}",
+                        server_id
+                    ))),
+                }
+            }
+
+            "sampling" => {
+                let server_id = args["server_id"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "server_id is required for sampling".to_string(),
+                    )
+                })?;
+                let messages: Vec<McpSamplingMessage> =
+                    serde_json::from_value(args["messages"].clone()).unwrap_or_default();
+                let max_tokens = args["max_tokens"].as_i64().unwrap_or(1024);
+                let model_hints = args["model_hints"].as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                });
+                match self.manager.get_client(server_id).await {
+                    Some(client_arc) => {
+                        let client = client_arc.read().await;
+                        let result = client
+                            .sampling_create_message(messages, max_tokens, model_hints)
+                            .await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "Sampling result from '{}'",
+                            server_id
+                        ))
+                        .with_data(json!(result)))
+                    }
+                    None => Ok(ToolExecutionResult::error(format!(
+                        "MCP server not found: {}",
+                        server_id
+                    ))),
+                }
+            }
+
             _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }
@@ -1265,6 +2381,9 @@ mod tests {
         let config = McpServerConfig::default();
         assert_eq!(config.timeout_secs, 30);
         assert!(config.auto_connect);
+        assert!(config.auto_reconnect);
+        assert_eq!(config.health_check_interval_secs, 30);
+        assert_eq!(config.max_reconnect_attempts, 5);
         assert!(config.command.is_none());
     }
 
@@ -1297,13 +2416,18 @@ mod tests {
     #[test]
     fn test_server_capabilities_deserialization() {
         let caps: McpServerCapabilities = serde_json::from_value(json!({
-            "tools": {},
-            "resources": {}
+            "tools": { "listChanged": true },
+            "resources": { "subscribe": true, "listChanged": false },
+            "prompts": { "listChanged": true }
         }))
         .unwrap();
         assert!(caps.supports_tools());
+        assert!(caps.supports_tool_list_changed());
         assert!(caps.supports_resources());
-        assert!(!caps.supports_prompts());
+        assert!(caps.supports_resource_subscribe());
+        assert!(!caps.supports_resource_list_changed());
+        assert!(caps.supports_prompts());
+        assert!(caps.supports_prompt_list_changed());
     }
 
     #[test]

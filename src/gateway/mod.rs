@@ -1059,6 +1059,28 @@ pub enum GatewayEvent {
         thread_id: String,
         active_subagent: Option<String>,
     },
+ /// MCP server connected
+    McpConnected {
+        server_id: String,
+        tools: usize,
+        prompts: usize,
+        resources: usize,
+    },
+ /// MCP server disconnected or marked unhealthy
+    McpDisconnected {
+        server_id: String,
+        reason: String,
+    },
+ /// MCP server recovered after automatic reconnect
+    McpRecovered {
+        server_id: String,
+        attempt: u32,
+    },
+ /// MCP subscribed resource changed
+    McpResourceChanged {
+        server_id: String,
+        uri: String,
+    },
  /// Self-repair action taken (agent or channel restarted)
     RepairAction {
  /// "agent" or "channel"
@@ -1362,8 +1384,9 @@ impl Gateway {
         };
         acp.load_persisted_sessions().await;
 
- // Create the shared MCP manager
-        let mcp_manager = Arc::new(McpManager::new());
+ // Create the shared MCP manager with an internal event channel.
+        let (mcp_event_tx, mut mcp_event_rx) = mpsc::unbounded_channel::<crate::tools::mcp::McpEvent>();
+        let mcp_manager = Arc::new(McpManager::new().with_event_tx(mcp_event_tx));
 
  // Create shared approval queue for human-in-the-loop tool policy enforcement
         let approval_queue = Arc::new(ApprovalQueue::new());
@@ -1825,6 +1848,38 @@ impl Gateway {
 
  // Wire ACP lifecycle events into the gateway broadcast channel.
         state.acp.set_event_tx(state.event_tx.clone()).await;
+
+ // Forward MCP lifecycle events into the gateway broadcast channel.
+        {
+            let event_tx = state.event_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = mcp_event_rx.recv().await {
+                    let gateway_event = match event {
+                        crate::tools::mcp::McpEvent::Connected {
+                            server_id,
+                            tools,
+                            prompts,
+                            resources,
+                        } => GatewayEvent::McpConnected {
+                            server_id,
+                            tools,
+                            prompts,
+                            resources,
+                        },
+                        crate::tools::mcp::McpEvent::Disconnected { server_id, reason } => {
+                            GatewayEvent::McpDisconnected { server_id, reason }
+                        }
+                        crate::tools::mcp::McpEvent::Recovered { server_id, attempt } => {
+                            GatewayEvent::McpRecovered { server_id, attempt }
+                        }
+                        crate::tools::mcp::McpEvent::ResourceChanged { server_id, uri } => {
+                            GatewayEvent::McpResourceChanged { server_id, uri }
+                        }
+                    };
+                    let _ = event_tx.send(gateway_event);
+                }
+            });
+        }
 
  // Initialize audit table (SQLite-backed persistent audit log)
         if let Err(e) = state.audit_log.init().await {

@@ -568,6 +568,41 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "active_subagent": active_subagent,
             }),
         )),
+        GatewayEvent::McpConnected {
+            server_id,
+            tools,
+            prompts,
+            resources,
+        } => Some((
+            "mcp.connected".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "tools": tools,
+                "prompts": prompts,
+                "resources": resources,
+            }),
+        )),
+        GatewayEvent::McpDisconnected { server_id, reason } => Some((
+            "mcp.disconnected".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "reason": reason,
+            }),
+        )),
+        GatewayEvent::McpRecovered { server_id, attempt } => Some((
+            "mcp.recovered".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "attempt": attempt,
+            }),
+        )),
+        GatewayEvent::McpResourceChanged { server_id, uri } => Some((
+            "mcp.resource_changed".to_string(),
+            serde_json::json!({
+                "server_id": server_id,
+                "uri": uri,
+            }),
+        )),
     }
 }
 
