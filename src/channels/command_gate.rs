@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::debug;
 
 /// Outcome of a command gate check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +183,7 @@ impl CommandGateConfig {
 }
 
 /// Auth context passed during gate evaluation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
     /// The user's ID on the channel.
     pub user_id: String,
@@ -198,6 +197,10 @@ pub struct AuthContext {
     pub is_admin: bool,
     /// Whether the user is allowlisted.
     pub is_allowlisted: bool,
+    /// Whether the user is the verified owner.
+    pub is_owner: bool,
+    /// Optional provider/model hint for command execution.
+    pub provider_hint: Option<String>,
     /// Custom auth flags set by the caller.
     pub custom_flags: HashMap<String, bool>,
 }
@@ -216,6 +219,8 @@ impl AuthContext {
             is_paired: false,
             is_admin: false,
             is_allowlisted: false,
+            is_owner: false,
+            provider_hint: None,
             custom_flags: HashMap::new(),
         }
     }
@@ -238,10 +243,67 @@ impl AuthContext {
         self
     }
 
+    /// Set owner status.
+    pub fn with_owner(mut self, owner: bool) -> Self {
+        self.is_owner = owner;
+        self
+    }
+
+    /// Set provider/model hint.
+    pub fn with_provider_hint(mut self, hint: impl Into<String>) -> Self {
+        self.provider_hint = Some(hint.into());
+        self
+    }
+
     /// Add a custom auth flag.
     pub fn with_flag(mut self, key: impl Into<String>, value: bool) -> Self {
         self.custom_flags.insert(key.into(), value);
         self
+    }
+
+    /// Build an auth context from an incoming message and channel policy.
+    ///
+    /// Populates `is_allowlisted` from the channel's `allow_from` list and
+    /// `is_paired` from the optional pairing store.
+    pub async fn from_message(
+        msg: &super::IncomingMessage,
+        policy: &super::ChannelPolicy,
+    ) -> Self {
+        let user_id = msg.user_id.0.clone();
+        let channel = match &msg.provenance {
+            super::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
+            _ => "unknown".to_string(),
+        };
+
+        let command = msg
+            .metadata
+            .extra
+            .get("detected_command")
+            .and_then(|v| v.get("command"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| msg.content.clone());
+
+        let allow_list = policy.allow_from.read().await;
+        let is_allowlisted = allow_list.iter().any(|a| a == &user_id);
+
+        let is_paired = if let Some(store) = policy.pairing_store.read().await.as_ref() {
+            store.is_authorized(&channel, &user_id).await
+        } else {
+            false
+        };
+
+        Self {
+            user_id,
+            channel,
+            command,
+            is_paired,
+            is_admin: false,
+            is_allowlisted,
+            is_owner: false,
+            provider_hint: None,
+            custom_flags: HashMap::new(),
+        }
     }
 }
 
@@ -819,5 +881,57 @@ mod tests {
             gate.check(&ctx_not_allowed).await,
             GateResult::Denied(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_auth_context_from_message_allowlist() {
+        let policy = crate::channels::ChannelPolicy::new(
+            std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::security::pairing::DmPolicy::Open,
+            )),
+            std::sync::Arc::new(tokio::sync::RwLock::new(vec!["alice".to_string()])),
+        );
+
+        let msg = crate::channels::IncomingMessage::new("alice", "conv1", "/help")
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: "telegram".to_string(),
+                is_direct: true,
+            });
+
+        let ctx = AuthContext::from_message(&msg, &policy).await;
+        assert_eq!(ctx.user_id, "alice");
+        assert_eq!(ctx.channel, "telegram");
+        assert_eq!(ctx.command, "/help");
+        assert!(ctx.is_allowlisted);
+        assert!(!ctx.is_paired);
+
+        let msg_bob = crate::channels::IncomingMessage::new("bob", "conv1", "/help")
+            .with_provenance(crate::channels::InputProvenance::ExternalUser {
+                channel: "telegram".to_string(),
+                is_direct: true,
+            });
+        let ctx_bob = AuthContext::from_message(&msg_bob, &policy).await;
+        assert!(!ctx_bob.is_allowlisted);
+    }
+
+    #[tokio::test]
+    async fn test_auth_context_from_message_detected_command() {
+        let policy = crate::channels::ChannelPolicy::new(
+            std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::security::pairing::DmPolicy::Open,
+            )),
+            std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        );
+
+        let result = crate::tools::command_detector::detect_command("/skill list extra").unwrap();
+        let metadata = crate::channels::MessageMetadata::new()
+            .with_detected_command(&result);
+        let msg = crate::channels::IncomingMessage::new("alice", "conv1", "/skill list extra")
+            .with_metadata(metadata);
+
+        let ctx = AuthContext::from_message(&msg, &policy).await;
+        assert_eq!(ctx.command, "skill");
     }
 }

@@ -5,6 +5,7 @@
 
 use crate::acp::AcpSessionId;
 use crate::agent::TranscriptFormat;
+use crate::gateway::command_provider::{CommandProviderHint, CommandProviderResolver};
 use crate::gateway::protocol::*;
 use crate::gateway::GatewayState;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter};
@@ -66,6 +67,8 @@ pub struct CommandDef {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub scope: CommandScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_hint: Option<CommandProviderHint>,
 }
 
 impl CommandDef {
@@ -81,7 +84,18 @@ impl CommandDef {
             requires_admin: false,
             aliases: Vec::new(),
             scope: CommandScope::Global,
+            provider_hint: None,
         }
+    }
+
+    fn with_tier(mut self, tier: CommandTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    fn with_provider_hint(mut self, hint: CommandProviderHint) -> Self {
+        self.provider_hint = Some(hint);
+        self
     }
 
     fn with_args(mut self, args: &str) -> Self {
@@ -415,6 +429,72 @@ pub async fn handle_commands_execute(
             }
         }
 
+        // Local commands are only available in channel message contexts, not
+        // via the WebSocket RPC path.
+        if def.local {
+            return WsResponse::err(
+                &req.id,
+                "LOCAL_COMMAND_NOT_AVAILABLE",
+                format!("Command /{} is only available in channel conversations", def.key),
+            );
+        }
+
+        // WebSocket RPC connections are treated as direct messages.
+        let is_direct = true;
+        match def.scope {
+            CommandScope::Global => {}
+            CommandScope::DirectMessage if is_direct => {}
+            CommandScope::Channel => {
+                return WsResponse::err(
+                    &req.id,
+                    "WRONG_SCOPE",
+                    format!("Command /{} is only available in channels", def.key),
+                );
+            }
+            _ => {
+                return WsResponse::err(
+                    &req.id,
+                    "WRONG_SCOPE",
+                    format!("Command /{} cannot be used here", def.key),
+                );
+            }
+        }
+
+        // Tier check against the user's configured level.
+        let user_id = conn
+            .read()
+            .await
+            .user_id
+            .as_ref()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "anonymous".to_string());
+        let user_level = state.command_gate.user_level(&user_id);
+        let required_level = match def.tier {
+            CommandTier::Essential | CommandTier::Standard => UserLevel::User,
+            CommandTier::Power => UserLevel::Admin,
+        };
+        if user_level < required_level {
+            return WsResponse::err(
+                &req.id,
+                "INSUFFICIENT_TIER",
+                format!(
+                    "Command /{} requires {:?} access; you have {:?}",
+                    def.key, required_level, user_level
+                ),
+            );
+        }
+
+        // Log any provider/model hint inferred for this command.
+        if let Some(hint) = CommandProviderResolver::resolve(&def, user_level, None) {
+            debug!(
+                command = %def.key,
+                provider = ?hint.provider,
+                model = ?hint.model,
+                reason = %hint.reason,
+                "Provider hint resolved"
+            );
+        }
+
  // Dispatch by canonical key so aliases resolve to the same handler
         match def.key.as_str() {
             "help" | "commands" => handle_help(req, &params.args),
@@ -511,7 +591,7 @@ fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
     let total_pages = total_commands.div_ceil(page_size).max(1);
     let page = help_args.page.clamp(1, total_pages);
     let start = (page - 1) * page_size;
-    let end = start + page_size.min(total_commands.saturating_sub(start));
+    let _end = start + page_size.min(total_commands.saturating_sub(start));
     let page_commands: Vec<&CommandDef> = filtered.into_iter().skip(start).take(page_size).collect();
 
     let mut lines = vec!["📋 **Syscity Commands**".to_string(), "".to_string()];
@@ -552,8 +632,6 @@ fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
         }
         lines.push("".to_string());
     }
-
-    let tier_display = help_args.tier.map(|t| format!("{:?}", t));
 
     WsResponse::ok(
         &req.id,

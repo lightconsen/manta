@@ -899,6 +899,9 @@ async fn handle_message_with_sender(
             return Ok(());
         }
 
+        // Three-layer command detection
+        let detected = crate::tools::command_detector::detect_command(text);
+
         info!("📨 Received message from @{}: {}", username, text);
 
         // Get or create session UUID for this chat
@@ -922,12 +925,28 @@ async fn handle_message_with_sender(
             .map(|u| u.id.0.to_string())
             .unwrap_or_default();
 
-        let incoming = IncomingMessage::new(&user_id, &session_id, text).with_metadata(
-            MessageMetadata::new()
-                .with_extra("message_id", msg.id.0)
-                .with_extra("chat_type", format!("{:?}", msg.chat.kind))
-                .with_extra("telegram_chat_id", chat_id),
-        );
+        let provenance = crate::channels::InputProvenance::ExternalUser {
+            channel: "telegram".to_string(),
+            is_direct: matches!(msg.chat.kind, teloxide::types::ChatKind::Private(_)),
+        };
+
+        let mut metadata = MessageMetadata::new()
+            .with_extra("message_id", msg.id.0)
+            .with_extra("chat_type", format!("{:?}", msg.chat.kind))
+            .with_extra("telegram_chat_id", chat_id);
+
+        if let Some(ref result) = detected {
+            metadata = metadata.with_detected_command(result);
+        }
+
+        let mut incoming = IncomingMessage::new(&user_id, &session_id, text)
+            .with_provenance(provenance)
+            .with_metadata(metadata);
+
+        if detected.is_some() {
+            let auth_ctx = crate::channels::AuthContext::from_message(&incoming, &policy).await;
+            incoming.metadata = incoming.metadata.with_auth_context(&auth_ctx);
+        }
 
         // Route to agent via message queue if available
         if let Some(tx) = message_tx {

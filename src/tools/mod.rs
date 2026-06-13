@@ -12,12 +12,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod approval;
+pub mod rbac;
 
 // Re-export approval types for convenience
 pub use approval::{
     ApprovalDecision, ApprovalFilter, ApprovalLevel, ApprovalQueue, ApprovalRequiredEvent,
     PendingApproval, PendingApprovalSummary, RiskLevel,
 };
+
+// Re-export RBAC types for convenience
+pub use rbac::{Role, ToolPolicy, UserContext};
 
 /// Skill trust level for tool access control.
 ///
@@ -27,9 +31,9 @@ pub use approval::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillTrust {
- /// Community / untrusted skill — read-only (non-privileged) tools only.
+    /// Community / untrusted skill — read-only (non-privileged) tools only.
     Community = 0,
- /// Installed / trusted skill — full tool access.
+    /// Installed / trusted skill — full tool access.
     #[default]
     Trusted = 1,
 }
@@ -39,7 +43,7 @@ pub enum SkillTrust {
 pub struct ToolId(pub String);
 
 impl ToolId {
- /// Create a new tool ID
+    /// Create a new tool ID
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
@@ -54,40 +58,47 @@ impl std::fmt::Display for ToolId {
 /// The execution context for a tool
 #[derive(Debug, Clone)]
 pub struct ToolContext {
- /// The user ID executing the tool
+    /// The user ID executing the tool
     pub user_id: String,
- /// The conversation ID
+    /// The conversation ID
     pub conversation_id: String,
- /// The working directory for file operations
+    /// The working directory for file operations
     pub working_directory: std::path::PathBuf,
- /// Environment variables
+    /// Environment variables
     pub environment: HashMap<String, String>,
- /// Timeout for tool execution
+    /// Timeout for tool execution
     pub timeout: Duration,
- /// Allowed paths for file operations (if empty, no restrictions)
+    /// Allowed paths for file operations (if empty, no restrictions)
     pub allowed_paths: Vec<std::path::PathBuf>,
- /// Allowed commands for shell execution (if empty, no restrictions)
+    /// Allowed commands for shell execution (if empty, no restrictions)
     pub allowed_commands: Vec<String>,
- /// Whether the tool is being executed in a sandbox
+    /// Whether the tool is being executed in a sandbox
     pub sandboxed: bool,
- /// Maximum memory allowed for child processes in bytes (if sandboxed)
+    /// Maximum memory allowed for child processes in bytes (if sandboxed)
     pub memory_limit: Option<usize>,
- /// Maximum CPU time in seconds (if sandboxed)
+    /// Maximum CPU time in seconds (if sandboxed)
     pub cpu_limit: Option<u64>,
- /// Maximum number of open file descriptors
+    /// Maximum number of open file descriptors
     pub fd_limit: Option<u64>,
- /// Maximum process count (for preventing fork bombs)
+    /// Maximum process count (for preventing fork bombs)
     pub process_limit: Option<u64>,
- /// Minimum trust level from active skills.
- /// When `Community`, privileged (write/exec) tools are excluded from
- /// `get_available()`.
+    /// Minimum trust level from active skills.
+    /// When `Community`, privileged (write/exec) tools are excluded from
+    /// `get_available()`.
     pub skill_trust: SkillTrust,
- /// Root directory for file operations (workspace boundary).
- /// All relative paths are resolved against this directory.
+    /// Root directory for file operations (workspace boundary).
+    /// All relative paths are resolved against this directory.
     pub workspace_root: std::path::PathBuf,
- /// When true, file operations are restricted to `workspace_root`.
- /// Attempts to read/write outside the workspace are rejected.
+    /// When true, file operations are restricted to `workspace_root`.
+    /// Attempts to read/write outside the workspace are rejected.
     pub workspace_only: bool,
+    /// Optional per-user RBAC context. When set together with
+    /// `tool_policy`, it drives additional tool filtering beyond the
+    /// legacy `SkillTrust` boundary.
+    pub user_context: Option<UserContext>,
+    /// Optional per-context RBAC policy. When set together with
+    /// `user_context`, it is evaluated in `ToolRegistry::is_excluded`.
+    pub tool_policy: Option<ToolPolicy>,
 }
 
 impl Default for ToolContext {
@@ -109,12 +120,14 @@ impl Default for ToolContext {
             skill_trust: SkillTrust::Trusted,
             workspace_root: crate::dirs::workspace_data_dir(),
             workspace_only: true,
+            user_context: None,
+            tool_policy: None,
         }
     }
 }
 
 impl ToolContext {
- /// Create a new tool context
+    /// Create a new tool context
     pub fn new(user_id: impl Into<String>, conversation_id: impl Into<String>) -> Self {
         Self {
             user_id: user_id.into(),
@@ -123,94 +136,106 @@ impl ToolContext {
         }
     }
 
- /// Set the workspace root directory
+    /// Set the workspace root directory
     pub fn with_workspace_root(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.workspace_root = path.into();
         self
     }
 
- /// Set workspace-only mode (restrict file ops to workspace_root)
+    /// Set workspace-only mode (restrict file ops to workspace_root)
     pub fn with_workspace_only(mut self, enabled: bool) -> Self {
         self.workspace_only = enabled;
         self
     }
 
- /// Set the minimum skill trust level (controls which tools are exposed).
+    /// Set the minimum skill trust level (controls which tools are exposed).
     pub fn with_skill_trust(mut self, trust: SkillTrust) -> Self {
         self.skill_trust = trust;
         self
     }
 
- /// Set the working directory
+    /// Set the RBAC user context for policy evaluation.
+    pub fn with_user_context(mut self, ctx: UserContext) -> Self {
+        self.user_context = Some(ctx);
+        self
+    }
+
+    /// Set the RBAC policy applied to this context.
+    pub fn with_tool_policy(mut self, policy: ToolPolicy) -> Self {
+        self.tool_policy = Some(policy);
+        self
+    }
+
+    /// Set the working directory
     pub fn with_working_dir(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.working_directory = path.into();
         self
     }
 
- /// Set the timeout
+    /// Set the timeout
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
- /// Add an allowed path
+    /// Add an allowed path
     pub fn allow_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.allowed_paths.push(path.into());
         self
     }
 
- /// Add an allowed command
+    /// Add an allowed command
     pub fn allow_command(mut self, command: impl Into<String>) -> Self {
         self.allowed_commands.push(command.into());
         self
     }
 
- /// Set sandboxed mode
+    /// Set sandboxed mode
     pub fn sandboxed(mut self, sandboxed: bool) -> Self {
         self.sandboxed = sandboxed;
         self
     }
 
- /// Set memory limit in bytes (only effective when sandboxed)
+    /// Set memory limit in bytes (only effective when sandboxed)
     pub fn with_memory_limit(mut self, bytes: usize) -> Self {
         self.memory_limit = Some(bytes);
         self
     }
 
- /// Set CPU time limit in seconds (only effective when sandboxed)
+    /// Set CPU time limit in seconds (only effective when sandboxed)
     pub fn with_cpu_limit(mut self, seconds: u64) -> Self {
         self.cpu_limit = Some(seconds);
         self
     }
 
- /// Set file descriptor limit (only effective when sandboxed)
+    /// Set file descriptor limit (only effective when sandboxed)
     pub fn with_fd_limit(mut self, count: u64) -> Self {
         self.fd_limit = Some(count);
         self
     }
 
- /// Set process limit for preventing fork bombs (only effective when sandboxed)
+    /// Set process limit for preventing fork bombs (only effective when sandboxed)
     pub fn with_process_limit(mut self, count: u64) -> Self {
         self.process_limit = Some(count);
         self
     }
 
- /// Apply resource limits to the current process (Unix only)
- /// This should be called in a pre_exec hook before spawning the child process
+    /// Apply resource limits to the current process (Unix only)
+    /// This should be called in a pre_exec hook before spawning the child process
     #[cfg(unix)]
     pub fn apply_resource_limits(&self) -> std::io::Result<()> {
         use std::io;
 
- // Only apply limits if sandboxed
+        // Only apply limits if sandboxed
         if !self.sandboxed {
             return Ok(());
         }
 
- // Apply memory limit
+        // Apply memory limit
         if let Some(memory_limit) = self.memory_limit {
- // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
- // limits for the current process. It is async-signal-safe and does not
- // access invalid memory.
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
             #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
@@ -223,11 +248,11 @@ impl ToolContext {
             }
         }
 
- // Apply CPU limit
+        // Apply CPU limit
         if let Some(cpu_limit) = self.cpu_limit {
- // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
- // limits for the current process. It is async-signal-safe and does not
- // access invalid memory.
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
             #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
@@ -240,11 +265,11 @@ impl ToolContext {
             }
         }
 
- // Apply file descriptor limit
+        // Apply file descriptor limit
         if let Some(fd_limit) = self.fd_limit {
- // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
- // limits for the current process. It is async-signal-safe and does not
- // access invalid memory.
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
             #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
@@ -257,11 +282,11 @@ impl ToolContext {
             }
         }
 
- // Apply process limit (NPROC)
+        // Apply process limit (NPROC)
         if let Some(process_limit) = self.process_limit {
- // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
- // limits for the current process. It is async-signal-safe and does not
- // access invalid memory.
+            // SAFETY: setrlimit is a standard POSIX syscall that modifies resource
+            // limits for the current process. It is async-signal-safe and does not
+            // access invalid memory.
             #[allow(unsafe_code)]
             unsafe {
                 let limit = libc::rlimit {
@@ -277,14 +302,14 @@ impl ToolContext {
         Ok(())
     }
 
- /// Apply resource limits is a no-op on non-Unix platforms
+    /// Apply resource limits is a no-op on non-Unix platforms
     #[cfg(not(unix))]
     pub fn apply_resource_limits(&self) -> std::io::Result<()> {
- // Resource limits are not implemented for non-Unix platforms
+        // Resource limits are not implemented for non-Unix platforms
         Ok(())
     }
 
- /// Get a human-readable summary of resource limits
+    /// Get a human-readable summary of resource limits
     pub fn resource_limits_summary(&self) -> String {
         if !self.sandboxed {
             return "No sandbox (no resource limits)".to_string();
@@ -312,14 +337,14 @@ impl ToolContext {
         parts.join(" | ")
     }
 
- /// Check if a path is allowed
+    /// Check if a path is allowed
     pub fn is_path_allowed(&self, path: &std::path::Path) -> bool {
- // ── allowlist check ────────────────────────────────────────────────
+        // ── allowlist check ────────────────────────────────────────────────
         if !self.allowed_paths.is_empty() {
             let path_canon = path.canonicalize().ok();
             let path_raw = path.to_path_buf();
             let in_allowlist = self.allowed_paths.iter().any(|allowed| {
- // Try canonical comparison first (handles symlinks)
+                // Try canonical comparison first (handles symlinks)
                 if let Ok(ref ac) = allowed.canonicalize() {
                     if let Some(ref pc) = path_canon {
                         if pc.starts_with(ac) {
@@ -327,15 +352,15 @@ impl ToolContext {
                         }
                     }
                 }
- // Fallback to raw path comparison for non-existent paths
+                // Fallback to raw path comparison for non-existent paths
                 path_raw.starts_with(allowed)
             });
- // When an allowlist is present it acts as a whitelist:
- // paths inside the allowlist are permitted, everything else is denied.
+            // When an allowlist is present it acts as a whitelist:
+            // paths inside the allowlist are permitted, everything else is denied.
             return in_allowlist;
         }
 
- // ── workspace boundary check ──────────────────────
+        // ── workspace boundary check ──────────────────────
         if self.workspace_only {
             let resolved = self.resolve_path(path);
             let resolved_canon = resolved.canonicalize().ok();
@@ -355,13 +380,13 @@ impl ToolContext {
         true
     }
 
- /// Resolve a path relative to the workspace root.
- ///
- /// * Absolute paths are returned as-is (but still subject to `is_path_allowed`).
- /// * Relative paths are joined with `workspace_root`.
- /// * `~` is expanded to the user's home directory.
+    /// Resolve a path relative to the workspace root.
+    ///
+    /// * Absolute paths are returned as-is (but still subject to `is_path_allowed`).
+    /// * Relative paths are joined with `workspace_root`.
+    /// * `~` is expanded to the user's home directory.
     pub fn resolve_path(&self, path: &std::path::Path) -> std::path::PathBuf {
- // Expand tilde
+        // Expand tilde
         let expanded = if let Some(path_str) = path.to_str() {
             if path_str.starts_with("~/") || path_str == "~" {
                 if let Some(home) = dirs::home_dir() {
@@ -384,7 +409,7 @@ impl ToolContext {
         }
     }
 
- /// Check if a command is allowed
+    /// Check if a command is allowed
     pub fn is_command_allowed(&self, command: &str) -> bool {
         if self.allowed_commands.is_empty() {
             return true;
@@ -397,15 +422,15 @@ impl ToolContext {
 /// The result of a tool execution
 #[derive(Debug, Clone)]
 pub struct ToolExecutionResult {
- /// Whether the execution was successful
+    /// Whether the execution was successful
     pub success: bool,
- /// The output data
+    /// The output data
     pub output: String,
- /// Error message if failed
+    /// Error message if failed
     pub error: Option<String>,
- /// Additional structured data
+    /// Additional structured data
     pub data: Option<Value>,
- /// Execution time
+    /// Execution time
     pub execution_time: Duration,
 }
 
@@ -457,7 +482,7 @@ impl std::fmt::Display for ToolExecutionResult {
 }
 
 impl ToolExecutionResult {
- /// Create a successful result
+    /// Create a successful result
     pub fn success(output: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -468,7 +493,7 @@ impl ToolExecutionResult {
         }
     }
 
- /// Create an error result
+    /// Create an error result
     pub fn error(error: impl Into<String>) -> Self {
         Self {
             success: false,
@@ -479,19 +504,19 @@ impl ToolExecutionResult {
         }
     }
 
- /// Add structured data
+    /// Add structured data
     pub fn with_data(mut self, data: Value) -> Self {
         self.data = Some(data);
         self
     }
 
- /// Set execution time
+    /// Set execution time
     pub fn with_execution_time(mut self, duration: Duration) -> Self {
         self.execution_time = duration;
         self
     }
 
- /// Convert to a ToolResult for LLM response
+    /// Convert to a ToolResult for LLM response
     pub fn to_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
         let content = if self.success {
             self.output
@@ -511,33 +536,41 @@ impl ToolExecutionResult {
 /// Trait for tools that can be executed by the agent
 #[async_trait]
 pub trait Tool: Send + Sync {
- /// Get the unique name of this tool
+    /// Get the unique name of this tool
     fn name(&self) -> &str;
 
- /// Get a description of what this tool does
+    /// Get a description of what this tool does
     fn description(&self) -> &str;
 
- /// Get the JSON schema for this tool's parameters
+    /// Get the JSON schema for this tool's parameters
     fn parameters_schema(&self) -> Value;
 
- /// Execute the tool with the given arguments
+    /// Execute the tool with the given arguments
     async fn execute(
         &self,
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult>;
 
- /// Check if this tool is available in the given context
+    /// Check if this tool is available in the given context
     fn is_available(&self, _context: &ToolContext) -> bool {
         true
     }
 
- /// Get the timeout for this tool (defaults to context timeout)
+    /// Advertised capabilities for RBAC and SDK discovery.
+    ///
+    /// Defaults to a low-risk, uncategorized tool. Individual tools can
+    /// override this to expose their real risk level and categories.
+    fn capabilities(&self) -> crate::tools::sdk::ToolCapabilities {
+        crate::tools::sdk::ToolCapabilities::default()
+    }
+
+    /// Get the timeout for this tool (defaults to context timeout)
     fn timeout(&self, context: &ToolContext) -> Duration {
         context.timeout
     }
 
- /// Convert to a function definition for LLM providers
+    /// Convert to a function definition for LLM providers
     fn to_function_definition(&self) -> FunctionDefinition {
         FunctionDefinition {
             name: self.name().to_string(),
@@ -555,6 +588,7 @@ pub mod agents_list;
 pub mod browser;
 pub mod canvas;
 pub mod code_exec;
+pub mod command_detector;
 pub mod command_gate;
 pub mod cron_tool;
 pub mod delegate_tool;
@@ -576,12 +610,12 @@ pub mod sandbox;
 pub mod sandbox_interceptor;
 pub mod sdk;
 pub mod session;
-pub mod shell_safety;
 pub mod shell;
+pub mod shell_safety;
+pub mod stt;
 pub mod team_communicate_tool;
 pub mod time;
 pub mod todo_tool;
-pub mod stt;
 pub mod tts;
 pub mod update_plan;
 pub mod web;
@@ -608,15 +642,17 @@ pub use patch::ApplyPatchTool;
 pub use pdf::PdfTool;
 pub use process::ProcessTool;
 pub use sandbox::{SandboxConfig, SandboxedTool};
-pub use sdk::{CapabilityFilter, SyncResult, ToolCapabilities, ToolMetadata, ToolPack, ToolSdk, ToolSdkError};
+pub use sdk::{
+    CapabilityFilter, SyncResult, ToolCapabilities, ToolMetadata, ToolPack, ToolSdk, ToolSdkError,
+};
 pub use session::{
     SessionStatusTool, SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsYieldTool,
 };
 pub use shell::ShellTool;
+pub use stt::SttTool;
 pub use team_communicate_tool::TeamCommunicateTool;
 pub use time::TimeTool;
 pub use todo_tool::TodoTool;
-pub use stt::SttTool;
 pub use tts::TtsTool;
 pub use update_plan::UpdatePlanTool;
 pub use web::{WebFetchTool, WebSearchTool};
@@ -631,31 +667,31 @@ struct CacheEntry {
 /// Registry of tools with optional caching, circuit breaker, and trust-level filtering.
 pub struct ToolRegistry {
     tools: HashMap<String, BoxedTool>,
- /// Dynamically registered tools (e.g. MCP auto-discovered tools).
- /// Uses interior mutability so tools can be added through `Arc<ToolRegistry>`.
+    /// Dynamically registered tools (e.g. MCP auto-discovered tools).
+    /// Uses interior mutability so tools can be added through `Arc<ToolRegistry>`.
     dynamic_tools: std::sync::RwLock<HashMap<String, std::sync::Arc<dyn Tool>>>,
- /// Tool-name prefixes that have been logically deregistered (e.g. MCP
- /// server disconnect). Tools matching any blocked prefix are excluded
- /// from `get`, `list`, `has`, `get_definitions`, and `get_available`
- /// without requiring `&mut self` — allowing this to be called through an
- /// `Arc<ToolRegistry>`.
+    /// Tool-name prefixes that have been logically deregistered (e.g. MCP
+    /// server disconnect). Tools matching any blocked prefix are excluded
+    /// from `get`, `list`, `has`, `get_definitions`, and `get_available`
+    /// without requiring `&mut self` — allowing this to be called through an
+    /// `Arc<ToolRegistry>`.
     blocked_prefixes: std::sync::RwLock<HashSet<String>>,
     cache: std::sync::Mutex<HashMap<String, CacheEntry>>,
     cache_ttl: Option<Duration>,
     cache_enabled: bool,
- /// Per-tool failure counts for circuit breaker logic.
+    /// Per-tool failure counts for circuit breaker logic.
     failure_counts: std::sync::RwLock<HashMap<String, u32>>,
- /// Tool names that require `SkillTrust::Trusted` access.
- /// When a context has `skill_trust == Community` these tools are hidden.
+    /// Tool names that require `SkillTrust::Trusted` access.
+    /// When a context has `skill_trust == Community` these tools are hidden.
     privileged_tools: std::sync::RwLock<HashSet<String>>,
- /// Hooks for tool execution (before/after/policy).
+    /// Hooks for tool execution (before/after/policy).
     hooks: ToolHooks,
- /// Approval queue for human-in-the-loop tool execution.
- /// When set, high-risk tool calls can be suspended pending human approval.
+    /// Approval queue for human-in-the-loop tool execution.
+    /// When set, high-risk tool calls can be suspended pending human approval.
     approval_queue: Option<Arc<ApprovalQueue>>,
- /// Content filter for scanning tool outputs for PII and secrets.
+    /// Content filter for scanning tool outputs for PII and secrets.
     content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
- /// Audit logger for recording tool invocations and security events.
+    /// Audit logger for recording tool invocations and security events.
     audit_log: Option<Arc<dyn crate::security::runtime_audit::AuditLogger>>,
 }
 
@@ -676,10 +712,10 @@ impl std::fmt::Debug for ToolRegistry {
 }
 
 impl ToolRegistry {
- /// Number of consecutive failures before a tool is circuit-broken.
+    /// Number of consecutive failures before a tool is circuit-broken.
     pub const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 
- /// Create a new empty registry
+    /// Create a new empty registry
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
@@ -697,7 +733,7 @@ impl ToolRegistry {
         }
     }
 
- /// Create a new registry with caching enabled
+    /// Create a new registry with caching enabled
     pub fn with_cache(ttl: Duration) -> Self {
         Self {
             tools: HashMap::new(),
@@ -715,11 +751,11 @@ impl ToolRegistry {
         }
     }
 
- // ── Circuit breaker ───────────────────────────────────────────────────────
+    // ── Circuit breaker ───────────────────────────────────────────────────────
 
- /// Record a failure for `name`. After `CIRCUIT_BREAKER_THRESHOLD`
- /// consecutive failures the tool is considered degraded and excluded from
- /// `get_available()`.
+    /// Record a failure for `name`. After `CIRCUIT_BREAKER_THRESHOLD`
+    /// consecutive failures the tool is considered degraded and excluded from
+    /// `get_available()`.
     pub fn record_failure(&self, name: &str) {
         if let Ok(mut counts) = self.failure_counts.write() {
             let entry = counts.entry(name.to_string()).or_insert(0);
@@ -734,15 +770,15 @@ impl ToolRegistry {
         }
     }
 
- /// Reset the failure count for `name` (e.g. after a successful execution).
+    /// Reset the failure count for `name` (e.g. after a successful execution).
     pub fn reset_failure(&self, name: &str) {
         if let Ok(mut counts) = self.failure_counts.write() {
             counts.remove(name);
         }
     }
 
- /// Returns `true` if the tool has been circuit-broken due to repeated
- /// failures.
+    /// Returns `true` if the tool has been circuit-broken due to repeated
+    /// failures.
     pub fn is_degraded(&self, name: &str) -> bool {
         self.failure_counts
             .read()
@@ -750,7 +786,7 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
- /// List all currently-degraded tool names.
+    /// List all currently-degraded tool names.
     pub fn degraded_tools(&self) -> Vec<String> {
         self.failure_counts
             .read()
@@ -764,17 +800,17 @@ impl ToolRegistry {
             .unwrap_or_default()
     }
 
- // ── Privilege / trust-level filtering ────────────────────────────────────
+    // ── Privilege / trust-level filtering ────────────────────────────────────
 
- /// Mark `name` as a privileged tool (shell execution, file writes, etc.).
- /// Privileged tools are hidden when `context.skill_trust == Community`.
+    /// Mark `name` as a privileged tool (shell execution, file writes, etc.).
+    /// Privileged tools are hidden when `context.skill_trust == Community`.
     pub fn mark_privileged(&mut self, name: &str) {
         if let Ok(mut set) = self.privileged_tools.write() {
             set.insert(name.to_string());
         }
     }
 
- /// Returns `true` if `name` is a privileged tool.
+    /// Returns `true` if `name` is a privileged tool.
     pub fn is_privileged(&self, name: &str) -> bool {
         self.privileged_tools
             .read()
@@ -782,7 +818,7 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
- /// Returns `true` if `name` matches any blocked prefix.
+    /// Returns `true` if `name` matches any blocked prefix.
     fn is_blocked(&self, name: &str) -> bool {
         self.blocked_prefixes
             .read()
@@ -790,56 +826,73 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
- /// Returns `true` if the tool should be excluded from availability checks,
- /// considering blocked prefixes, circuit-breaker state, and trust level.
-    fn is_excluded(&self, name: &str, skill_trust: SkillTrust) -> bool {
+    /// Returns `true` if the tool should be excluded from availability checks,
+    /// considering blocked prefixes, circuit-breaker state, trust level, and
+    /// any RBAC policy attached to the execution context.
+    fn is_excluded(&self, name: &str, context: &ToolContext) -> bool {
         if self.is_blocked(name) {
             return true;
         }
         if self.is_degraded(name) {
             return true;
         }
-        if skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
+        if context.skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
             return true;
+        }
+        if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.tool_policy) {
+            let capabilities = self
+                .tools
+                .get(name)
+                .map(|t| t.capabilities())
+                .or_else(|| {
+                    self.dynamic_tools
+                        .read()
+                        .ok()
+                        .and_then(|map| map.get(name).map(|t| t.capabilities()))
+                })
+                .unwrap_or_default();
+            if !policy.evaluate(user_ctx, name, &capabilities) {
+                return true;
+            }
         }
         false
     }
 
- /// Enable caching with the specified TTL
+    /// Enable caching with the specified TTL
     pub fn enable_cache(&mut self, ttl: Duration) {
         self.cache_enabled = true;
         self.cache_ttl = Some(ttl);
     }
 
- /// Disable caching
+    /// Disable caching
     pub fn disable_cache(&mut self) {
         self.cache_enabled = false;
- // Clear existing cache
+        // Clear existing cache
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         }
     }
 
- /// Clear the tool result cache
+    /// Clear the tool result cache
     pub fn clear_cache(&self) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         }
     }
 
- /// Generate a cache key from tool name and arguments
+    /// Generate a cache key from tool name and arguments
     fn cache_key(name: &str, args: &Value) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
- // Hash the JSON string representation of args
+        // Hash the JSON string representation of args
         args.to_string().hash(&mut hasher);
         format!("{}:{}", name, hasher.finish())
     }
 
- /// Get cached result if available and not expired
+    /// Get cached result if available and not expired
     fn get_cached(&self, key: &str) -> Option<ToolExecutionResult> {
         if !self.cache_enabled {
             return None;
@@ -848,7 +901,7 @@ impl ToolRegistry {
         let cache = self.cache.lock().ok()?;
         let entry = cache.get(key)?;
 
- // Check if cache entry is expired
+        // Check if cache entry is expired
         if let Some(ttl) = self.cache_ttl {
             if entry.timestamp.elapsed() > ttl {
                 return None;
@@ -858,7 +911,7 @@ impl ToolRegistry {
         Some(entry.result.clone())
     }
 
- /// Store result in cache
+    /// Store result in cache
     fn store_cached(&self, key: String, result: ToolExecutionResult) {
         if !self.cache_enabled {
             return;
@@ -875,32 +928,32 @@ impl ToolRegistry {
         }
     }
 
- // ── Hooks and approval queue ──────────────────────────────────────────────
+    // ── Hooks and approval queue ──────────────────────────────────────────────
 
- /// Set the hooks for this registry.
- ///
- /// Hooks allow policy decisions, before/after execution callbacks,
- /// and human-in-the-loop approval for high-risk tools.
+    /// Set the hooks for this registry.
+    ///
+    /// Hooks allow policy decisions, before/after execution callbacks,
+    /// and human-in-the-loop approval for high-risk tools.
     pub fn with_hooks(mut self, hooks: ToolHooks) -> Self {
         self.hooks = hooks;
         self
     }
 
- /// Set the approval queue for human-in-the-loop execution.
- ///
- /// When set, tool calls that return `ToolPolicyDecision::NeedsApproval`
- /// will suspend execution and wait for human approval via the queue.
+    /// Set the approval queue for human-in-the-loop execution.
+    ///
+    /// When set, tool calls that return `ToolPolicyDecision::NeedsApproval`
+    /// will suspend execution and wait for human approval via the queue.
     pub fn with_approval_queue(mut self, queue: Arc<ApprovalQueue>) -> Self {
         self.approval_queue = Some(queue);
         self
     }
 
- /// Get a reference to the approval queue if set.
+    /// Get a reference to the approval queue if set.
     pub fn approval_queue(&self) -> Option<&Arc<ApprovalQueue>> {
         self.approval_queue.as_ref()
     }
 
- /// Set the content filter for scanning tool outputs.
+    /// Set the content filter for scanning tool outputs.
     pub fn with_content_filter(
         mut self,
         filter: Arc<crate::security::content_filter::ContentFilter>,
@@ -909,7 +962,7 @@ impl ToolRegistry {
         self
     }
 
- /// Set the audit logger for recording security events.
+    /// Set the audit logger for recording security events.
     pub fn with_audit_log(
         mut self,
         audit_log: Arc<dyn crate::security::runtime_audit::AuditLogger>,
@@ -918,39 +971,39 @@ impl ToolRegistry {
         self
     }
 
- /// Register a tool
+    /// Register a tool
     pub fn register(&mut self, tool: BoxedTool) {
         let name = tool.name().to_string();
         self.tools.insert(name, tool);
     }
 
- /// Remove a single tool by exact name.
+    /// Remove a single tool by exact name.
     pub fn remove(&mut self, name: &str) -> Option<BoxedTool> {
         self.tools.remove(name)
     }
 
- /// Remove all tools whose names start with `prefix`.
- ///
- /// Uses interior mutability so it works through `Arc<ToolRegistry>` —
- /// tools are hidden from all lookup methods immediately. The underlying
- /// map entries are lazily cleaned up (they remain allocated but invisible).
- ///
- /// Used by the MCP subsystem to clean up `mcp__{server}__*` tools when a
- /// server disconnects.
+    /// Remove all tools whose names start with `prefix`.
+    ///
+    /// Uses interior mutability so it works through `Arc<ToolRegistry>` —
+    /// tools are hidden from all lookup methods immediately. The underlying
+    /// map entries are lazily cleaned up (they remain allocated but invisible).
+    ///
+    /// Used by the MCP subsystem to clean up `mcp__{server}__*` tools when a
+    /// server disconnects.
     pub fn deregister_prefix(&self, prefix: &str) {
         if let Ok(mut set) = self.blocked_prefixes.write() {
             set.insert(prefix.to_string());
         }
- // Also remove matching dynamic tools immediately
+        // Also remove matching dynamic tools immediately
         if let Ok(mut map) = self.dynamic_tools.write() {
             map.retain(|k, _| !k.starts_with(prefix));
         }
     }
 
- /// Dynamically register a tool without requiring `&mut self`.
- ///
- /// This allows tools to be added through an `Arc<ToolRegistry>` — used by
- /// the MCP subsystem to register auto-discovered tools at startup.
+    /// Dynamically register a tool without requiring `&mut self`.
+    ///
+    /// This allows tools to be added through an `Arc<ToolRegistry>` — used by
+    /// the MCP subsystem to register auto-discovered tools at startup.
     pub fn register_dynamic(&self, tool: std::sync::Arc<dyn Tool>) {
         let name = tool.name().to_string();
         if let Ok(mut map) = self.dynamic_tools.write() {
@@ -958,17 +1011,17 @@ impl ToolRegistry {
         }
     }
 
- /// Remove a single dynamically-registered tool by exact name.
+    /// Remove a single dynamically-registered tool by exact name.
     pub fn deregister_dynamic(&self, name: &str) {
         if let Ok(mut map) = self.dynamic_tools.write() {
             map.remove(name);
         }
     }
 
- /// Get a tool by name (returns `None` for blocked or degraded tools).
- ///
- /// Only covers statically-registered tools. For dynamic tools use
- /// `execute()` or `execute_call()` which check both registries.
+    /// Get a tool by name (returns `None` for blocked or degraded tools).
+    ///
+    /// Only covers statically-registered tools. For dynamic tools use
+    /// `execute()` or `execute_call()` which check both registries.
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         if self.is_blocked(name) || self.is_degraded(name) {
             return None;
@@ -976,8 +1029,8 @@ impl ToolRegistry {
         self.tools.get(name).map(|t| t.as_ref())
     }
 
- /// List available tool names (excludes blocked and degraded tools).
- /// Includes both statically- and dynamically-registered tools.
+    /// List available tool names (excludes blocked and degraded tools).
+    /// Includes both statically- and dynamically-registered tools.
     pub fn list(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .tools
@@ -997,8 +1050,8 @@ impl ToolRegistry {
         names
     }
 
- /// Check if a tool exists, is not blocked, and is not degraded.
- /// Checks both static and dynamic registries.
+    /// Check if a tool exists, is not blocked, and is not degraded.
+    /// Checks both static and dynamic registries.
     pub fn has(&self, name: &str) -> bool {
         if self.is_blocked(name) || self.is_degraded(name) {
             return false;
@@ -1012,8 +1065,8 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 
- /// Get all tools as function definitions (excludes blocked and degraded tools).
- /// Includes both statically- and dynamically-registered tools.
+    /// Get all tools as function definitions (excludes blocked and degraded tools).
+    /// Includes both statically- and dynamically-registered tools.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         let mut defs: Vec<FunctionDefinition> = self
             .tools
@@ -1033,27 +1086,25 @@ impl ToolRegistry {
         defs
     }
 
- /// Get all available tools for a given context.
- ///
- /// Excludes:
- /// - Blocked-prefix tools (MCP server disconnected)
- /// - Degraded tools (circuit-breaker tripped)
- /// - Privileged tools when `context.skill_trust == Community`
- ///
- /// Includes both statically- and dynamically-registered tools.
+    /// Get all available tools for a given context.
+    ///
+    /// Excludes:
+    /// - Blocked-prefix tools (MCP server disconnected)
+    /// - Degraded tools (circuit-breaker tripped)
+    /// - Privileged tools when `context.skill_trust == Community`
+    ///
+    /// Includes both statically- and dynamically-registered tools.
     pub fn get_available(&self, context: &ToolContext) -> Vec<FunctionDefinition> {
         let mut defs: Vec<FunctionDefinition> = self
             .tools
             .iter()
-            .filter(|(name, t)| {
-                !self.is_excluded(name, context.skill_trust) && t.is_available(context)
-            })
+            .filter(|(name, t)| !self.is_excluded(name, context) && t.is_available(context))
             .map(|(_, t)| t.to_function_definition())
             .collect();
 
         if let Ok(dynamic) = self.dynamic_tools.read() {
             for (name, tool) in dynamic.iter() {
-                if !self.is_excluded(name, context.skill_trust) && tool.is_available(context) {
+                if !self.is_excluded(name, context) && tool.is_available(context) {
                     defs.push(tool.to_function_definition());
                 }
             }
@@ -1062,29 +1113,29 @@ impl ToolRegistry {
         defs
     }
 
- /// Execute a tool by name with optional caching, hooks, and approval flow.
- /// Checks both static and dynamic registries.
- ///
- /// # Policy and Approval Flow
- ///
- /// 1. Run policy hooks — if any hook returns `Deny`, return error immediately
- /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
- /// suspend execution and wait for human approval
- /// 3. Run before-hooks
- /// 4. Execute the tool
- /// 5. Run after-hooks
+    /// Execute a tool by name with optional caching, hooks, and approval flow.
+    /// Checks both static and dynamic registries.
+    ///
+    /// # Policy and Approval Flow
+    ///
+    /// 1. Run policy hooks — if any hook returns `Deny`, return error immediately
+    /// 2. If any hook returns `NeedsApproval` and approval_queue is configured,
+    /// suspend execution and wait for human approval
+    /// 3. Run before-hooks
+    /// 4. Execute the tool
+    /// 5. Run after-hooks
     pub async fn execute(
         &self,
         name: &str,
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
- // Run policy hooks first
+        // Run policy hooks first
         let policy_decision = self.hooks.run_policy(name, &args).await;
 
         match policy_decision {
             ToolPolicyDecision::Allow => {
- // Proceed with execution
+                // Proceed with execution
             }
             ToolPolicyDecision::Deny { reason } => {
                 return Some(Err(crate::error::SyscityError::Validation(format!(
@@ -1101,7 +1152,7 @@ impl ToolRegistry {
                 requested_by,
                 message,
             } => {
- // Check if approval queue is configured
+                // Check if approval queue is configured
                 let approval_queue = match &self.approval_queue {
                     Some(q) => q.clone(),
                     None => {
@@ -1111,10 +1162,10 @@ impl ToolRegistry {
                     }
                 };
 
- // Create oneshot channel for the approval resolution
+                // Create oneshot channel for the approval resolution
                 let (tx, rx) = tokio::sync::oneshot::channel();
 
- // Create pending approval
+                // Create pending approval
                 let approval = PendingApproval::new(
                     &approval_id,
                     &tool_name,
@@ -1126,17 +1177,17 @@ impl ToolRegistry {
                     tx,
                 );
 
- // Submit to approval queue
+                // Submit to approval queue
                 approval_queue.submit(approval).await;
 
- // Wait for human decision
+                // Wait for human decision
                 match rx.await {
                     Ok(ApprovalDecision::Approve) => {
                         tracing::info!(
                             "Approval {} granted, proceeding with tool execution",
                             approval_id
                         );
- // Proceed with execution below
+                        // Proceed with execution below
                     }
                     Ok(ApprovalDecision::Deny { reason }) => {
                         return Some(Err(crate::error::SyscityError::Validation(format!(
@@ -1153,10 +1204,10 @@ impl ToolRegistry {
             }
         }
 
- // Run before-hooks
+        // Run before-hooks
         self.hooks.run_before(name, &args).await;
 
- // Check cache first
+        // Check cache first
         let cache_key = Self::cache_key(name, &args);
         if let Some(cached_result) = self.get_cached(&cache_key) {
             tracing::debug!("Cache hit for tool: {}", name);
@@ -1167,9 +1218,9 @@ impl ToolRegistry {
             return self.filter_and_audit(name, context, Some(result)).await;
         }
 
- // Execute the tool — clone args so the original remains for after-hooks
+        // Execute the tool — clone args so the original remains for after-hooks
         let execution_result: Option<crate::Result<ToolExecutionResult>> = {
- // Try static tools first
+            // Try static tools first
             if let Some(tool) = self.get(name) {
                 let result = tool.execute(args.clone(), context).await;
                 if let Ok(ref exec_result) = result {
@@ -1177,7 +1228,7 @@ impl ToolRegistry {
                 }
                 Some(result)
             } else {
- // Try dynamic tools
+                // Try dynamic tools
                 let dynamic_tool = self
                     .dynamic_tools
                     .read()
@@ -1200,7 +1251,7 @@ impl ToolRegistry {
             }
         };
 
- // Run after-hooks
+        // Run after-hooks
         if let Some(Ok(ref exec_result)) = execution_result {
             self.hooks.run_after(name, &args, exec_result).await;
         }
@@ -1208,14 +1259,14 @@ impl ToolRegistry {
         self.filter_and_audit(name, context, execution_result).await
     }
 
- /// Apply content filtering and audit logging to a tool execution result.
+    /// Apply content filtering and audit logging to a tool execution result.
     async fn filter_and_audit(
         &self,
         name: &str,
         context: &ToolContext,
         result: Option<crate::Result<ToolExecutionResult>>,
     ) -> Option<crate::Result<ToolExecutionResult>> {
- // ── Audit: tool invocation ─────────────────────────────────────────
+        // ── Audit: tool invocation ─────────────────────────────────────────
         if let Some(ref audit) = self.audit_log {
             let allowed = matches!(result, Some(Ok(_)));
             audit
@@ -1230,17 +1281,15 @@ impl ToolRegistry {
                 .await;
         }
 
- // ── Content filtering ──────────────────────────────────────────────
+        // ── Content filtering ──────────────────────────────────────────────
         let result = match result {
             Some(Ok(exec_result)) => {
                 if let Some(ref filter) = self.content_filter {
                     let outcome = filter.filter_result(&exec_result);
 
- // Audit: content filter action
+                    // Audit: content filter action
                     if let Some(ref audit) = self.audit_log {
-                        if outcome.action
-                            != crate::security::content_filter::FilterAction::Pass
-                        {
+                        if outcome.action != crate::security::content_filter::FilterAction::Pass {
                             let details = serde_json::json!({
                                 "action": format!("{:?}", outcome.action),
                                 "pii_findings": outcome.pii_findings.len(),
@@ -1291,18 +1340,18 @@ impl ToolRegistry {
         result
     }
 
- /// Execute a tool by name without caching
+    /// Execute a tool by name without caching
     pub async fn execute_no_cache(
         &self,
         name: &str,
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
- // Try static tools first
+        // Try static tools first
         if let Some(tool) = self.get(name) {
             return Some(tool.execute(args, context).await);
         }
- // Try dynamic tools
+        // Try dynamic tools
         let dynamic_tool = self
             .dynamic_tools
             .read()
@@ -1316,9 +1365,9 @@ impl ToolRegistry {
         None
     }
 
- /// Execute a function call from an LLM.
- /// Checks both static and dynamic registries.
- /// Enforces the timeout configured in `ToolContext`.
+    /// Execute a function call from an LLM.
+    /// Checks both static and dynamic registries.
+    /// Enforces the timeout configured in `ToolContext`.
     pub async fn execute_call(
         &self,
         call: &FunctionCall,
@@ -1338,16 +1387,19 @@ impl ToolRegistry {
         let tool_name = call.name.clone();
         let timeout = context.timeout;
 
- // Try static tools first
+        // Try static tools first
         if let Some(tool) = self.get(&tool_name) {
             return tokio::time::timeout(timeout, tool.execute(args, context))
                 .await
-                .map_err(|_| crate::error::SyscityError::Timeout(format!(
-                    "Tool '{}' timed out after {:?}", tool_name, timeout
-                )))?;
+                .map_err(|_| {
+                    crate::error::SyscityError::Timeout(format!(
+                        "Tool '{}' timed out after {:?}",
+                        tool_name, timeout
+                    ))
+                })?;
         }
 
- // Try dynamic tools
+        // Try dynamic tools
         let dynamic_tool = self
             .dynamic_tools
             .read()
@@ -1358,9 +1410,12 @@ impl ToolRegistry {
             if !self.is_blocked(&tool_name) && !self.is_degraded(&tool_name) {
                 return tokio::time::timeout(timeout, tool.execute(args, context))
                     .await
-                    .map_err(|_| crate::error::SyscityError::Timeout(format!(
-                        "Tool '{}' timed out after {:?}", tool_name, timeout
-                    )))?;
+                    .map_err(|_| {
+                        crate::error::SyscityError::Timeout(format!(
+                            "Tool '{}' timed out after {:?}",
+                            tool_name, timeout
+                        ))
+                    })?;
             }
         }
 
@@ -1381,22 +1436,22 @@ pub struct ToolRegistrar {
 
 /// Trait for custom tool validators
 pub trait ToolValidator: Send + Sync + std::fmt::Debug {
- /// Validate a tool before registration
+    /// Validate a tool before registration
     fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError>;
- /// Validate tool input arguments
+    /// Validate tool input arguments
     fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError>;
 }
 
 /// Tool validation errors
 #[derive(Debug, Clone)]
 pub enum ToolValidationError {
- /// Invalid tool name
+    /// Invalid tool name
     InvalidName(String),
- /// Invalid schema
+    /// Invalid schema
     InvalidSchema(String),
- /// Input validation failed
+    /// Input validation failed
     InvalidInput(String),
- /// Security violation
+    /// Security violation
     SecurityViolation(String),
 }
 
@@ -1421,7 +1476,7 @@ impl ToolValidator for NameValidator {
     fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
         let name = tool.name();
 
- // Check length
+        // Check length
         if name.len() < 2 || name.len() > 64 {
             return Err(ToolValidationError::InvalidName(format!(
                 "Tool name '{}' must be between 2 and 64 characters",
@@ -1429,7 +1484,7 @@ impl ToolValidator for NameValidator {
             )));
         }
 
- // Check characters (alphanumeric, underscore, hyphen only)
+        // Check characters (alphanumeric, underscore, hyphen only)
         if !name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
@@ -1439,7 +1494,7 @@ impl ToolValidator for NameValidator {
             ));
         }
 
- // Check doesn't start with number
+        // Check doesn't start with number
         if name.chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
             return Err(ToolValidationError::InvalidName(format!(
                 "Tool name '{}' cannot start with a number",
@@ -1463,7 +1518,7 @@ impl ToolValidator for SchemaValidator {
     fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
         let schema = tool.parameters_schema();
 
- // Check schema has required fields
+        // Check schema has required fields
         if !schema.get("type").map(|v| v == "object").unwrap_or(false) {
             return Err(ToolValidationError::InvalidSchema(
                 "Schema must have type 'object'".to_string(),
@@ -1480,7 +1535,7 @@ impl ToolValidator for SchemaValidator {
     }
 
     fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
- // Basic JSON structure validation
+        // Basic JSON structure validation
         if !args.is_object() && !args.is_null() {
             return Err(ToolValidationError::InvalidInput(format!(
                 "Tool '{}' arguments must be a JSON object",
@@ -1497,7 +1552,7 @@ impl ToolValidator for SchemaValidator {
 pub struct SecurityValidator;
 
 impl SecurityValidator {
- /// Check for path traversal attempts
+    /// Check for path traversal attempts
     fn check_path_traversal(&self, value: &str) -> Result<(), ToolValidationError> {
         let dangerous_patterns = ["../", "..\\", "~/..", "/..", "%2e%2e%2f", "%252e%252e%252f"];
 
@@ -1510,7 +1565,7 @@ impl SecurityValidator {
             }
         }
 
- // Check for double slashes (can be used in some path traversal attacks)
+        // Check for double slashes (can be used in some path traversal attacks)
         if value.contains("//") || value.contains("\\\\") {
             return Err(ToolValidationError::SecurityViolation(
                 "Suspicious path pattern detected".to_string(),
@@ -1520,7 +1575,7 @@ impl SecurityValidator {
         Ok(())
     }
 
- /// Check for command injection attempts
+    /// Check for command injection attempts
     fn check_command_injection(&self, value: &str) -> Result<(), ToolValidationError> {
         let dangerous_chars = [';', '&', '|', '$', '`', '\n', '\r'];
 
@@ -1533,7 +1588,7 @@ impl SecurityValidator {
             }
         }
 
- // Check for command substitution patterns
+        // Check for command substitution patterns
         if value.contains("$(") || value.contains("${") {
             return Err(ToolValidationError::SecurityViolation(
                 "Command substitution pattern detected".to_string(),
@@ -1546,7 +1601,7 @@ impl SecurityValidator {
 
 impl ToolValidator for SecurityValidator {
     fn validate(&self, tool: &dyn Tool) -> Result<(), ToolValidationError> {
- // Check tool description for potential issues
+        // Check tool description for potential issues
         let desc = tool.description();
         if desc.len() < 10 {
             return Err(ToolValidationError::InvalidSchema(
@@ -1558,7 +1613,7 @@ impl ToolValidator for SecurityValidator {
     }
 
     fn validate_input(&self, _tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
- // Recursively check all string values for security issues
+        // Recursively check all string values for security issues
         fn check_value(
             value: &Value,
             validator: &SecurityValidator,
@@ -1577,7 +1632,7 @@ impl ToolValidator for SecurityValidator {
                 }
                 Value::Object(obj) => {
                     for (k, v) in obj {
- // Also check keys for path traversal in property names
+                        // Also check keys for path traversal in property names
                         validator.check_path_traversal(k)?;
                         check_value(v, validator)?;
                     }
@@ -1592,7 +1647,7 @@ impl ToolValidator for SecurityValidator {
 }
 
 impl ToolRegistrar {
- /// Create a new ToolRegistrar with default validators
+    /// Create a new ToolRegistrar with default validators
     pub fn new() -> Self {
         Self {
             registry: ToolRegistry::new(),
@@ -1604,7 +1659,7 @@ impl ToolRegistrar {
         }
     }
 
- /// Create with custom validators
+    /// Create with custom validators
     pub fn with_validators(validators: Vec<Box<dyn ToolValidator>>) -> Self {
         Self {
             registry: ToolRegistry::new(),
@@ -1612,9 +1667,9 @@ impl ToolRegistrar {
         }
     }
 
- /// Register a tool with validation
+    /// Register a tool with validation
     pub fn register(&mut self, tool: BoxedTool) -> Result<(), ToolValidationError> {
- // Run all validators
+        // Run all validators
         for validator in &self.validators {
             validator.validate(tool.as_ref())?;
         }
@@ -1623,7 +1678,7 @@ impl ToolRegistrar {
         Ok(())
     }
 
- /// Validate tool input before execution
+    /// Validate tool input before execution
     pub fn validate_input(&self, tool_name: &str, args: &Value) -> Result<(), ToolValidationError> {
         for validator in &self.validators {
             validator.validate_input(tool_name, args)?;
@@ -1631,22 +1686,22 @@ impl ToolRegistrar {
         Ok(())
     }
 
- /// Get a tool by name
+    /// Get a tool by name
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         self.registry.get(name)
     }
 
- /// List available tool names
+    /// List available tool names
     pub fn list(&self) -> Vec<String> {
         self.registry.list()
     }
 
- /// Check if a tool exists
+    /// Check if a tool exists
     pub fn has(&self, name: &str) -> bool {
         self.registry.has(name)
     }
 
- /// Get tool descriptions
+    /// Get tool descriptions
     pub fn get_descriptions(&self) -> HashMap<String, String> {
         self.registry
             .list()
@@ -1659,14 +1714,14 @@ impl ToolRegistrar {
             .collect()
     }
 
- /// Execute a tool with validation
+    /// Execute a tool with validation
     pub async fn execute(
         &self,
         name: &str,
         args: Value,
         context: &ToolContext,
     ) -> Option<crate::Result<ToolExecutionResult>> {
- // Validate input first
+        // Validate input first
         if let Err(e) = self.validate_input(name, &args) {
             return Some(Err(crate::error::SyscityError::Validation(e.to_string())));
         }
@@ -1674,17 +1729,17 @@ impl ToolRegistrar {
         self.registry.execute(name, args, context).await
     }
 
- /// Get all tools as function definitions
+    /// Get all tools as function definitions
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         self.registry.get_definitions()
     }
 
- /// Add a custom validator
+    /// Add a custom validator
     pub fn add_validator(&mut self, validator: Box<dyn ToolValidator>) {
         self.validators.push(validator);
     }
 
- /// Get reference to inner registry
+    /// Get reference to inner registry
     pub fn registry(&self) -> &ToolRegistry {
         &self.registry
     }
@@ -1763,7 +1818,7 @@ mod tests {
         assert_eq!(schema["required"], serde_json::json!(["name"]));
     }
 
- // ToolRegistrar tests
+    // ToolRegistrar tests
 
     #[test]
     fn test_tool_registrar_creation() {
@@ -1833,13 +1888,13 @@ mod tests {
     fn test_security_validator_path_traversal() {
         let validator = SecurityValidator;
 
- // Valid paths
+        // Valid paths
         assert!(validator
             .check_path_traversal("/home/user/file.txt")
             .is_ok());
         assert!(validator.check_path_traversal("./file.txt").is_ok());
 
- // Invalid paths with traversal
+        // Invalid paths with traversal
         assert!(validator.check_path_traversal("../etc/passwd").is_err());
         assert!(validator
             .check_path_traversal("foo/../../../etc/passwd")
@@ -1850,11 +1905,11 @@ mod tests {
     fn test_security_validator_command_injection() {
         let validator = SecurityValidator;
 
- // Valid commands
+        // Valid commands
         assert!(validator.check_command_injection("ls -la").is_ok());
         assert!(validator.check_command_injection("cat file.txt").is_ok());
 
- // Invalid commands with injection
+        // Invalid commands with injection
         assert!(validator.check_command_injection("ls; rm -rf /").is_err());
         assert!(validator
             .check_command_injection("cat file | grep test")
@@ -1866,28 +1921,28 @@ mod tests {
     fn test_security_validator_input_validation() {
         let validator = SecurityValidator;
 
- // Valid input
+        // Valid input
         let valid_args = serde_json::json!({
             "path": "/home/user/file.txt",
             "content": "hello world"
         });
         assert!(validator.validate_input("test", &valid_args).is_ok());
 
- // Invalid input with path traversal
+        // Invalid input with path traversal
         let invalid_args = serde_json::json!({
             "path": "../../../etc/passwd",
             "content": "malicious"
         });
         assert!(validator.validate_input("test", &invalid_args).is_err());
 
- // Invalid input with command injection
+        // Invalid input with command injection
         let cmd_inject_args = serde_json::json!({
             "command": "ls; rm -rf /"
         });
         assert!(validator.validate_input("test", &cmd_inject_args).is_err());
     }
 
- // ── Path sandbox penetration tests ───────────────────────────────────────
+    // ── Path sandbox penetration tests ───────────────────────────────────────
 
     use tempfile::tempdir;
 
@@ -1970,7 +2025,7 @@ mod tests {
         let ws = tmp.path().join("workspace");
         std::fs::create_dir(&ws).unwrap();
         let ctx = workspace_context(&ws);
- // `~` resolves to the user's home directory, which is outside the workspace.
+        // `~` resolves to the user's home directory, which is outside the workspace.
         assert!(!ctx.is_path_allowed(std::path::Path::new("~/anything.txt")));
     }
 
@@ -1987,7 +2042,7 @@ mod tests {
         assert!(!ctx.is_path_allowed(std::path::Path::new("/etc/passwd")));
     }
 
- // ── Skill trust boundary tests ───────────────────────────────────────────
+    // ── Skill trust boundary tests ───────────────────────────────────────────
 
     struct ReadTool;
 
@@ -2047,5 +2102,146 @@ mod tests {
             "Community context must not see shell"
         );
         assert!(community.contains(&"read".to_string()), "Community context should see read");
+    }
+
+    // ── RBAC policy tests ────────────────────────────────────────────────────
+
+    struct HighRiskTool;
+
+    #[async_trait]
+    impl Tool for HighRiskTool {
+        fn name(&self) -> &str {
+            "high_risk"
+        }
+
+        fn description(&self) -> &str {
+            "A high-risk tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema(
+                "A high-risk tool",
+                serde_json::json!({"x": {"type": "string"}}),
+                vec!["x"],
+            )
+        }
+
+        fn capabilities(&self) -> crate::tools::sdk::ToolCapabilities {
+            crate::tools::sdk::ToolCapabilities {
+                risk_level: crate::tools::approval::RiskLevel::High,
+                categories: vec!["system".to_string()],
+                ..Default::default()
+            }
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("ok"))
+        }
+    }
+
+    #[test]
+    fn test_rbac_policy_denies_by_name() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ShellTool::new()));
+        registry.register(Box::new(ReadTool));
+
+        let policy = crate::tools::rbac::ToolPolicy {
+            denied_tools: vec!["shell".to_string()],
+            ..Default::default()
+        };
+        let ctx = ToolContext::new("user", "conv1")
+            .with_user_context(crate::tools::rbac::UserContext::owner())
+            .with_tool_policy(policy);
+
+        let available: Vec<String> = registry
+            .get_available(&ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(!available.contains(&"shell".to_string()));
+        assert!(available.contains(&"read".to_string()));
+    }
+
+    #[test]
+    fn test_rbac_policy_denies_by_role() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ShellTool::new()));
+
+        let policy = crate::tools::rbac::ToolPolicy {
+            required_role: crate::tools::rbac::Role::Admin,
+            ..Default::default()
+        };
+        let admin_ctx = ToolContext::new("admin", "conv1")
+            .with_user_context(crate::tools::rbac::UserContext {
+                roles: vec![crate::tools::rbac::Role::Admin],
+                ..Default::default()
+            })
+            .with_tool_policy(policy.clone());
+        let user_ctx = ToolContext::new("user", "conv1")
+            .with_user_context(crate::tools::rbac::UserContext::user())
+            .with_tool_policy(policy);
+
+        let admin_available: Vec<String> = registry
+            .get_available(&admin_ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        let user_available: Vec<String> = registry
+            .get_available(&user_ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(admin_available.contains(&"shell".to_string()));
+        assert!(!user_available.contains(&"shell".to_string()));
+    }
+
+    #[test]
+    fn test_rbac_policy_denies_by_risk_level() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(HighRiskTool));
+        registry.register(Box::new(ReadTool));
+
+        let policy = crate::tools::rbac::ToolPolicy {
+            max_risk_level: Some(crate::tools::approval::RiskLevel::Medium),
+            ..Default::default()
+        };
+        let ctx = ToolContext::new("user", "conv1")
+            .with_user_context(crate::tools::rbac::UserContext::owner())
+            .with_tool_policy(policy);
+
+        let available: Vec<String> = registry
+            .get_available(&ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(!available.contains(&"high_risk".to_string()));
+        assert!(available.contains(&"read".to_string()));
+    }
+
+    #[test]
+    fn test_rbac_skill_trust_backward_compatible() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ShellTool::new()));
+        registry.register(Box::new(ReadTool));
+        registry.mark_privileged("shell");
+
+        // No user_context/tool_policy: SkillTrust alone governs availability.
+        let community_ctx =
+            ToolContext::new("user", "conv1").with_skill_trust(SkillTrust::Community);
+        let available: Vec<String> = registry
+            .get_available(&community_ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(!available.contains(&"shell".to_string()));
+        assert!(available.contains(&"read".to_string()));
     }
 }

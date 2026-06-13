@@ -907,18 +907,41 @@ impl EventHandler for DiscordHandler {
             // Get or create session UUID for this channel
             let session_id = self.get_or_create_session(channel_id).await;
 
-            let incoming = IncomingMessage::new(
+            let detected = crate::tools::command_detector::detect_command(&content);
+
+            let mut metadata = MessageMetadata::new()
+                .with_extra("message_id", msg.id.get())
+                .with_extra("username", msg.author.name.clone())
+                .with_extra("is_dm", is_dm)
+                .with_extra("discord_channel_id", channel_id);
+
+            if let Some(ref result) = detected {
+                metadata = metadata.with_detected_command(result);
+            }
+
+            let policy = crate::channels::ChannelPolicy::new(
+                self.pairing_store.clone(),
+                self.dm_policy.clone(),
+                self.allow_from.clone(),
+            );
+
+            let provenance = crate::channels::InputProvenance::ExternalUser {
+                channel: "discord".to_string(),
+                is_direct: is_dm,
+            };
+
+            let mut incoming = IncomingMessage::new(
                 msg.author.id.get().to_string(),
                 &session_id, // Use UUID session instead of channel_id
                 content,
             )
-            .with_metadata(
-                MessageMetadata::new()
-                    .with_extra("message_id", msg.id.get())
-                    .with_extra("username", msg.author.name.clone())
-                    .with_extra("is_dm", is_dm)
-                    .with_extra("discord_channel_id", channel_id),
-            );
+            .with_provenance(provenance)
+            .with_metadata(metadata);
+
+            if detected.is_some() {
+                let auth_ctx = crate::channels::AuthContext::from_message(&incoming, &policy).await;
+                incoming.metadata = incoming.metadata.with_auth_context(&auth_ctx);
+            }
 
             // Send to handler if configured; responses arrive via Channel::send()
             if let Some(tx) = &self.config.message_tx {

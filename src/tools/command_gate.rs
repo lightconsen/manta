@@ -65,7 +65,7 @@ impl std::fmt::Display for UserLevel {
 // ── Command classification ────────────────────────────────────────────────────
 
 /// The class of a request determined by its content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestClass {
     /// Plain conversational message (no leading slash).
     Chat,
@@ -73,6 +73,57 @@ pub enum RequestClass {
     Command,
     /// An admin-only slash command (prefixed with `/admin`).
     AdminCommand,
+    /// A system-level control command (e.g. `/start`, `/help`, `/pair`).
+    ControlCommand(ControlCommand),
+}
+
+/// System-level control commands that are intercepted before normal command handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlCommand {
+    /// Start / initialize interaction.
+    Start,
+    /// Stop / shutdown the current session.
+    Stop,
+    /// Show help.
+    Help,
+    /// Pair with the bot.
+    Pair,
+    /// Unpair from the bot.
+    Unpair,
+    /// Restart the bot / session.
+    Restart,
+    /// Show current status.
+    Status,
+}
+
+impl ControlCommand {
+    /// Detect a control command from the start of a message.
+    pub fn detect(content: &str) -> Option<Self> {
+        let trimmed = content.trim().split_whitespace().next()?;
+        match trimmed.to_lowercase().as_str() {
+            "/start" | "/begin" => Some(ControlCommand::Start),
+            "/stop" | "/end" => Some(ControlCommand::Stop),
+            "/help" | "/h" => Some(ControlCommand::Help),
+            "/pair" | "/link" => Some(ControlCommand::Pair),
+            "/unpair" | "/unlink" => Some(ControlCommand::Unpair),
+            "/restart" | "/reload" => Some(ControlCommand::Restart),
+            "/status" => Some(ControlCommand::Status),
+            _ => None,
+        }
+    }
+
+    /// Canonical string representation used for dispatch.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ControlCommand::Start => "start",
+            ControlCommand::Stop => "stop",
+            ControlCommand::Help => "help",
+            ControlCommand::Pair => "pair",
+            ControlCommand::Unpair => "unpair",
+            ControlCommand::Restart => "restart",
+            ControlCommand::Status => "status",
+        }
+    }
 }
 
 /// Admin command prefixes that require the `Admin` level.
@@ -91,6 +142,11 @@ impl RequestClass {
     pub fn classify(content: &str) -> Self {
         let trimmed = content.trim();
 
+        // Layer 1: control commands take precedence.
+        if let Some(ctrl) = ControlCommand::detect(content) {
+            return RequestClass::ControlCommand(ctrl);
+        }
+
         if ADMIN_PREFIXES.iter().any(|p| trimmed.starts_with(p)) {
             return RequestClass::AdminCommand;
         }
@@ -108,6 +164,9 @@ impl RequestClass {
             RequestClass::Chat => UserLevel::Chat,
             RequestClass::Command => UserLevel::User,
             RequestClass::AdminCommand => UserLevel::Admin,
+            // Control commands are handled separately; default to User so the
+            // legacy gate does not silently block them.
+            RequestClass::ControlCommand(_) => UserLevel::User,
         }
     }
 }

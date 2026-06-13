@@ -283,6 +283,8 @@ mod tests {
             skill_trust: crate::tools::SkillTrust::Trusted,
             workspace_root: PathBuf::from("/tmp"),
             workspace_only: false,
+            user_context: None,
+            tool_policy: None,
         }
     }
 

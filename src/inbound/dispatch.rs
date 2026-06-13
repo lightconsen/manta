@@ -6,8 +6,8 @@
 //!
 //! This replaces the direct "enqueue then route" logic in Gateway.
 
-use crate::channels::IncomingMessage;
 use crate::channels::command_gate::{AuthContext, CommandGate as ChannelCommandGate};
+use crate::channels::IncomingMessage;
 use crate::gateway::send_policy::{PolicyDecision, SendPolicy};
 
 use super::media::MediaUnderstandingResult;
@@ -144,6 +144,8 @@ impl AutoReplyDispatch {
                 is_paired: false,
                 is_admin: false,
                 is_allowlisted: false,
+                is_owner: false,
+                provider_hint: None,
                 custom_flags: Default::default(),
             };
             let decision = gate.check(&ctx).await;
@@ -151,7 +153,8 @@ impl AutoReplyDispatch {
                 return DispatchResult::suppress(format!(
                     "channel command gate denied: {}",
                     match &decision {
-                        crate::channels::command_gate::GateResult::Denied(reason) => reason.as_str(),
+                        crate::channels::command_gate::GateResult::Denied(reason) =>
+                            reason.as_str(),
                         _ => "unknown",
                     }
                 ));

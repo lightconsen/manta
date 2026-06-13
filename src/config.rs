@@ -647,6 +647,21 @@ pub struct CapabilitiesConfig {
     /// Explicitly disable specific set IDs regardless of profile
     #[serde(default)]
     pub disabled_sets: Vec<String>,
+    /// Default minimum role required to invoke tools.
+    #[serde(default)]
+    pub default_required_role: Option<crate::tools::rbac::Role>,
+    /// Default maximum tool risk level allowed.
+    #[serde(default)]
+    pub default_max_risk_level: Option<crate::tools::approval::RiskLevel>,
+    /// Tool names denied by default across all users.
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
+    /// Tool names allowed by default (empty = all allowed).
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Tool categories allowed by default (empty = all allowed).
+    #[serde(default)]
+    pub allowed_categories: Vec<String>,
 }
 
 fn default_capability_profile() -> String {
@@ -664,6 +679,11 @@ impl Default for CapabilitiesConfig {
             custom_sets: Vec::new(),
             max_scope: default_capability_max_scope(),
             disabled_sets: Vec::new(),
+            default_required_role: None,
+            default_max_risk_level: None,
+            denied_tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            allowed_categories: Vec::new(),
         }
     }
 }
@@ -941,10 +961,11 @@ impl Config {
             self.computer.remote_control.user = Some(val);
         }
         if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_PORT", ENV_PREFIX)) {
-            self.computer.remote_control.port = val.parse().map_err(|e| ConfigError::InvalidValue {
-                key: "computer.remote_control.port".to_string(),
-                message: format!("Invalid port number: {}", e),
-            })?;
+            self.computer.remote_control.port =
+                val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "computer.remote_control.port".to_string(),
+                    message: format!("Invalid port number: {}", e),
+                })?;
         }
         if let Ok(val) = std::env::var(format!("{}_REMOTE_CONTROL_PROTOCOL", ENV_PREFIX)) {
             self.computer.remote_control.protocol = val;
@@ -956,10 +977,11 @@ impl Config {
             self.computer.remote_control.display = Some(val);
         }
         if let Ok(val) = std::env::var(format!("{}_HEADLESS_ENABLED", ENV_PREFIX)) {
-            self.computer.headless.enabled = val.parse().map_err(|e| ConfigError::InvalidValue {
-                key: "computer.headless.enabled".to_string(),
-                message: format!("Invalid boolean: {}", e),
-            })?;
+            self.computer.headless.enabled =
+                val.parse().map_err(|e| ConfigError::InvalidValue {
+                    key: "computer.headless.enabled".to_string(),
+                    message: format!("Invalid boolean: {}", e),
+                })?;
         }
         if let Ok(val) = std::env::var(format!("{}_HEADLESS_DISPLAY", ENV_PREFIX)) {
             self.computer.headless.display = val;
@@ -975,9 +997,10 @@ impl Config {
     /// other env vars are **not** recursively resolved.
     fn interpolate_env_vars(input: &str) -> String {
         // Match both ${VAR} and $VAR — but not $$ (escaped dollar)
-        let re =
-            regex::Regex::new(r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))")
-                .expect("valid env var regex");
+        let re = regex::Regex::new(
+            r"(?P<full>\$\$(?P<escaped>[\w_]+)|\$\{(?P<braced>\w+)\}|\$(?P<plain>\w+))",
+        )
+        .expect("valid env var regex");
 
         re.replace_all(input, |caps: &regex::Captures<'_>| {
             // $$VAR → literal $VAR (escape)
@@ -1061,7 +1084,8 @@ impl Config {
         {
             return Err(ConfigError::InvalidValue {
                 key: "storage.connection".to_string(),
-                message: "Connection string is required when storage type is 'database'".to_string(),
+                message: "Connection string is required when storage type is 'database'"
+                    .to_string(),
             }
             .into());
         }

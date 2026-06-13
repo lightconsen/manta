@@ -951,19 +951,36 @@ async fn handle_event_message(
         MentionState::Mentioned
     };
 
-    let incoming = IncomingMessage {
+    let detected = crate::tools::command_detector::detect_command(&event_text);
+
+    let mut metadata = MessageMetadata::new();
+    if let Some(ref result) = detected {
+        metadata = metadata.with_detected_command(result);
+    }
+
+    let mut incoming = IncomingMessage {
         id: Id::new(),
         user_id: UserId::new(event_user_id),
         conversation_id: ConversationId::new(event_channel),
         content: event_text,
         attachments: vec![],
-        metadata: MessageMetadata::new(),
+        metadata,
         provenance: crate::channels::InputProvenance::ExternalUser {
             channel: "slack".to_string(),
             is_direct: is_dm,
         },
         mention,
     };
+
+    if detected.is_some() {
+        let policy = crate::channels::ChannelPolicy::new(
+            pairing_store.clone(),
+            dm_policy.clone(),
+            allow_from.clone(),
+        );
+        let auth_ctx = crate::channels::AuthContext::from_message(&incoming, &policy).await;
+        incoming.metadata = incoming.metadata.with_auth_context(&auth_ctx);
+    }
 
     if let Some(tx) = message_tx {
         if let Err(e) = tx.send(incoming) {

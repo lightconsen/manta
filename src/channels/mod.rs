@@ -75,6 +75,7 @@ pub mod imessage;
 pub mod webchat;
 
 pub mod acp_bridge;
+pub mod authorization;
 pub mod command_gate;
 pub mod envelope;
 pub mod resolver;
@@ -280,6 +281,36 @@ impl MessageMetadata {
         value: impl Into<serde_json::Value>,
     ) -> Self {
         self.extra.insert(key.into(), value.into());
+        self
+    }
+
+    /// Mark this message as containing a detected command.
+    pub fn with_detected_command(
+        mut self,
+        result: &crate::tools::command_detector::CommandDetectionResult,
+    ) -> Self {
+        self.extra.insert(
+            "detected_command".to_string(),
+            serde_json::json!({
+                "layer": format!("{:?}", result.layer),
+                "command": result.command,
+                "args": result.args,
+                "raw_match": result.raw_match,
+            }),
+        );
+        self
+    }
+
+    /// Attach an authorization context to this message's metadata.
+    pub fn with_auth_context(mut self, ctx: &crate::channels::AuthContext) -> Self {
+        match serde_json::to_value(ctx) {
+            Ok(value) => {
+                self.extra.insert("auth_context".to_string(), value);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to serialize AuthContext: {}", e);
+            }
+        }
         self
     }
 }
