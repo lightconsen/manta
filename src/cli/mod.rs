@@ -246,7 +246,6 @@ pub enum Commands {
     /// Check and display available OS capability sets
     Capabilities,
     /// Interactive terminal UI client
-    #[cfg(feature = "tui")]
     Tui {
         /// Host to connect to
         #[arg(long, default_value = "127.0.0.1")]
@@ -408,7 +407,6 @@ impl Cli {
             Commands::Provider { command } => provider::run_provider_command(command, config).await,
             Commands::Doctor { command } => doctor::run_doctor_command(command).await,
             Commands::Capabilities => capability::run_capability_check().await,
-            #[cfg(feature = "tui")]
             Commands::Tui { host, port, token, session } => {
                 crate::tui::run(host, *port, token.as_deref(), session.as_deref()).await
             }

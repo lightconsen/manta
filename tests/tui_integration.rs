@@ -3,8 +3,6 @@
 //! These tests use `ratatui::backend::TestBackend` to verify that the
 //! main render coordinator draws expected elements without panicking.
 
-#![cfg(feature = "tui")]
-
 use ratatui::{backend::TestBackend, Terminal};
 use syscity::tui::state::{AppState, ConnectionState};
 use syscity::tui::ui::render;

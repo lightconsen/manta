@@ -164,10 +164,10 @@ ndarray = { version = "0.17", optional = true }
 qrcode = "0.14"
 
 # Terminal UI (optional)
-ratatui = { version = "0.29", optional = true }
-crossterm = { version = "0.28", optional = true, features = ["event-stream"] }
-tokio-util = { version = "0.7", optional = true }
-unicode-width = { version = "0.2", optional = true }
+ratatui = { version = "0.29" }
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio-util = { version = "0.7" }
+unicode-width = { version = "0.2" }
 
 # Channels (optional)
 teloxide = { version = "0.17", features = ["macros"], optional = true }
@@ -193,7 +193,8 @@ local-embeddings = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]
 hot-reload = ["notify-debouncer-full"]
 vision = ["ort", "image", "ndarray"]
-tui = ["ratatui", "crossterm", "tokio-util", "unicode-width"]
+# TUI is no longer optional; kept as a no-op feature for backwards compatibility
+tui = []
 
 # Note: Discord and Slack use reqwest for HTTP API calls
 # WhatsApp, QQ, Lark use reqwest with custom implementations
