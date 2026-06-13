@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use super::{Tool, ToolContext, ToolExecutionResult};
 use crate::agent::budget::IterationBudget;
@@ -275,19 +274,61 @@ impl DelegateTool {
         parent_budget: Option<IterationBudget>,
         parent_id: String,
     ) -> crate::Result<ChildAgent> {
-        // Check if we can delegate
-        if !self.tracker.can_delegate().await {
-            return Err(crate::error::SyscityError::Validation(
-                "Maximum delegation depth reached or too many children".to_string(),
-            ));
-        }
-
-        let child_id = Uuid::new_v4().to_string();
         let budget = parent_budget.unwrap_or_else(|| IterationBudget::new(50));
         let iterations = Arc::new(AtomicUsize::new(0));
 
+        // Determine which agent to use for child execution:
+        // 1. If target_agent is set and we have a resolver, look it up
+        // 2. Fall back to self.agent if not found or no target specified
+        let child_agent = if let Some(ref resolver) = self.agent_resolver {
+            if let Some(target) = &task.target_agent {
+                resolver.resolve(target).await.or_else(|| self.agent.clone())
+            } else {
+                self.agent.clone()
+            }
+        } else {
+            self.agent.clone()
+        };
+
+        let agent_type = task
+            .target_agent
+            .clone()
+            .unwrap_or_else(|| "delegate".to_string());
+
+        // Build the execution closure. The registry will supply the run_id, which
+        // becomes the child id so local tracking and registry tracking share a key.
+        let registry = Arc::clone(&self.registry);
+        let reg_task = task.clone();
+        let reg_tracker = self.tracker.clone();
+        let iterations_bg = iterations.clone();
+        let task_fn = move |run_id: String, _task_str: String| {
+            let reg_task = reg_task.clone();
+            let reg_tracker = reg_tracker.clone();
+            let iterations_bg = iterations_bg.clone();
+            let child_agent = child_agent.clone();
+            let registry = Arc::clone(&registry);
+            async move {
+                execute_child_task(
+                    run_id,
+                    reg_task,
+                    reg_tracker,
+                    iterations_bg,
+                    child_agent,
+                    registry,
+                )
+                .await;
+            }
+        };
+
+        // Ask the registry to enforce depth/concurrency limits and assign a run id.
+        // If the registry rejects the spawn, no child is registered locally.
+        let run_id = self
+            .registry
+            .spawn(&parent_id, &agent_type, &task.prompt, task_fn)
+            .await?;
+
         let child = ChildAgent {
-            id: child_id.clone(),
+            id: run_id,
             parent_id: parent_id.clone(),
             task: task.clone(),
             status: ChildStatus::Pending,
@@ -303,59 +344,9 @@ impl DelegateTool {
 
         info!(
             "Spawned child agent {} for task: {}",
-            child_id,
+            child.id,
             task.prompt.chars().take(50).collect::<String>()
         );
-
-        // Determine which agent to use for child execution:
-        // 1. If target_agent is set and we have a resolver, look it up
-        // 2. Fall back to self.agent if not found or no target specified
-        let child_agent = if let Some(ref resolver) = self.agent_resolver {
-            if let Some(target) = &task.target_agent {
-                resolver
-                    .resolve(target)
-                    .await
-                    .or_else(|| self.agent.clone())
-            } else {
-                self.agent.clone()
-            }
-        } else {
-            self.agent.clone()
-        };
-
-        // Also register with the SubagentRegistry for cross-cutting tracking
-        let registry = Arc::clone(&self.registry);
-        let reg_child_id = child_id.clone();
-        let reg_task = task.clone();
-        let reg_tracker = self.tracker.clone();
-        let iterations_bg = iterations.clone();
-
-        // Spawn via the registry so it participates in depth/metrics tracking.
-        // We use the registry's lower-level complete_run to report outcomes.
-        let registry_for_spawn = Arc::clone(&registry);
-        let agent_type = reg_task
-            .target_agent
-            .clone()
-            .unwrap_or_else(|| "delegate".to_string());
-        let _ = registry_for_spawn
-            .spawn(&parent_id, &agent_type, &task.prompt, move |run_id, _task_str| async move {
-                execute_child_task(
-                    reg_child_id,
-                    reg_task,
-                    reg_tracker,
-                    iterations_bg,
-                    child_agent,
-                    Arc::clone(&registry),
-                    run_id,
-                )
-                .await;
-            })
-            .await
-            .unwrap_or_else(|e| {
-                // Registry spawn failure is non-fatal: the tracker already has the child.
-                warn!("SubagentRegistry::spawn failed (non-fatal): {}", e);
-                String::new()
-            });
 
         Ok(child)
     }
@@ -370,11 +361,10 @@ async fn execute_child_task(
     iterations: Arc<AtomicUsize>,
     agent: Option<Arc<crate::agent::Agent>>,
     registry: Arc<SubagentRegistry>,
-    run_id: String,
 ) {
     tracker.update_status(&child_id, ChildStatus::Running).await;
 
-    debug!("Child {} starting execution (run_id={})", child_id, run_id);
+    debug!("Child {} starting execution", child_id);
 
     if let Some(agent) = agent {
         // Create incoming message for the child task
@@ -433,17 +423,13 @@ async fn execute_child_task(
                 };
 
                 tracker.set_result(&child_id, result.clone()).await;
-                if !run_id.is_empty() {
-                    registry.complete_run(&run_id, Ok(result)).await;
-                }
+                registry.complete_run(&child_id, Ok(result)).await;
             }
             Err(e) => {
                 error!("Child {} failed: {}", child_id, e);
                 let err_msg = format!("Task execution failed: {}", e);
                 tracker.set_error(&child_id, err_msg.clone()).await;
-                if !run_id.is_empty() {
-                    registry.complete_run(&run_id, Err(err_msg)).await;
-                }
+                registry.complete_run(&child_id, Err(err_msg)).await;
             }
         }
     } else {
@@ -454,12 +440,10 @@ async fn execute_child_task(
         );
         let err_msg = "No agent configured for delegation".to_string();
         tracker.set_error(&child_id, err_msg.clone()).await;
-        if !run_id.is_empty() {
-            registry.complete_run(&run_id, Err(err_msg)).await;
-        }
+        registry.complete_run(&child_id, Err(err_msg)).await;
     }
 
-    debug!("Child {} execution completed (run_id={})", child_id, run_id);
+    debug!("Child {} execution completed", child_id);
 }
 
 #[async_trait]
@@ -561,12 +545,14 @@ impl DelegateTool {
 
         match action {
             "spawn" => {
-                // Check if we can spawn more children
-                let current_count = self.tracker.child_count().await;
-                if current_count >= MAX_CHILDREN {
+                // Fast pre-check using the shared registry, which is the authority
+                // for depth and concurrency limits.
+                let current_count = self.registry.active_count().await;
+                let max_children = self.registry.max_concurrent();
+                if current_count >= max_children {
                     return Ok(ToolExecutionResult::error(format!(
                         "Maximum children ({}) already active. Cannot spawn more.",
-                        MAX_CHILDREN
+                        max_children
                     )));
                 }
 
@@ -617,12 +603,19 @@ impl DelegateTool {
                     .spawn_child(task, None, context.conversation_id.clone())
                     .await?;
 
+                let child_session = format!(
+                    "{}:subagent:{}",
+                    context.conversation_id,
+                    &child.id[..8.min(child.id.len())]
+                );
+                let depth = self.registry.get_depth(&child_session).await;
+
                 Ok(ToolExecutionResult::success(format!("Spawned child agent: {}", child.id))
                     .with_data(json!({
                         "child_id": child.id,
                         "status": child.status,
-                        "depth": self.tracker.depth + 1,
-                        "max_depth": MAX_DEPTH,
+                        "depth": depth,
+                        "max_depth": self.registry.max_depth(),
                     })))
             }
 
@@ -663,7 +656,7 @@ impl DelegateTool {
                     .with_data(json!({
                         "children": summary,
                         "count": children.len(),
-                        "max_children": MAX_CHILDREN,
+                        "max_children": self.registry.max_concurrent(),
                     })))
             }
 
@@ -1013,5 +1006,47 @@ mod tests {
         let cloned = tracker.clone();
         assert_eq!(cloned.depth, tracker.depth);
         assert_eq!(cloned.max_children, tracker.max_children);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_uses_registry_for_routing_limits() {
+        use std::time::Duration;
+
+        let tool = DelegateTool::new(0);
+        let registry = Arc::clone(tool.registry());
+        let context = ToolContext::new("user", "parent-session");
+
+        let args = serde_json::json!({
+            "action": "spawn",
+            "task": { "prompt": "test task" }
+        });
+
+        let result = tool.execute(args, &context).await.expect("execute spawn");
+        assert!(result.success, "spawn should succeed: {:?}", result);
+
+        let child_id = result
+            .data
+            .as_ref()
+            .and_then(|d| d.get("child_id"))
+            .and_then(|v| v.as_str())
+            .expect("child_id in result")
+            .to_string();
+
+        // The registry must know about the same run id.
+        assert!(
+            registry.get_run(&child_id).await.is_some(),
+            "registry should contain run with child_id"
+        );
+
+        // Cancel should kill the registry run.
+        let cancel_args = serde_json::json!({
+            "action": "cancel",
+            "child_id": child_id
+        });
+        let cancel_result = tool.execute(cancel_args, &context).await.expect("execute cancel");
+        assert!(cancel_result.success);
+
+        let run = registry.get_run(&child_id).await.expect("run still in registry");
+        assert!(matches!(run.status, crate::agent::SubagentStatus::Killed));
     }
 }

@@ -962,6 +962,8 @@ pub struct AcpControlPlane {
     recovery: Arc<RwLock<CrashRecoveryConfig>>,
     /// Cross-session subagent communication bus.
     bus: Arc<RwLock<AcpBus>>,
+    /// Event broadcast channel for ACP lifecycle events.
+    event_tx: Arc<RwLock<Option<tokio::sync::broadcast::Sender<crate::gateway::GatewayEvent>>>>,
 }
 
 /// ACP Session - groups related subagents
@@ -988,6 +990,7 @@ impl AcpControlPlane {
             max_iterations,
             recovery: Arc::new(RwLock::new(CrashRecoveryConfig::default())),
             bus: Arc::new(RwLock::new(AcpBus::new())),
+            event_tx: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1039,16 +1042,51 @@ impl AcpControlPlane {
         info!("ACP default agent builder configured");
     }
 
+ /// Set the event broadcast sender on an existing instance.
+ ///
+ /// Use this when the ACP is created before the GatewayState that owns the
+ /// event broadcast channel.
+    pub async fn set_event_tx(
+        &self,
+        event_tx: tokio::sync::broadcast::Sender<crate::gateway::GatewayEvent>,
+    ) {
+        let mut guard = self.event_tx.write().await;
+        *guard = Some(event_tx);
+        info!("ACP event broadcaster configured");
+    }
+
+    /// Emit an ACP lifecycle event if the broadcast channel is configured.
+    async fn emit(&self, event: crate::gateway::GatewayEvent) {
+        let guard = self.event_tx.read().await;
+        if let Some(ref tx) = *guard {
+            let _ = tx.send(event);
+        }
+    }
+
+ /// Returns true if a session store is attached for persistence.
+    pub fn has_store(&self) -> bool {
+        self.store.is_some()
+    }
+
  /// Load persisted ACP sessions from the store into memory.
     pub async fn load_persisted_sessions(&self) {
         let Some(ref store) = self.store else {
+            info!("ACP session store not configured; skipping load_persisted_sessions");
             return;
         };
 
         match store.list_acp_sessions().await {
             Ok(rows) => {
+                let mut loaded = 0usize;
                 let mut sessions = self.sessions.write().await;
                 for (session_id, parent_id, subagent_ids, created_at) in rows {
+                    if session_id.is_empty() || parent_id.is_empty() {
+                        warn!(
+                            "Skipping malformed persisted ACP session (session_id={}, parent_id={})",
+                            session_id, parent_id
+                        );
+                        continue;
+                    }
                     sessions.insert(
                         AcpSessionId(session_id.clone()),
                         AcpSession {
@@ -1058,8 +1096,9 @@ impl AcpControlPlane {
                             created_at,
                         },
                     );
+                    loaded += 1;
                 }
-                info!("Loaded {} persisted ACP sessions", sessions.len());
+                info!("Loaded {} persisted ACP session(s)", loaded);
             }
             Err(e) => {
                 warn!("Failed to load persisted ACP sessions: {}", e);
@@ -1169,28 +1208,48 @@ impl AcpControlPlane {
 
  /// Pause a running session
     pub async fn pause(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Pause { session_id }).await;
+        let _ = self.command_tx.send(AcpCommand::Pause { session_id: session_id.clone() }).await;
+        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+            session_id,
+            runtime_state: "paused".to_string(),
+        })
+        .await;
     }
 
  /// Resume a paused session
     pub async fn resume(&self, session_id: String) {
         let _ = self
             .command_tx
-            .send(AcpCommand::Resume { session_id })
+            .send(AcpCommand::Resume { session_id: session_id.clone() })
             .await;
+        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+            session_id,
+            runtime_state: "running".to_string(),
+        })
+        .await;
     }
 
  /// Single step a paused session
     pub async fn step(&self, session_id: String) {
-        let _ = self.command_tx.send(AcpCommand::Step { session_id }).await;
+        let _ = self.command_tx.send(AcpCommand::Step { session_id: session_id.clone() }).await;
+        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+            session_id,
+            runtime_state: "stepping".to_string(),
+        })
+        .await;
     }
 
  /// Cancel a running session
     pub async fn cancel(&self, session_id: String) {
         let _ = self
             .command_tx
-            .send(AcpCommand::Cancel { session_id })
+            .send(AcpCommand::Cancel { session_id: session_id.clone() })
             .await;
+        self.emit(crate::gateway::GatewayEvent::AcpStatusChanged {
+            session_id,
+            runtime_state: "cancelled".to_string(),
+        })
+        .await;
     }
 
  /// Get session status
@@ -1432,6 +1491,8 @@ impl AcpControlPlane {
         let watchdog_subagents_ref = Arc::clone(&self.subagents);
         let watch_id = subagent_id.clone();
         let store_ref = self.store.clone();
+        let acp_for_events = self.clone();
+        let event_session_id = session_id.clone();
         tokio::spawn(async move {
             match join_handle.await {
                 Ok(()) => {
@@ -1440,6 +1501,13 @@ impl AcpControlPlane {
                         h.status = SubagentStatus::Terminated;
                     }
                     drop(map);
+                    acp_for_events
+                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
+                            session_id: event_session_id.to_string(),
+                            subagent_id: watch_id.clone(),
+                            status: "terminated".to_string(),
+                        })
+                        .await;
                     if let Some(store) = store_ref {
                         let _ = store
                             .complete_subagent_run(&watch_id, Some("normal exit"), None)
@@ -1458,6 +1526,13 @@ impl AcpControlPlane {
                             h.status = SubagentStatus::Crashed;
                         }
                     }
+                    acp_for_events
+                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
+                            session_id: event_session_id.to_string(),
+                            subagent_id: watch_id.clone(),
+                            status: "crashed".to_string(),
+                        })
+                        .await;
                     if let Some(store) = store_ref {
                         let _ = store
                             .complete_subagent_run(&watch_id, None, Some("panicked"))
@@ -1525,6 +1600,13 @@ impl AcpControlPlane {
                         h.status = SubagentStatus::Terminated;
                     }
                     drop(map);
+                    acp_for_events
+                        .emit(crate::gateway::GatewayEvent::AcpCompleted {
+                            session_id: event_session_id.to_string(),
+                            subagent_id: watch_id.clone(),
+                            status: "aborted".to_string(),
+                        })
+                        .await;
  // Kill/abort already updates the store, so no-op here.
                 }
             }
@@ -1600,6 +1682,14 @@ impl AcpControlPlane {
         }
 
         info!("Subagent {} spawned successfully", subagent_id);
+        self.emit(crate::gateway::GatewayEvent::AcpSpawned {
+            session_id: session_id.to_string(),
+            subagent_id: subagent_id.clone(),
+            parent_id: parent_id.clone(),
+            mode: format!("{:?}", config.mode).to_lowercase(),
+            thread_id: thread_id.clone(),
+        })
+        .await;
         Ok(handle)
     }
 
@@ -1660,10 +1750,10 @@ impl AcpControlPlane {
                     }
                 }
 
-                if let Some(old_id) = old_id {
+                if let Some(ref old_id) = old_id {
                     let mut sessions = self.sessions.write().await;
                     if let Some(session) = sessions.get_mut(&session_id) {
-                        session.subagents.retain(|id| id != &old_id);
+                        session.subagents.retain(|id| id != old_id);
                         if !session.subagents.contains(&new_id) {
                             session.subagents.push(new_id.clone());
                         }
@@ -1680,7 +1770,7 @@ impl AcpControlPlane {
                     }
                     {
                         let mut subagents = self.subagents.write().await;
-                        subagents.remove(&old_id);
+                        subagents.remove(old_id);
                     }
                 }
 
@@ -1712,6 +1802,15 @@ impl AcpControlPlane {
                     new_id,
                     crash_count + 1
                 );
+                if let Some(old_id) = old_id {
+                    self.emit(crate::gateway::GatewayEvent::AcpRecovered {
+                        session_id: session_id.to_string(),
+                        old_subagent_id: old_id,
+                        new_subagent_id: new_id,
+                        crash_count,
+                    })
+                    .await;
+                }
                 Some(handle)
             }
             Err(e) => {
@@ -1805,6 +1904,11 @@ impl AcpControlPlane {
             "Switched active subagent on thread {} to {:?}",
             thread_id, subagent_id
         );
+        self.emit(crate::gateway::GatewayEvent::AcpThreadSwitched {
+            thread_id: thread_id.to_string(),
+            active_subagent: subagent_id.map(|s| s.to_string()),
+        })
+        .await;
         Ok(())
     }
 
@@ -2724,5 +2828,69 @@ mod tests {
         assert_eq!(handles.len(), 10);
         let ids: std::collections::HashSet<_> = handles.iter().map(|h| h.id.clone()).collect();
         assert_eq!(ids.len(), 10, "all subagent IDs should be unique");
+    }
+
+    #[tokio::test]
+    async fn test_acp_lifecycle_events_are_emitted() {
+        let acp = AcpControlPlane::new(50).with_agent_builder(mock_agent_builder());
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(16);
+        acp.set_event_tx(event_tx).await;
+
+        let session_id = acp.create_session("parent".to_string()).await;
+        let handle = acp
+            .spawn_subagent(
+                session_id.clone(),
+                "parent".to_string(),
+                SubagentConfig {
+                    agent_type: "default".to_string(),
+                    mode: SpawnMode::Run,
+                    thread_binding: ThreadBinding::New,
+                    ..SubagentConfig::default()
+                },
+            )
+            .await
+            .expect("spawn subagent");
+
+        let event = event_rx.recv().await.expect("receive spawned event");
+        match event {
+            crate::gateway::GatewayEvent::AcpSpawned {
+                session_id: sid,
+                subagent_id,
+                parent_id,
+                mode,
+                ..
+            } => {
+                assert_eq!(sid, session_id.to_string());
+                assert_eq!(subagent_id, handle.id);
+                assert_eq!(parent_id, "parent");
+                assert_eq!(mode, "run");
+            }
+            other => panic!("expected AcpSpawned event, got {:?}", other),
+        }
+
+        let _ = handle.command_tx.send(SubagentCommand::Shutdown).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let completed = event_rx
+            .recv()
+            .await
+            .expect("receive completed event");
+        match completed {
+            crate::gateway::GatewayEvent::AcpCompleted {
+                subagent_id,
+                status,
+                ..
+            } => {
+                assert_eq!(subagent_id, handle.id);
+                assert_eq!(status, "terminated");
+            }
+            other => panic!("expected AcpCompleted event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_acp_control_plane_has_store_without_store() {
+        let acp = AcpControlPlane::new(50);
+        assert!(!acp.has_store());
     }
 }

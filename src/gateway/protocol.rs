@@ -506,6 +506,68 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "name": name,
             }),
         )),
+        GatewayEvent::AcpSpawned {
+            session_id,
+            subagent_id,
+            parent_id,
+            mode,
+            thread_id,
+        } => Some((
+            "acp.spawned".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "subagent_id": subagent_id,
+                "parent_id": parent_id,
+                "mode": mode,
+                "thread_id": thread_id,
+            }),
+        )),
+        GatewayEvent::AcpCompleted {
+            session_id,
+            subagent_id,
+            status,
+        } => Some((
+            "acp.completed".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "subagent_id": subagent_id,
+                "status": status,
+            }),
+        )),
+        GatewayEvent::AcpStatusChanged {
+            session_id,
+            runtime_state,
+        } => Some((
+            "acp.status_changed".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "runtime_state": runtime_state,
+            }),
+        )),
+        GatewayEvent::AcpRecovered {
+            session_id,
+            old_subagent_id,
+            new_subagent_id,
+            crash_count,
+        } => Some((
+            "acp.recovered".to_string(),
+            serde_json::json!({
+                "session_id": session_id,
+                "old_subagent_id": old_subagent_id,
+                "new_subagent_id": new_subagent_id,
+                "crash_count": crash_count,
+            }),
+        )),
+        GatewayEvent::AcpThreadSwitched {
+            thread_id,
+            active_subagent,
+        } => Some((
+            "acp.thread_switched".to_string(),
+            serde_json::json!({
+                "thread_id": thread_id,
+                "active_subagent": active_subagent,
+            }),
+        )),
     }
 }
 
@@ -599,5 +661,26 @@ mod tests {
 
         assert_eq!(conn.next_seq(), 1);
         assert_eq!(conn.next_seq(), 2);
+    }
+
+    #[test]
+    fn test_acp_event_mapping() {
+        let event = crate::gateway::GatewayEvent::AcpSpawned {
+            session_id: "s1".to_string(),
+            subagent_id: "sub-1".to_string(),
+            parent_id: "parent".to_string(),
+            mode: "run".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        let (name, payload) = gateway_event_to_ws(&event).expect("mapped event");
+        assert_eq!(name, "acp.spawned");
+        assert_eq!(payload["subagent_id"], "sub-1");
+
+        let event = crate::gateway::GatewayEvent::AcpStatusChanged {
+            session_id: "s1".to_string(),
+            runtime_state: "paused".to_string(),
+        };
+        let (name, _) = gateway_event_to_ws(&event).expect("mapped event");
+        assert_eq!(name, "acp.status_changed");
     }
 }

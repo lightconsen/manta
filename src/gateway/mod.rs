@@ -1028,6 +1028,37 @@ pub enum GatewayEvent {
     },
  /// Session display name was auto-generated or updated
     SessionRenamed { session_id: String, name: String },
+ /// ACP subagent spawned
+    AcpSpawned {
+        session_id: String,
+        subagent_id: String,
+        parent_id: String,
+        mode: String,
+        thread_id: String,
+    },
+ /// ACP subagent completed / terminated / crashed
+    AcpCompleted {
+        session_id: String,
+        subagent_id: String,
+        status: String,
+    },
+ /// ACP subagent runtime state changed (pause/resume/step/cancel)
+    AcpStatusChanged {
+        session_id: String,
+        runtime_state: String,
+    },
+ /// ACP crashed subagent recovered
+    AcpRecovered {
+        session_id: String,
+        old_subagent_id: String,
+        new_subagent_id: String,
+        crash_count: u32,
+    },
+ /// ACP thread active subagent switched
+    AcpThreadSwitched {
+        thread_id: String,
+        active_subagent: Option<String>,
+    },
  /// Self-repair action taken (agent or channel restarted)
     RepairAction {
  /// "agent" or "channel"
@@ -1316,8 +1347,17 @@ impl Gateway {
  // Create ACP control plane first (needed for tool registration)
         let acp_max_iter = config.acp.max_iterations;
         let acp = if let Some(ref store) = session_store {
+            info!("Wiring ACP control plane to SessionStore for persistent subagent sessions");
             Arc::new(AcpControlPlane::new(acp_max_iter).with_store(store.clone()))
         } else {
+            if config.storage.storage_type == "sqlite" {
+                warn!(
+                    "Storage type is 'database' but no SessionStore is available; \
+                     ACP subagent sessions will not persist. Check the SQLite pool configuration."
+                );
+            } else {
+                info!("ACP control plane running without SessionStore (ephemeral subagent sessions)");
+            }
             Arc::new(AcpControlPlane::new(acp_max_iter))
         };
         acp.load_persisted_sessions().await;
@@ -1782,6 +1822,9 @@ impl Gateway {
             let mut mgr = state.session_manager.write().await;
             mgr.with_store(store.clone());
         }
+
+ // Wire ACP lifecycle events into the gateway broadcast channel.
+        state.acp.set_event_tx(state.event_tx.clone()).await;
 
  // Initialize audit table (SQLite-backed persistent audit log)
         if let Err(e) = state.audit_log.init().await {

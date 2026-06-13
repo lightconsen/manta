@@ -346,6 +346,19 @@ impl SubagentRegistry {
         self.metrics.read().await.clone()
     }
 
+    /// Return active (running) runs targeting a specific agent.
+    pub async fn active_runs_for_target(&self, target_agent: &str) -> Vec<SubagentRun> {
+        self.runs
+            .read()
+            .await
+            .values()
+            .filter(|r| {
+                r.target_agent == target_agent && matches!(r.status, SubagentStatus::Running)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Number of currently running subagents.
     pub async fn active_count(&self) -> usize {
         self.runs
@@ -356,9 +369,19 @@ impl SubagentRegistry {
             .count()
     }
 
+    /// Maximum configured nesting depth.
+    pub fn max_depth(&self) -> u32 {
+        self.max_depth
+    }
+
+    /// Maximum configured concurrent runs.
+    pub fn max_concurrent(&self) -> usize {
+        self.max_concurrent
+    }
+
     /// Determine the nesting depth for a (child) session by locating the run
     /// whose `child_session` matches it.
-    async fn get_depth(&self, session: &str) -> u32 {
+    pub async fn get_depth(&self, session: &str) -> u32 {
         self.runs
             .read()
             .await
@@ -592,5 +615,39 @@ mod tests {
             .wait_for_completion("no-such-id", Duration::from_millis(10))
             .await;
         assert!(matches!(result, Err(SyscityError::SubagentNotFound)));
+    }
+
+    #[test]
+    fn test_config_getters() {
+        let registry = SubagentRegistry::new(5, 7);
+        assert_eq!(registry.max_depth(), 5);
+        assert_eq!(registry.max_concurrent(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_active_runs_for_target() {
+        let registry = Arc::new(SubagentRegistry::new(3, 10));
+        let reg = Arc::clone(&registry);
+
+        let run_id = registry
+            .spawn("session-1", "reviewer", "task", move |run_id, _| {
+                let reg = Arc::clone(&reg);
+                async move {
+                    // Hold running status until polled.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    reg.complete_run(&run_id, Ok("done".to_string())).await;
+                }
+            })
+            .await
+            .unwrap();
+
+        let active = registry.active_runs_for_target("reviewer").await;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].run_id, run_id);
+
+        let _ = registry
+            .wait_for_completion(&run_id, Duration::from_secs(5))
+            .await;
+        assert!(registry.active_runs_for_target("reviewer").await.is_empty());
     }
 }
