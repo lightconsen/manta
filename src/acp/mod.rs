@@ -21,6 +21,27 @@ use crate::channels::{IncomingMessage, OutgoingMessage};
 // AgentHandle is defined in gateway module
 pub use crate::gateway::AgentHandle;
 
+/// Configuration for automatic crash recovery of subagents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrashRecoveryConfig {
+    /// Whether to automatically restart crashed subagents.
+    pub enabled: bool,
+    /// Maximum number of restart attempts for a single subagent.
+    pub max_retries: u32,
+    /// Backoff delays in seconds between restart attempts.
+    pub backoff_seconds: &'static [u64],
+}
+
+impl Default for CrashRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_retries: 3,
+            backoff_seconds: &[1, 2, 5, 10, 30],
+        }
+    }
+}
+
 /// ACP Session ID - unique identifier for an ACP session
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AcpSessionId(pub String);
@@ -264,6 +285,7 @@ pub enum AcpCommand {
     },
  /// Shutdown the ACP
     Shutdown,
+
 }
 
 impl std::fmt::Debug for AcpCommand {
@@ -507,6 +529,8 @@ async fn acp_actor_loop(mut command_rx: mpsc::Receiver<AcpCommand>, max_iteratio
                 session_meta.clear();
                 break;
             }
+
+
         }
     }
 }
@@ -772,6 +796,150 @@ pub struct ThreadMessage {
     pub queued_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Lightweight snapshot of a thread context that can be cloned and returned
+/// to callers without exposing internal oneshot channels.
+#[derive(Debug, Clone)]
+pub struct ThreadContextSummary {
+    /// Thread ID
+    pub id: String,
+    /// Active subagent on this thread (if any)
+    pub active_subagent: Option<String>,
+    /// Number of queued thread messages
+    pub queue_len: usize,
+    /// Created timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Message sent over the cross-session subagent bus.
+#[derive(Debug, Clone)]
+pub struct BusMessage {
+    /// Unique message ID
+    pub id: String,
+    /// Topic the message was published on
+    pub topic: String,
+    /// Subagent ID that published the message
+    pub sender_id: String,
+    /// Message payload
+    pub payload: String,
+    /// When the message was sent
+    pub sent_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Cross-session message bus for subagents.
+///
+/// Allows subagents in unrelated ACP sessions to communicate via named topics.
+#[derive(Debug, Default, Clone)]
+pub struct AcpBus {
+    /// Messages per topic, oldest first.
+    messages: HashMap<String, Vec<BusMessage>>,
+    /// Topic subscriptions: topic -> set of subagent IDs.
+    subscriptions: HashMap<String, std::collections::HashSet<String>>,
+    /// Per-subagent per-topic read offsets.
+    read_offsets: HashMap<(String, String), usize>,
+}
+
+impl AcpBus {
+    /// Create an empty bus.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Subscribe a subagent to a topic.
+    ///
+    /// The subscriber starts receiving messages published after the
+    /// subscription is created.
+    pub fn subscribe(&mut self, subagent_id: &str, topic: &str) {
+        self.subscriptions
+            .entry(topic.to_string())
+            .or_default()
+            .insert(subagent_id.to_string());
+        let current_len = self.messages.get(topic).map(|v| v.len()).unwrap_or(0);
+        self.read_offsets
+            .entry((subagent_id.to_string(), topic.to_string()))
+            .or_insert(current_len);
+    }
+
+    /// Unsubscribe a subagent from a topic.
+    pub fn unsubscribe(&mut self, subagent_id: &str, topic: &str) {
+        if let Some(set) = self.subscriptions.get_mut(topic) {
+            set.remove(subagent_id);
+            if set.is_empty() {
+                self.subscriptions.remove(topic);
+            }
+        }
+        self.read_offsets
+            .remove(&(subagent_id.to_string(), topic.to_string()));
+    }
+
+    /// Publish a message to a topic.
+    pub fn publish(&mut self, topic: &str, sender_id: &str, payload: &str) -> BusMessage {
+        let message = BusMessage {
+            id: Uuid::new_v4().to_string(),
+            topic: topic.to_string(),
+            sender_id: sender_id.to_string(),
+            payload: payload.to_string(),
+            sent_at: chrono::Utc::now(),
+        };
+        self.messages
+            .entry(topic.to_string())
+            .or_default()
+            .push(message.clone());
+        message
+    }
+
+    /// Poll pending messages for a subagent on a topic.
+    pub fn poll(&mut self, subagent_id: &str, topic: &str) -> Vec<BusMessage> {
+        if !self
+            .subscriptions
+            .get(topic)
+            .map(|s| s.contains(subagent_id))
+            .unwrap_or(false)
+        {
+            return Vec::new();
+        }
+        let offset = self
+            .read_offsets
+            .entry((subagent_id.to_string(), topic.to_string()))
+            .or_insert(0);
+        let messages = self.messages.get(topic).map(|v| v.as_slice()).unwrap_or(&[]);
+        let pending: Vec<BusMessage> = messages[*offset..].to_vec();
+        *offset = messages.len();
+        pending
+    }
+
+    /// Poll pending messages for a subagent across all subscribed topics.
+    pub fn poll_all(&mut self, subagent_id: &str) -> HashMap<String, Vec<BusMessage>> {
+        let topics: Vec<String> = self
+            .subscriptions
+            .iter()
+            .filter(|(_, subs)| subs.contains(subagent_id))
+            .map(|(topic, _)| topic.clone())
+            .collect();
+        topics
+            .into_iter()
+            .map(|topic| {
+                let messages = self.poll(subagent_id, &topic);
+                (topic, messages)
+            })
+            .collect()
+    }
+
+    /// List all topics that have at least one message or subscriber.
+    pub fn topics(&self) -> Vec<String> {
+        let mut topics: std::collections::HashSet<String> = self.messages.keys().cloned().collect();
+        topics.extend(self.subscriptions.keys().cloned());
+        topics.into_iter().collect()
+    }
+
+    /// List subscribers for a topic.
+    pub fn subscribers(&self, topic: &str) -> Vec<String> {
+        self.subscriptions
+            .get(topic)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
 /// ACP Control Plane - unified control plane for agents and subagents
 #[derive(Clone)]
 pub struct AcpControlPlane {
@@ -790,6 +958,10 @@ pub struct AcpControlPlane {
     store: Option<Arc<crate::agent::session_store::SessionStore>>,
  /// Maximum iterations per ACP execution
     max_iterations: usize,
+ /// Configuration controlling automatic crash recovery.
+    recovery: Arc<RwLock<CrashRecoveryConfig>>,
+    /// Cross-session subagent communication bus.
+    bus: Arc<RwLock<AcpBus>>,
 }
 
 /// ACP Session - groups related subagents
@@ -814,6 +986,8 @@ impl AcpControlPlane {
             command_tx,
             store: None,
             max_iterations,
+            recovery: Arc::new(RwLock::new(CrashRecoveryConfig::default())),
+            bus: Arc::new(RwLock::new(AcpBus::new())),
         }
     }
 
@@ -828,8 +1002,29 @@ impl AcpControlPlane {
     where
         F: Fn() -> crate::Result<Agent> + Send + Sync + 'static,
     {
-        *self.default_agent_builder.blocking_write() = Some(Arc::new(builder));
+        {
+            let mut guard = self.default_agent_builder.try_write()
+                .expect("agent builder lock available during construction");
+            *guard = Some(Arc::new(builder));
+        }
         self
+    }
+
+ /// Configure automatic crash recovery.
+    pub fn with_recovery(self, recovery: CrashRecoveryConfig) -> Self {
+        {
+            let mut guard = self.recovery.try_write()
+                .expect("recovery lock available during construction");
+            *guard = recovery;
+        }
+        self
+    }
+
+ /// Update crash recovery configuration at runtime.
+    pub async fn set_recovery_config(&self, recovery: CrashRecoveryConfig) {
+        let mut guard = self.recovery.write().await;
+        *guard = recovery;
+        info!("ACP crash recovery config updated: enabled={}", recovery.enabled);
     }
 
  /// Set the default agent builder on an existing instance.
@@ -1121,6 +1316,11 @@ impl AcpControlPlane {
  // Capture fields needed for crash recovery logging
         let recovery_retry_on_crash = config.retry_on_crash;
         let recovery_max_retries = config.max_crash_retries;
+        let _recovery_config = self.recovery.clone();
+        let acp_for_recovery = self.clone();
+        let recovery_session_id = session_id.clone();
+        let recovery_parent_id = parent_id.clone();
+        let recovery_config_clone = config.clone();
 
         let join_handle = tokio::spawn(async move {
             info!("Subagent {} task started", subagent_id_clone);
@@ -1272,6 +1472,51 @@ impl AcpControlPlane {
                             recovery_max_retries
                         );
                     }
+
+                    // Automatic recovery: if enabled globally or per-subagent, restart with backoff.
+                    // The recovery future is not Send, so run it entirely inside a blocking task
+                    // on the current runtime thread instead of spawning it back onto the executor.
+                    let acp = acp_for_recovery.clone();
+                    let sid = recovery_session_id.clone();
+                    let pid = recovery_parent_id.clone();
+                    let cfg = recovery_config_clone.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let rt = tokio::runtime::Handle::current();
+                        rt.block_on(async {
+                            let global = *acp.recovery.read().await;
+                            let should_recover = (recovery_retry_on_crash || global.enabled)
+                                && current_crash_count < recovery_max_retries;
+                            if !should_recover {
+                                return;
+                            }
+                            let delay = global
+                                .backoff_seconds
+                                .get(current_crash_count as usize)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    global.backoff_seconds.last().copied().unwrap_or(30)
+                                });
+                            warn!(
+                                "Auto-recovering subagent {} (attempt {}/{}) in {}s",
+                                watch_id,
+                                current_crash_count + 1,
+                                recovery_max_retries,
+                                delay
+                            );
+                            tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                            match acp
+                                .recover_crashed_subagent(sid, pid, cfg, current_crash_count + 1)
+                                .await
+                            {
+                                Some(new_handle) => {
+                                    info!("Subagent {} recovered as {}", watch_id, new_handle.id);
+                                }
+                                None => {
+                                    warn!("Failed to auto-recover subagent {}", watch_id);
+                                }
+                            }
+                        });
+                    });
                 }
                 Err(_) => {
  // Aborted externally
@@ -1359,10 +1604,12 @@ impl AcpControlPlane {
     }
 
  /// Recover a crashed subagent by spawning a new one with the same config.
- ///
- /// This is a public method that can be called externally (e.g., by an
- /// orchestrator or recovery handler) to restart a crashed subagent.
- /// Uses exponential backoff: 1s, 2s, 5s, 10s, 30s.
+    ///
+    /// This method may be called externally or by the automatic recovery
+    /// watchdog. It applies backoff based on `crash_count`, sets the crash
+    /// counter on the new handle to the supplied value, persists a recovery
+    /// event if a store is attached, and updates the session's subagent list
+    /// to point to the replacement.
     pub async fn recover_crashed_subagent(
         &self,
         session_id: AcpSessionId,
@@ -1370,9 +1617,12 @@ impl AcpControlPlane {
         config: SubagentConfig,
         crash_count: u32,
     ) -> Option<SubagentHandle> {
-        let backoff_delays: &[u64] = &[1, 2, 5, 10, 30];
-        let delay_idx = (crash_count as usize).min(backoff_delays.len() - 1);
-        let delay = backoff_delays[delay_idx];
+        let backoff_delays: &[u64] = {
+            let guard = self.recovery.read().await;
+            guard.backoff_seconds
+        };
+        let delay_idx = (crash_count as usize).min(backoff_delays.len().saturating_sub(1));
+        let delay = backoff_delays.get(delay_idx).copied().unwrap_or(30);
 
         warn!(
             "Recovering crashed subagent (attempt {}, retrying in {}s)",
@@ -1382,11 +1632,85 @@ impl AcpControlPlane {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
 
-        match self.spawn_subagent(session_id, parent_id, config).await {
+        match self.spawn_subagent(session_id.clone(), parent_id.clone(), config).await {
             Ok(handle) => {
+                let new_id = handle.id.clone();
+                let old_id = {
+                    let subagents = self.subagents.read().await;
+                    // Find the predecessor that was previously registered with the same
+                    // configuration and session. The simplest heuristic is the first
+                    // crashed subagent in the same session with a matching parent.
+                    subagents
+                        .values()
+                        .find(|h| {
+                            h.session_id == session_id
+                                && h.parent_id == parent_id
+                                && h.status == SubagentStatus::Crashed
+                                && h.id != new_id
+                        })
+                        .map(|h| h.id.clone())
+                };
+
+                // The new handle inherits the crash count supplied by the caller
+                // (already incremented by the watchdog before recovery is triggered).
+                {
+                    let mut subagents = self.subagents.write().await;
+                    if let Some(h) = subagents.get_mut(&new_id) {
+                        h.crash_count = crash_count;
+                    }
+                }
+
+                if let Some(old_id) = old_id {
+                    let mut sessions = self.sessions.write().await;
+                    if let Some(session) = sessions.get_mut(&session_id) {
+                        session.subagents.retain(|id| id != &old_id);
+                        if !session.subagents.contains(&new_id) {
+                            session.subagents.push(new_id.clone());
+                        }
+                        if let Some(ref store) = self.store {
+                            let ids = session.subagents.clone();
+                            let parent = session.parent_agent_id.clone();
+                            let created = session.created_at;
+                            let sid = session_id.0.clone();
+                            drop(sessions);
+                            let _ = store
+                                .save_acp_session(&sid, &parent, &ids, created)
+                                .await;
+                        }
+                    }
+                    {
+                        let mut subagents = self.subagents.write().await;
+                        subagents.remove(&old_id);
+                    }
+                }
+
+                if let Some(ref store) = self.store {
+                    let _ = store
+                        .save_subagent_run(
+                            &SaveSubagentRunParams {
+                                run_id: &new_id,
+                                subagent_id: &new_id,
+                                session_id: &session_id.to_string(),
+                                parent_id: &handle.parent_id,
+                                label: Some("recovery"),
+                                task_prompt: Some(
+                                    &format!(
+                                        "auto-recovery after crash (attempt {})",
+                                        crash_count + 1
+                                    )
+                                ),
+                                mode: if handle.mode == SpawnMode::Run { "run" } else { "session" },
+                                thread_id: Some(&handle.thread_id),
+                            }
+                        )
+                        .await;
+                    let _ = store.update_subagent_run_status(&new_id, "recovered").await;
+                }
+
                 info!(
                     "Crashed subagent recovered successfully (new id: {}, crash_count: {})",
-                    handle.id, handle.crash_count
+                    new_id,
+                    crash_count + 1
                 );
                 Some(handle)
             }
@@ -1397,10 +1721,271 @@ impl AcpControlPlane {
         }
     }
 
- // ------------------------------------------------------------------
- // Thread management
- // ------------------------------------------------------------------
- /// Send a message to a subagent
+    // ------------------------------------------------------------------
+    // Thread management
+    // ------------------------------------------------------------------
+
+    /// Ensure a thread context exists in the control plane.
+    pub async fn ensure_thread(&self, thread_id: &str) {
+        let mut threads = self.threads.write().await;
+        if !threads.contains_key(thread_id) {
+            threads.insert(
+                thread_id.to_string(),
+                ThreadContext {
+                    id: thread_id.to_string(),
+                    active_subagent: None,
+                    queue: vec![],
+                    created_at: chrono::Utc::now(),
+                },
+            );
+        }
+    }
+
+    /// List snapshots of all known threads.
+    pub async fn list_threads(&self) -> Vec<ThreadContextSummary> {
+        let threads = self.threads.read().await;
+        threads
+            .values()
+            .map(|t| ThreadContextSummary {
+                id: t.id.clone(),
+                active_subagent: t.active_subagent.clone(),
+                queue_len: t.queue.len(),
+                created_at: t.created_at,
+            })
+            .collect()
+    }
+
+    /// Get a snapshot of a thread context.
+    pub async fn get_thread_context(&self, thread_id: &str) -> Option<ThreadContextSummary> {
+        let threads = self.threads.read().await;
+        threads.get(thread_id).map(|t| ThreadContextSummary {
+            id: t.id.clone(),
+            active_subagent: t.active_subagent.clone(),
+            queue_len: t.queue.len(),
+            created_at: t.created_at,
+        })
+    }
+
+    /// Switch the active subagent on a thread.
+    ///
+    /// This performs a thread context switch: the given subagent becomes the
+    /// active context on the thread. Passing `None` clears the active context.
+    pub async fn switch_thread_active_subagent(
+        &self,
+        thread_id: &str,
+        subagent_id: Option<&str>,
+    ) -> crate::Result<()> {
+        if let Some(id) = subagent_id {
+            let subagents = self.subagents.read().await;
+            let handle = subagents.get(id).ok_or_else(|| crate::error::SyscityError::NotFound {
+                resource: format!("Subagent '{}'", id),
+            })?;
+            if handle.thread_id != thread_id {
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "Subagent {} is bound to thread {}, not {}",
+                    id, handle.thread_id, thread_id
+                )));
+            }
+            if handle.status == SubagentStatus::Terminated || handle.status == SubagentStatus::Crashed {
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "Cannot switch to {:?} subagent {}",
+                    handle.status, id
+                )));
+            }
+        }
+
+        self.ensure_thread(thread_id).await;
+
+        let mut threads = self.threads.write().await;
+        let thread = threads.get_mut(thread_id).ok_or_else(|| {
+            crate::error::SyscityError::Internal(format!("Thread {} disappeared", thread_id))
+        })?;
+        thread.active_subagent = subagent_id.map(|s| s.to_string());
+        info!(
+            "Switched active subagent on thread {} to {:?}",
+            thread_id, subagent_id
+        );
+        Ok(())
+    }
+
+    /// Migrate a subagent to a different thread.
+    ///
+    /// The subagent's `thread_id` is updated, the old thread clears its active
+    /// subagent reference if it pointed to this subagent, and any queued thread
+    /// messages addressed to this subagent are moved to the target thread.
+    pub async fn migrate_subagent_thread(
+        &self,
+        subagent_id: &str,
+        target_thread_id: &str,
+    ) -> crate::Result<()> {
+        let (old_thread_id, _status) = {
+            let subagents = self.subagents.read().await;
+            let handle = subagents.get(subagent_id).ok_or_else(|| {
+                crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                }
+            })?;
+            if handle.status == SubagentStatus::Terminated || handle.status == SubagentStatus::Crashed {
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "Cannot migrate {:?} subagent {}",
+                    handle.status, subagent_id
+                )));
+            }
+            (handle.thread_id.clone(), handle.status)
+        };
+
+        if old_thread_id == target_thread_id {
+            return Ok(());
+        }
+
+        self.ensure_thread(target_thread_id).await;
+
+        let moved_messages = {
+            let mut threads = self.threads.write().await;
+            let mut taken = Vec::new();
+            if let Some(old) = threads.get_mut(&old_thread_id) {
+                if old.active_subagent.as_deref() == Some(subagent_id) {
+                    old.active_subagent = None;
+                }
+                let (for_subagent, remaining): (Vec<ThreadMessage>, Vec<ThreadMessage>) = old
+                    .queue
+                    .drain(..)
+                    .partition(|m| m.subagent_id == subagent_id);
+                old.queue = remaining;
+                taken = for_subagent;
+            }
+            let target = threads.get_mut(target_thread_id).ok_or_else(|| {
+                crate::error::SyscityError::Internal(format!(
+                    "Thread {} disappeared after creation",
+                    target_thread_id
+                ))
+            })?;
+            if matches!(
+                target.active_subagent.as_deref(),
+                Some(id) if id != subagent_id
+            ) {
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "Thread {} already has active subagent {}",
+                    target_thread_id,
+                    target.active_subagent.as_deref().unwrap_or("")
+                )));
+            }
+            target.active_subagent = Some(subagent_id.to_string());
+            let moved = taken.len();
+            target.queue.extend(taken);
+            moved
+        };
+
+        {
+            let mut subagents = self.subagents.write().await;
+            if let Some(handle) = subagents.get_mut(subagent_id) {
+                handle.thread_id = target_thread_id.to_string();
+            }
+        }
+
+        info!(
+            "Migrated subagent {} from thread {} to thread {} (moved {} queued messages)",
+            subagent_id, old_thread_id, target_thread_id, moved_messages
+        );
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Cross-session subagent bus
+    // ------------------------------------------------------------------
+
+    /// Subscribe a subagent to a bus topic.
+    pub async fn bus_subscribe(&self, subagent_id: &str, topic: &str) -> crate::Result<()> {
+        {
+            let subagents = self.subagents.read().await;
+            if !subagents.contains_key(subagent_id) {
+                return Err(crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                });
+            }
+        }
+        let mut bus = self.bus.write().await;
+        bus.subscribe(subagent_id, topic);
+        info!("Subagent {} subscribed to bus topic {}", subagent_id, topic);
+        Ok(())
+    }
+
+    /// Unsubscribe a subagent from a bus topic.
+    pub async fn bus_unsubscribe(&self, subagent_id: &str, topic: &str) {
+        let mut bus = self.bus.write().await;
+        bus.unsubscribe(subagent_id, topic);
+        info!("Subagent {} unsubscribed from bus topic {}", subagent_id, topic);
+    }
+
+    /// Publish a message to a bus topic from a subagent.
+    pub async fn bus_publish(
+        &self,
+        subagent_id: &str,
+        topic: &str,
+        payload: &str,
+    ) -> crate::Result<BusMessage> {
+        {
+            let subagents = self.subagents.read().await;
+            if !subagents.contains_key(subagent_id) {
+                return Err(crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                });
+            }
+        }
+        let mut bus = self.bus.write().await;
+        let message = bus.publish(topic, subagent_id, payload);
+        info!("Subagent {} published to bus topic {}", subagent_id, topic);
+        Ok(message)
+    }
+
+    /// Poll pending bus messages for a subagent on a topic.
+    pub async fn bus_poll(
+        &self,
+        subagent_id: &str,
+        topic: &str,
+    ) -> crate::Result<Vec<BusMessage>> {
+        {
+            let subagents = self.subagents.read().await;
+            if !subagents.contains_key(subagent_id) {
+                return Err(crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                });
+            }
+        }
+        let mut bus = self.bus.write().await;
+        Ok(bus.poll(subagent_id, topic))
+    }
+
+    /// Poll pending bus messages for a subagent across all subscribed topics.
+    pub async fn bus_poll_all(
+        &self,
+        subagent_id: &str,
+    ) -> crate::Result<HashMap<String, Vec<BusMessage>>> {
+        {
+            let subagents = self.subagents.read().await;
+            if !subagents.contains_key(subagent_id) {
+                return Err(crate::error::SyscityError::NotFound {
+                    resource: format!("Subagent '{}'", subagent_id),
+                });
+            }
+        }
+        let mut bus = self.bus.write().await;
+        Ok(bus.poll_all(subagent_id))
+    }
+
+    /// List all bus topics.
+    pub async fn bus_topics(&self) -> Vec<String> {
+        let bus = self.bus.read().await;
+        bus.topics()
+    }
+
+    /// List subscribers for a bus topic.
+    pub async fn bus_subscribers(&self, topic: &str) -> Vec<String> {
+        let bus = self.bus.read().await;
+        bus.subscribers(topic)
+    }
+
+    /// Send a message to a subagent
     pub async fn send_message(
         &self,
         subagent_id: &str,
@@ -1708,6 +2293,207 @@ impl AcpAgentExt for AgentHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spawn a subagent whose task panics and verify it is automatically recovered.
+    #[tokio::test]
+    async fn test_subagent_crash_auto_recovery() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static CRASHED: AtomicBool = AtomicBool::new(false);
+        let acp = AcpControlPlane::new(50)
+            .with_recovery(CrashRecoveryConfig {
+                enabled: true,
+                max_retries: 1,
+                backoff_seconds: &[0],
+            })
+            .with_agent_builder(|| {
+                let provider = Arc::new(crate::providers::mock::MockProvider::new().with_callback(
+                    |_messages| {
+                        if !CRASHED.swap(true, Ordering::SeqCst) {
+                            panic!("simulated subagent crash")
+                        }
+                        crate::providers::Message::assistant("recovered")
+                    },
+                ));
+                let tools = Arc::new(crate::tools::ToolRegistry::new());
+                let config = AgentConfig::default();
+                Ok(Agent::new(config, provider, tools))
+            });
+
+        let session_id = acp.create_session("parent".to_string()).await;
+        let config = SubagentConfig {
+            retry_on_crash: true,
+            max_crash_retries: 1,
+            mode: SpawnMode::Run,
+            ..SubagentConfig::default()
+        };
+
+        let handle = acp
+            .spawn_subagent(session_id.clone(), "parent".to_string(), config)
+            .await
+            .expect("spawn subagent");
+
+        // Send a message to trigger processing (and the simulated panic).
+        let msg = IncomingMessage::new(
+            "user".to_string(),
+            format!("conv-{}", handle.id),
+            "trigger".to_string(),
+        );
+        let _ = acp.send_message(&handle.id, msg).await;
+
+        // Wait long enough for the panic + recovery to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+        // The original handle is replaced during recovery; it may no longer be
+        // present in the subagent map.
+        let original_status = acp.get_subagent_status(&handle.id).await;
+        assert!(
+            original_status.is_none() || original_status == Some(SubagentStatus::Crashed),
+            "original handle should be removed or marked Crashed"
+        );
+
+        // Session should contain a recovered subagent with a different id.
+        let session_subagents = acp.list_session_subagents(&session_id).await;
+        assert_eq!(session_subagents.len(), 1);
+        let recovered = &session_subagents[0];
+        assert_ne!(recovered.id, handle.id);
+        assert_eq!(recovered.crash_count, 1);
+        assert_eq!(recovered.status, SubagentStatus::Ready);
+
+        // Cleanup
+        let _ = acp.shutdown_subagent(&recovered.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_thread_context_switch_and_migration() {
+        let acp = AcpControlPlane::new(50).with_agent_builder(mock_agent_builder());
+        let session_id = acp.create_session("parent".to_string()).await;
+
+        let s1 = acp
+            .spawn_subagent(
+                session_id.clone(),
+                "parent".to_string(),
+                SubagentConfig {
+                    thread_binding: ThreadBinding::Thread("thread-a".to_string()),
+                    ..SubagentConfig::default()
+                },
+            )
+            .await
+            .expect("spawn s1");
+
+        let s2 = acp
+            .spawn_subagent(
+                session_id.clone(),
+                "parent".to_string(),
+                SubagentConfig {
+                    thread_binding: ThreadBinding::Thread("thread-a".to_string()),
+                    ..SubagentConfig::default()
+                },
+            )
+            .await
+            .expect("spawn s2");
+
+        // Context switch: make s1 the active subagent on thread-a.
+        acp.switch_thread_active_subagent("thread-a", Some(&s1.id))
+            .await
+            .expect("switch to s1");
+        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        assert_eq!(ctx_a.active_subagent, Some(s1.id.clone()));
+
+        // Migrate s1 to thread-b.
+        acp.migrate_subagent_thread(&s1.id, "thread-b")
+            .await
+            .expect("migrate to thread-b");
+
+        // s1 should now be bound to thread-b.
+        let session_subagents = acp.list_session_subagents(&session_id).await;
+        let s1_after = session_subagents
+            .iter()
+            .find(|h| h.id == s1.id)
+            .expect("s1 still registered");
+        assert_eq!(s1_after.thread_id, "thread-b");
+
+        // thread-a should have cleared its active subagent.
+        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        assert!(ctx_a.active_subagent.is_none());
+
+        // thread-b should have s1 as active subagent.
+        let ctx_b = acp.get_thread_context("thread-b").await.expect("thread-b exists");
+        assert_eq!(ctx_b.active_subagent, Some(s1.id.clone()));
+
+        // s2 should remain on thread-a.
+        let s2_after = session_subagents
+            .iter()
+            .find(|h| h.id == s2.id)
+            .expect("s2 still registered");
+        assert_eq!(s2_after.thread_id, "thread-a");
+
+        // Context switch s2 to active on thread-a.
+        acp.switch_thread_active_subagent("thread-a", Some(&s2.id))
+            .await
+            .expect("switch to s2");
+        let ctx_a = acp.get_thread_context("thread-a").await.expect("thread-a exists");
+        assert_eq!(ctx_a.active_subagent, Some(s2.id.clone()));
+
+        // Cleanup
+        let _ = acp.shutdown_subagent(&s1.id).await;
+        let _ = acp.shutdown_subagent(&s2.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_subagent_bus() {
+        let acp = AcpControlPlane::new(50).with_agent_builder(mock_agent_builder());
+        let session_a = acp.create_session("parent-a".to_string()).await;
+        let session_b = acp.create_session("parent-b".to_string()).await;
+
+        let s1 = acp
+            .spawn_subagent(session_a, "parent-a".to_string(), SubagentConfig::default())
+            .await
+            .expect("spawn s1");
+        let s2 = acp
+            .spawn_subagent(session_b, "parent-b".to_string(), SubagentConfig::default())
+            .await
+            .expect("spawn s2");
+
+        // Subscribe s2 to the shared topic; s1 will publish without subscribing.
+        acp.bus_subscribe(&s2.id, "alerts").await.expect("subscribe s2");
+
+        // Publish from s1 in session A.
+        let msg = acp
+            .bus_publish(&s1.id, "alerts", "hello from session A")
+            .await
+            .expect("publish");
+        assert_eq!(msg.sender_id, s1.id);
+        assert_eq!(msg.payload, "hello from session A");
+
+        // s2 in session B receives the message.
+        let pending = acp.bus_poll(&s2.id, "alerts").await.expect("poll s2");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].payload, "hello from session A");
+
+        // A second poll returns nothing new.
+        let pending_again = acp.bus_poll(&s2.id, "alerts").await.expect("poll s2 again");
+        assert!(pending_again.is_empty());
+
+        // Topic and subscriber introspection.
+        let topics = acp.bus_topics().await;
+        assert!(topics.contains(&"alerts".to_string()));
+
+        let subscribers = acp.bus_subscribers("alerts").await;
+        assert_eq!(subscribers, vec![s2.id.clone()]);
+
+        // Unsubscribe s2 and confirm it no longer receives messages.
+        acp.bus_unsubscribe(&s2.id, "alerts").await;
+        acp.bus_publish(&s1.id, "alerts", "after unsubscribe")
+            .await
+            .expect("publish after unsubscribe");
+        let after_unsub = acp.bus_poll(&s2.id, "alerts").await.expect("poll after unsub");
+        assert!(after_unsub.is_empty());
+
+        // Cleanup
+        let _ = acp.shutdown_subagent(&s1.id).await;
+        let _ = acp.shutdown_subagent(&s2.id).await;
+    }
 
     fn mock_agent_builder() -> impl Fn() -> crate::Result<Agent> + Send + Sync + 'static {
         || {
