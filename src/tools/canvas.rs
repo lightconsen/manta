@@ -169,7 +169,7 @@ fn guess_mime_from_path(path: &std::path::Path) -> &'static str {
 }
 
 impl CanvasComponentArg {
- /// Recursively collect all image (id, src) pairs and inline SVG blocks.
+    /// Recursively collect all image (id, src) pairs and inline SVG blocks.
     fn collect_images(&self, out: &mut Vec<(String, String)>) {
         match self {
             CanvasComponentArg::Container { children, .. } => {
@@ -181,7 +181,7 @@ impl CanvasComponentArg {
                 out.push((id.clone(), src.clone()));
             }
             CanvasComponentArg::Markdown { id, content } => {
- // Extract <svg>...</svg> blocks and convert them to base64 data URIs.
+                // Extract <svg>...</svg> blocks and convert them to base64 data URIs.
                 let mut start = 0;
                 let mut idx = 0;
                 while let Some(svg_start) = content[start..].find("<svg") {
@@ -339,7 +339,7 @@ impl Tool for CanvasTool {
 
         match action {
             CanvasAction::Present { session_id, title, components } => {
- // Collect images from the component tree for inline display
+                // Collect images from the component tree for inline display
                 let mut images = Vec::new();
                 for component in &components {
                     component.collect_images(&mut images);
@@ -646,7 +646,7 @@ mod tests {
             .as_bool()
             .unwrap());
 
- // Should NOT create a canvas session when images are inline
+        // Should NOT create a canvas session when images are inline
         let sessions = manager.list_sessions().await;
         assert!(sessions.is_empty());
     }
@@ -678,7 +678,7 @@ mod tests {
         assert!(result.success);
         assert!(result.output.contains("Canvas presented"));
 
- // Should create a canvas session for non-image content
+        // Should create a canvas session for non-image content
         let sessions = manager.list_sessions().await;
         assert_eq!(sessions.len(), 1);
     }

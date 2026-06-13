@@ -293,18 +293,13 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 .as_ref()
                 .map(|r| format!("&registry={}", r))
                 .unwrap_or_default();
-            let url = format!(
-                "{}/api/v1/plugins/search?q={}{}",
-                DAEMON_URL, query, registry_param
-            );
+            let url = format!("{}/api/v1/plugins/search?q={}{}", DAEMON_URL, query, registry_param);
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     let text = resp.text().await.unwrap_or_default();
                     if status.is_success() {
-                        if let Ok(json) =
-                            serde_json::from_str::<serde_json::Value>(&text)
-                        {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
                             let empty = vec![];
                             let plugins = json["results"].as_array().unwrap_or(&empty);
                             println!("Search results for '{}' ({}):", query, plugins.len());

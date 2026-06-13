@@ -156,10 +156,7 @@ pub async fn run_reload_daemon() -> Result<()> {
                 Ok(())
             } else {
                 eprintln!("Reload failed ({}): {}", status, text);
-                Err(crate::error::SyscityError::Internal(format!(
-                    "Reload failed: {}",
-                    text
-                )))
+                Err(crate::error::SyscityError::Internal(format!("Reload failed: {}", text)))
             }
         }
         Err(e) => {

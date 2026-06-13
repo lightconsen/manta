@@ -138,11 +138,7 @@ impl ToolSdk {
 
     /// List all tools from packs and registry (if connected).
     pub fn list_tools(&self) -> Vec<String> {
-        let mut tools: Vec<String> = self
-            .packs
-            .values()
-            .flat_map(|p| p.tools.clone())
-            .collect();
+        let mut tools: Vec<String> = self.packs.values().flat_map(|p| p.tools.clone()).collect();
         if let Some(ref reg) = self.registry {
             for name in reg.list() {
                 if !tools.contains(&name) {
@@ -190,10 +186,7 @@ impl ToolSdk {
     }
 
     /// Get the JSON schema for a specific tool's parameters.
-    pub fn get_tool_parameter_schema(
-        &self,
-        name: &str,
-    ) -> Result<serde_json::Value, ToolSdkError> {
+    pub fn get_tool_parameter_schema(&self, name: &str) -> Result<serde_json::Value, ToolSdkError> {
         if let Some(ref reg) = self.registry {
             if let Some(tool) = reg.get(name) {
                 return Ok(tool.parameters_schema());
@@ -277,11 +270,8 @@ impl ToolSdk {
         }
 
         // Add new tools not in any pack
-        let all_pack_tools: HashSet<String> = self
-            .packs
-            .values()
-            .flat_map(|p| p.tools.clone())
-            .collect();
+        let all_pack_tools: HashSet<String> =
+            self.packs.values().flat_map(|p| p.tools.clone()).collect();
         let new_tools: Vec<String> = registry_tools
             .difference(&all_pack_tools)
             .cloned()

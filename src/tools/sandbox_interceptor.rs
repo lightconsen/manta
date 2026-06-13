@@ -105,16 +105,65 @@ impl SandboxInterceptor {
         let mut command_blacklist = HashSet::new();
         // Dangerous system commands
         for cmd in [
-            "rm", "dd", "fdisk", "mkfs", "format", "mkfs.ext4", "mkfs.xfs",
-            "mkfs.ntfs", "parted", "gdisk", "sgdisk", "wipefs", "shred",
-            "mkswap", "swapon", "swapoff", "sysctl", "modprobe", "rmmod",
-            "insmod", "depmod", "lsmod", "kmod", "dmesg", "reboot", "shutdown",
-            "poweroff", "halt", "init", "systemctl", "service", "chkconfig",
-            "update-rc.d", "rc-update", "telinit", "runlevel", "killall5",
-            "pkill", "skill", "snice", "chsh", "chfn", "vigr", "vipw",
-            "usermod", "userdel", "groupmod", "groupdel", "gpasswd",
-            "chpasswd", "newusers", "pwconv", "pwunconv", "grpconv",
-            "grpunconv", "pwck", "grpck", "lastlog", "faillog",
+            "rm",
+            "dd",
+            "fdisk",
+            "mkfs",
+            "format",
+            "mkfs.ext4",
+            "mkfs.xfs",
+            "mkfs.ntfs",
+            "parted",
+            "gdisk",
+            "sgdisk",
+            "wipefs",
+            "shred",
+            "mkswap",
+            "swapon",
+            "swapoff",
+            "sysctl",
+            "modprobe",
+            "rmmod",
+            "insmod",
+            "depmod",
+            "lsmod",
+            "kmod",
+            "dmesg",
+            "reboot",
+            "shutdown",
+            "poweroff",
+            "halt",
+            "init",
+            "systemctl",
+            "service",
+            "chkconfig",
+            "update-rc.d",
+            "rc-update",
+            "telinit",
+            "runlevel",
+            "killall5",
+            "pkill",
+            "skill",
+            "snice",
+            "chsh",
+            "chfn",
+            "vigr",
+            "vipw",
+            "usermod",
+            "userdel",
+            "groupmod",
+            "groupdel",
+            "gpasswd",
+            "chpasswd",
+            "newusers",
+            "pwconv",
+            "pwunconv",
+            "grpconv",
+            "grpunconv",
+            "pwck",
+            "grpck",
+            "lastlog",
+            "faillog",
         ] {
             command_blacklist.insert(cmd.to_string());
         }
@@ -211,10 +260,7 @@ impl SandboxInterceptor {
             if self.command_blacklist.contains(base) {
                 return Err(SandboxError::CommandBlocked {
                     command: base.to_string(),
-                    reason: format!(
-                        "'{}' is on the command blacklist",
-                        base
-                    ),
+                    reason: format!("'{}' is on the command blacklist", base),
                 });
             }
         }
@@ -228,10 +274,7 @@ impl SandboxInterceptor {
                 if !allowed {
                     return Err(SandboxError::PathBlocked {
                         path: path.clone(),
-                        pattern: format!(
-                            "not in allowlist: {:?}",
-                            self.path_allowlist
-                        ),
+                        pattern: format!("not in allowlist: {:?}", self.path_allowlist),
                     });
                 }
             }
@@ -285,10 +328,7 @@ impl SandboxInterceptor {
                 if !allowed {
                     return Err(SandboxError::IpBlocked {
                         ip: ip.clone(),
-                        reason: format!(
-                            "not in allowlist: {:?}",
-                            self.ip_allowlist
-                        ),
+                        reason: format!("not in allowlist: {:?}", self.ip_allowlist),
                     });
                 }
             }
@@ -306,9 +346,11 @@ impl SandboxInterceptor {
     /// with [`ToolHooks`].
     pub fn as_policy_hook(
         self,
-    ) -> impl Fn(&str, &Value) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = ToolPolicyDecision> + Send>,
-    > {
+    ) -> impl Fn(
+        &str,
+        &Value,
+    )
+        -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolPolicyDecision> + Send>> {
         let this = Arc::new(self);
         move |name: &str, args: &Value| {
             let this = Arc::clone(&this);
@@ -322,38 +364,18 @@ impl SandboxInterceptor {
     fn evaluate(&self, name: &str, args: &Value) -> ToolPolicyDecision {
         match self.check(name, args) {
             Ok(()) => ToolPolicyDecision::Allow,
-            Err(SandboxError::CommandBlocked { command, reason }) => {
-                ToolPolicyDecision::Deny {
-                    reason: format!(
-                        "Sandbox: command '{}' is blocked — {}",
-                        command, reason
-                    ),
-                }
-            }
-            Err(SandboxError::PathBlocked { path, pattern }) => {
-                ToolPolicyDecision::Deny {
-                    reason: format!(
-                        "Sandbox: path '{}' matches blocked pattern '{}'",
-                        path, pattern
-                    ),
-                }
-            }
-            Err(SandboxError::NetworkBlocked { domain, reason }) => {
-                ToolPolicyDecision::Deny {
-                    reason: format!(
-                        "Sandbox: network domain '{}' is blocked — {}",
-                        domain, reason
-                    ),
-                }
-            }
-            Err(SandboxError::IpBlocked { ip, reason }) => {
-                ToolPolicyDecision::Deny {
-                    reason: format!(
-                        "Sandbox: IP address '{}' is blocked — {}",
-                        ip, reason
-                    ),
-                }
-            }
+            Err(SandboxError::CommandBlocked { command, reason }) => ToolPolicyDecision::Deny {
+                reason: format!("Sandbox: command '{}' is blocked — {}", command, reason),
+            },
+            Err(SandboxError::PathBlocked { path, pattern }) => ToolPolicyDecision::Deny {
+                reason: format!("Sandbox: path '{}' matches blocked pattern '{}'", path, pattern),
+            },
+            Err(SandboxError::NetworkBlocked { domain, reason }) => ToolPolicyDecision::Deny {
+                reason: format!("Sandbox: network domain '{}' is blocked — {}", domain, reason),
+            },
+            Err(SandboxError::IpBlocked { ip, reason }) => ToolPolicyDecision::Deny {
+                reason: format!("Sandbox: IP address '{}' is blocked — {}", ip, reason),
+            },
             Err(SandboxError::SensitiveDetected { kind, detail }) => {
                 if self.flag_sensitive_for_approval {
                     ToolPolicyDecision::NeedsApproval {
@@ -363,10 +385,7 @@ impl SandboxInterceptor {
                         risk_level: super::RiskLevel::High,
                         approval_level: super::ApprovalLevel::Ask,
                         requested_by: "sandbox_interceptor".to_string(),
-                        message: format!(
-                            "Sensitive content detected ({}): {}",
-                            kind, detail
-                        ),
+                        message: format!("Sensitive content detected ({}): {}", kind, detail),
                     }
                 } else {
                     ToolPolicyDecision::Deny {
@@ -398,8 +417,20 @@ fn extract_command(args: &Value) -> Option<String> {
 fn extract_paths(args: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     const PATH_FIELDS: &[&str] = &[
-        "path", "file", "directory", "dir", "source", "destination", "dst",
-        "src", "from", "to", "output", "input", "out", "in",
+        "path",
+        "file",
+        "directory",
+        "dir",
+        "source",
+        "destination",
+        "dst",
+        "src",
+        "from",
+        "to",
+        "output",
+        "input",
+        "out",
+        "in",
     ];
 
     for field in PATH_FIELDS {
@@ -561,10 +592,7 @@ fn ip_in_range(ip: &str, range: &str) -> bool {
 }
 
 /// Detect sensitive content in tool arguments.
-fn detect_sensitive_content(
-    _name: &str,
-    args: &Value,
-) -> Option<SandboxError> {
+fn detect_sensitive_content(_name: &str, args: &Value) -> Option<SandboxError> {
     let json_str = args.to_string();
 
     // API key patterns
@@ -647,8 +675,8 @@ mod tests {
 
     #[test]
     fn test_domain_allowlist_blocks_unknown() {
-        let interceptor = SandboxInterceptor::with_defaults()
-            .allow_domains(vec!["example.com".to_string()]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().allow_domains(vec!["example.com".to_string()]);
         let args = json!({"url": "https://evil.com/api"});
         let err = interceptor.check("web_fetch", &args).unwrap_err();
         assert!(matches!(err, SandboxError::NetworkBlocked { domain, .. } if domain == "evil.com"));
@@ -656,8 +684,8 @@ mod tests {
 
     #[test]
     fn test_domain_allowlist_allows_known() {
-        let interceptor = SandboxInterceptor::with_defaults()
-            .allow_domains(vec!["example.com".to_string()]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().allow_domains(vec!["example.com".to_string()]);
         let args = json!({"url": "https://example.com/api"});
         assert!(interceptor.check("web_fetch", &args).is_ok());
     }
@@ -682,8 +710,8 @@ mod tests {
     #[test]
     fn test_path_allowlist_blocks_then_blacklist() {
         // Allowlist permits /home/user/projects, but blacklist blocks .ssh
-        let interceptor = SandboxInterceptor::with_defaults()
-            .allow_paths(vec![PathBuf::from("/home/user")]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().allow_paths(vec![PathBuf::from("/home/user")]);
         let args = json!({"path": "/home/user/.ssh/id_rsa"});
         let err = interceptor.check("file_read", &args).unwrap_err();
         assert!(matches!(err, SandboxError::PathBlocked { .. }));
@@ -715,7 +743,10 @@ mod tests {
     #[test]
     fn test_parse_domain_url() {
         assert_eq!(parse_domain("https://example.com/path"), Some("example.com".to_string()));
-        assert_eq!(parse_domain("http://api.example.com:8080/v1"), Some("api.example.com".to_string()));
+        assert_eq!(
+            parse_domain("http://api.example.com:8080/v1"),
+            Some("api.example.com".to_string())
+        );
         assert_eq!(parse_domain("example.com"), Some("example.com".to_string()));
     }
 
@@ -739,8 +770,8 @@ mod tests {
 
     #[test]
     fn test_ip_blocklist_blocks_exact() {
-        let interceptor = SandboxInterceptor::with_defaults()
-            .block_ip_ranges(vec!["192.168.1.5".to_string()]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().block_ip_ranges(vec!["192.168.1.5".to_string()]);
         let args = json!({"url": "http://192.168.1.5/api"});
         let err = interceptor.check("web_fetch", &args).unwrap_err();
         assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "192.168.1.5"));
@@ -748,8 +779,8 @@ mod tests {
 
     #[test]
     fn test_ip_blocklist_blocks_cidr() {
-        let interceptor = SandboxInterceptor::with_defaults()
-            .block_ip_ranges(vec!["10.0.0.0/8".to_string()]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().block_ip_ranges(vec!["10.0.0.0/8".to_string()]);
         let args = json!({"host": "10.50.100.1"});
         let err = interceptor.check("shell", &args).unwrap_err();
         assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "10.50.100.1"));
@@ -757,8 +788,8 @@ mod tests {
 
     #[test]
     fn test_ip_allowlist_blocks_unknown() {
-        let interceptor = SandboxInterceptor::with_defaults()
-            .allow_ip_ranges(vec!["127.0.0.0/8".to_string()]);
+        let interceptor =
+            SandboxInterceptor::with_defaults().allow_ip_ranges(vec!["127.0.0.0/8".to_string()]);
         let args = json!({"endpoint": "192.168.1.1"});
         let err = interceptor.check("web_fetch", &args).unwrap_err();
         assert!(matches!(err, SandboxError::IpBlocked { ip, .. } if ip == "192.168.1.1"));

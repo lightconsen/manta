@@ -366,7 +366,11 @@ mod tests {
 
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]
@@ -381,7 +385,11 @@ mod tests {
 
         let result = tool.execute(args, &context).await.unwrap();
         assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not in the allowlist"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("not in the allowlist"));
     }
 
     #[tokio::test]

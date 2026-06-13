@@ -29,19 +29,19 @@ impl Default for PdfTool {
 
 #[derive(Debug, Deserialize)]
 struct PdfArgs {
- /// Content to convert (markdown or plain text)
+    /// Content to convert (markdown or plain text)
     content: String,
- /// Output file path (default: current dir)
+    /// Output file path (default: current dir)
     #[serde(default)]
     output: Option<String>,
- /// Document title
+    /// Document title
     #[serde(default)]
     title: Option<String>,
- /// Page orientation: portrait or landscape
+    /// Page orientation: portrait or landscape
     #[serde(default = "default_orientation")]
     #[allow(dead_code)]
     orientation: String,
- /// Paper size: a4, letter, legal
+    /// Paper size: a4, letter, legal
     #[serde(default = "default_paper")]
     #[allow(dead_code)]
     paper: String,
@@ -59,12 +59,12 @@ fn default_paper() -> String {
 fn markdown_to_html(content: &str, title: &str) -> String {
     let mut html = content.to_string();
 
- // Escape HTML entities
+    // Escape HTML entities
     html = html.replace('&', "&amp;");
     html = html.replace('<', "&lt;");
     html = html.replace('>', "&gt;");
 
- // Headers
+    // Headers
     for level in (1..=6).rev() {
         let prefix = "#".repeat(level);
         let tag = format!("h{}", level);
@@ -76,7 +76,7 @@ fn markdown_to_html(content: &str, title: &str) -> String {
             .to_string();
     }
 
- // Bold: handle ** pairs correctly
+    // Bold: handle ** pairs correctly
     let mut result = String::new();
     let mut chars = html.chars().peekable();
     let mut in_bold = false;
@@ -96,9 +96,9 @@ fn markdown_to_html(content: &str, title: &str) -> String {
     }
     html = result;
 
- // Code blocks
+    // Code blocks
     html = html.replace("```", "<pre><code>");
- // naive: pairs
+    // naive: pairs
     let mut result = String::new();
     let mut in_code = false;
     for part in html.split("<pre><code>") {
@@ -120,13 +120,13 @@ fn markdown_to_html(content: &str, title: &str) -> String {
             in_code = true;
         }
     }
- // Handle unclosed code blocks
+    // Handle unclosed code blocks
     if in_code {
         result.push_str("</code></pre>");
     }
     html = result;
 
- // Inline code
+    // Inline code
     let re = regex::Regex::new(r"`([^`]+)`").unwrap();
     html = re
         .replace_all(&html, |caps: &regex::Captures<'_>| {
@@ -134,7 +134,7 @@ fn markdown_to_html(content: &str, title: &str) -> String {
         })
         .to_string();
 
- // Line breaks
+    // Line breaks
     html = html.replace("\n\n", "</p><p>");
     html = html.replace('\n', "<br>");
 
@@ -232,7 +232,7 @@ impl Tool for PdfTool {
             context.working_directory.join("output.pdf")
         };
 
- // Generate HTML as intermediate format
+        // Generate HTML as intermediate format
         let html = markdown_to_html(&args.content, title);
         let html_path = output_path.with_extension("html");
 
@@ -246,7 +246,7 @@ impl Tool for PdfTool {
             });
         }
 
- // Try to convert HTML to PDF using headless Chrome/Chromium
+        // Try to convert HTML to PDF using headless Chrome/Chromium
         let pdf_result = tokio::process::Command::new("google-chrome")
             .args([
                 "--headless",
@@ -265,7 +265,7 @@ impl Tool for PdfTool {
                 (true, "chrome")
             }
             _ => {
- // Try chromium
+                // Try chromium
                 let result = tokio::process::Command::new("chromium")
                     .args([
                         "--headless",
@@ -284,7 +284,7 @@ impl Tool for PdfTool {
                         (true, "chromium")
                     }
                     _ => {
- // Fallback: keep HTML, user can print to PDF
+                        // Fallback: keep HTML, user can print to PDF
                         warn!("No headless browser found; keeping HTML output");
                         (false, "html_fallback")
                     }

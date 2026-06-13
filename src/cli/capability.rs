@@ -59,13 +59,7 @@ pub async fn run_capability_check() -> Result<()> {
             crate::capabilities::OsControlScope::Root => "root",
         };
 
-        println!(
-            "  {} [{}] — {} (scope: {})",
-            set.name(),
-            set.id(),
-            status,
-            scope_label
-        );
+        println!("  {} [{}] — {} (scope: {})", set.name(), set.id(), status, scope_label);
         println!("    {}", set.description());
 
         let tools = set.tools();
@@ -81,7 +75,9 @@ pub async fn run_capability_check() -> Result<()> {
     println!();
 
     if unavailable_count > 0 {
-        println!("Note: Unavailable sets require a different OS or environment (e.g. GUI session).");
+        println!(
+            "Note: Unavailable sets require a different OS or environment (e.g. GUI session)."
+        );
     }
 
     Ok(())

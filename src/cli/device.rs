@@ -57,7 +57,8 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                             println!("{:<20} {:<20}", "Device ID", "Name");
                             println!("{}", "-".repeat(45));
                             for dev in devices {
-                                let id = dev.get("device_id").and_then(|v| v.as_str()).unwrap_or("-");
+                                let id =
+                                    dev.get("device_id").and_then(|v| v.as_str()).unwrap_or("-");
                                 let name = dev
                                     .get("display_name")
                                     .and_then(|v| v.as_str())
@@ -84,7 +85,8 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                         println!("{}", "-".repeat(35));
                         for req in pending {
                             let code = req.get("code").and_then(|c| c.as_str()).unwrap_or("-");
-                            let dev_id = req.get("device_id").and_then(|c| c.as_str()).unwrap_or("-");
+                            let dev_id =
+                                req.get("device_id").and_then(|c| c.as_str()).unwrap_or("-");
                             println!("{:<12} {:<20}", code, dev_id);
                         }
                     }
@@ -143,13 +145,15 @@ pub async fn run_device_command(command: &DeviceCommands) -> Result<()> {
                     }
                     let svg = resp.text().await.unwrap_or_default();
                     if let Some(path) = output {
-                        tokio::fs::write(&path, &svg).await
-                            .map_err(|e| SyscityError::Internal(format!("Failed to write file: {}", e)))?;
+                        tokio::fs::write(&path, &svg).await.map_err(|e| {
+                            SyscityError::Internal(format!("Failed to write file: {}", e))
+                        })?;
                         println!("QR code saved to {}", path);
                     } else {
                         let tmp = std::env::temp_dir().join(format!("syscity-qr-{}.svg", code));
-                        tokio::fs::write(&tmp, &svg).await
-                            .map_err(|e| SyscityError::Internal(format!("Failed to write file: {}", e)))?;
+                        tokio::fs::write(&tmp, &svg).await.map_err(|e| {
+                            SyscityError::Internal(format!("Failed to write file: {}", e))
+                        })?;
                         println!("QR code saved to {}", tmp.display());
                         if cfg!(target_os = "macos") {
                             let _ = std::process::Command::new("open").arg(&tmp).spawn();

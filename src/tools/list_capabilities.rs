@@ -46,11 +46,7 @@ impl Tool for ListCapabilitiesTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        create_schema(
-            "List available capability sets",
-            serde_json::json!({}),
-            Vec::<String>::new(),
-        )
+        create_schema("List available capability sets", serde_json::json!({}), Vec::<String>::new())
     }
 
     async fn execute(
@@ -74,10 +70,7 @@ impl Tool for ListCapabilitiesTool {
                         .iter()
                         .any(|os| os == std::env::consts::OS)
                 {
-                    reasons.push(format!(
-                        "requires OS: {:?}",
-                        constraints.target_os
-                    ));
+                    reasons.push(format!("requires OS: {:?}", constraints.target_os));
                 }
                 if constraints.requires_gui && !has_display() {
                     reasons.push("requires GUI/display".to_string());

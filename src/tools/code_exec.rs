@@ -204,10 +204,7 @@ print(json.dumps(result))
                     let _ = libc::setrlimit(libc::RLIMIT_CPU, &limit);
 
                     // File descriptor limit
-                    let limit = libc::rlimit {
-                        rlim_cur: 256,
-                        rlim_max: 256,
-                    };
+                    let limit = libc::rlimit { rlim_cur: 256, rlim_max: 256 };
                     let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
 
                     // Process limit (prevent fork bombs).
@@ -215,10 +212,7 @@ print(json.dumps(result))
                     // pyenv and other multi-process toolchains.
                     #[cfg(target_os = "linux")]
                     {
-                        let limit = libc::rlimit {
-                            rlim_cur: 64,
-                            rlim_max: 64,
-                        };
+                        let limit = libc::rlimit { rlim_cur: 64, rlim_max: 64 };
                         let _ = libc::setrlimit(libc::RLIMIT_NPROC, &limit);
                     }
 

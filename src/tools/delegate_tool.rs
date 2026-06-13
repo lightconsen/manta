@@ -312,7 +312,9 @@ impl DelegateTool {
         // 2. Fall back to self.agent if not found or no target specified
         let child_agent = if let Some(ref resolver) = self.agent_resolver {
             if let Some(target) = &task.target_agent {
-                resolver.resolve(target).await
+                resolver
+                    .resolve(target)
+                    .await
                     .or_else(|| self.agent.clone())
             } else {
                 self.agent.clone()

@@ -36,9 +36,7 @@ impl SafeBinList {
 
     /// Create an empty `SafeBinList`.
     pub fn empty() -> Self {
-        Self {
-            bins: HashSet::new(),
-        }
+        Self { bins: HashSet::new() }
     }
 
     /// Add a binary name or path to the allowlist.
@@ -65,40 +63,100 @@ impl Default for SafeBinList {
         Self {
             bins: HashSet::from([
                 // File operations
-                "ls".to_string(), "cat".to_string(), "head".to_string(), "tail".to_string(),
-                "less".to_string(), "more".to_string(), "wc".to_string(), "sort".to_string(),
-                "uniq".to_string(), "cut".to_string(), "grep".to_string(), "rg".to_string(),
-                "awk".to_string(), "sed".to_string(), "find".to_string(), "diff".to_string(),
+                "ls".to_string(),
+                "cat".to_string(),
+                "head".to_string(),
+                "tail".to_string(),
+                "less".to_string(),
+                "more".to_string(),
+                "wc".to_string(),
+                "sort".to_string(),
+                "uniq".to_string(),
+                "cut".to_string(),
+                "grep".to_string(),
+                "rg".to_string(),
+                "awk".to_string(),
+                "sed".to_string(),
+                "find".to_string(),
+                "diff".to_string(),
                 "cmp".to_string(),
                 // Version control
                 "git".to_string(),
                 // Network
-                "curl".to_string(), "wget".to_string(), "ping".to_string(), "dig".to_string(),
-                "nslookup".to_string(), "ssh".to_string(),
+                "curl".to_string(),
+                "wget".to_string(),
+                "ping".to_string(),
+                "dig".to_string(),
+                "nslookup".to_string(),
+                "ssh".to_string(),
                 // Python / scripting
-                "python".to_string(), "python3".to_string(), "node".to_string(), "deno".to_string(),
-                "bun".to_string(), "ruby".to_string(), "perl".to_string(), "sh".to_string(),
-                "bash".to_string(), "zsh".to_string(), "fish".to_string(),
+                "python".to_string(),
+                "python3".to_string(),
+                "node".to_string(),
+                "deno".to_string(),
+                "bun".to_string(),
+                "ruby".to_string(),
+                "perl".to_string(),
+                "sh".to_string(),
+                "bash".to_string(),
+                "zsh".to_string(),
+                "fish".to_string(),
                 // Build tools
-                "cargo".to_string(), "make".to_string(), "cmake".to_string(), "ninja".to_string(),
-                "npm".to_string(), "yarn".to_string(), "pnpm".to_string(), "pip".to_string(),
+                "cargo".to_string(),
+                "make".to_string(),
+                "cmake".to_string(),
+                "ninja".to_string(),
+                "npm".to_string(),
+                "yarn".to_string(),
+                "pnpm".to_string(),
+                "pip".to_string(),
                 "pip3".to_string(),
                 // System info
-                "ps".to_string(), "top".to_string(), "htop".to_string(), "df".to_string(),
-                "du".to_string(), "uname".to_string(), "whoami".to_string(), "id".to_string(),
-                "date".to_string(), "cal".to_string(), "which".to_string(), "env".to_string(),
-                "printenv".to_string(), "echo".to_string(), "printf".to_string(),
+                "ps".to_string(),
+                "top".to_string(),
+                "htop".to_string(),
+                "df".to_string(),
+                "du".to_string(),
+                "uname".to_string(),
+                "whoami".to_string(),
+                "id".to_string(),
+                "date".to_string(),
+                "cal".to_string(),
+                "which".to_string(),
+                "env".to_string(),
+                "printenv".to_string(),
+                "echo".to_string(),
+                "printf".to_string(),
                 // File manipulation
-                "cp".to_string(), "mv".to_string(), "mkdir".to_string(), "touch".to_string(),
-                "chmod".to_string(), "chown".to_string(), "ln".to_string(), "tar".to_string(),
-                "gzip".to_string(), "gunzip".to_string(), "xz".to_string(), "zip".to_string(),
+                "cp".to_string(),
+                "mv".to_string(),
+                "mkdir".to_string(),
+                "touch".to_string(),
+                "chmod".to_string(),
+                "chown".to_string(),
+                "ln".to_string(),
+                "tar".to_string(),
+                "gzip".to_string(),
+                "gunzip".to_string(),
+                "xz".to_string(),
+                "zip".to_string(),
                 "unzip".to_string(),
                 // Reading / viewing
-                "file".to_string(), "stat".to_string(), "realpath".to_string(),
-                "readlink".to_string(), "basename".to_string(), "dirname".to_string(),
-                "strings".to_string(), "xxd".to_string(), "hexdump".to_string(), "od".to_string(),
+                "file".to_string(),
+                "stat".to_string(),
+                "realpath".to_string(),
+                "readlink".to_string(),
+                "basename".to_string(),
+                "dirname".to_string(),
+                "strings".to_string(),
+                "xxd".to_string(),
+                "hexdump".to_string(),
+                "od".to_string(),
                 // Process management
-                "kill".to_string(), "pkill".to_string(), "pgrep".to_string(), "nohup".to_string(),
+                "kill".to_string(),
+                "pkill".to_string(),
+                "pgrep".to_string(),
+                "nohup".to_string(),
                 "timeout".to_string(),
             ]),
         }
@@ -280,10 +338,7 @@ pub fn shell_safety_policy(safe_bins: SafeBinList) -> PolicyHookFn {
                     risk_level: RiskLevel::High,
                     approval_level: ApprovalLevel::Host,
                     requested_by: "system".into(),
-                    message: format!(
-                        "Shell command requires host approval: {}",
-                        command
-                    ),
+                    message: format!("Shell command requires host approval: {}", command),
                 },
             }
         }) as Pin<Box<dyn Future<Output = ToolPolicyDecision> + Send>>
@@ -321,14 +376,8 @@ mod tests {
     #[test]
     fn test_dangerous_rm_rf() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command("rm -rf /", &safe),
-            ShellSafetyTier::Dangerous,
-        );
-        assert_eq!(
-            analyze_shell_command("rm -rf /*", &safe),
-            ShellSafetyTier::Dangerous,
-        );
+        assert_eq!(analyze_shell_command("rm -rf /", &safe), ShellSafetyTier::Dangerous,);
+        assert_eq!(analyze_shell_command("rm -rf /*", &safe), ShellSafetyTier::Dangerous,);
     }
 
     #[test]
@@ -343,41 +392,26 @@ mod tests {
     #[test]
     fn test_dangerous_fork_bomb() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command(":(){ :|:& };:", &safe),
-            ShellSafetyTier::Dangerous,
-        );
+        assert_eq!(analyze_shell_command(":(){ :|:& };:", &safe), ShellSafetyTier::Dangerous,);
     }
 
     #[test]
     fn test_high_risk_sudo() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command("sudo apt update", &safe),
-            ShellSafetyTier::HighRisk,
-        );
+        assert_eq!(analyze_shell_command("sudo apt update", &safe), ShellSafetyTier::HighRisk,);
     }
 
     #[test]
     fn test_high_risk_iptables() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command("iptables -L", &safe),
-            ShellSafetyTier::HighRisk,
-        );
+        assert_eq!(analyze_shell_command("iptables -L", &safe), ShellSafetyTier::HighRisk,);
     }
 
     #[test]
     fn test_safe_known_binary() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command("ls -la", &safe),
-            ShellSafetyTier::Safe,
-        );
-        assert_eq!(
-            analyze_shell_command("git status", &safe),
-            ShellSafetyTier::Safe,
-        );
+        assert_eq!(analyze_shell_command("ls -la", &safe), ShellSafetyTier::Safe,);
+        assert_eq!(analyze_shell_command("git status", &safe), ShellSafetyTier::Safe,);
     }
 
     #[test]
@@ -392,10 +426,7 @@ mod tests {
     #[test]
     fn test_empty_command_is_safe() {
         let safe = SafeBinList::new();
-        assert_eq!(
-            analyze_shell_command("", &safe),
-            ShellSafetyTier::Safe,
-        );
+        assert_eq!(analyze_shell_command("", &safe), ShellSafetyTier::Safe,);
     }
 
     #[test]
@@ -421,13 +452,7 @@ mod tests {
         let policy = shell_safety_policy(safe);
         let result = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(async {
-                policy(
-                    "shell",
-                    &serde_json::json!({"command": "ls -la"}),
-                )
-                .await
-            });
+            .block_on(async { policy("shell", &serde_json::json!({"command": "ls -la"})).await });
         assert!(result.is_allow());
     }
 
@@ -437,13 +462,7 @@ mod tests {
         let policy = shell_safety_policy(safe);
         let result = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(async {
-                policy(
-                    "shell",
-                    &serde_json::json!({"command": "rm -rf /"}),
-                )
-                .await
-            });
+            .block_on(async { policy("shell", &serde_json::json!({"command": "rm -rf /"})).await });
         assert!(result.is_deny());
     }
 
@@ -451,15 +470,9 @@ mod tests {
     fn test_shell_safety_policy_needs_approval_for_sudo() {
         let safe = SafeBinList::new();
         let policy = shell_safety_policy(safe);
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                policy(
-                    "bash",
-                    &serde_json::json!({"command": "sudo apt update"}),
-                )
-                .await
-            });
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            policy("bash", &serde_json::json!({"command": "sudo apt update"})).await
+        });
         assert!(result.is_needs_approval());
     }
 }

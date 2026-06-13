@@ -246,13 +246,7 @@ pub async fn run_provider_command(
                 scope: scope.clone(),
                 redirect_port: *redirect_port,
             };
-            run_auth_command(
-                id,
-                &oauth,
-                *timeout,
-                *no_browser,
-            )
-            .await
+            run_auth_command(id, &oauth, *timeout, *no_browser).await
         }
     }
 }
