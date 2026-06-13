@@ -8,8 +8,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_stream::StreamExt;
 
 pub mod approval;
 pub mod rbac;
@@ -21,7 +23,9 @@ pub use approval::{
 };
 
 // Re-export RBAC types for convenience
-pub use rbac::{Role, ToolPolicy, UserContext};
+pub use rbac::{
+    ModelCapabilities, PolicyEvaluationContext, Role, SandboxPolicy, ToolPolicy, UserContext,
+};
 
 /// Skill trust level for tool access control.
 ///
@@ -99,6 +103,24 @@ pub struct ToolContext {
     /// Optional per-context RBAC policy. When set together with
     /// `user_context`, it is evaluated in `ToolRegistry::is_excluded`.
     pub tool_policy: Option<ToolPolicy>,
+    /// Name of the LLM model driving the current invocation.
+    /// Used for model-based tool gating.
+    pub model_name: Option<String>,
+    /// Name of the LLM provider driving the current invocation.
+    /// Used for provider-based tool gating.
+    pub provider_name: Option<String>,
+    /// Identifier of the sender/user that triggered the invocation.
+    /// Used for sender-based tool gating.
+    pub sender_id: Option<String>,
+    /// Whether the sender is the system owner.
+    pub sender_is_owner: bool,
+    /// Optional allowlist of plugin tool prefixes/names.
+    /// When set, only plugin tools matching these prefixes are exposed.
+    pub plugin_allowlist: Option<Vec<String>>,
+    /// Capabilities of the current model (vision, tool use, etc.).
+    pub model_capabilities: ModelCapabilities,
+    /// Optional sandbox policy applied to tool execution.
+    pub sandbox_policy: Option<SandboxPolicy>,
 }
 
 impl Default for ToolContext {
@@ -122,6 +144,13 @@ impl Default for ToolContext {
             workspace_only: true,
             user_context: None,
             tool_policy: None,
+            model_name: None,
+            provider_name: None,
+            sender_id: None,
+            sender_is_owner: false,
+            plugin_allowlist: None,
+            model_capabilities: ModelCapabilities::default(),
+            sandbox_policy: None,
         }
     }
 }
@@ -163,6 +192,48 @@ impl ToolContext {
     /// Set the RBAC policy applied to this context.
     pub fn with_tool_policy(mut self, policy: ToolPolicy) -> Self {
         self.tool_policy = Some(policy);
+        self
+    }
+
+    /// Set the model name for model-based tool gating.
+    pub fn with_model_name(mut self, model: impl Into<String>) -> Self {
+        self.model_name = Some(model.into());
+        self
+    }
+
+    /// Set the provider name for provider-based tool gating.
+    pub fn with_provider_name(mut self, provider: impl Into<String>) -> Self {
+        self.provider_name = Some(provider.into());
+        self
+    }
+
+    /// Set the sender identifier for sender-based tool gating.
+    pub fn with_sender_id(mut self, sender: impl Into<String>) -> Self {
+        self.sender_id = Some(sender.into());
+        self
+    }
+
+    /// Mark the sender as the system owner.
+    pub fn with_sender_is_owner(mut self, is_owner: bool) -> Self {
+        self.sender_is_owner = is_owner;
+        self
+    }
+
+    /// Set an allowlist of plugin tool prefixes/names.
+    pub fn with_plugin_allowlist(mut self, allowlist: Vec<String>) -> Self {
+        self.plugin_allowlist = Some(allowlist);
+        self
+    }
+
+    /// Set the model capabilities for model-based tool gating.
+    pub fn with_model_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
+        self.model_capabilities = capabilities;
+        self
+    }
+
+    /// Set the sandbox policy applied to tool execution.
+    pub fn with_sandbox_policy(mut self, policy: SandboxPolicy) -> Self {
+        self.sandbox_policy = Some(policy);
         self
     }
 
@@ -419,6 +490,23 @@ impl ToolContext {
     }
 }
 
+/// A chunk emitted by a streaming tool execution.
+///
+/// Streaming tools can emit output, errors, and structured data incrementally
+/// instead of buffering everything into a single [`ToolExecutionResult`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "payload")]
+pub enum ToolExecutionChunk {
+    /// Standard output / progress text.
+    Output(String),
+    /// Standard error / error text.
+    Error(String),
+    /// Structured data chunk.
+    Data(Value),
+    /// Stream completed successfully.
+    Done,
+}
+
 /// The result of a tool execution
 #[derive(Debug, Clone)]
 pub struct ToolExecutionResult {
@@ -551,6 +639,36 @@ pub trait Tool: Send + Sync {
         args: Value,
         context: &ToolContext,
     ) -> crate::Result<ToolExecutionResult>;
+
+    /// Execute the tool as a stream of incremental chunks.
+    ///
+    /// The default implementation calls [`execute`](Tool::execute) once and
+    /// yields the resulting output/error/data as a single chunk sequence.
+    /// Tools that produce incremental output (long-running shells, process
+    /// runners, etc.) should override this to emit [`ToolExecutionChunk`]s
+    /// as data becomes available.
+    fn execute_stream<'a>(
+        &'a self,
+        args: Value,
+        context: &'a ToolContext,
+    ) -> Pin<Box<dyn tokio_stream::Stream<Item = ToolExecutionChunk> + Send + 'a>> {
+        Box::pin(async_stream::stream! {
+            match self.execute(args, context).await {
+                Ok(result) => {
+                    if !result.output.is_empty() {
+                        yield ToolExecutionChunk::Output(result.output);
+                    }
+                    if let Some(error) = result.error {
+                        yield ToolExecutionChunk::Error(error);
+                    }
+                    if let Some(data) = result.data {
+                        yield ToolExecutionChunk::Data(data);
+                    }
+                }
+                Err(e) => yield ToolExecutionChunk::Error(e.to_string()),
+            }
+        })
+    }
 
     /// Check if this tool is available in the given context
     fn is_available(&self, _context: &ToolContext) -> bool {
@@ -827,8 +945,8 @@ impl ToolRegistry {
     }
 
     /// Returns `true` if the tool should be excluded from availability checks,
-    /// considering blocked prefixes, circuit-breaker state, trust level, and
-    /// any RBAC policy attached to the execution context.
+    /// considering blocked prefixes, circuit-breaker state, trust level,
+    /// plugin allowlists, and any RBAC/gating policy attached to the context.
     fn is_excluded(&self, name: &str, context: &ToolContext) -> bool {
         if self.is_blocked(name) {
             return true;
@@ -839,23 +957,84 @@ impl ToolRegistry {
         if context.skill_trust < SkillTrust::Trusted && self.is_privileged(name) {
             return true;
         }
+
+        // Determine registration provenance for source gating.
+        let is_dynamic = self.is_dynamic_tool(name);
+        let is_mcp = name.starts_with("mcp__");
+
+        // Plugin allowlist at the context level (runtime restriction).
+        if is_dynamic && Self::is_plugin_like_name(name) {
+            if let Some(ref allowlist) = context.plugin_allowlist {
+                let allowed = allowlist
+                    .iter()
+                    .any(|prefix| name == prefix || name.starts_with(prefix));
+                if !allowed {
+                    return true;
+                }
+            }
+        }
+
+        // Sandbox policy: require sandboxed tools.
+        if let Some(ref sandbox_policy) = context.sandbox_policy {
+            if sandbox_policy.require_sandboxed {
+                let caps = self.tool_capabilities(name);
+                if !caps.sandboxed {
+                    return true;
+                }
+            }
+        }
+
         if let (Some(user_ctx), Some(policy)) = (&context.user_context, &context.tool_policy) {
-            let capabilities = self
-                .tools
-                .get(name)
-                .map(|t| t.capabilities())
-                .or_else(|| {
-                    self.dynamic_tools
-                        .read()
-                        .ok()
-                        .and_then(|map| map.get(name).map(|t| t.capabilities()))
-                })
-                .unwrap_or_default();
-            if !policy.evaluate(user_ctx, name, &capabilities) {
+            let capabilities = self.tool_capabilities(name);
+            let eval_ctx = PolicyEvaluationContext {
+                model_name: context.model_name.clone(),
+                provider_name: context.provider_name.clone(),
+                sender_id: context.sender_id.clone(),
+                sender_is_owner: context.sender_is_owner,
+                plugin_allowlist: context.plugin_allowlist.clone(),
+                model_capabilities: context.model_capabilities.clone(),
+                is_dynamic,
+                is_mcp,
+            };
+            if !policy.evaluate_with_context(user_ctx, name, &capabilities, &eval_ctx) {
                 return true;
             }
         }
         false
+    }
+
+    /// Helper to look up tool capabilities from either registry.
+    fn tool_capabilities(&self, name: &str) -> crate::tools::sdk::ToolCapabilities {
+        self.tools
+            .get(name)
+            .map(|t| t.capabilities())
+            .or_else(|| {
+                self.dynamic_tools
+                    .read()
+                    .ok()
+                    .and_then(|map| map.get(name).map(|t| t.capabilities()))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get the advertised capabilities for a tool by name.
+    pub fn get_capabilities(&self, name: &str) -> crate::tools::sdk::ToolCapabilities {
+        self.tool_capabilities(name)
+    }
+
+    /// Returns `true` if `name` is registered only in the dynamic registry.
+    fn is_dynamic_tool(&self, name: &str) -> bool {
+        !self.tools.contains_key(name)
+            && self
+                .dynamic_tools
+                .read()
+                .map(|map| map.contains_key(name))
+                .unwrap_or(false)
+    }
+
+    /// Heuristic: plugin tools often use `__` separators (MCP or plugin runtime).
+    fn is_plugin_like_name(name: &str) -> bool {
+        name.contains("__")
     }
 
     /// Enable caching with the specified TTL
@@ -1424,6 +1603,194 @@ impl ToolRegistry {
             tool_name,
             self.list().join(", ")
         )))
+    }
+
+    /// Execute a function call from an LLM with streaming output.
+    ///
+    /// Policy hooks, approval, and before-hooks are run before chunks are
+    /// yielded. `on_chunk` is invoked for every [`ToolExecutionChunk`]
+    /// produced by the tool. After the stream completes, after-hooks,
+    /// content filtering, and audit logging are applied and the final
+    /// [`ToolExecutionResult`] is returned.
+    ///
+    /// This method owns the tool reference internally, so it works for both
+    /// static and dynamically-registered tools without lifetime issues.
+    pub async fn execute_call_streaming<F, Fut>(
+        &self,
+        call: &FunctionCall,
+        context: &ToolContext,
+        mut on_chunk: F,
+    ) -> crate::Result<ToolExecutionResult>
+    where
+        F: FnMut(ToolExecutionChunk) -> Fut + Send,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let args: Value = if call.arguments.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&call.arguments).map_err(|e| {
+                crate::error::SyscityError::Validation(format!(
+                    "Invalid arguments for tool {}: {}",
+                    call.name, e
+                ))
+            })?
+        };
+
+        let tool_name = call.name.clone();
+
+        // Run policy hooks first.
+        let policy_decision = self.hooks.run_policy(&tool_name, &args).await;
+        match policy_decision {
+            ToolPolicyDecision::Allow => {}
+            ToolPolicyDecision::Deny { reason } => {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Tool '{}' denied: {}",
+                    tool_name, reason
+                )));
+            }
+            ToolPolicyDecision::NeedsApproval { .. } => {
+                // For streaming tools, fall back to buffered execution so the
+                // approval flow can suspend and resume in a single future.
+                let result = self.execute(&tool_name, args.clone(), context).await;
+                return match result {
+                    Some(Ok(exec_result)) => {
+                        if !exec_result.output.is_empty() {
+                            on_chunk(ToolExecutionChunk::Output(exec_result.output.clone())).await;
+                        }
+                        if let Some(error) = exec_result.error.clone() {
+                            on_chunk(ToolExecutionChunk::Error(error)).await;
+                        }
+                        if let Some(data) = exec_result.data.clone() {
+                            on_chunk(ToolExecutionChunk::Data(data)).await;
+                        }
+                        Ok(exec_result)
+                    }
+                    Some(Err(e)) => {
+                        on_chunk(ToolExecutionChunk::Error(e.to_string())).await;
+                        Err(e)
+                    }
+                    None => Err(crate::error::SyscityError::Validation(format!(
+                        "Unknown tool: {}. Available tools: {}",
+                        tool_name,
+                        self.list().join(", ")
+                    ))),
+                };
+            }
+        }
+
+        // Run before-hooks.
+        self.hooks.run_before(&tool_name, &args).await;
+
+        // Look up the tool and consume its stream.
+        let collected = if let Some(tool) = self.get(&tool_name) {
+            consume_stream(tool.execute_stream(args.clone(), context), &mut on_chunk).await
+        } else {
+            let dynamic_tool = self
+                .dynamic_tools
+                .read()
+                .ok()
+                .and_then(|map| map.get(&tool_name).cloned());
+            if let Some(tool) = dynamic_tool {
+                if !self.is_blocked(&tool_name) && !self.is_degraded(&tool_name) {
+                    consume_stream(tool.execute_stream(args.clone(), context), &mut on_chunk).await
+                } else {
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "Tool '{}' is blocked or degraded",
+                        tool_name
+                    )));
+                }
+            } else {
+                return Err(crate::error::SyscityError::Validation(format!(
+                    "Unknown tool: {}. Available tools: {}",
+                    tool_name,
+                    self.list().join(", ")
+                )));
+            }
+        };
+
+        // Apply after-hooks, content filtering, and audit logging.
+        match self
+            .finalize_stream_result(&tool_name, &args, context, collected)
+            .await
+        {
+            Some(Ok(result)) => Ok(result),
+            Some(Err(e)) => Err(e),
+            None => Err(crate::error::SyscityError::Validation(format!(
+                "Tool '{}' finalization failed",
+                tool_name
+            ))),
+        }
+    }
+
+    /// Apply content filtering and audit logging to a collected streaming
+    /// result, and run after-hooks.
+    ///
+    /// This is the streaming equivalent of the post-processing performed by
+    /// [`execute`](ToolRegistry::execute) after a buffered call.
+    pub async fn finalize_stream_result(
+        &self,
+        name: &str,
+        args: &Value,
+        context: &ToolContext,
+        collected: ToolExecutionResult,
+    ) -> Option<crate::Result<ToolExecutionResult>> {
+        self.hooks.run_after(name, args, &collected).await;
+        self.filter_and_audit(name, context, Some(Ok(collected)))
+            .await
+    }
+}
+
+/// Consume a tool execution stream, accumulating chunks into a
+/// [`ToolExecutionResult`] while invoking `on_chunk` for each chunk.
+async fn consume_stream<S, F, Fut>(
+    mut stream: S,
+    on_chunk: &mut F,
+) -> ToolExecutionResult
+where
+    S: tokio_stream::Stream<Item = ToolExecutionChunk> + Unpin,
+    F: FnMut(ToolExecutionChunk) -> Fut + Send,
+    Fut: std::future::Future<Output = ()> + Send,
+{
+    let mut output = String::new();
+    let mut error_output = String::new();
+    let mut data: Option<Value> = None;
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            ToolExecutionChunk::Output(text) => {
+                output.push_str(&text);
+                on_chunk(ToolExecutionChunk::Output(text)).await;
+            }
+            ToolExecutionChunk::Error(text) => {
+                error_output.push_str(&text);
+                on_chunk(ToolExecutionChunk::Error(text)).await;
+            }
+            ToolExecutionChunk::Data(value) => {
+                let value_clone = value.clone();
+                data = Some(value);
+                on_chunk(ToolExecutionChunk::Data(value_clone)).await;
+            }
+            ToolExecutionChunk::Done => {
+                on_chunk(ToolExecutionChunk::Done).await;
+            }
+        }
+    }
+
+    let success = error_output.is_empty();
+    let final_output = if error_output.is_empty() {
+        output
+    } else if output.is_empty() {
+        error_output.clone()
+    } else {
+        format!("{}\nErrors:\n{}", output, error_output)
+    };
+
+    ToolExecutionResult {
+        success,
+        output: final_output,
+        error: if success { None } else { Some(error_output) },
+        data,
+        execution_time: Duration::default(),
     }
 }
 
@@ -2243,5 +2610,160 @@ mod tests {
 
         assert!(!available.contains(&"shell".to_string()));
         assert!(available.contains(&"read".to_string()));
+    }
+
+    // ── Tool gating tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_plugin_allowlist_gating() {
+        let registry = ToolRegistry::new();
+        registry.register_dynamic(std::sync::Arc::new(ReadTool));
+        registry.register_dynamic(std::sync::Arc::new(PluginTool));
+        registry.register_dynamic(std::sync::Arc::new(BlockedPluginTool));
+
+        let ctx = ToolContext::new("user", "conv1")
+            .with_plugin_allowlist(vec!["allowed__".to_string()]);
+
+        let available: Vec<String> = registry
+            .get_available(&ctx)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+
+        assert!(available.contains(&"read".to_string()));
+        assert!(available.contains(&"allowed__foo".to_string()));
+        assert!(!available.contains(&"blocked__bar".to_string()));
+    }
+
+    struct PluginTool;
+
+    #[async_trait]
+    impl Tool for PluginTool {
+        fn name(&self) -> &str {
+            "allowed__foo"
+        }
+
+        fn description(&self) -> &str {
+            "An allowed plugin tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("Plugin", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("plugin ok"))
+        }
+    }
+
+    struct BlockedPluginTool;
+
+    #[async_trait]
+    impl Tool for BlockedPluginTool {
+        fn name(&self) -> &str {
+            "blocked__bar"
+        }
+
+        fn description(&self) -> &str {
+            "A blocked plugin tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("Blocked", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("blocked"))
+        }
+    }
+
+    // ── Streaming tool tests ─────────────────────────────────────────────────
+
+    struct StreamingTool;
+
+    #[async_trait]
+    impl Tool for StreamingTool {
+        fn name(&self) -> &str {
+            "streaming_test"
+        }
+
+        fn description(&self) -> &str {
+            "A tool that streams output"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            create_schema("Stream", serde_json::json!({}), Vec::<String>::new())
+        }
+
+        fn capabilities(&self) -> crate::tools::sdk::ToolCapabilities {
+            crate::tools::sdk::ToolCapabilities {
+                streaming: true,
+                ..Default::default()
+            }
+        }
+
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &ToolContext,
+        ) -> crate::Result<ToolExecutionResult> {
+            Ok(ToolExecutionResult::success("final"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_execute_stream_default() {
+        let tool = StreamingTool;
+        let ctx = ToolContext::new("user", "conv1");
+        let mut stream = tool.execute_stream(serde_json::json!({}), &ctx);
+
+        let chunks: Vec<ToolExecutionChunk> =
+            tokio_stream::StreamExt::collect(&mut stream).await;
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0], ToolExecutionChunk::Output(ref s) if s == "final"));
+    }
+
+    #[tokio::test]
+    async fn test_registry_execute_call_streaming() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StreamingTool));
+
+        let call = crate::providers::FunctionCall {
+            name: "streaming_test".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let ctx = ToolContext::new("user", "conv1");
+
+        let mut chunks = Vec::new();
+        let result = registry
+            .execute_call_streaming(&call, &ctx, |chunk| {
+                chunks.push(chunk.clone());
+                async move {}
+            })
+            .await;
+
+        assert!(result.is_ok(), "streaming execution should succeed");
+        let result = result.unwrap();
+        assert_eq!(result.output, "final");
+        assert!(chunks.iter().any(|c| matches!(c, ToolExecutionChunk::Output(s) if s == "final")));
+    }
+
+    #[test]
+    fn test_tool_execution_chunk_serialization() {
+        let chunk = ToolExecutionChunk::Output("hello".to_string());
+        let json = serde_json::to_string(&chunk).unwrap();
+        assert!(json.contains("\"kind\":\"output\""));
+        assert!(json.contains("\"payload\":\"hello\""));
+
+        let decoded: ToolExecutionChunk = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ToolExecutionChunk::Output(s) if s == "hello"));
     }
 }

@@ -258,6 +258,10 @@ pub async fn create_agent_handler(
                                             tool_name: name.clone(), result, data,
                                         });
                                     }
+                                    crate::agent::ProgressEvent::ToolResultDelta { .. } => {
+                                        // Streaming tool chunks are accumulated locally and emitted
+                                        // as a final ToolResult event; no per-chunk gateway event yet.
+                                    }
                                     crate::agent::ProgressEvent::Completed { response } => {
                                         let _ = state.event_tx.send(GatewayEvent::Completed {
                                             session_id: sid.clone(),

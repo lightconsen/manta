@@ -285,6 +285,13 @@ mod tests {
             workspace_only: false,
             user_context: None,
             tool_policy: None,
+            model_name: None,
+            provider_name: None,
+            sender_id: None,
+            sender_is_owner: false,
+            plugin_allowlist: None,
+            model_capabilities: crate::tools::ModelCapabilities::default(),
+            sandbox_policy: None,
         }
     }
 

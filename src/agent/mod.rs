@@ -6,7 +6,7 @@
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::channels::thread_binding::ThreadBindingManager;
 use crate::providers::{CompletionRequest, ContentBlock, Message, Provider, Role, ToolCall, ToolResult};
-use crate::tools::{ToolContext, ToolRegistry};
+use crate::tools::{ToolContext, ToolExecutionChunk, ToolRegistry};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
@@ -25,6 +25,8 @@ pub enum ProgressEvent {
     ToolCalling { name: String, arguments: String },
     /// Tool execution completed
     ToolResult { name: String, result: String, data: Option<serde_json::Value> },
+    /// Incremental chunk from a streaming tool
+    ToolResultDelta { name: String, chunk: String, is_error: bool },
     /// LLM is generating reasoning/thinking content
     Generating { content: Option<String> },
     /// LLM is streaming text content delta
@@ -966,16 +968,43 @@ impl Agent {
         }
     }
 
+    fn infer_model_vision(&self) -> bool {
+        self.model
+            .as_deref()
+            .map(|m| {
+                let m = m.to_lowercase();
+                m.contains("vision")
+                    || m.contains("claude-3")
+                    || m.contains("gpt-4o")
+                    || m.contains("gemini-pro-vision")
+                    || m.contains("llava")
+            })
+            .unwrap_or(false)
+    }
+
     /// Build a ToolContext pre-configured with workspace settings from agent config.
     fn build_tool_context(
         &self,
         user_id: impl Into<String>,
         conversation_id: impl Into<String>,
     ) -> ToolContext {
-        ToolContext::new(user_id, conversation_id)
+        let user_id = user_id.into();
+        let conversation_id = conversation_id.into();
+
+        let model_capabilities = crate::tools::ModelCapabilities {
+            has_vision: self.infer_model_vision(),
+            supports_tool_use: self.provider.supports_tools(),
+            max_context_length: None,
+        };
+
+        ToolContext::new(user_id.clone(), conversation_id)
             .with_skill_trust(self.current_skill_trust())
             .with_workspace_root(self.config.resolve_workspace_dir())
             .with_workspace_only(self.config.workspace_only)
+            .with_model_name(self.model.clone().unwrap_or_default())
+            .with_provider_name(self.provider.name().to_string())
+            .with_sender_id(user_id)
+            .with_model_capabilities(model_capabilities)
     }
 
     /// Attach a `SessionStore` for turn persistence.
@@ -2402,6 +2431,148 @@ Your response:"#,
         result
     }
 
+    /// Execute a single tool call, using streaming when the tool advertises
+    /// `capabilities.streaming`.
+    async fn execute_single_tool(
+        &self,
+        tool_call: &ToolCall,
+        tool_context: &ToolContext,
+        progress_cb: &ProgressCallback,
+        context_id: &str,
+    ) -> ToolResult {
+        let tool_name = tool_call.function.name.clone();
+        let capabilities = self.tools.get_capabilities(&tool_name);
+
+        if capabilities.streaming {
+            self.execute_single_tool_stream(tool_call, tool_context, progress_cb, context_id)
+                .await
+        } else {
+            self.execute_single_tool_buffered(tool_call, tool_context, progress_cb, context_id)
+                .await
+        }
+    }
+
+    /// Buffered execution path for tools that do not support streaming.
+    async fn execute_single_tool_buffered(
+        &self,
+        tool_call: &ToolCall,
+        tool_context: &ToolContext,
+        progress_cb: &ProgressCallback,
+        context_id: &str,
+    ) -> ToolResult {
+        let tool_name = tool_call.function.name.clone();
+
+        match self.tools.execute_call(&tool_call.function, tool_context).await {
+            Ok(exec_result) => {
+                // Reset circuit-breaker on success
+                self.tools.reset_failure(&tool_name);
+                let tool_data = exec_result.data.clone();
+                let tool_result = exec_result.to_tool_result(&tool_call.id);
+                let result_str = tool_result.content.clone();
+
+                // Extract artifacts from successful tool results
+                self.extract_and_store_artifacts(context_id, &result_str, &tool_name);
+
+                // Notify tool result
+                (progress_cb)(ProgressEvent::ToolResult {
+                    name: tool_name.clone(),
+                    result: result_str.chars().take(200).collect(), // Truncate for display
+                    data: tool_data,
+                })
+                .await;
+
+                info!("Tool {} executed successfully", tool_name);
+                tool_result
+            }
+            Err(e) => {
+                // Record failure for circuit-breaker
+                self.tools.record_failure(&tool_name);
+                let error_msg = format!("Tool execution failed: {}", e);
+
+                // Notify tool error
+                (progress_cb)(ProgressEvent::ToolResult {
+                    name: tool_name.clone(),
+                    result: error_msg.clone(),
+                    data: None,
+                })
+                .await;
+
+                error!("Tool {} failed: {}", tool_name, e);
+                ToolResult::error(&tool_call.id, error_msg)
+            }
+        }
+    }
+
+    /// Streaming execution path for tools that advertise streaming support.
+    async fn execute_single_tool_stream(
+        &self,
+        tool_call: &ToolCall,
+        tool_context: &ToolContext,
+        progress_cb: &ProgressCallback,
+        context_id: &str,
+    ) -> ToolResult {
+        let tool_name = tool_call.function.name.clone();
+        let progress_cb = progress_cb.clone();
+
+        let result = self
+            .tools
+            .execute_call_streaming(
+                &tool_call.function,
+                tool_context,
+                |chunk| {
+                    let progress_cb = progress_cb.clone();
+                    let tool_name = tool_name.clone();
+                    async move {
+                        let (chunk_text, is_error) = match chunk {
+                            ToolExecutionChunk::Output(text) => (text, false),
+                            ToolExecutionChunk::Error(text) => (text, true),
+                            ToolExecutionChunk::Data(_) | ToolExecutionChunk::Done => return,
+                        };
+                        (progress_cb)(ProgressEvent::ToolResultDelta {
+                            name: tool_name,
+                            chunk: chunk_text,
+                            is_error,
+                        })
+                        .await;
+                    }
+                },
+            )
+            .await;
+
+        match result {
+            Ok(exec_result) => {
+                self.tools.reset_failure(&tool_name);
+                let tool_data = exec_result.data.clone();
+                let tool_result = exec_result.to_tool_result(&tool_call.id);
+                let result_str = tool_result.content.clone();
+
+                self.extract_and_store_artifacts(context_id, &result_str, &tool_name);
+
+                (progress_cb)(ProgressEvent::ToolResult {
+                    name: tool_name.clone(),
+                    result: result_str.chars().take(200).collect(),
+                    data: tool_data,
+                })
+                .await;
+
+                info!("Streaming tool {} executed successfully", tool_name);
+                tool_result
+            }
+            Err(e) => {
+                self.tools.record_failure(&tool_name);
+                let error_msg = format!("Tool execution failed: {}", e);
+                (progress_cb)(ProgressEvent::ToolResult {
+                    name: tool_name.clone(),
+                    result: error_msg.clone(),
+                    data: None,
+                })
+                .await;
+                error!("Streaming tool {} failed: {}", tool_name, e);
+                ToolResult::error(&tool_call.id, error_msg)
+            }
+        }
+    }
+
     /// Process a message with progress callbacks and an execution controller.
     pub async fn process_message_with_progress_and_controller(
         &self,
@@ -2981,49 +3152,9 @@ Your response:"#,
 
             debug!("Executing tool: {}", tool_name);
 
-            let result = match self
-                .tools
-                .execute_call(&tool_call.function, &tool_context)
-                .await
-            {
-                Ok(exec_result) => {
-                    // Reset circuit-breaker on success
-                    self.tools.reset_failure(&tool_name);
-                    let tool_data = exec_result.data.clone();
-                    let tool_result = exec_result.to_tool_result(&tool_call.id);
-                    let result_str = tool_result.content.clone();
-
-                    // Extract artifacts from successful tool results
-                    self.extract_and_store_artifacts(context.id(), &result_str, &tool_name);
-
-                    // Notify tool result
-                    (progress_cb)(ProgressEvent::ToolResult {
-                        name: tool_name.clone(),
-                        result: result_str.chars().take(200).collect(), // Truncate for display
-                        data: tool_data,
-                    })
-                    .await;
-
-                    info!("Tool {} executed successfully", tool_name);
-                    tool_result
-                }
-                Err(e) => {
-                    // Record failure for circuit-breaker
-                    self.tools.record_failure(&tool_name);
-                    let error_msg = format!("Tool execution failed: {}", e);
-
-                    // Notify tool error
-                    (progress_cb)(ProgressEvent::ToolResult {
-                        name: tool_name.clone(),
-                        result: error_msg.clone(),
-                        data: None,
-                    })
-                    .await;
-
-                    error!("Tool {} failed: {}", tool_name, e);
-                    ToolResult::error(&tool_call.id, error_msg)
-                }
-            };
+            let result = self
+                .execute_single_tool(tool_call, &tool_context, &progress_cb, context.id())
+                .await;
 
             results.push(result);
         }
