@@ -1,0 +1,333 @@
+//! WebSocket client for the TUI.
+
+use crate::tui::auth::AuthConfig;
+use crate::tui::error::TuiError;
+use crate::VERSION;
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
+use uuid::Uuid;
+
+const PROTOCOL_VERSION: u32 = 1;
+
+/// Client-side request frame.
+#[derive(Debug, Clone, Serialize)]
+struct ClientRequest {
+    #[serde(rename = "type")]
+    frame_type: &'static str,
+    id: String,
+    method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Value>,
+}
+
+/// Client-side response frame.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ClientResponse {
+    #[serde(rename = "type")]
+    _frame_type: String,
+    id: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub payload: Option<Value>,
+    #[serde(default)]
+    pub error: Option<ClientError>,
+}
+
+/// Client-side event frame.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientEvent {
+    #[serde(rename = "type")]
+    _frame_type: String,
+    pub event: String,
+    #[serde(default)]
+    pub payload: Option<Value>,
+    #[serde(default)]
+    pub seq: Option<u64>,
+}
+
+/// Error shape in a response frame.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ClientError {
+    pub code: String,
+    pub message: String,
+}
+
+/// Payload of the hello-ok response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HelloOkPayload {
+    pub protocol_version: u32,
+    pub session_key: String,
+    pub features: Vec<String>,
+    pub scopes_granted: Vec<String>,
+    pub server: ServerInfo,
+}
+
+/// Server info in hello-ok.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerInfo {
+    pub version: String,
+    pub conn_id: String,
+}
+
+/// Message type exposed by the WebSocket client stream.
+#[derive(Debug, Clone)]
+pub enum WsMessage {
+    /// Server event.
+    Event(ClientEvent),
+    /// Response without a pending waiter.
+    OrphanResponse(ClientResponse),
+}
+
+/// Shared state tracking pending request/response waiters.
+type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<ClientResponse>>>>;
+
+/// WebSocket client connected to a Syscity gateway.
+pub struct WsClient {
+    /// Channel of incoming messages (events + orphan responses).
+    event_rx: mpsc::UnboundedReceiver<WsMessage>,
+    /// Sender half for outgoing messages.
+    write_tx: mpsc::UnboundedSender<Message>,
+    /// Pending response waiters.
+    pending: PendingMap,
+    /// Stop signal for background tasks.
+    _stop_tx: mpsc::Sender<()>,
+}
+
+impl WsClient {
+    /// Connect to `url`, perform the `connect` handshake, and return the client
+    /// plus the `hello-ok` payload.
+    pub async fn connect(
+        url: &str,
+        _auth: &AuthConfig,
+        session_id: Option<&str>,
+        scopes: &[&str],
+    ) -> Result<(Self, HelloOkPayload), TuiError> {
+        let (ws_stream, _response) = connect_async(url)
+            .await
+            .map_err(|e| TuiError::WebSocket(e.to_string()))?;
+
+        let (write_tx, write_rx) = mpsc::unbounded_channel::<Message>();
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<WsMessage>();
+        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
+
+        tokio::spawn(ws_driver(ws_stream, write_rx, event_tx, Arc::clone(&pending), stop_rx));
+
+        let mut client = Self {
+            event_rx,
+            write_tx,
+            pending,
+            _stop_tx: stop_tx,
+        };
+
+        let params = serde_json::json!({
+            "protocol_version": PROTOCOL_VERSION,
+            "client": {
+                "id": "tui",
+                "version": VERSION,
+            },
+            "scopes": scopes,
+        });
+
+        let response = client.request("connect", Some(params)).await?;
+
+        let payload: HelloOkPayload = serde_json::from_value(response)?;
+
+        if let Some(sid) = session_id {
+            client
+                .request("sessions.subscribe", Some(serde_json::json!({ "session_id": sid })))
+                .await
+                .ok();
+        }
+
+        Ok((client, payload))
+    }
+
+    /// Send a request and await the matching response.
+    pub async fn request(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, TuiError> {
+        let id = format!("tui_{}", Uuid::new_v4());
+        let request = ClientRequest {
+            frame_type: "req",
+            id: id.clone(),
+            method: method.to_string(),
+            params,
+        };
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            pending.insert(id, tx);
+        }
+
+        let text = serde_json::to_string(&request)?;
+        self.write_tx
+            .send(Message::Text(text))
+            .map_err(|_| TuiError::WebSocket("send channel closed".to_string()))?;
+
+        let response = rx
+            .await
+            .map_err(|_| TuiError::WebSocket("response channel closed".to_string()))?;
+
+        if response.ok {
+            Ok(response.payload.unwrap_or(Value::Null))
+        } else {
+            let err = response.error.unwrap_or(ClientError {
+                code: "UNKNOWN".to_string(),
+                message: "unknown error".to_string(),
+            });
+            Err(TuiError::Gateway {
+                code: err.code,
+                message: err.message,
+            })
+        }
+    }
+
+    /// Send a fire-and-forget text message.
+    pub fn send_text(&self, text: String) -> Result<(), TuiError> {
+        self.write_tx
+            .send(Message::Text(text))
+            .map_err(|_| TuiError::WebSocket("send channel closed".to_string()))
+    }
+
+    /// Close the connection gracefully.
+    pub fn close(&self) -> Result<(), TuiError> {
+        self.write_tx
+            .send(Message::Close(None))
+            .map_err(|_| TuiError::WebSocket("send channel closed".to_string()))
+    }
+
+    /// Receive the next message, if any.
+    pub async fn next(&mut self) -> Option<WsMessage> {
+        self.event_rx.recv().await
+    }
+}
+
+/// Combined read/write WebSocket driver.
+async fn ws_driver(
+    ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    mut write_rx: mpsc::UnboundedReceiver<Message>,
+    event_tx: mpsc::UnboundedSender<WsMessage>,
+    pending: PendingMap,
+    mut stop_rx: mpsc::Receiver<()>,
+) {
+    let (mut write, mut read) = ws_stream.split();
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = stop_rx.recv() => {
+                let _ = write.send(Message::Close(None)).await;
+                break;
+            }
+
+            Some(msg) = write_rx.recv() => {
+                if write.send(msg).await.is_err() {
+                    break;
+                }
+            }
+
+            Some(item) = read.next() => {
+                match item {
+                    Ok(Message::Text(text)) => {
+                        handle_text(&text, &event_tx, &pending);
+                    }
+                    Ok(Message::Close(_)) | Ok(Message::Frame(_)) => break,
+                    Ok(Message::Ping(data)) => {
+                        if write.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Message::Pong(_)) => {}
+                    Ok(Message::Binary(_)) => {}
+                    Err(_) => break,
+                }
+            }
+
+            else => break,
+        }
+    }
+}
+
+/// Parse an incoming text frame and route it to waiters or events.
+fn handle_text(text: &str, event_tx: &mpsc::UnboundedSender<WsMessage>, pending: &PendingMap) {
+    let value: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let frame_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    match frame_type {
+        "res" => {
+            let response: ClientResponse = match serde_json::from_value(value) {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+
+            let waiter = {
+                let mut pending = pending.lock().unwrap();
+                pending.remove(&response.id)
+            };
+
+            if let Some(tx) = waiter {
+                let _ = tx.send(response);
+            } else {
+                let _ = event_tx.send(WsMessage::OrphanResponse(response));
+            }
+        }
+        "event" => {
+            let event: ClientEvent = match serde_json::from_value(value) {
+                Ok(e) => e,
+                Err(_) => return,
+            };
+            let _ = event_tx.send(WsMessage::Event(event));
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_serializes() {
+        let req = ClientRequest {
+            frame_type: "req",
+            id: "id".to_string(),
+            method: "chat.send".to_string(),
+            params: Some(serde_json::json!({ "message": "hi" })),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        assert!(s.contains("\"type\":\"req\""));
+        assert!(s.contains("\"method\":\"chat.send\""));
+    }
+
+    #[test]
+    fn response_deserializes() {
+        let text = r#"{"type":"res","id":"id","ok":true,"payload":{"key":"val"}}"#;
+        let resp: ClientResponse = serde_json::from_str(text).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.id, "id");
+    }
+
+    #[test]
+    fn event_deserializes() {
+        let text = r#"{"type":"event","event":"chat.delta","payload":{"content":"hi"},"seq":1}"#;
+        let evt: ClientEvent = serde_json::from_str(text).unwrap();
+        assert_eq!(evt.event, "chat.delta");
+    }
+}

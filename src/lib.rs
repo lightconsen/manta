@@ -73,6 +73,8 @@ pub mod skills;
 pub mod tailscale;
 pub mod taskflow;
 pub mod team;
+#[cfg(feature = "tui")]
+pub mod tui;
 pub mod tools;
 pub mod utils;
 
