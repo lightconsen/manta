@@ -111,9 +111,3 @@ pub struct ConfigChange {
 }
 ```
 
-## Missing / TODO
-
-- **✅ Implemented**: Config schema version migration — `schema_version` field, `CURRENT_SCHEMA_VERSION` constant, and `migrate()` with sequential v0→v1 support. Auto-applied on load when `config.schema_version < CURRENT_SCHEMA_VERSION`. See `src/config.rs:19-24`, `src/config.rs:968-986`.
-- **✅ Implemented**: Config schema validation — `Config::validate()` checks individual fields (port, log level, ...) and cross-field constraints (e.g., `storage_type: database` requires `connection`; heartbeat time format validation). A JSON Schema endpoint is available at `GET /api/v1/config/schema` (`config_schema_handler` in `src/gateway/handlers/health.rs:277-359`, removed in a later cleanup). Neither `Config` nor `GatewayConfig` use `#[serde(deny_unknown_fields)]`. See `src/config.rs:1026-1070`.
-- **✅ Implemented**: Environment variable interpolation — `Config::interpolate_env_vars()` pre-processes raw TOML with regex before `toml::from_str()`, supporting `${VAR}`, `$VAR`, and `$$VAR` (escape → literal `$VAR`). Applied in `load_from_file()`. See `src/config.rs:976-1007`.
-- **✅ Implemented**: Config diff / audit trail — `GatewayConfig::snapshot()` captures hot-reloadable fields to a `ConfigSnapshot`; `diff_since()` computes `Vec<ConfigChange>` with path/old/new values. Wired into `reload_all_handler` (`src/gateway/handlers/admin.rs`) and `HotReloadManager Gateway` handler (`src/gateway/mod.rs:4459-4493`). Changes are logged to `PersistentAuditLog` with `AuditEventType::ConfigChange` and emitted via `tracing::info!`.

@@ -38,10 +38,3 @@ pub struct Agent {
 5. Tool results are fed back to the LLM
 6. Final response is formatted and returned
 
-## Missing / TODO
-
-- **✅ Implemented**: Advanced retry/fallback — `ModelRouter` maintains `fallback_chains` and `get_provider_chain()` for sequential failover across providers. See `src/model_router/mod.rs`.
-- **✅ Implemented**: Group chat participant tracking — `GroupSession` with `GroupRole` enum (Owner/Admin/Member/Observer), member management, and `GroupSessionManager`. See `src/agent/group.rs`.
-- **✅ Implemented**: Full ACP session lifecycle — `ExecutionController` with `check_and_wait()` is inserted between LLM iterations in the agent tool loop (a true lifecycle hook). pause/resume/step/cancel are exposed through WebSocket RPC (`acp.pause/resume/step/cancel`), ACP bridge commands (`/acp pause` etc.), and ACP actor command handlers. See `src/acp/mod.rs:121-210` (controller), `src/agent/mod.rs:2681-2701` (lifecycle hook), `src/gateway/ws.rs:509-512` (WebSocket handlers), `src/channels/acp_bridge.rs:372+` (channel commands).
-- **✅ Implemented**: Subagent delegation with `target_agent` routing — `SubagentRegistry` tracks lifecycle (spawn/complete/wait/kill) with persist/load (`src/agent/subagent_registry.rs`). `DelegateTool` now consults the registry's `AgentResolver` for routing decisions: when `TaskSpec.target_agent` is set, the child task is routed to the named agent via the Gateway's agent pool. Falls back to the default agent when no target is specified or the target is not running. See `src/tools/delegate_tool.rs:182-370` (DelegateTool with resolver), `src/gateway/mod.rs:2182-2208` (registration with Gateway agent pool).
-- **✅ Implemented**: Planner persistence — Two systems: (1) `TaskPlanner` uses `PersistedPlan` with JSON file save/load (`src/agent/planner.rs:511-627`); (2) `GoalPlanner` uses `TaskStateStore` with SQLite-backed crash recovery (`src/planner/state.rs`, `src/planner/persistent_queue.rs`). Wired at startup via `load_all_plans()` and `with_planner_state_store()`. See `src/gateway/mod.rs:2578-2612`.

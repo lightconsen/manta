@@ -46,10 +46,3 @@ impl Id {
 3. The async future is `.instrument(span)`-ed so `#[instrument]`-ed functions inherit the fields
 4. All `tracing::info!` / `warn!` / `debug!` calls in the call tree carry the context
 
-## Missing / TODO
-
-- **✅ Implemented**: Domain event system — `EventBus` with `CoreEvent` enum, `EventHandler` trait, `subscribe`/`publish`/`unsubscribe`. Used by `Engine` for entity mutations. See `src/core/events.rs`.
-- **✅ Implemented**: Structured logging context propagation — `RequestContext` with `attach_to_span()`, injected at WebSocket entry points (`handle_acp_execute_session`, `handle_acp_execute_run`). Fields propagate to all `#[instrument]`-ed functions. See `src/core/context.rs`, `src/gateway/ws.rs`.
-- **✅ Implemented**: Metrics instrumentation hooks — `EngineMetrics` with atomic counters wired into all `Engine` methods (create/update/delete/archive). Accessible via `engine.metrics()`. See `src/core/engine.rs`.
-- **✅ Implemented**: Event persistence — `EventLog` with JSONL-backed append/read/read_by_type. See `src/core/events.rs`.
-- **✅ Implemented**: Metrics export — `syscity_engine_*` gauges exposed via `/api/v1/metrics` (entities_created/updated/deleted, errors_total, archive_runs_total, entities_archived_total). See `src/gateway/handlers/health.rs`.
