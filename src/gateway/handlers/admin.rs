@@ -26,7 +26,6 @@ fn default_reload_scope() -> String {
 
 /// Comprehensive reload handler — reloads plugins, config, providers,
 /// MCP servers, and skills without requiring a daemon restart.
-#[allow(dead_code)]
 pub async fn reload_all_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<ReloadRequest>,
@@ -298,7 +297,6 @@ pub async fn reload_all_handler(
 // ── Channel management ─────────────────────────────────────────────────────────
 
 /// GET /api/v1/channels — List all channels and their enabled status.
-#[allow(dead_code)]
 pub async fn channel_list_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let config = state.config.read().await;
     let channels: Vec<serde_json::Value> = config
@@ -317,7 +315,6 @@ pub async fn channel_list_handler(State(state): State<Arc<GatewayState>>) -> imp
 }
 
 /// POST /api/v1/channels/{name}/enable — Enable a channel.
-#[allow(dead_code)]
 pub async fn enable_channel_handler(
     Path(name): Path<String>,
     State(state): State<Arc<GatewayState>>,
@@ -371,7 +368,6 @@ pub async fn enable_channel_handler(
 }
 
 /// POST /api/v1/channels/{name}/disable — Disable a channel.
-#[allow(dead_code)]
 pub async fn disable_channel_handler(
     Path(name): Path<String>,
     State(state): State<Arc<GatewayState>>,

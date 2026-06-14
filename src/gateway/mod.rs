@@ -4521,22 +4521,11 @@ impl Gateway {
         });
     }
 
-    #[allow(dead_code)]
-    /// Start Tailscale for remote access
+    /// Start Tailscale for remote access.
+    #[cfg(feature = "tailscale")]
     async fn start_tailscale(&self) -> crate::Result<()> {
-        #[cfg(feature = "tailscale")]
-        {
-            info!("Starting Tailscale integration...");
-            crate::tailscale::start(self.config.port, self.config.tailscale_domain.clone()).await?;
-        }
-
-        #[cfg(not(feature = "tailscale"))]
-        {
-            warn!(
-                "Tailscale feature not compiled in. Install with: cargo build --features tailscale"
-            );
-        }
-
+        info!("Starting Tailscale integration...");
+        crate::tailscale::start(self.config.port, self.config.tailscale_domain.clone()).await?;
         Ok(())
     }
 
@@ -5555,7 +5544,6 @@ pub struct HealthStatus {
     message: String,
 }
 
-#[allow(dead_code)]
 /// Simple chat handler for backwards compatibility with DaemonClient
 #[derive(Debug, Deserialize)]
 pub struct ChatRequestCompat {
@@ -5563,7 +5551,6 @@ pub struct ChatRequestCompat {
     conversation_id: Option<String>,
 }
 
-#[allow(dead_code)]
 /// Request body for web terminal chat
 #[derive(Debug, Deserialize)]
 pub struct WebTerminalChatRequest {
@@ -5575,7 +5562,6 @@ pub struct WebTerminalChatRequest {
     user_id: Option<String>,
 }
 
-#[allow(dead_code)]
 /// Response for web terminal chat
 #[derive(Debug, Serialize)]
 pub struct WebTerminalChatResponse {
@@ -5587,7 +5573,6 @@ pub struct WebTerminalChatResponse {
     status: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SetFallbackChainRequest {
     providers: Vec<String>,
@@ -5595,7 +5580,6 @@ pub struct SetFallbackChainRequest {
 
 // Vector Memory API Handlers
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemorySearchRequest {
     query: String,
@@ -5609,7 +5593,6 @@ fn default_memory_limit() -> usize {
     10
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemoryAddRequest {
     content: String,
@@ -5620,44 +5603,11 @@ pub struct MemoryAddRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct RunSkillRequest {
     /// Input for the skill
     input: String,
-    /// Additional context
-    #[serde(default)]
-    context: Option<serde_json::Value>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct SpawnSubagentRequest {
-    task: String,
-    #[serde(default = "default_acp_mode")]
-    mode: String,
-    #[serde(default)]
-    agent_type: String,
-}
-
-fn default_acp_mode() -> String {
-    "run".to_string()
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct AcpMessageRequest {
-    message: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct AcpExecuteRequest {
-    message: String,
-    user_id: String,
-    agent_id: Option<String>,
-}
-
-#[allow(dead_code)]
 /// Request body for connecting an MCP server
 #[derive(Debug, Deserialize)]
 pub struct McpConnectRequest {
@@ -5671,7 +5621,6 @@ pub struct McpConnectRequest {
     timeout_secs: u64,
 }
 
-#[allow(dead_code)]
 /// Request body for reading a resource
 #[derive(Debug, Deserialize)]
 pub struct McpReadResourceRequest {
@@ -5733,20 +5682,17 @@ pub struct OpenAiUsage {
 
 // ── Runtime settings CRUD ─────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SetSettingRequest {
     key: String,
     value: serde_json::Value,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct DenyApprovalRequest {
     reason: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AddCronJobRequest {
     name: String,
@@ -5754,74 +5700,17 @@ pub struct AddCronJobRequest {
     command: String,
 }
 
-// ── Pairing / DM Access Control Handlers ───────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct PairingChannelQuery {
-    channel: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct ApprovePairingRequest {
-    channel: String,
-    code: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct RejectPairingRequest {
-    channel: String,
-    code: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct RevokePairingRequest {
-    channel: String,
-    user_id: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct AddAllowlistRequest {
-    channel: String,
-    user_id: String,
-    username: Option<String>,
-}
-
-// ── Command Gate Handlers ──────────────────────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct SetGateLevelRequest {
-    user_id: String,
-    level: String,
-}
-
 // ── Mention Gate Handlers ──────────────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SetMentionPolicyRequest {
     policy: crate::security::mention_gate::MentionPolicy,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AddMentionPatternRequest {
     channel: String,
     pattern: String,
-}
-
-// ── Audit Log Handler ──────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct AuditLogQuery {
-    limit: Option<usize>,
-    event_type: Option<String>,
 }
 
 #[cfg(test)]
