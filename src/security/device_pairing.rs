@@ -8,6 +8,7 @@
 //! 5. Server issues a device token to the client
 //! 6. Client reconnects using the device token in `auth.token`
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -221,10 +222,7 @@ impl DevicePairingStore {
             let mut index = self.pending_index.write().await;
             index.remove(&req.device_id);
         }
-        info!(
-            "Device pairing rejected: code={} device_id={}",
-            code, req.device_id
-        );
+        info!("Device pairing rejected: code={} device_id={}", code, req.device_id);
         Some(req)
     }
 
@@ -288,6 +286,33 @@ impl DevicePairingStore {
             .build();
         Ok(svg)
     }
+
+    /// Encode a pairing code into a base64url-safe setup token.
+    ///
+    /// The token can be embedded in URLs without further escaping.
+    pub fn encode_setup_code(code: &str) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(code.as_bytes())
+    }
+
+    /// Decode a base64url setup token back to the original pairing code.
+    pub fn decode_setup_code(encoded: &str) -> Option<String> {
+        if encoded.is_empty() {
+            return None;
+        }
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .ok()?;
+        String::from_utf8(bytes).ok()
+    }
+
+    /// Build a setup URL for a pairing code.
+    ///
+    /// The URL path contains the base64url-encoded pairing code. The caller
+    /// is responsible for ensuring `base_url` has no trailing slash.
+    pub fn setup_url(base_url: &str, code: &str) -> String {
+        let base = base_url.trim_end_matches('/');
+        format!("{}/api/v1/device/pairing/setup/{}", base, Self::encode_setup_code(code))
+    }
 }
 
 #[cfg(test)]
@@ -340,7 +365,9 @@ mod tests {
 
         // Should work: 3 requests
         for i in 0..3 {
-            let result = store.request_access(&format!("dev_{}", i), None, None).await;
+            let result = store
+                .request_access(&format!("dev_{}", i), None, None)
+                .await;
             assert!(matches!(result, DeviceAccessResult::PairingRequired { .. }));
         }
 
@@ -372,5 +399,35 @@ mod tests {
         assert!(!code.contains('1'));
         assert!(!code.contains('I'));
         assert!(!code.contains('l'));
+    }
+
+    #[test]
+    fn test_setup_code_roundtrip() {
+        let code = "A3F7K2X9";
+        let encoded = DevicePairingStore::encode_setup_code(code);
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('='));
+
+        let decoded = DevicePairingStore::decode_setup_code(&encoded).unwrap();
+        assert_eq!(decoded, code);
+    }
+
+    #[test]
+    fn test_setup_url_format() {
+        let code = "A3F7K2X9";
+        let url = DevicePairingStore::setup_url("http://127.0.0.1:18080", code);
+        assert!(url.starts_with("http://127.0.0.1:18080/api/v1/device/pairing/setup/"));
+        assert!(!url.contains(code), "setup URL should not expose raw code");
+
+        // Trailing slash on base URL should be normalized.
+        let url2 = DevicePairingStore::setup_url("http://127.0.0.1:18080/", code);
+        assert_eq!(url, url2);
+    }
+
+    #[test]
+    fn test_decode_setup_code_rejects_invalid_input() {
+        assert!(DevicePairingStore::decode_setup_code("!!!").is_none());
+        assert!(DevicePairingStore::decode_setup_code("").is_none());
     }
 }

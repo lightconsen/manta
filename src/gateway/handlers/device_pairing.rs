@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tracing::{info, warn};
 
 use crate::gateway::GatewayState;
@@ -99,16 +100,14 @@ pub async fn reject_device_handler(
             )
                 .into_response()
         }
-        None => {
-            (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "Pairing code not found",
-                    "code": req.code,
-                })),
-            )
-                .into_response()
-        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "Pairing code not found",
+                "code": req.code,
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -117,10 +116,7 @@ pub async fn revoke_device_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<DeviceRevokeRequest>,
 ) -> impl IntoResponse {
-    let removed = state
-        .device_pairing_store
-        .revoke(&req.device_id)
-        .await;
+    let removed = state.device_pairing_store.revoke(&req.device_id).await;
     if removed {
         info!("Device revoked: device_id={}", req.device_id);
         (
@@ -143,7 +139,49 @@ pub async fn revoke_device_handler(
     }
 }
 
-/// `GET /api/v1/device/pairing/qr/{code}` — get QR code SVG for a pairing code.
+/// `GET /api/v1/device/pairing/setup/{setup_code}` — decode a base64url setup
+/// token back to the pairing code and return the pending request details.
+pub async fn setup_device_handler(
+    State(state): State<Arc<GatewayState>>,
+    Path(setup_code): Path<String>,
+) -> impl IntoResponse {
+    let code = match DevicePairingStore::decode_setup_code(&setup_code) {
+        Some(code) => code,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Invalid setup code",
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    let pending = state.device_pairing_store.list_pending().await;
+    match pending.into_iter().find(|r| r.code == code) {
+        Some(req) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "code": req.code,
+                "device_id": req.device_id,
+                "display_name": req.display_name,
+                "expires_at": req.expires_at.duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            })),
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "Pairing code not found or expired",
+                "code": code,
+            })),
+        )
+            .into_response(),
+    }
+}
 pub async fn device_qr_handler(
     State(state): State<Arc<GatewayState>>,
     Path(code): Path<String>,
@@ -153,21 +191,13 @@ pub async fn device_qr_handler(
     let exists = pending.iter().any(|r| r.code == code);
 
     if !exists {
-        return (
-            StatusCode::NOT_FOUND,
-            Html("Pairing code not found or expired".to_string()),
-        )
+        return (StatusCode::NOT_FOUND, Html("Pairing code not found or expired".to_string()))
             .into_response();
     }
 
     let uri = DevicePairingStore::pairing_uri(&code);
     match DevicePairingStore::generate_qr_svg(&uri) {
-        Ok(svg) => (
-            StatusCode::OK,
-            [("content-type", "image/svg+xml")],
-            svg,
-        )
-            .into_response(),
+        Ok(svg) => (StatusCode::OK, [("content-type", "image/svg+xml")], svg).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Html(format!("Failed to generate QR code: {}", e)),
