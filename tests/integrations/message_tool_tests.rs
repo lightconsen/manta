@@ -115,6 +115,7 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
         ),
         acp: Arc::new(syscity::acp::AcpControlPlane::new(10)),
         tailscale_authenticator: None,
+        trusted_proxy_authenticator: None,
         vector_memory: RwLock::new(None),
         session_search: RwLock::new(None),
         memory_manager: Arc::new(RwLock::new(None)),

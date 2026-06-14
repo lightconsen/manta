@@ -58,6 +58,23 @@ pub struct ChatMessage {
     pub timestamp: DateTime<Local>,
     /// Extra metadata (duration, tool count, etc.).
     pub metadata: Option<Value>,
+    /// Structured parts for rich rendering (reasoning, tool-call, text).
+    pub parts: Vec<ChatMessagePart>,
+}
+
+/// A structured part inside a chat message.
+#[derive(Debug, Clone, Default)]
+pub struct ChatMessagePart {
+    /// Part type: "text", "reasoning", or "tool-call".
+    pub part_type: String,
+    /// Text content for text/reasoning parts.
+    pub text: Option<String>,
+    /// Tool name for tool-call parts.
+    pub tool_name: Option<String>,
+    /// Tool arguments for tool-call parts.
+    pub args: Option<Value>,
+    /// Tool result for tool-call parts.
+    pub result: Option<Value>,
 }
 
 /// Summary of a session shown in the sidebar.
@@ -135,8 +152,12 @@ pub struct AppState {
     pub sessions: Vec<SessionSummary>,
     /// Chat messages for the current session.
     pub messages: Vec<ChatMessage>,
+    /// Messages stored per session id.
+    pub messages_by_session: HashMap<String, Vec<ChatMessage>>,
     /// Current input buffer.
     pub input_buffer: String,
+    /// Cursor position in the input buffer (byte index).
+    pub input_cursor: usize,
     /// Current input mode.
     pub input_mode: InputMode,
     /// Current popup, if any.
@@ -153,8 +174,12 @@ pub struct AppState {
     pub config_edits: HashMap<String, String>,
     /// Index of selected config row in the editor.
     pub config_selected_index: usize,
-    /// Cached command list for the help popup.
+    /// Cached command list for the help popup and command palette.
     pub command_list: Vec<CommandInfo>,
+    /// Filtered command palette entries.
+    pub palette_commands: Vec<CommandInfo>,
+    /// Selected index in the command palette.
+    pub palette_index: usize,
     /// Whether a response is currently streaming.
     pub is_running: bool,
     /// Fatal error that should end the TUI.
@@ -163,19 +188,119 @@ pub struct AppState {
     pub should_quit: bool,
 }
 
-/// Information about a gateway command shown in the help popup.
+/// Information about a gateway command shown in the help popup and command palette.
 #[derive(Debug, Clone, Default)]
 pub struct CommandInfo {
-    /// Command name (e.g. "new").
+    /// Canonical key (e.g. "new").
+    pub key: String,
+    /// Display name.
     pub name: String,
     /// Short description.
     pub description: String,
     /// Usage pattern.
     pub usage: String,
+    /// Category string (session, model, status, agents, tools, admin).
+    pub category: String,
+    /// Tier (essential, standard, power).
+    pub tier: String,
+    /// Whether the command is client-side only.
+    pub local: bool,
+    /// Whether the command requires admin scope.
+    pub requires_admin: bool,
+}
+
+impl CommandInfo {
+    /// Match against a query string (name prefix or description contains).
+    pub fn matches(&self, query: &str) -> bool {
+        let q = query.to_lowercase();
+        self.name.to_lowercase().starts_with(&q)
+            || self.description.to_lowercase().contains(&q)
+    }
 }
 
 impl AppState {
-    /// Append a user message and return its id.
+    /// Insert a character at the current input cursor position.
+    pub fn insert_char(&mut self, c: char) {
+        self.input_buffer.insert(self.input_cursor, c);
+        self.input_cursor += c.len_utf8();
+    }
+
+    /// Insert a newline at the current input cursor position.
+    pub fn insert_newline(&mut self) {
+        self.insert_char('\n');
+    }
+
+    /// Delete the character before the input cursor.
+    pub fn input_backspace(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        let mut prev = self.input_cursor - 1;
+        while prev > 0 && !self.input_buffer.is_char_boundary(prev) {
+            prev -= 1;
+        }
+        self.input_buffer.replace_range(prev..self.input_cursor, "");
+        self.input_cursor = prev;
+    }
+
+    /// Move the input cursor one character to the left.
+    pub fn move_cursor_left(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        let mut prev = self.input_cursor - 1;
+        while prev > 0 && !self.input_buffer.is_char_boundary(prev) {
+            prev -= 1;
+        }
+        self.input_cursor = prev;
+    }
+
+    /// Move the input cursor one character to the right.
+    pub fn move_cursor_right(&mut self) {
+        if self.input_cursor >= self.input_buffer.len() {
+            return;
+        }
+        let mut next = self.input_cursor + 1;
+        while next < self.input_buffer.len() && !self.input_buffer.is_char_boundary(next) {
+            next += 1;
+        }
+        self.input_cursor = next.min(self.input_buffer.len());
+    }
+
+    /// Persist the current `messages` buffer into `messages_by_session`.
+    pub fn save_current_session_messages(&mut self) {
+        if let Some(ref sid) = self.current_session {
+            if !self.messages.is_empty() {
+                self.messages_by_session
+                    .insert(sid.clone(), self.messages.clone());
+            }
+        }
+    }
+
+    /// Load messages for a session from `messages_by_session` into `messages`.
+    pub fn load_session_messages(&mut self, session_id: &str) {
+        self.messages = self
+            .messages_by_session
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    /// Switch the current session, persisting the previous session's messages.
+    pub fn switch_session(&mut self, session_id: &str) {
+        self.save_current_session_messages();
+        self.current_session = Some(session_id.to_string());
+        self.load_session_messages(session_id);
+        self.scroll_offset = 0;
+        for (idx, s) in self.sessions.iter_mut().enumerate() {
+            s.selected = s.id == session_id;
+            if s.selected {
+                self.selected_session_index = idx;
+            }
+        }
+    }
+
+    /// Append a user message to the current session and return its id.
     pub fn append_user_message(
         &mut self,
         id: impl Into<String>,
@@ -212,6 +337,22 @@ impl AppState {
         self.messages.push(ChatMessage {
             id: id.into(),
             role: "system".to_string(),
+            content: content.into(),
+            status: MessageStatus::Complete,
+            timestamp: Local::now(),
+            ..ChatMessage::default()
+        });
+    }
+
+    /// Append an assistant message that is already complete.
+    pub fn append_complete_assistant_message(
+        &mut self,
+        id: impl Into<String>,
+        content: impl Into<String>,
+    ) {
+        self.messages.push(ChatMessage {
+            id: id.into(),
+            role: "assistant".to_string(),
             content: content.into(),
             status: MessageStatus::Complete,
             timestamp: Local::now(),
@@ -289,15 +430,12 @@ impl AppState {
         }
     }
 
-    /// Select a session by id.
-    pub fn select_session(&mut self, session_id: &str) {
-        self.current_session = Some(session_id.to_string());
-        for (idx, s) in self.sessions.iter_mut().enumerate() {
-            s.selected = s.id == session_id;
-            if s.selected {
-                self.selected_session_index = idx;
-            }
-        }
+    /// Find a command in the cached catalog by key or name.
+    pub fn find_command(&self, name: &str) -> Option<&CommandInfo> {
+        let normalized = name.to_lowercase();
+        self.command_list
+            .iter()
+            .find(|c| c.key == normalized || c.name == normalized)
     }
 
     /// Return true if the granted scopes include `scope`.

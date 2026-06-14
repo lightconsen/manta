@@ -40,7 +40,7 @@ fn render_shows_session_sidebar() {
     let mut terminal = Terminal::new(backend).unwrap();
     let mut state = AppState::default();
     state.ensure_session("test-session");
-    state.select_session("test-session");
+    state.switch_session("test-session");
 
     terminal
         .draw(|f| render(f, &state))

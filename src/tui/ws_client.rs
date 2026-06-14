@@ -208,6 +208,11 @@ impl WsClient {
             .map_err(|_| TuiError::WebSocket("send channel closed".to_string()))
     }
 
+    /// Request the gateway abort the current run.
+    pub async fn abort(&mut self) -> Result<Value, TuiError> {
+        self.request("chat.abort", None).await
+    }
+
     /// Receive the next message, if any.
     pub async fn next(&mut self) -> Option<WsMessage> {
         self.event_rx.recv().await

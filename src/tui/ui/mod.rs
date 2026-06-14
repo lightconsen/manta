@@ -115,3 +115,20 @@ pub fn error_style() -> Style {
 pub fn system_style() -> Style {
     Style::default().fg(Color::Yellow)
 }
+
+/// Helper: style for reasoning blocks.
+pub fn reasoning_style() -> Style {
+    Style::default()
+        .fg(Color::Gray)
+        .add_modifier(Modifier::ITALIC)
+}
+
+/// Helper: style for tool-call blocks.
+pub fn tool_call_style() -> Style {
+    Style::default().fg(Color::Magenta)
+}
+
+/// Helper: style for code blocks.
+pub fn code_style() -> Style {
+    Style::default().bg(Color::Black).fg(Color::White)
+}

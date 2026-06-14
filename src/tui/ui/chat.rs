@@ -2,7 +2,8 @@
 
 use crate::tui::state::{AppState, ChatMessage, MessageStatus};
 use crate::tui::ui::{
-    assistant_style, dim_style, error_style, system_style, titled_block, user_style,
+    assistant_style, code_style, dim_style, error_style, reasoning_style, system_style,
+    titled_block, tool_call_style, user_style,
 };
 use ratatui::{
     layout::Rect,
@@ -28,7 +29,8 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             Line::from(""),
             Line::from("  Type a message and press Enter to chat."),
             Line::from("  Press Ctrl+H for help, Ctrl+E for config editor."),
-            Line::from("  Press Ctrl+C or Ctrl+Q to quit."),
+            Line::from("  Press Ctrl+C to abort a run or quit."),
+            Line::from("  Shift+Enter inserts a newline."),
         ])
         .wrap(Wrap { trim: false });
         f.render_widget(hint, inner);
@@ -68,6 +70,7 @@ fn message_to_lines(msg: &ChatMessage, _width: usize) -> Vec<Line<'_>> {
         "user" => ("You", user_style()),
         "assistant" => ("Assistant", assistant_style()),
         "system" => ("System", system_style()),
+        "tool" => ("Tool", tool_call_style()),
         _ => ("Unknown", dim_style()),
     };
 
@@ -86,21 +89,115 @@ fn message_to_lines(msg: &ChatMessage, _width: usize) -> Vec<Line<'_>> {
         status_indicator,
     ]));
 
-    for line in msg.content.lines() {
-        lines.push(Line::from(Span::styled(line.to_string(), style)));
+    if msg.parts.is_empty() {
+        lines.extend(render_text_content(&msg.content, style));
+    } else {
+        for part in &msg.parts {
+            match part.part_type.as_str() {
+                "reasoning" => {
+                    if let Some(text) = &part.text {
+                        lines.push(Line::from(Span::styled(
+                            "thinking:",
+                            reasoning_style().add_modifier(Modifier::BOLD),
+                        )));
+                        for line in text.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {}", line),
+                                reasoning_style(),
+                            )));
+                        }
+                    }
+                }
+                "tool-call" => {
+                    let tool_name = part
+                        .tool_name
+                        .as_deref()
+                        .unwrap_or(msg.tool_name.as_deref().unwrap_or("tool"));
+                    lines.push(Line::from(vec![
+                        Span::styled("tool: ", tool_call_style().add_modifier(Modifier::BOLD)),
+                        Span::styled(tool_name, tool_call_style()),
+                    ]));
+                    if let Some(args) = &part.args {
+                        let args_text = serde_json::to_string_pretty(args).unwrap_or_default();
+                        for line in args_text.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {}", line),
+                                tool_call_style(),
+                            )));
+                        }
+                    }
+                    if let Some(result) = &part.result {
+                        let result_text = serde_json::to_string_pretty(result).unwrap_or_default();
+                        lines.push(Line::from(Span::styled(
+                            "  → result:",
+                            tool_call_style().add_modifier(Modifier::BOLD),
+                        )));
+                        for line in result_text.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("    {}", line),
+                                tool_call_style(),
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(text) = &part.text {
+                        lines.extend(render_text_content(text, style));
+                    }
+                }
+            }
+        }
+        // Also render any plain content not represented by parts.
+        if msg.content.is_empty() || msg.parts.iter().any(|p| p.part_type == "text") {
+            // Already covered.
+        } else {
+            lines.extend(render_text_content(&msg.content, style));
+        }
     }
 
     if let Some(thinking) = &msg.thinking {
         lines.push(Line::from(Span::styled(
             "thinking:",
-            dim_style().add_modifier(Modifier::ITALIC),
+            reasoning_style().add_modifier(Modifier::BOLD),
         )));
         for line in thinking.lines() {
             lines.push(Line::from(Span::styled(
                 format!("  {}", line),
-                dim_style().add_modifier(Modifier::ITALIC),
+                reasoning_style(),
             )));
         }
+    }
+
+    lines
+}
+
+/// Render text content, detecting fenced code blocks.
+fn render_text_content(content: &str, base_style: Style) -> Vec<Line<'_>> {
+    let mut lines = Vec::new();
+    let mut in_code = false;
+
+    for line in content.lines() {
+        if let Some(lang) = line.strip_prefix("```") {
+            in_code = !in_code;
+            if in_code && !lang.trim().is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("code: {}", lang.trim()),
+                    code_style().add_modifier(Modifier::BOLD),
+                )));
+            }
+            continue;
+        }
+
+        if in_code {
+            lines.push(Line::from(Span::styled(line.to_string(), code_style())));
+        } else {
+            lines.push(Line::from(Span::styled(line.to_string(), base_style)));
+        }
+    }
+
+    // If no lines were produced (empty content), render the raw text.
+    if lines.is_empty() && !content.is_empty() {
+        lines.push(Line::from(Span::styled(content.to_string(), base_style)));
     }
 
     lines
@@ -120,5 +217,12 @@ mod tests {
         };
         let lines = message_to_lines(&msg, 80);
         assert!(lines.len() >= 3);
+    }
+
+    #[test]
+    fn code_block_detected() {
+        let content = "```rust\nlet x = 1;\n```";
+        let lines = render_text_content(content, Style::default());
+        assert!(lines.iter().any(|l| l.to_string().contains("code: rust")));
     }
 }

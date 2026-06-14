@@ -11,6 +11,8 @@ pub enum TuiAction {
     RunSlashCommand(String),
     /// Append a character to the input buffer.
     InputChar(char),
+    /// Insert a newline into the input buffer.
+    InputNewline,
     /// Delete the character before the cursor.
     InputBackspace,
     /// Move cursor left.
@@ -49,6 +51,8 @@ pub enum TuiAction {
     Approve { id: String },
     /// Reject a pending approval.
     Reject { id: String },
+    /// Abort the current run.
+    Abort,
     /// Terminal resized.
     Resize(u16, u16),
     /// Save pending config edits.
@@ -64,7 +68,7 @@ impl TuiAction {
     pub fn from_key_event(key: KeyEvent) -> Self {
         match key.code {
             KeyCode::Char('s') if key.modifiers == KeyModifiers::CONTROL => Self::SaveConfig,
-            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => Self::Quit,
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => Self::Abort,
             KeyCode::Char('q') if key.modifiers == KeyModifiers::CONTROL => Self::Quit,
             KeyCode::Char('l') if key.modifiers == KeyModifiers::CONTROL => Self::FocusNext,
             KeyCode::Char('h') if key.modifiers == KeyModifiers::CONTROL => Self::OpenHelp,
@@ -72,6 +76,7 @@ impl TuiAction {
             KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => Self::NewSession,
             KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => Self::DeleteSelected,
             KeyCode::Esc => Self::ClosePopup,
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => Self::InputNewline,
             KeyCode::Enter => Self::SendMessage,
             KeyCode::Up => Self::SelectUp,
             KeyCode::Down => Self::SelectDown,
@@ -97,7 +102,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_quits() {
-        let key = KeyEvent::from(KeyCode::Char('c'));
+        let _key = KeyEvent::from(KeyCode::Char('c'));
         // KeyEvent::from does not set modifiers; construct manually for control.
         let ctrl_c = KeyEvent {
             code: KeyCode::Char('c'),
@@ -105,7 +110,7 @@ mod tests {
             kind: crossterm::event::KeyEventKind::Press,
             state: crossterm::event::KeyEventState::empty(),
         };
-        assert_eq!(TuiAction::from_key_event(ctrl_c), TuiAction::Quit);
+        assert_eq!(TuiAction::from_key_event(ctrl_c), TuiAction::Abort);
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Central async event loop merging input, network, and rendering.
 
 use crate::tui::actions::TuiAction;
-use crate::tui::commands::{action_for_input, handle_slash_command};
+use crate::tui::commands::{
+    action_for_input, extract_inline_command, handle_slash_command, update_palette,
+};
 use crate::tui::state::{AppState, InputMode, Popup, SessionSummary};
 use crate::tui::ui;
 use crate::tui::ws_client::{ClientEvent, WsClient, WsMessage};
@@ -20,8 +22,18 @@ pub async fn run(
     mut input_rx: mpsc::UnboundedReceiver<TuiAction>,
     mut render_interval: Interval,
 ) -> Result<(), crate::tui::error::TuiError> {
-    // Fetch initial session list.
+    // Fetch initial session list and command catalog.
     let _ = fetch_sessions(&mut ws_client, Arc::clone(&state)).await;
+    let _ = fetch_commands(&mut ws_client, Arc::clone(&state)).await;
+
+    // If we already have a current session, load its history.
+    {
+        let s = state.read().await;
+        if let Some(sid) = s.current_session.clone() {
+            drop(s);
+            let _ = load_session_history(&mut ws_client, Arc::clone(&state), &sid).await;
+        }
+    }
 
     loop {
         tokio::select! {
@@ -78,6 +90,7 @@ async fn handle_action(
             TuiAction::SendMessage => {
                 let value = s.input_buffer.trim().to_string();
                 s.input_buffer.clear();
+                s.input_cursor = 0;
                 let key = config_keys()
                     .get(s.config_selected_index)
                     .cloned()
@@ -87,17 +100,22 @@ async fn handle_action(
             }
             TuiAction::SaveConfig => {
                 s.input_mode = InputMode::Popup;
+                s.input_cursor = 0;
                 drop(s);
                 save_config_edits(Arc::clone(&state), ws_client).await.ok();
                 return Ok(false);
             }
-            TuiAction::InputChar(c) => s.input_buffer.push(c),
-            TuiAction::InputBackspace => {
-                s.input_buffer.pop();
-            }
+            TuiAction::InputChar(c) => s.insert_char(c),
+            TuiAction::InputNewline => s.insert_newline(),
+            TuiAction::InputBackspace => s.input_backspace(),
+            TuiAction::CursorLeft => s.move_cursor_left(),
+            TuiAction::CursorRight => s.move_cursor_right(),
+            TuiAction::CursorHome => s.input_cursor = 0,
+            TuiAction::CursorEnd => s.input_cursor = s.input_buffer.len(),
             TuiAction::ClosePopup => {
                 s.input_mode = InputMode::Popup;
                 s.input_buffer.clear();
+                s.input_cursor = 0;
             }
             _ => {}
         }
@@ -106,6 +124,20 @@ async fn handle_action(
 
     match action {
         TuiAction::Quit => {
+            s.should_quit = true;
+            return Ok(true);
+        }
+        TuiAction::Abort => {
+            if s.is_running {
+                drop(s);
+                let _ = ws_client.request("chat.abort", None).await;
+                let mut s = state.write().await;
+                s.is_running = false;
+                if let Some(msg) = s.last_streaming_message() {
+                    msg.status = crate::tui::state::MessageStatus::Error("Stopped".to_string());
+                }
+                return Ok(false);
+            }
             s.should_quit = true;
             return Ok(true);
         }
@@ -118,33 +150,58 @@ async fn handle_action(
                 return Ok(false);
             }
             s.input_buffer.clear();
+            s.input_cursor = 0;
+            s.scroll_offset = 0;
             drop(s);
 
             if text.starts_with('/') {
-                return handle_slash_command(&text, state, ws_client)
+                return handle_slash_command(&text, state.clone(), ws_client)
                     .await
                     .map(|_| false);
             }
 
-            send_chat_message(state, ws_client, text).await?;
+            let (inline_cmd, remaining) = extract_inline_command(&text);
+            if !remaining.is_empty() {
+                send_chat_message(state.clone(), ws_client, remaining).await?;
+            } else if inline_cmd.is_none() {
+                // The message contained only whitespace after extraction; nothing to send.
+                return Ok(false);
+            }
+            if let Some(cmd) = inline_cmd {
+                handle_slash_command(&cmd, state.clone(), ws_client).await?;
+            }
         }
         TuiAction::RunSlashCommand(cmd) => {
+            s.input_buffer.clear();
+            s.input_cursor = 0;
             drop(s);
-            handle_slash_command(&cmd, state, ws_client).await?;
+            handle_slash_command(&cmd, state.clone(), ws_client).await?;
         }
         TuiAction::InputChar(c) => match s.input_mode {
-            InputMode::Normal | InputMode::ConfigEdit => s.input_buffer.push(c),
+            InputMode::Normal | InputMode::ConfigEdit => s.insert_char(c),
+            InputMode::Popup => {}
+        },
+        TuiAction::InputNewline => match s.input_mode {
+            InputMode::Normal | InputMode::ConfigEdit => {
+                s.insert_newline();
+            }
             InputMode::Popup => {}
         },
         TuiAction::InputBackspace => {
-            s.input_buffer.pop();
+            s.input_backspace();
         }
         TuiAction::CursorLeft => {
-            // Cursor always stays at end for simplicity.
+            s.move_cursor_left();
         }
-        TuiAction::CursorRight => {}
-        TuiAction::CursorHome => {}
-        TuiAction::CursorEnd => {}
+        TuiAction::CursorRight => {
+            s.move_cursor_right();
+        }
+        TuiAction::CursorHome => {
+            s.input_cursor = 0;
+        }
+        TuiAction::CursorEnd => {
+            s.input_cursor = s.input_buffer.len();
+        }
         TuiAction::ScrollUp => {
             s.scroll_offset = s.scroll_offset.saturating_add(3);
         }
@@ -185,7 +242,9 @@ async fn handle_action(
             Popup::ConfigEditor => {
                 s.config_selected_index = s.config_selected_index.saturating_sub(1);
             }
-            _ => {}
+            Popup::Help => {
+                s.palette_index = s.palette_index.saturating_sub(1);
+            }
         },
         TuiAction::SelectDown => match s.popup {
             Popup::None => {
@@ -199,13 +258,17 @@ async fn handle_action(
                 s.config_selected_index =
                     (s.config_selected_index + 1).min(keys.len().saturating_sub(1));
             }
-            _ => {}
+            Popup::Help => {
+                if !s.palette_commands.is_empty() {
+                    s.palette_index = (s.palette_index + 1).min(s.palette_commands.len() - 1);
+                }
+            }
         },
         TuiAction::SelectEnter => match s.popup {
             Popup::None => {
                 if let Some(session) = s.sessions.get(s.selected_session_index).cloned() {
                     let sid = session.id.clone();
-                    s.select_session(&sid);
+                    s.switch_session(&sid);
                     drop(s);
                     subscribe_session(ws_client, &sid).await.ok();
                 }
@@ -218,18 +281,27 @@ async fn handle_action(
                     .unwrap_or_default();
                 let current = s.config_cache.get(&key).cloned().unwrap_or(Value::Null);
                 s.input_buffer = current.to_string();
+                s.input_cursor = s.input_buffer.len();
             }
-            _ => {}
+            Popup::Help => {
+                if let Some(cmd) = s.palette_commands.get(s.palette_index).cloned() {
+                    s.popup = Popup::None;
+                    s.input_mode = InputMode::Normal;
+                    s.input_buffer = format!("/{}", cmd.name);
+                    s.input_cursor = s.input_buffer.len();
+                    update_palette(&mut s);
+                }
+            }
         },
         TuiAction::NewSession => {
             drop(s);
-            create_session(state, ws_client).await?;
+            create_session(state.clone(), ws_client).await?;
         }
         TuiAction::DeleteSelected => {
             let idx = s.selected_session_index;
             if let Some(session) = s.sessions.get(idx).cloned() {
                 drop(s);
-                delete_session(state, ws_client, &session.id).await?;
+                delete_session(state.clone(), ws_client, &session.id).await?;
             }
         }
         TuiAction::Approve { id } => {
@@ -253,6 +325,14 @@ async fn handle_action(
         TuiAction::None => {}
     }
 
+    // Keep the command palette in sync whenever typing in normal mode.
+    if state.read().await.input_mode == InputMode::Normal
+        && state.read().await.input_buffer.starts_with('/')
+    {
+        let mut s = state.write().await;
+        update_palette(&mut s);
+    }
+
     Ok(false)
 }
 
@@ -270,7 +350,7 @@ async fn send_chat_message(
             .unwrap_or_else(|| format!("tui:{}", uuid::Uuid::new_v4()));
         s.current_session = Some(sid.clone());
         s.ensure_session(&sid);
-        s.select_session(&sid);
+        s.switch_session(&sid);
         let msg_id = format!("msg_{}", s.messages.len());
         s.append_user_message(msg_id, &text);
         sid
@@ -309,7 +389,11 @@ async fn handle_network_message(
 }
 
 /// Handle a gateway event.
-async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_client: &mut WsClient) {
+async fn handle_event(
+    event: ClientEvent,
+    state: Arc<RwLock<AppState>>,
+    _ws_client: &mut WsClient,
+) {
     let mut s = state.write().await;
 
     match event.event.as_str() {
@@ -317,6 +401,9 @@ async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_clie
             if let Some(payload) = event.payload {
                 if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
                     s.append_delta(content);
+                    if s.scroll_offset == 0 {
+                        // Keep tail pinned when already at the bottom.
+                    }
                 }
             }
         }
@@ -340,8 +427,23 @@ async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_clie
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool")
                     .to_string();
+                let args = payload.get("args").cloned();
                 let msg_id = format!("tool_call_{}", s.messages.len());
-                s.append_system_message(msg_id, format!("Calling {}...", tool_name));
+                s.messages.push(crate::tui::state::ChatMessage {
+                    id: msg_id,
+                    role: "tool".to_string(),
+                    content: format!("Calling {}...", tool_name),
+                    tool_name: Some(tool_name.clone()),
+                    status: crate::tui::state::MessageStatus::Sending,
+                    parts: vec![crate::tui::state::ChatMessagePart {
+                        part_type: "tool-call".to_string(),
+                        text: Some(format!("Calling {}...", tool_name)),
+                        tool_name: Some(tool_name),
+                        args,
+                        result: None,
+                    }],
+                    ..crate::tui::state::ChatMessage::default()
+                });
             }
         }
         "tool.result" => {
@@ -351,13 +453,32 @@ async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_clie
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool")
                     .to_string();
-                let result = payload
-                    .get("result")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("done")
-                    .to_string();
-                let msg_id = format!("tool_result_{}", s.messages.len());
-                s.append_system_message(msg_id, format!("{}: {}", tool_name, result));
+                let result = payload.get("result").cloned();
+                if let Some(msg) = s.messages.iter_mut().rev().find(|m| {
+                    m.role == "tool" && m.tool_name.as_deref() == Some(&tool_name)
+                }) {
+                    msg.status = crate::tui::state::MessageStatus::Complete;
+                    if let Some(idx) = msg.parts.iter_mut().find(|p| p.part_type == "tool-call") {
+                        idx.result = result.clone();
+                    }
+                } else {
+                    let msg_id = format!("tool_result_{}", s.messages.len());
+                    s.messages.push(crate::tui::state::ChatMessage {
+                        id: msg_id,
+                        role: "tool".to_string(),
+                        content: format!("{}: done", tool_name),
+                        tool_name: Some(tool_name.clone()),
+                        status: crate::tui::state::MessageStatus::Complete,
+                        parts: vec![crate::tui::state::ChatMessagePart {
+                            part_type: "tool-call".to_string(),
+                            text: Some(format!("{}: done", tool_name)),
+                            tool_name: Some(tool_name),
+                            args: None,
+                            result,
+                        }],
+                        ..crate::tui::state::ChatMessage::default()
+                    });
+                }
             }
         }
         "chat.final" => {
@@ -367,6 +488,7 @@ async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_clie
                 .and_then(|p| p.get("response"))
                 .and_then(|v| v.as_str());
             s.finalize_assistant(content);
+            s.scroll_offset = 0;
         }
         "chat.error" => {
             let message = event
@@ -397,6 +519,17 @@ async fn handle_event(event: ClientEvent, state: Arc<RwLock<AppState>>, _ws_clie
                         session.label = Some(name.to_string());
                     }
                 }
+            }
+        }
+        "cron.completed" => {
+            if let Some(payload) = event.payload {
+                let message = payload
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Cron job completed")
+                    .to_string();
+                let msg_id = format!("cron_{}", s.messages.len());
+                s.append_system_message(msg_id, message);
             }
         }
         "approval.required" => {
@@ -441,7 +574,7 @@ async fn fetch_sessions(
             })
             .collect();
         if let Some(current) = s.current_session.clone() {
-            s.select_session(&current);
+            s.switch_session(&current);
         }
     }
     Ok(())
@@ -468,7 +601,7 @@ async fn create_session(
         {
             let mut s = state.write().await;
             s.ensure_session(sid);
-            s.select_session(sid);
+            s.switch_session(sid);
         }
         subscribe_session(ws_client, sid).await?;
     }
@@ -498,35 +631,119 @@ async fn delete_session(
     Ok(())
 }
 
-/// Fetch the command list for the help popup.
+/// Load persisted chat history for a session.
+async fn load_session_history(
+    ws_client: &mut WsClient,
+    state: Arc<RwLock<AppState>>,
+    session_id: &str,
+) -> Result<(), crate::tui::error::TuiError> {
+    let result = ws_client
+        .request(
+            "chat.history",
+            Some(serde_json::json!({ "session_id": session_id })),
+        )
+        .await;
+
+    let mut s = state.write().await;
+    match result {
+        Ok(payload) => {
+            let messages: Vec<crate::tui::state::ChatMessage> = payload
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| {
+                            Some(crate::tui::state::ChatMessage {
+                                id: v.get("id")?.as_str()?.to_string(),
+                                role: v.get("role")?.as_str()?.to_string(),
+                                content: v
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                thinking: v
+                                    .get("thinking")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                tool_name: v
+                                    .get("tool_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                status: crate::tui::state::MessageStatus::Complete,
+                                timestamp: chrono::Local::now(),
+                                metadata: v.get("metadata").cloned(),
+                                parts: vec![],
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            s.messages_by_session.insert(session_id.to_string(), messages);
+            if s.current_session.as_deref() == Some(session_id) {
+                s.load_session_messages(session_id);
+            }
+        }
+        Err(e) => {
+            s.error_toast(format!("Failed to load history: {}", e));
+        }
+    }
+    Ok(())
+}
+
+/// Fetch the command list for the help popup and command palette.
 pub(crate) async fn fetch_commands(
     ws_client: &mut WsClient,
     state: Arc<RwLock<AppState>>,
 ) -> Result<(), crate::tui::error::TuiError> {
     let result = ws_client
-        .request("commands.list", Some(serde_json::json!({ "tier": "essential" })))
-        .await?;
+        .request("commands.list", Some(serde_json::json!({ "tier": "power" })))
+        .await;
+
     let mut s = state.write().await;
-    if let Some(items) = result.as_array() {
-        s.command_list = items
-            .iter()
-            .filter_map(|v| {
-                Some(crate::tui::state::CommandInfo {
-                    name: v.get("name")?.as_str()?.to_string(),
-                    description: v
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    usage: v
-                        .get("usage")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-            })
-            .collect();
+    match result {
+        Ok(value) => {
+            if let Some(items) = value.get("commands").and_then(|v| v.as_array()) {
+                s.command_list = items
+                    .iter()
+                    .filter_map(|v| {
+                        Some(crate::tui::state::CommandInfo {
+                            key: v.get("key")?.as_str()?.to_string(),
+                            name: v.get("name")?.as_str()?.to_string(),
+                            description: v
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            usage: v
+                                .get("args")
+                                .and_then(|v| v.as_str())
+                                .map(String::from)
+                                .unwrap_or_default(),
+                            category: v
+                                .get("category")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("status")
+                                .to_string(),
+                            tier: v
+                                .get("tier")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("standard")
+                                .to_string(),
+                            local: v.get("local").and_then(|v| v.as_bool()).unwrap_or(false),
+                            requires_admin: v
+                                .get("requires_admin")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                        })
+                    })
+                    .collect();
+            }
+        }
+        Err(_) => {
+            s.command_list = crate::tui::commands::fallback_commands();
+        }
     }
+    update_palette(&mut s);
     Ok(())
 }
 
