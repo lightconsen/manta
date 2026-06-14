@@ -19,30 +19,23 @@ The command system has two layers:
 |---|---|
 | `local` | Executed client-side |
 | `admin` | Requires admin scope |
-| `essential` | Always shown in completions |
-| `standard` | Shown by default |
-| `power` | Hidden unless explicitly requested |
-
-### Implementation Status
-
-| Icon | Meaning |
-|---|---|
-| ✅ | **Implemented** — calls real backend APIs |
-| ⏳ | **Partial** — basic implementation, subcommands may be missing |
+| `essential` | Core commands always shown in completions |
+| `standard` | Common commands shown by default |
+| `power` | Advanced/admin commands hidden unless filtering explicitly |
 
 ---
 
 ## Session Commands
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/new` | `[model]` | Start a new session | yes | no | ✅ |
-| `/reset` | `[soft\|hard]` | Reset the current session | no | no | ✅ |
-| `/stop` | — | Abort the current run | no | no | ✅ |
-| `/compact` | `[instructions]` | Flush transcript to disk and compact context | no | no | ✅ |
-| `/export-session` | `[path]` | Export session transcript as HTML | no | no | ✅ |
-| `/clear` | — | Clear chat history (client-side) | yes | no | ✅ |
-| `/session` | `idle\|max-age <duration\|off>` | Manage session timeout settings | no | no | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/new` | `[model]` | Start a new session. In channels this is handled locally; the TUI creates a session via `sessions.create` and subscribes to it. | yes | no |
+| `/reset` | `[soft\|hard]` | Reset the current session. Terminates the session, recreates it, and deletes persisted history. | no | no |
+| `/stop` | — | Abort the current run by cancelling the active ACP session. | no | no |
+| `/compact` | `[instructions]` | Compact the session context via `Agent::compact_context()` and flush the transcript to disk as HTML. | no | no |
+| `/export-session` | `[path]` | Export the current session transcript as HTML via `TranscriptStore::export()`. | no | no |
+| `/clear` | — | Clear chat history from the local message buffer (client-side only). | yes | no |
+| `/session` | `idle\|max-age <duration\|off>` | Read or set session timeout values (`session.idle`, `session.max-age`). | no | no |
 
 ### Examples
 
@@ -60,15 +53,15 @@ The command system has two layers:
 
 ## Model / Directive Commands
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/model` | `[name\|#\|status]` | Show or switch the active model | no | no | ✅ |
-| `/think` | `<level>` | Set thinking level (`off`, `minimal`, `low`, `medium`, `high`) | no | no | ✅ |
-| `/verbose` | `on\|off\|full` | Toggle verbose output | no | no | ✅ |
-| `/trace` | `on\|off` | Toggle plugin trace | no | no | ✅ |
-| `/fast` | `[on\|off\|status]` | Show or set fast mode | no | no | ✅ |
-| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility | no | no | ✅ |
-| `/queue` | `<mode>` | Set queue behavior (`steer`, `interrupt`, `followup`) | no | no | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/model` | `[name\|#\|status]` | Show the current default model and provider, or set a runtime model override. | no | no |
+| `/think` | `<level>` | Set the thinking level (`off`, `minimal`, `low`, `medium`, `high`) stored as `think.level`. | no | no |
+| `/verbose` | `on\|off\|full` | Toggle verbose output mode stored as `verbose.mode`. | no | no |
+| `/trace` | `on\|off` | Toggle plugin trace via `PluginManager::set_trace_enabled()` and store as `trace.enabled`. | no | no |
+| `/fast` | `[on\|off\|status]` | Enable or disable fast mode, which swaps `config.model` to the resolved `fast` alias and restores it on disable. | no | no |
+| `/reasoning` | `[on\|off\|stream]` | Set reasoning visibility stored as `reasoning.visibility`. | no | no |
+| `/queue` | `<mode>` | Set queue behavior (`steer`, `interrupt`, `followup`) stored as `queue.mode`. | no | no |
 
 ### Examples
 
@@ -86,15 +79,15 @@ The command system has two layers:
 
 ## Status / Query Commands
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/help` | `[page] [--tier=essential|standard|power]` | Show paginated help summary | no | no | ✅ |
-| `/commands` | — | Alias for `/help` | no | no | ✅ |
-| `/status` | — | Show gateway runtime status | no | no | ✅ |
-| `/tools` | `[compact\|verbose]` | Show available tools | no | no | ✅ |
-| `/whoami` | — | Show your sender ID and scopes | no | no | ✅ |
-| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics | no | no | ⏳ |
-| `/context` | `[list\|detail\|json]` | Show context assembly info | no | no | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/help` | `[page] [--tier=essential|standard|power]` | Show paginated help summary grouped by category. | no | no |
+| `/commands` | — | Alias for `/help`. | no | no |
+| `/status` | — | Show gateway runtime status: active agents and sessions. | no | no |
+| `/tools` | `[compact\|verbose]` | Show available tools registered in `ToolRegistry`. | no | no |
+| `/whoami` | — | Show the authenticated user ID and granted scopes. | no | no |
+| `/usage` | `[off\|tokens\|full\|cost]` | Show usage statistics from `runtime_settings`. | no | no |
+| `/context` | `[list\|detail\|json]` | Show context assembly info for the active session. | no | no |
 
 ### Examples
 
@@ -112,15 +105,15 @@ The command system has two layers:
 
 ## Subagents / ACP Commands
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/subagents` | `list\|kill\|log\|info\|send\|steer\|spawn` | Manage sub-agents | no | no | ⏳ |
-| `/acp` | `spawn\|cancel\|steer\|close\|sessions\|status\|...` | Manage ACP sessions | no | no | ⏳ |
-| `/kill` | `<id\|#\|all>` | Abort sub-agent runs | no | no | ✅ |
-| `/steer` | `<id> <message>` | Send steering message to a sub-agent | no | no | ✅ |
-| `/tell` | `<id> <message>` | Alias for `/steer` | no | no | ✅ |
-| `/focus` | `<target>` | Bind thread to a session target (agent) | no | no | ✅ |
-| `/unfocus` | — | Remove thread binding | no | no | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/subagents` | `list\|kill\|log\|info\|send\|steer\|spawn` | Manage sub-agents. `list` shows ACP status for the active session. | no | no |
+| `/acp` | `spawn\|cancel\|steer\|close\|sessions\|status\|...` | Manage ACP sessions. `status` and `cancel`/`close` are implemented. | no | no |
+| `/kill` | `<id\|#\|all>` | Abort sub-agent runs. Cancels the active session or shuts down a specific subagent. | no | no |
+| `/steer` | `<id> <message>` | Send a steering message to a sub-agent via `acp.send_message()`. | no | no |
+| `/tell` | `<id> <message>` | Alias for `/steer`. | no | no |
+| `/focus` | `<target>` | Bind the current thread to an agent target via `AgentRouter::bind_session()`. | no | no |
+| `/unfocus` | — | Remove thread binding via `AgentRouter::unbind_session()`. | no | no |
 
 ### Examples
 
@@ -138,12 +131,12 @@ The command system has two layers:
 
 ## Skills / Approval Commands
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/skill` | `<name> [input]` | List skills or show skill details | no | no | ✅ |
-| `/allowlist` | `[list\|add\|remove] ...` | Manage command gate user levels | no | no | ✅ |
-| `/approve` | `<id> <decision>` | Resolve an approval prompt | no | no | ✅ |
-| `/btw` | `<question>` | Side question without changing context | no | no | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/skill` | `<name> [input]` | List all skills or show details for a named skill. | no | no |
+| `/allowlist` | `[list\|add\|remove] ...` | Manage command gate user levels (`chat`, `user`, `admin`). | no | no |
+| `/approve` | `<id> <decision>` | List pending approvals or resolve one via `ApprovalQueue::resolve()`. | no | no |
+| `/btw` | `<question>` | Side question without changing context; calls `ModelRouter::complete_auto()` directly. | no | no |
 
 ### Examples
 
@@ -160,14 +153,14 @@ The command system has two layers:
 
 ## Admin Commands (Owner-Only)
 
-| Command | Args | Description | Local | Admin | Status |
-|---|---|---|---|---|---|
-| `/config` | `show\|get\|set\|unset` | Read or write runtime config | no | **yes** | ✅ |
-| `/plugins` | `list\|enable\|disable` | Inspect or toggle plugins | no | **yes** | ✅ |
-| `/mcp` | `show\|disconnect` | Manage MCP server connections | no | **yes** | ⏳ |
-| `/debug` | `show\|set\|unset\|reset` | Runtime debug overrides | no | **yes** | ✅ |
-| `/restart` | — | Restart the gateway | no | **yes** | ✅ |
-| `/bash` | `<command>` | Run a host shell command | no | **yes** | ✅ |
+| Command | Args | Description | Local | Admin |
+|---|---|---|---|---|
+| `/config` | `show\|get\|set\|unset` | Read or write runtime config values in `runtime_settings`. | no | **yes** |
+| `/plugins` | `list\|enable\|disable` | List plugins or toggle plugin enabled state. | no | **yes** |
+| `/mcp` | `show\|disconnect` | List connected MCP servers or disconnect a server. | no | **yes** |
+| `/debug` | `show\|set\|unset\|reset` | Read, write, or clear runtime debug overrides. | no | **yes** |
+| `/restart` | — | Restart the gateway by scheduling `std::process::exit(0)` after 1 second. | no | **yes** |
+| `/bash` | `<command>` | Run a host shell command via `sh -c` and return stdout, stderr, and exit code. | no | **yes** |
 
 ### Examples
 
@@ -193,15 +186,15 @@ These commands are handled directly by `src/tui/commands.rs` and never leave the
 
 | Command | Args | Description |
 |---|---|---|
-| `/new` | — | Create a new session and subscribe to it |
-| `/clear` | — | Clear the message panel |
-| `/status` | — | Query gateway presence (`system.presence`) |
-| `/tools` | — | Show number of available commands (`commands.list`) |
-| `/model` | `<id>` | Set the default model (`models.set_default`) |
-| `/help` | — | Open help popup with command list |
-| `/config` | — | Open config editor popup |
-| `/sessions` | — | List and refresh sessions |
-| `/quit` / `/exit` | — | Exit the TUI |
+| `/new` | — | Create a new session and subscribe to it. |
+| `/clear` | — | Clear the message panel. |
+| `/status` | — | Query gateway presence via `system.presence`. |
+| `/tools` | — | Show the number of available commands via `commands.list`. |
+| `/model` | `<id>` | Set the default model via `models.set_default`. |
+| `/help` | — | Open help popup with the command list. |
+| `/config` | — | Open config editor popup. |
+| `/sessions` | — | List and refresh sessions. |
+| `/quit` / `/exit` | — | Exit the TUI. |
 
 ---
 
