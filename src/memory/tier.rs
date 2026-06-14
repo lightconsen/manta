@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
+use super::effectiveness::{EffectivenessConfig, EffectivenessStats};
+
 /// Memory tier levels, ordered from most to least ephemeral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -220,18 +222,34 @@ pub enum TierAction {
 #[derive(Debug, Clone)]
 pub struct TierEvaluator {
     config: TierSystemConfig,
+    effectiveness_config: Option<EffectivenessConfig>,
 }
 
 impl TierEvaluator {
     /// Create a new evaluator with the given config.
     pub fn new(config: TierSystemConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            effectiveness_config: None,
+        }
+    }
+
+    /// Attach effectiveness thresholds for direct tier promotion/demotion.
+    pub fn with_effectiveness_config(mut self, config: EffectivenessConfig) -> Self {
+        self.effectiveness_config = Some(config);
+        self
     }
 
     /// Evaluate a memory and decide its tier action.
     ///
-    /// Factors: importance_score, access_count, age in current tier, config thresholds.
-    pub fn evaluate(&self, memory: &super::Memory, tiered: &TieredMemory) -> TierAction {
+    /// Factors: importance_score, access_count, age in current tier, config thresholds,
+    /// and optional effectiveness statistics (recall hit rate).
+    pub fn evaluate(
+        &self,
+        memory: &super::Memory,
+        tiered: &TieredMemory,
+        effectiveness: Option<&EffectivenessStats>,
+    ) -> TierAction {
         let Some(tier_config) = self.config.tiers.get(&tiered.tier) else {
             return TierAction::Keep;
         };
@@ -257,6 +275,23 @@ impl TierEvaluator {
                 Some(lower) => TierAction::Demote(lower),
                 None => TierAction::Evict,
             };
+        }
+
+        // Effectiveness-driven direct promotion/demotion.
+        if let (Some(eff_cfg), Some(stats)) = (self.effectiveness_config.as_ref(), effectiveness) {
+            if stats.total_recalls >= eff_cfg.min_recalls_for_adjustment {
+                if stats.hit_rate >= eff_cfg.promote_directly_threshold {
+                    if let Some(higher_tier) = tiered.tier.promote() {
+                        return TierAction::Promote(higher_tier);
+                    }
+                }
+                if stats.hit_rate <= eff_cfg.demote_directly_threshold {
+                    return match tiered.tier.demote() {
+                        Some(lower) => TierAction::Demote(lower),
+                        None => TierAction::Evict,
+                    };
+                }
+            }
         }
 
         // Check promotion criteria
@@ -427,7 +462,7 @@ mod tests {
             relevance_score: 0.5,
         };
 
-        let action = evaluator.evaluate(&memory, &tiered);
+        let action = evaluator.evaluate(&memory, &tiered, None);
         assert_eq!(action, TierAction::Promote(MemoryTier::LongTerm));
     }
 
@@ -447,7 +482,7 @@ mod tests {
             relevance_score: 0.5,
         };
 
-        let action = evaluator.evaluate(&memory, &tiered);
+        let action = evaluator.evaluate(&memory, &tiered, None);
         assert_eq!(action, TierAction::Demote(MemoryTier::ShortTerm));
     }
 
@@ -468,9 +503,81 @@ mod tests {
             relevance_score: 0.5,
         };
 
-        let action = evaluator.evaluate(&memory, &tiered);
+        let action = evaluator.evaluate(&memory, &tiered, None);
         // Working can't demote further, so it gets evicted
         assert_eq!(action, TierAction::Evict);
+    }
+
+    #[test]
+    fn test_tier_evaluator_effectiveness_promote() {
+        let eff_config = EffectivenessConfig {
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
+            min_recalls_for_adjustment: 3,
+            ..Default::default()
+        };
+        let evaluator =
+            TierEvaluator::new(TierSystemConfig::default()).with_effectiveness_config(eff_config);
+
+        let memory =
+            super::super::Memory::new("u1", "highly useful", "fact").with_importance_score(0.4);
+
+        let tiered = TieredMemory {
+            id: "m1".to_string(),
+            tier: MemoryTier::ShortTerm,
+            tier_entered_at: SystemTime::now(),
+            access_count: 0,
+            last_accessed: None,
+            relevance_score: 0.5,
+        };
+
+        let stats = EffectivenessStats {
+            total_recalls: 5,
+            hits: 5,
+            hit_rate: 1.0,
+            avg_rank: 0.0,
+            promotions: 0,
+            demotions: 0,
+        };
+
+        let action = evaluator.evaluate(&memory, &tiered, Some(&stats));
+        assert_eq!(action, TierAction::Promote(MemoryTier::LongTerm));
+    }
+
+    #[test]
+    fn test_tier_evaluator_effectiveness_demote() {
+        let eff_config = EffectivenessConfig {
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
+            min_recalls_for_adjustment: 3,
+            ..Default::default()
+        };
+        let evaluator =
+            TierEvaluator::new(TierSystemConfig::default()).with_effectiveness_config(eff_config);
+
+        let memory =
+            super::super::Memory::new("u1", "rarely useful", "fact").with_importance_score(0.8);
+
+        let tiered = TieredMemory {
+            id: "m1".to_string(),
+            tier: MemoryTier::LongTerm,
+            tier_entered_at: SystemTime::now(),
+            access_count: 5,
+            last_accessed: None,
+            relevance_score: 0.5,
+        };
+
+        let stats = EffectivenessStats {
+            total_recalls: 5,
+            hits: 0,
+            hit_rate: 0.0,
+            avg_rank: 0.0,
+            promotions: 0,
+            demotions: 0,
+        };
+
+        let action = evaluator.evaluate(&memory, &tiered, Some(&stats));
+        assert_eq!(action, TierAction::Demote(MemoryTier::ShortTerm));
     }
 
     #[test]

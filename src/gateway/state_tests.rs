@@ -118,6 +118,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         heartbeat_wake_tx: RwLock::new(None),
         heartbeat_event_tx: RwLock::new(None),
         dream_scheduler: RwLock::new(None),
+        dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
         standing_order_manager: RwLock::new(None),
         auth_manager: Arc::new(crate::security::AuthManager::new()),
         pairing_store: Arc::new(PairingStore::new()),

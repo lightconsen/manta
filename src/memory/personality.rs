@@ -16,6 +16,7 @@
 //! An mtime+size file cache avoids re-reading unchanged files on every turn.
 
 use crate::error::SyscityError;
+use crate::memory::soul::SoulAnalysis;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,9 +32,9 @@ use tracing::{debug, info, warn};
 /// and BOOTSTRAP.md (startup-only instructions irrelevant to subagents).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryContext {
- /// Full prompt for the primary interactive session (includes MEMORY.md)
+    /// Full prompt for the primary interactive session (includes MEMORY.md)
     Primary,
- /// Reduced prompt for spawned subagents and cron jobs (excludes MEMORY.md, BOOTSTRAP.md)
+    /// Reduced prompt for spawned subagents and cron jobs (excludes MEMORY.md, BOOTSTRAP.md)
     Subagent,
 }
 
@@ -53,7 +54,7 @@ pub fn truncate_with_head_tail(content: &str, max_chars: usize) -> String {
     }
     let head = (max_chars as f64 * 0.70) as usize;
     let tail = (max_chars as f64 * 0.20) as usize;
- // Clamp to valid char boundaries.
+    // Clamp to valid char boundaries.
     let head = head.min(content.len());
     let tail_start = content.len().saturating_sub(tail);
     let tail_start = tail_start.max(head);
@@ -82,26 +83,26 @@ type FileCache = Arc<RwLock<HashMap<PathBuf, CachedFile>>>;
 /// Types of memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryType {
- /// Soul memory - core personality, values, behavioral guidelines
+    /// Soul memory - core personality, values, behavioral guidelines
     Soul,
- /// Identity memory - agent identity, name, role definition
+    /// Identity memory - agent identity, name, role definition
     Identity,
- /// Bootstrap memory - initial startup behavior, first-run logic
+    /// Bootstrap memory - initial startup behavior, first-run logic
     Bootstrap,
- /// User memory - user-specific data, preferences, conversation history
+    /// User memory - user-specific data, preferences, conversation history
     User,
- /// Agents memory - operating instructions and agent "memory"
+    /// Agents memory - operating instructions and agent "memory"
     Agents,
- /// Tools memory - user-maintained tool notes and conventions
+    /// Tools memory - user-maintained tool notes and conventions
     Tools,
- /// Heartbeat memory - periodic task checklist and proactive work reminders
+    /// Heartbeat memory - periodic task checklist and proactive work reminders
     Heartbeat,
- /// Memory memory - curated long-term memory (evergreen, no temporal decay)
+    /// Memory memory - curated long-term memory (evergreen, no temporal decay)
     Memory,
 }
 
 impl MemoryType {
- /// Get the filename for this memory type
+    /// Get the filename for this memory type
     pub fn filename(&self) -> &'static str {
         match self {
             MemoryType::Soul => "SOUL.md",
@@ -115,7 +116,7 @@ impl MemoryType {
         }
     }
 
- /// Get the description of this memory type
+    /// Get the description of this memory type
     pub fn description(&self) -> &'static str {
         match self {
             MemoryType::Soul => {
@@ -137,24 +138,24 @@ impl MemoryType {
 /// Personality memory storage manager
 #[derive(Debug, Clone)]
 pub struct PersonalityMemory {
- /// Base directory for memory files
+    /// Base directory for memory files
     base_dir: PathBuf,
- /// Maximum size for each individual memory file (chars)
+    /// Maximum size for each individual memory file (chars)
     max_size: usize,
- /// Maximum combined size across all files loaded into a prompt (chars)
+    /// Maximum combined size across all files loaded into a prompt (chars)
     total_max_size: usize,
- /// In-process file cache (invalidated on mtime/size change)
+    /// In-process file cache (invalidated on mtime/size change)
     cache: FileCache,
 }
 
 impl PersonalityMemory {
- /// Create a new personality memory manager
- ///
- /// Uses tiered lookup:
- /// 1. Workspace level: <workspace>/.syscity/memory/ (if in a workspace)
- /// 2. User level: ~/.syscity/memory-files/ (fallback)
+    /// Create a new personality memory manager
+    ///
+    /// Uses tiered lookup:
+    /// 1. Workspace level: <workspace>/.syscity/memory/ (if in a workspace)
+    /// 2. User level: ~/.syscity/memory-files/ (fallback)
     pub async fn new() -> crate::Result<Self> {
- // Try workspace level first
+        // Try workspace level first
         if let Some(workspace_dir) = Self::find_workspace_memory_dir() {
             if workspace_dir.exists() {
                 tracing::info!("Using workspace-level personality memory: {:?}", workspace_dir);
@@ -162,20 +163,20 @@ impl PersonalityMemory {
             }
         }
 
- // Fall back to user level
+        // Fall back to user level
         let base_dir = crate::dirs::workspace_memory_dir();
         tracing::info!("Using user-level personality memory: {:?}", base_dir);
         Self::with_dir(base_dir).await
     }
 
- /// Find workspace-level memory directory
+    /// Find workspace-level memory directory
     fn find_workspace_memory_dir() -> Option<PathBuf> {
- // Look for workspace root marker
+        // Look for workspace root marker
         let cwd = std::env::current_dir().ok()?;
         let mut current = cwd.as_path();
 
         loop {
- // Check for workspace markers
+            // Check for workspace markers
             let markers = [".syscity-workspace", ".git", "syscity.workspace.toml"];
             for marker in &markers {
                 if current.join(marker).exists() {
@@ -184,7 +185,7 @@ impl PersonalityMemory {
                 }
             }
 
- // Go up one level
+            // Go up one level
             match current.parent() {
                 Some(parent) => current = parent,
                 None => break,
@@ -194,9 +195,9 @@ impl PersonalityMemory {
         None
     }
 
- /// Create a dual memory manager with specific directory
+    /// Create a dual memory manager with specific directory
     pub async fn with_dir(base_dir: PathBuf) -> crate::Result<Self> {
- // Ensure directory exists
+        // Ensure directory exists
         fs::create_dir_all(&base_dir)
             .await
             .map_err(|e| SyscityError::Storage {
@@ -212,31 +213,31 @@ impl PersonalityMemory {
         })
     }
 
- /// Set the per-file character cap.
+    /// Set the per-file character cap.
     pub fn with_max_size(mut self, max_size: usize) -> Self {
         self.max_size = max_size;
         self
     }
 
- /// Set the total character budget across all files.
+    /// Set the total character budget across all files.
     pub fn with_total_max_size(mut self, total_max_size: usize) -> Self {
         self.total_max_size = total_max_size;
         self
     }
 
- /// Get the path for a specific memory type
+    /// Get the path for a specific memory type
     fn memory_path(&self, mem_type: MemoryType) -> PathBuf {
         self.base_dir.join(mem_type.filename())
     }
 
- /// Read a file from `path`, using the in-process cache when the file is
- /// unchanged (same mtime and size).
+    /// Read a file from `path`, using the in-process cache when the file is
+    /// unchanged (same mtime and size).
     async fn read_with_cache(&self, path: &Path) -> crate::Result<String> {
         if !path.exists() {
             return Ok(String::new());
         }
 
- // Try the cache first.
+        // Try the cache first.
         if let Ok(meta) = fs::metadata(path).await {
             let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             let size = meta.len();
@@ -249,7 +250,7 @@ impl PersonalityMemory {
             }
         }
 
- // Cache miss or stale — read from disk.
+        // Cache miss or stale — read from disk.
         let content = fs::read_to_string(path)
             .await
             .map_err(|e| SyscityError::Storage {
@@ -257,7 +258,7 @@ impl PersonalityMemory {
                 details: e.to_string(),
             })?;
 
- // Update the cache entry.
+        // Update the cache entry.
         if let Ok(meta) = fs::metadata(path).await {
             let mut cache = self.cache.write().await;
             cache.insert(
@@ -274,12 +275,12 @@ impl PersonalityMemory {
         Ok(content)
     }
 
- /// Invalidate the cache entry for `path` (called after every write).
+    /// Invalidate the cache entry for `path` (called after every write).
     async fn invalidate_cache(&self, path: &Path) {
         self.cache.write().await.remove(path);
     }
 
- /// Read memory content (cache-backed).
+    /// Read memory content (cache-backed).
     pub async fn read(&self, mem_type: MemoryType) -> crate::Result<String> {
         let path = self.memory_path(mem_type);
         if !path.exists() {
@@ -289,17 +290,17 @@ impl PersonalityMemory {
         self.read_with_cache(&path).await
     }
 
- /// Read and parse SOUL.md as a structured config file.
- ///
- /// Supports optional YAML frontmatter with `SoulConfig` fields.
+    /// Read and parse SOUL.md as a structured config file.
+    ///
+    /// Supports optional YAML frontmatter with `SoulConfig` fields.
     pub async fn read_soul(&self) -> crate::Result<crate::memory::soul::SoulFile> {
         let raw = self.read(MemoryType::Soul).await?;
         crate::memory::soul::SoulFile::parse(&raw)
     }
 
- /// Write memory content, applying head/tail truncation if over the per-file cap.
+    /// Write memory content, applying head/tail truncation if over the per-file cap.
     pub async fn write(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
- // Apply head/tail truncation (preserves beginning + end of large files).
+        // Apply head/tail truncation (preserves beginning + end of large files).
         let content_owned;
         let content = if content.len() > self.max_size {
             warn!(
@@ -313,7 +314,7 @@ impl PersonalityMemory {
             content
         };
 
- // Security scan for injection patterns
+        // Security scan for injection patterns
         if let Some(threat) = self.scan_for_threats(content) {
             warn!("Security threat detected in memory: {}", threat);
             return Err(SyscityError::Validation(format!(
@@ -325,7 +326,7 @@ impl PersonalityMemory {
         self.write_unchecked(mem_type, content).await
     }
 
- /// Write without security checks (internal use only).
+    /// Write without security checks (internal use only).
     async fn write_unchecked(&self, mem_type: MemoryType, content: &str) -> crate::Result<()> {
         let path = self.memory_path(mem_type);
 
@@ -336,37 +337,197 @@ impl PersonalityMemory {
                 details: e.to_string(),
             })?;
 
- // Invalidate any cached version so the next read sees the new content.
+        // Invalidate any cached version so the next read sees the new content.
         self.invalidate_cache(&path).await;
         info!("Wrote {} bytes to {:?}", content.len(), mem_type);
         Ok(())
     }
 
- /// Append to memory content (with size limit)
+    /// Append to memory content (with size limit)
     pub async fn append(&self, mem_type: MemoryType, addition: &str) -> crate::Result<()> {
         let current = self.read(mem_type).await?;
         let new_content = format!("{}\n{}", current, addition);
         self.write(mem_type, &new_content).await
     }
 
- /// Check if memory exists
+    /// Check if memory exists
     pub async fn exists(&self, mem_type: MemoryType) -> bool {
         self.memory_path(mem_type).exists()
     }
 
- /// Get memory size in bytes
+    /// Get memory size in bytes
     pub async fn size(&self, mem_type: MemoryType) -> crate::Result<usize> {
         let content = self.read(mem_type).await?;
         Ok(content.len())
     }
 
- /// Clear memory
+    /// Clear memory
     pub async fn clear(&self, mem_type: MemoryType) -> crate::Result<()> {
         self.write_unchecked(mem_type, "").await
     }
 
- /// Load `memory/*.md` fragments from the memory directory, sorted
- /// chronologically by filename (YYYY-MM-DD.md files sort naturally).
+    /// Analyze conversation patterns to infer personality/preferences.
+    ///
+    /// This is intentionally heuristic: it looks at language scripts, code
+    /// fences, assistant message length/emoji use, repeated topic words, and
+    /// explicit preference statements. The result can be merged into SOUL.md
+    /// via [`update_soul_from_analysis`].
+    pub fn analyze_conversation_patterns(
+        &self,
+        messages: &[crate::memory::ChatMessage],
+    ) -> crate::Result<SoulAnalysis> {
+        let mut analysis = SoulAnalysis::default();
+
+        let user_msgs: Vec<_> = messages.iter().filter(|m| m.role == "user").collect();
+        let assistant_msgs: Vec<_> = messages.iter().filter(|m| m.role == "assistant").collect();
+
+        if user_msgs.is_empty() {
+            return Ok(analysis);
+        }
+
+        // --- language detection ---
+        let total_chars: usize = user_msgs.iter().map(|m| m.content.chars().count()).sum();
+        let cjk_chars: usize = user_msgs
+            .iter()
+            .map(|m| m.content.chars().filter(|c| is_cjk(*c)).count())
+            .sum();
+        if total_chars > 0 && cjk_chars * 3 > total_chars {
+            analysis.detected_language = Some("zh-CN".to_string());
+        } else {
+            analysis.detected_language = Some("en-US".to_string());
+        }
+
+        // --- code style detection ---
+        let mut lang_counts: HashMap<String, usize> = HashMap::new();
+        let code_fence = regex::Regex::new(r"```(\w+)").expect("valid regex");
+        for msg in messages {
+            for cap in code_fence.captures_iter(&msg.content) {
+                let lang = cap[1].to_lowercase();
+                *lang_counts.entry(lang).or_insert(0) += 1;
+            }
+        }
+        analysis.detected_code_style = lang_counts
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(lang, _)| lang);
+
+        // Fallback: infer from explicit language mentions.
+        if analysis.detected_code_style.is_none() {
+            let combined = user_msgs
+                .iter()
+                .map(|m| m.content.to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let langs = [
+                ("rust", r"\brust\b"),
+                ("python", r"\bpython\b"),
+                ("javascript", r"\bjavascript\b"),
+                ("typescript", r"\btypescript\b"),
+                ("go", r"\bgo\b"),
+            ];
+            for (lang, pattern) in &langs {
+                if let Ok(re) = regex::Regex::new(pattern) {
+                    if re.is_match(&combined) {
+                        analysis.detected_code_style = Some(lang.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+
+        // --- voice detection ---
+        if !assistant_msgs.is_empty() {
+            let total_len: usize = assistant_msgs.iter().map(|m| m.content.len()).sum();
+            let avg_len = total_len / assistant_msgs.len();
+            let has_emoji = assistant_msgs
+                .iter()
+                .any(|m| m.content.chars().any(|c| !c.is_ascii()));
+
+            analysis.detected_voice = if has_emoji {
+                Some("friendly with emoji".to_string())
+            } else if avg_len < 120 {
+                Some("concise".to_string())
+            } else {
+                Some("detailed".to_string())
+            };
+        }
+
+        // --- common topics ---
+        let stopwords = [
+            "about", "after", "again", "also", "always", "and", "another", "any", "are", "as",
+            "ask", "because", "been", "before", "being", "best", "better", "between", "both",
+            "but", "can", "could", "did", "does", "doing", "done", "each", "either", "even",
+            "every", "few", "for", "from", "get", "give", "going", "got", "had", "has", "have",
+            "having", "here", "how", "into", "its", "just", "know", "like", "look", "make", "many",
+            "more", "most", "much", "must", "need", "never", "only", "other", "our", "over",
+            "please", "rather", "really", "right", "said", "same", "should", "since", "some",
+            "such", "take", "than", "that", "the", "their", "them", "then", "there", "these",
+            "they", "thing", "this", "those", "through", "time", "times", "too", "under", "until",
+            "using", "very", "want", "was", "well", "were", "what", "when", "where", "which",
+            "while", "will", "with", "without", "would", "you", "your",
+        ];
+        let mut word_counts: HashMap<String, usize> = HashMap::new();
+        let word_re = regex::Regex::new(r"[a-zA-Z]{4,}").expect("valid regex");
+        for msg in &user_msgs {
+            let lower = msg.content.to_lowercase();
+            for m in word_re.find_iter(&lower) {
+                let w = m.as_str();
+                if !stopwords.contains(&w) {
+                    *word_counts.entry(w.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut topics: Vec<(String, usize)> = word_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .collect();
+        topics.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        analysis.common_topics = topics.into_iter().take(5).map(|(w, _)| w).collect();
+
+        // --- explicit preferences ---
+        let pref_re = regex::Regex::new(
+            r"(?i)(?:i\s+(?:prefer|like|want|need)|please\s+use|always\s+use|use)\s+([^.]{3,80})",
+        )
+        .expect("valid regex");
+        for msg in &user_msgs {
+            for cap in pref_re.captures_iter(&msg.content) {
+                let phrase = cap[1].trim().to_string();
+                if phrase.len() >= 3 {
+                    let key = format!("preference_{}", analysis.user_preferences.len() + 1);
+                    analysis.user_preferences.insert(key, phrase);
+                }
+            }
+        }
+
+        Ok(analysis)
+    }
+
+    /// Read SOUL.md, merge heuristic analysis, and write it back if changed.
+    ///
+    /// Returns `true` when the file was updated.
+    pub async fn update_soul_from_analysis(&self, analysis: &SoulAnalysis) -> crate::Result<bool> {
+        let mut soul_file = self.read_soul().await?;
+
+        if !soul_file.config.merge_analysis(analysis) {
+            return Ok(false);
+        }
+
+        let yaml = serde_yaml::to_string(&soul_file.config).map_err(|e| {
+            SyscityError::Validation(format!("Failed to serialize SOUL.md config: {}", e))
+        })?;
+
+        let mut output = String::new();
+        output.push_str("---\n");
+        output.push_str(&yaml);
+        output.push_str("---\n\n");
+        output.push_str(&soul_file.body);
+
+        self.write(MemoryType::Soul, &output).await?;
+        Ok(true)
+    }
+
+    /// Load `memory/*.md` fragments from the memory directory, sorted
+    /// chronologically by filename (YYYY-MM-DD.md files sort naturally).
     pub async fn load_memory_fragments(&self) -> Vec<(String, String)> {
         let memory_dir = self.base_dir.join("memory");
         if !memory_dir.exists() {
@@ -389,36 +550,36 @@ impl PersonalityMemory {
                         .and_then(|n| n.to_str())
                         .unwrap_or("memory")
                         .to_string();
- // Apply per-file cap to each fragment.
+                    // Apply per-file cap to each fragment.
                     let content = truncate_with_head_tail(&content, self.max_size);
                     fragments.push((name, content));
                 }
             }
         }
 
- // Sort chronologically (dated files like YYYY-MM-DD.md sort naturally).
+        // Sort chronologically (dated files like YYYY-MM-DD.md sort naturally).
         fragments.sort_by(|a, b| a.0.cmp(&b.0));
         fragments
     }
 
- /// Get memory content formatted for system prompt.
- ///
- /// Uses the primary context (includes all files).
+    /// Get memory content formatted for system prompt.
+    ///
+    /// Uses the primary context (includes all files).
     pub async fn format_for_prompt(&self) -> crate::Result<String> {
         self.format_for_prompt_with_context(MemoryContext::Primary)
             .await
     }
 
- /// Get memory content formatted for system prompt with the given context.
- ///
- /// Applies the per-file cap via head/tail truncation and enforces the
- /// total character budget across all sections.
+    /// Get memory content formatted for system prompt with the given context.
+    ///
+    /// Applies the per-file cap via head/tail truncation and enforces the
+    /// total character budget across all sections.
     pub async fn format_for_prompt_with_context(
         &self,
         context: MemoryContext,
     ) -> crate::Result<String> {
- // personality files (loaded in priority order)
- // AGENTS.md and TOOLS.md are loaded first as they provide operating instructions
+        // personality files (loaded in priority order)
+        // AGENTS.md and TOOLS.md are loaded first as they provide operating instructions
         let agents = self.read(MemoryType::Agents).await?;
         let tools_mem = self.read(MemoryType::Tools).await?;
         let identity = self.read(MemoryType::Identity).await?;
@@ -432,7 +593,7 @@ impl PersonalityMemory {
         let mut sections = Vec::new();
         let mut total_chars: usize = 0;
 
- /// Push a section if it is non-empty and fits in the total budget.
+        /// Push a section if it is non-empty and fits in the total budget.
         macro_rules! push_section {
             ($content:expr, $label:expr) => {{
                 let c = truncate_with_head_tail($content.trim(), self.max_size);
@@ -451,13 +612,13 @@ impl PersonalityMemory {
             }};
         }
 
- // AGENTS.md - Operating instructions (highest priority after system)
+        // AGENTS.md - Operating instructions (highest priority after system)
         push_section!(&agents, "Agents");
- // TOOLS.md - Tool conventions and notes
+        // TOOLS.md - Tool conventions and notes
         push_section!(&tools_mem, "Tools");
 
- // HEARTBEAT.md - Periodic tasks and proactive work
- // Only in primary context (not for subagents/cron)
+        // HEARTBEAT.md - Periodic tasks and proactive work
+        // Only in primary context (not for subagents/cron)
         if matches!(context, MemoryContext::Primary) {
             push_section!(&heartbeat, "Heartbeat");
         }
@@ -465,20 +626,20 @@ impl PersonalityMemory {
         push_section!(&identity, "Identity");
         push_section!(&soul, "Soul");
 
- // BOOTSTRAP.md - Only in primary context (startup-only instructions)
+        // BOOTSTRAP.md - Only in primary context (startup-only instructions)
         if matches!(context, MemoryContext::Primary) {
             push_section!(&bootstrap, "Bootstrap");
         }
 
         push_section!(&user, "User");
 
- // MEMORY.md - ONLY in primary context (contains personal context)
- // Security: DO NOT load in shared/group contexts
+        // MEMORY.md - ONLY in primary context (contains personal context)
+        // Security: DO NOT load in shared/group contexts
         if matches!(context, MemoryContext::Primary) {
             push_section!(&memory, "Memory");
         }
 
- // Memory fragments from memory/*.md
+        // Memory fragments from memory/*.md
         if !fragments.is_empty() {
             let mut frag_parts = Vec::new();
             for (name, content) in &fragments {
@@ -503,9 +664,9 @@ impl PersonalityMemory {
         }
     }
 
- /// Scan content for security threats
+    /// Scan content for security threats
     fn scan_for_threats(&self, content: &str) -> Option<String> {
- // List of suspicious patterns
+        // List of suspicious patterns
         let patterns = [
             ("system_prompt_injection", r"(?i)(system|assistant|user)\s*:\s*"),
             ("command_injection", r"(?i)(;|\|\||&&|`|<\(|>\$)\s*[a-z]+"),
@@ -524,49 +685,49 @@ impl PersonalityMemory {
         None
     }
 
- /// Initialize default memory files if they don't exist
- ///
- /// Uses workspace state tracking to avoid re-initializing existing workspaces.
- /// Only creates files for brand-new workspaces (no state file, no user content).
+    /// Initialize default memory files if they don't exist
+    ///
+    /// Uses workspace state tracking to avoid re-initializing existing workspaces.
+    /// Only creates files for brand-new workspaces (no state file, no user content).
     pub async fn initialize_defaults(&self) -> crate::Result<()> {
         use crate::memory::workspace_state::WorkspaceManager;
 
         let workspace_manager = WorkspaceManager::new(self.base_dir.clone());
 
- // Check if this is a brand-new workspace
+        // Check if this is a brand-new workspace
         let is_brand_new = workspace_manager.is_brand_new().await;
         let setup_completed = workspace_manager.is_setup_completed().await;
 
- // If setup is completed, don't re-create bootstrap files
+        // If setup is completed, don't re-create bootstrap files
         if setup_completed {
             debug!("Workspace setup already completed, skipping bootstrap file creation");
             return Ok(());
         }
 
- // Check if bootstrap was already seeded
+        // Check if bootstrap was already seeded
         let bootstrap_seeded = workspace_manager.is_bootstrap_seeded().await;
 
- // For existing workspaces (not brand new, but no state file),
- // check for user content indicators
+        // For existing workspaces (not brand new, but no state file),
+        // check for user content indicators
         let has_user_content = !is_brand_new;
 
- // If workspace has user content but no bootstrap seeded state,
- // mark as setup completed (legacy workspace)
+        // If workspace has user content but no bootstrap seeded state,
+        // mark as setup completed (legacy workspace)
         if has_user_content && !bootstrap_seeded {
             debug!("Existing workspace with user content detected, marking as completed");
             workspace_manager.mark_setup_completed().await?;
             return Ok(());
         }
 
- // Brand new workspace - create all bootstrap files
+        // Brand new workspace - create all bootstrap files
         if !is_brand_new {
- // Not a brand new workspace, nothing to do
+            // Not a brand new workspace, nothing to do
             return Ok(());
         }
 
         info!("Brand new workspace detected, initializing bootstrap files");
 
- // AGENTS.md - Operating instructions
+        // AGENTS.md - Operating instructions
         if !self.exists(MemoryType::Agents).await {
             let default_agents = r#"# AGENTS.md - Your Workspace
 
@@ -696,7 +857,7 @@ This is a starting point. Add your own conventions, style, and rules as you figu
             self.write(MemoryType::Agents, default_agents).await?;
         }
 
- // SOUL.md - Core personality (with structured frontmatter)
+        // SOUL.md - Core personality (with structured frontmatter)
         if !self.exists(MemoryType::Soul).await {
             let default_soul = r#"---
 name: Syscity
@@ -753,7 +914,7 @@ _This file is yours to evolve. As you learn who you are, update it._
             self.write(MemoryType::Soul, default_soul).await?;
         }
 
- // BOOTSTRAP.md - Initial behavior
+        // BOOTSTRAP.md - Initial behavior
         if !self.exists(MemoryType::Bootstrap).await {
             let default_bootstrap = r#"# BOOTSTRAP.md - Hello, World
 
@@ -804,7 +965,7 @@ _Good luck out there. Make it count._
             self.write(MemoryType::Bootstrap, default_bootstrap).await?;
         }
 
- // IDENTITY.md - Agent identity
+        // IDENTITY.md - Agent identity
         if !self.exists(MemoryType::Identity).await {
             let default_identity = r#"# IDENTITY.md - Who Am I?
 
@@ -826,7 +987,7 @@ This isn't just metadata. It's the start of figuring out who you are.
             self.write(MemoryType::Identity, default_identity).await?;
         }
 
- // USER.md - User profile
+        // USER.md - User profile
         if !self.exists(MemoryType::User).await {
             let default_user = r#"# USER.md - About Your Human
 
@@ -849,7 +1010,7 @@ The more you know, the better you can help. But remember — you're learning abo
             self.write(MemoryType::User, default_user).await?;
         }
 
- // TOOLS.md - Local notes
+        // TOOLS.md - Local notes
         if !self.exists(MemoryType::Tools).await {
             let default_tools = r#"# TOOLS.md - Local Notes
 
@@ -895,7 +1056,7 @@ Add whatever helps you do your job. This is your cheat sheet.
             self.write(MemoryType::Tools, default_tools).await?;
         }
 
- // HEARTBEAT.md - Periodic tasks
+        // HEARTBEAT.md - Periodic tasks
         if !self.exists(MemoryType::Heartbeat).await {
             let default_heartbeat = r#"# HEARTBEAT.md Template
 
@@ -908,7 +1069,7 @@ Add whatever helps you do your job. This is your cheat sheet.
             self.write(MemoryType::Heartbeat, default_heartbeat).await?;
         }
 
- // MEMORY.md - Curated long-term memory
+        // MEMORY.md - Curated long-term memory
         if !self.exists(MemoryType::Memory).await {
             let default_memory = r#"# MEMORY.md - Your Long-Term Memory
 
@@ -940,7 +1101,7 @@ _Start writing when you're ready. This file grows with you._
             self.write(MemoryType::Memory, default_memory).await?;
         }
 
- // Create memory/ subdirectory for dated/named fragments.
+        // Create memory/ subdirectory for dated/named fragments.
         let memory_dir = self.base_dir.join("memory");
         if !memory_dir.exists() {
             if let Err(e) = fs::create_dir_all(&memory_dir).await {
@@ -948,10 +1109,10 @@ _Start writing when you're ready. This file grows with you._
             }
         }
 
- // Mark bootstrap as seeded in workspace state
+        // Mark bootstrap as seeded in workspace state
         workspace_manager.mark_bootstrap_seeded().await?;
 
- // Initialize git repo for brand-new workspaces
+        // Initialize git repo for brand-new workspaces
         workspace_manager.ensure_git_repo(is_brand_new).await;
 
         Ok(())
@@ -965,20 +1126,20 @@ pub mod tool {
     use async_trait::async_trait;
     use serde_json::json;
 
- /// Tool for reading and writing personality memory
+    /// Tool for reading and writing personality memory
     #[derive(Debug)]
     pub struct PersonalityMemoryTool {
         memory: PersonalityMemory,
     }
 
     impl PersonalityMemoryTool {
- /// Create a new personality memory tool
+        /// Create a new personality memory tool
         pub async fn new() -> crate::Result<Self> {
             let memory = PersonalityMemory::new().await?;
             Ok(Self { memory })
         }
 
- /// Create with custom directory
+        /// Create with custom directory
         pub async fn with_dir(dir: PathBuf) -> crate::Result<Self> {
             let memory = PersonalityMemory::with_dir(dir).await?;
             Ok(Self { memory })
@@ -1103,6 +1264,18 @@ These files are loaded into the system prompt at startup."#
     }
 }
 
+/// True for CJK Unified Ideographs and common CJK punctuation blocks.
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        '\u{4E00}'..='\u{9FFF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{3040}'..='\u{309F}'
+            | '\u{30A0}'..='\u{30FF}'
+            | '\u{AC00}'..='\u{D7AF}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,13 +1286,13 @@ mod tests {
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
- // Write to identity memory
+        // Write to identity memory
         memory
             .write(MemoryType::Identity, "Test content")
             .await
             .unwrap();
 
- // Read it back
+        // Read it back
         let content = memory.read(MemoryType::Identity).await.unwrap();
         assert_eq!(content, "Test content");
     }
@@ -1128,7 +1301,7 @@ mod tests {
     async fn test_personality_memory_size_limit_head_tail() {
         let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
- // Use max_size=20 so the 100-char string triggers head/tail truncation.
+        // Use max_size=20 so the 100-char string triggers head/tail truncation.
         let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap()
@@ -1138,8 +1311,8 @@ mod tests {
         memory.write(MemoryType::Soul, &long_content).await.unwrap();
 
         let content = memory.read(MemoryType::Soul).await.unwrap();
- // Head/tail truncation produces head(14) + marker + tail(4) which is >20
- // but <100, and the truncation marker must be present.
+        // Head/tail truncation produces head(14) + marker + tail(4) which is >20
+        // but <100, and the truncation marker must be present.
         assert!(content.contains("[... ") && content.contains("chars truncated ...]"));
         assert!(content.len() < long_content.len());
     }
@@ -1149,7 +1322,7 @@ mod tests {
         let content = "A".repeat(100);
         let result = truncate_with_head_tail(&content, 50);
         assert!(result.contains("[... ") && result.contains("chars truncated ...]"));
- // Result is shorter than original
+        // Result is shorter than original
         assert!(result.len() < content.len());
     }
 
@@ -1182,7 +1355,7 @@ mod tests {
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let memory = PersonalityMemory::with_dir(temp_dir.clone()).await.unwrap();
 
- // Create the memory/ subdir and two dated fragments.
+        // Create the memory/ subdir and two dated fragments.
         let mem_dir = temp_dir.join("memory");
         tokio::fs::create_dir_all(&mem_dir).await.unwrap();
         tokio::fs::write(mem_dir.join("2026-03-20.md"), "March content")
@@ -1194,7 +1367,7 @@ mod tests {
 
         let frags = memory.load_memory_fragments().await;
         assert_eq!(frags.len(), 2);
- // Sorted chronologically, January comes first.
+        // Sorted chronologically, January comes first.
         assert_eq!(frags[0].0, "2026-01-01.md");
         assert_eq!(frags[1].0, "2026-03-20.md");
     }
@@ -1225,9 +1398,9 @@ mod tests {
 
         memory.write(MemoryType::Identity, "v1").await.unwrap();
 
- // First read populates cache.
+        // First read populates cache.
         let r1 = memory.read(MemoryType::Identity).await.unwrap();
- // Second read should hit cache and return the same value.
+        // Second read should hit cache and return the same value.
         let r2 = memory.read(MemoryType::Identity).await.unwrap();
         assert_eq!(r1, r2);
         assert_eq!(r1, "v1");
@@ -1251,9 +1424,9 @@ mod tests {
     async fn test_total_budget_enforced() {
         let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
- // Very small total budget so only the first section (Agents) fits.
- // Budget: "## Agents\n" (10) + content (20) + "\n" (1) = 31 chars fits.
- // "## Soul\n" (8) + soul_content (20) + "\n" (1) = 29 chars would push total to 60, exceeding 58.
+        // Very small total budget so only the first section (Agents) fits.
+        // Budget: "## Agents\n" (10) + content (20) + "\n" (1) = 31 chars fits.
+        // "## Soul\n" (8) + soul_content (20) + "\n" (1) = 29 chars would push total to 60, exceeding 58.
         let memory = PersonalityMemory::with_dir(temp_dir.clone())
             .await
             .unwrap()
@@ -1270,7 +1443,7 @@ mod tests {
 
         let prompt = memory.format_for_prompt().await.unwrap();
         assert!(prompt.contains("AgentContent"));
- // Soul should be cut due to budget.
+        // Soul should be cut due to budget.
         assert!(!prompt.contains("SoulShouldBeExcluded"));
     }
 
@@ -1323,5 +1496,75 @@ mod tests {
 
         let primary_prompt = memory.format_for_prompt().await.unwrap();
         assert!(primary_prompt.contains("PRIMARY_MEMORY_CONTENT"));
+    }
+
+    #[test]
+    fn test_analyze_conversation_patterns() {
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
+        // `with_dir` is async, but analysis is sync; create a minimal instance
+        // through the runtime for the test.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let memory = rt.block_on(PersonalityMemory::with_dir(temp_dir)).unwrap();
+
+        let messages = vec![
+            crate::memory::ChatMessage::new(
+                "c1",
+                "u1",
+                "user",
+                "I prefer short answers. I work with Rust and Python.",
+            ),
+            crate::memory::ChatMessage::new("c1", "u1", "assistant", "Got it. 🦀"),
+            crate::memory::ChatMessage::new(
+                "c1",
+                "u1",
+                "user",
+                "Rust is great for systems programming.",
+            ),
+            crate::memory::ChatMessage::new("c1", "u1", "user", "Python is nice for scripts."),
+            crate::memory::ChatMessage::new("c1", "u1", "assistant", "Yes."),
+        ];
+
+        let analysis = memory.analyze_conversation_patterns(&messages).unwrap();
+        assert_eq!(analysis.detected_language, Some("en-US".to_string()));
+        assert_eq!(analysis.detected_code_style, Some("rust".to_string()));
+        assert_eq!(analysis.detected_voice, Some("friendly with emoji".to_string()));
+        assert!(analysis.common_topics.contains(&"rust".to_string()));
+        assert!(analysis.common_topics.contains(&"python".to_string()));
+        assert!(analysis
+            .user_preferences
+            .values()
+            .any(|v| v.contains("short answers")));
+    }
+
+    #[tokio::test]
+    async fn test_update_soul_from_analysis() {
+        let temp_dir = std::env::temp_dir().join(format!("syscity_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let memory = PersonalityMemory::with_dir(temp_dir).await.unwrap();
+
+        let analysis = SoulAnalysis {
+            detected_language: Some("en-US".to_string()),
+            detected_code_style: Some("rust".to_string()),
+            detected_voice: Some("concise".to_string()),
+            common_topics: vec!["rust".to_string(), "systems".to_string()],
+            user_preferences: HashMap::from([(
+                "preference_1".to_string(),
+                "short answers".to_string(),
+            )]),
+        };
+
+        let changed = memory.update_soul_from_analysis(&analysis).await.unwrap();
+        assert!(changed);
+
+        let soul = memory.read_soul().await.unwrap();
+        assert_eq!(soul.config.preferences.language, Some("en-US".to_string()));
+        assert_eq!(soul.config.preferences.code_style, Some("rust".to_string()));
+        assert_eq!(soul.config.voice, Some("concise".to_string()));
+        assert!(soul.config.persona.is_some());
+        assert!(soul.config.preferences.extra.contains_key("preference_1"));
+
+        // A second merge with the same analysis should not change anything.
+        let changed = memory.update_soul_from_analysis(&analysis).await.unwrap();
+        assert!(!changed);
     }
 }

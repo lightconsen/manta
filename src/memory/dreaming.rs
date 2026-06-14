@@ -9,8 +9,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+use sysinfo::{RefreshKind, System};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -20,7 +22,7 @@ use super::{Memory, MemoryQuery};
 use chrono::Utc;
 use cron::Schedule as CronSchedule;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::{sleep_until, Instant as TokioInstant};
 
 /// Async callback for LLM-based entity extraction in REM dreams.
@@ -127,6 +129,8 @@ pub struct DreamResult {
     pub started_at: SystemTime,
     /// When the dream finished.
     pub finished_at: SystemTime,
+    /// Duration of the dream cycle in milliseconds.
+    pub duration_ms: u64,
     /// Number of memories processed.
     pub memories_processed: u32,
     /// Number of memories created (summaries, merged, etc.).
@@ -137,10 +141,71 @@ pub struct DreamResult {
     pub memories_promoted: u32,
     /// Number of memories demoted.
     pub memories_demoted: u32,
+    /// Peak memory usage observed during the cycle, in megabytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_memory_mb: Option<f64>,
+    /// Estimated LLM input tokens consumed during the cycle.
+    pub llm_tokens_input: u32,
+    /// Estimated LLM output tokens produced during the cycle.
+    pub llm_tokens_output: u32,
     /// Human-readable summary.
     pub summary: String,
     /// Errors encountered (non-fatal).
     pub errors: Vec<String>,
+}
+
+/// Observability counters for dream activity.
+///
+/// All counters use relaxed ordering — they are meant for observability,
+/// not for synchronisation.
+#[derive(Debug, Default)]
+pub struct DreamMetrics {
+    /// Total number of dream cycles started.
+    pub dreams_total: AtomicU64,
+    /// Total number of dream cycles that failed.
+    pub dreams_failed: AtomicU64,
+    /// Total memories processed across all dreams.
+    pub memories_processed_total: AtomicU64,
+    /// Total memories created across all dreams.
+    pub memories_created_total: AtomicU64,
+    /// Total memories removed across all dreams.
+    pub memories_removed_total: AtomicU64,
+    /// Total memories promoted across all dreams.
+    pub memories_promoted_total: AtomicU64,
+    /// Total memories demoted across all dreams.
+    pub memories_demoted_total: AtomicU64,
+    /// Total dream duration across all cycles, in milliseconds.
+    pub dream_duration_ms_total: AtomicU64,
+    /// Total estimated LLM input tokens consumed during dreams.
+    pub llm_tokens_input_total: AtomicU64,
+    /// Total estimated LLM output tokens produced during dreams.
+    pub llm_tokens_output_total: AtomicU64,
+}
+
+impl DreamMetrics {
+    /// Record a completed dream cycle.
+    pub fn record(&self, result: &DreamResult, failed: bool) {
+        self.dreams_total.fetch_add(1, Ordering::Relaxed);
+        if failed {
+            self.dreams_failed.fetch_add(1, Ordering::Relaxed);
+        }
+        self.memories_processed_total
+            .fetch_add(result.memories_processed as u64, Ordering::Relaxed);
+        self.memories_created_total
+            .fetch_add(result.memories_created as u64, Ordering::Relaxed);
+        self.memories_removed_total
+            .fetch_add(result.memories_removed as u64, Ordering::Relaxed);
+        self.memories_promoted_total
+            .fetch_add(result.memories_promoted as u64, Ordering::Relaxed);
+        self.memories_demoted_total
+            .fetch_add(result.memories_demoted as u64, Ordering::Relaxed);
+        self.dream_duration_ms_total
+            .fetch_add(result.duration_ms, Ordering::Relaxed);
+        self.llm_tokens_input_total
+            .fetch_add(result.llm_tokens_input as u64, Ordering::Relaxed);
+        self.llm_tokens_output_total
+            .fetch_add(result.llm_tokens_output as u64, Ordering::Relaxed);
+    }
 }
 
 /// Recovery checkpoint for resuming interrupted dreams.
@@ -318,6 +383,52 @@ pub struct DreamEngine {
     /// Optional review queue for human-in-the-loop mode.
     /// When set, dream actions are enqueued instead of applied directly.
     review_queue: Option<Arc<DreamReviewQueue>>,
+    /// Observability counters for dream activity.
+    metrics: Arc<DreamMetrics>,
+}
+
+/// Helper to estimate LLM token count from text.
+///
+/// This is a fast heuristic approximation (characters / 4) when provider
+/// token usage metadata is unavailable.
+fn estimate_tokens(text: &str) -> u32 {
+    (text.chars().count() as u32 / 4).max(1)
+}
+
+/// Capture current system memory usage in megabytes.
+fn current_memory_mb() -> Option<f64> {
+    let mut sys = System::new_with_specifics(RefreshKind::new().with_memory(sysinfo::MemoryRefreshKind::new()));
+    sys.refresh_memory();
+    Some(sys.used_memory() as f64 / 1024.0 / 1024.0)
+}
+
+/// Timing and token-tracking context for a single dream phase.
+struct DreamPhaseContext {
+    start: Instant,
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+impl DreamPhaseContext {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            input_tokens: 0,
+            output_tokens: 0,
+        }
+    }
+
+    fn track_prompt(&mut self, prompt: &str) {
+        self.input_tokens += estimate_tokens(prompt);
+    }
+
+    fn track_response(&mut self, response: &str) {
+        self.output_tokens += estimate_tokens(response);
+    }
+
+    fn duration_ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
 }
 
 impl DreamEngine {
@@ -331,6 +442,7 @@ impl DreamEngine {
             event_log: None,
             workspace_dir: None,
             review_queue: None,
+            metrics: Arc::new(DreamMetrics::default()),
         }
     }
 
@@ -353,6 +465,17 @@ impl DreamEngine {
     pub fn with_workspace_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.workspace_dir = Some(dir);
         self
+    }
+
+    /// Attach shared observability metrics.
+    pub fn with_metrics(mut self, metrics: Arc<DreamMetrics>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    /// Get the current metrics.
+    pub fn metrics(&self) -> Arc<DreamMetrics> {
+        Arc::clone(&self.metrics)
     }
 
     /// Initialize the engine: load persisted knowledge graph if available.
@@ -419,6 +542,9 @@ impl DreamEngine {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-light-{}", uuid::Uuid::new_v4());
         info!("Starting Light Dream: {}", dream_id);
+
+        let ctx = DreamPhaseContext::new();
+        let baseline_memory_mb = current_memory_mb();
 
         let mut removed = 0;
         let mut promoted = 0;
@@ -491,7 +617,7 @@ impl DreamEngine {
             processed += 1;
             if let Some(tiered) = tier_index.get(&mem.id.to_string()) {
                 let old_tier = tiered.tier;
-                match evaluator.evaluate(mem, &tiered) {
+                match evaluator.evaluate(mem, &tiered, None) {
                     TierAction::Promote(new_tier) => {
                         tier_index.update_tier(&mem.id.to_string(), new_tier);
                         promoted += 1;
@@ -538,16 +664,27 @@ impl DreamEngine {
         }
 
         let finished_at = SystemTime::now();
+        let peak_memory_mb = current_memory_mb().map(|peak| {
+            if let Some(baseline) = baseline_memory_mb {
+                peak.max(baseline)
+            } else {
+                peak
+            }
+        });
         let result = DreamResult {
             dream_id,
             phase: DreamPhase::Light,
             started_at,
             finished_at,
+            duration_ms: ctx.duration_ms(),
             memories_processed: processed,
             memories_created: 0,
             memories_removed: removed,
             memories_promoted: promoted,
             memories_demoted: demoted,
+            peak_memory_mb,
+            llm_tokens_input: ctx.input_tokens,
+            llm_tokens_output: ctx.output_tokens,
             summary: format!(
                 "Light Dream: processed {} memories, removed {} duplicates/expired, promoted {}, demoted {}",
                 processed, removed, promoted, demoted
@@ -578,6 +715,9 @@ impl DreamEngine {
         let started_at = SystemTime::now();
         let dream_id = format!("dream-deep-{}", uuid::Uuid::new_v4());
         info!("Starting Deep Dream: {}", dream_id);
+
+        let ctx = DreamPhaseContext::new();
+        let baseline_memory_mb = current_memory_mb();
 
         let mut created = 0;
         let mut errors = Vec::new();
@@ -719,17 +859,28 @@ impl DreamEngine {
         }
 
         let finished_at = SystemTime::now();
+        let peak_memory_mb = current_memory_mb().map(|peak| {
+            if let Some(baseline) = baseline_memory_mb {
+                peak.max(baseline)
+            } else {
+                peak
+            }
+        });
         let processed = memories.len();
         let result = DreamResult {
             dream_id,
             phase: DreamPhase::Deep,
             started_at,
             finished_at,
+            duration_ms: ctx.duration_ms(),
             memories_processed: processed as u32,
             memories_created: created,
             memories_removed: 0,
             memories_promoted: 0,
             memories_demoted: 0,
+            peak_memory_mb,
+            llm_tokens_input: ctx.input_tokens,
+            llm_tokens_output: ctx.output_tokens,
             summary: format!(
                 "Deep Dream: processed {} memories, created {} topic summaries",
                 processed, created
@@ -762,6 +913,9 @@ impl DreamEngine {
         let dream_id = format!("dream-rem-{}", uuid::Uuid::new_v4());
         info!("Starting REM Dream: {}", dream_id);
 
+        let mut ctx = DreamPhaseContext::new();
+        let baseline_memory_mb = current_memory_mb();
+
         let mut created = 0;
         let mut errors = Vec::new();
 
@@ -789,7 +943,9 @@ impl DreamEngine {
                 content_for_prompt.chars().take(8000).collect::<String>()
             );
 
+            ctx.track_prompt(&prompt);
             let response = llm(prompt).await;
+            ctx.track_response(&response);
 
             // Parse JSON response
             #[derive(Deserialize)]
@@ -932,16 +1088,27 @@ impl DreamEngine {
         }
 
         let finished_at = SystemTime::now();
+        let peak_memory_mb = current_memory_mb().map(|peak| {
+            if let Some(baseline) = baseline_memory_mb {
+                peak.max(baseline)
+            } else {
+                peak
+            }
+        });
         let result = DreamResult {
             dream_id,
             phase: DreamPhase::Rem,
             started_at,
             finished_at,
+            duration_ms: ctx.duration_ms(),
             memories_processed: processed as u32,
             memories_created: created,
             memories_removed: 0,
             memories_promoted: 0,
             memories_demoted: 0,
+            peak_memory_mb,
+            llm_tokens_input: ctx.input_tokens,
+            llm_tokens_output: ctx.output_tokens,
             summary: format!(
                 "REM Dream: processed {} memories, discovered {} entities, {} relations, created {} patterns",
                 processed,
@@ -988,6 +1155,7 @@ impl DreamEngine {
         // Light dream always runs
         match self.run_light(store, tier_index).await {
             Ok(r) => {
+                self.metrics.record(&r, false);
                 if let Some(ref event_log) = self.event_log {
                     let event = MemoryEventBuilder::new().dream(
                         &r.dream_id,
@@ -1002,12 +1170,17 @@ impl DreamEngine {
                 }
                 results.push(r);
             }
-            Err(e) => warn!("Light dream failed: {}", e),
+            Err(e) => {
+                self.metrics.dreams_total.fetch_add(1, Ordering::Relaxed);
+                self.metrics.dreams_failed.fetch_add(1, Ordering::Relaxed);
+                warn!("Light dream failed: {}", e);
+            }
         }
 
         // Deep dream runs on balanced/slow or if enough memories
         match self.run_deep(store, tier_index).await {
             Ok(r) => {
+                self.metrics.record(&r, false);
                 if let Some(ref event_log) = self.event_log {
                     let event = MemoryEventBuilder::new().dream(
                         &r.dream_id,
@@ -1022,13 +1195,18 @@ impl DreamEngine {
                 }
                 results.push(r);
             }
-            Err(e) => warn!("Deep dream failed: {}", e),
+            Err(e) => {
+                self.metrics.dreams_total.fetch_add(1, Ordering::Relaxed);
+                self.metrics.dreams_failed.fetch_add(1, Ordering::Relaxed);
+                warn!("Deep dream failed: {}", e);
+            }
         }
 
         // REM dream runs only if requested and budget allows
         if include_rem && self.config.budget == DreamBudget::Expensive {
             match self.run_rem(store, tier_index, llm_callback).await {
                 Ok(r) => {
+                    self.metrics.record(&r, false);
                     if let Some(ref event_log) = self.event_log {
                         let event = MemoryEventBuilder::new().dream(
                             &r.dream_id,
@@ -1043,7 +1221,11 @@ impl DreamEngine {
                     }
                     results.push(r);
                 }
-                Err(e) => warn!("REM dream failed: {}", e),
+                Err(e) => {
+                    self.metrics.dreams_total.fetch_add(1, Ordering::Relaxed);
+                    self.metrics.dreams_failed.fetch_add(1, Ordering::Relaxed);
+                    warn!("REM dream failed: {}", e);
+                }
             }
         }
 
@@ -1322,9 +1504,9 @@ impl DreamScheduler {
             .await
     }
 
-    /// Get the engine configuration.
-    pub fn config(&self) -> &DreamConfig {
-        &self.engine.config
+    /// Get the shared metrics.
+    pub fn metrics(&self) -> Arc<DreamMetrics> {
+        self.engine.metrics()
     }
 
     /// Start the background cron scheduler.
@@ -1506,5 +1688,148 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.frequency, DEFAULT_MEMORY_DREAMING_FREQUENCY);
         assert!(config.dedup_similarity_threshold > 0.0);
+    }
+
+    #[test]
+    fn test_estimate_tokens() {
+        assert_eq!(estimate_tokens("hello"), 1);
+        assert_eq!(estimate_tokens("this is a short sentence"), 6);
+        assert_eq!(estimate_tokens(""), 1);
+    }
+
+    #[tokio::test]
+    async fn test_dream_light_metrics() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let config = DreamConfig::default();
+        let tier_config = TierSystemConfig::default();
+        let engine = DreamEngine::new(config, tier_config);
+        let tier_index = TierIndex::new();
+
+        for i in 0..5 {
+            let mem = Memory::new("u1", format!("Duplicate content {}", i % 2), "fact")
+                .with_importance_score(0.5);
+            let id = store.store(mem).await.unwrap();
+            tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
+        }
+
+        let result = engine.run_light(store.as_ref(), &tier_index).await.unwrap();
+        assert_eq!(result.phase, DreamPhase::Light);
+        assert!(result.peak_memory_mb.is_some());
+        assert!(result.memories_processed >= 5);
+
+        let metrics = engine.metrics();
+        assert_eq!(
+            metrics.dreams_total.load(Ordering::Relaxed),
+            0,
+            "run_light should not record metrics directly"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dream_metrics_record() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let config = DreamConfig::default();
+        let tier_config = TierSystemConfig::default();
+        let engine = DreamEngine::new(config, tier_config);
+        let tier_index = TierIndex::new();
+
+        for i in 0..5 {
+            let mem = Memory::new("u1", format!("Project Alpha milestone {} completed", i), "fact")
+                .with_importance_score(0.6);
+            let id = store.store(mem).await.unwrap();
+            tier_index.insert(id.to_string(), MemoryTier::ShortTerm);
+        }
+
+        let results = engine
+            .run_full_cycle(store.as_ref(), &tier_index, false, None)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+
+        let metrics = engine.metrics();
+        assert!(metrics.dreams_total.load(Ordering::Relaxed) >= 1);
+        assert!(metrics.memories_processed_total.load(Ordering::Relaxed) >= 5);
+    }
+
+    #[tokio::test]
+    async fn test_dream_rem_token_tracking() {
+        let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
+        let config = DreamConfig {
+            budget: DreamBudget::Expensive,
+            ..DreamConfig::default()
+        };
+        let tier_config = TierSystemConfig::default();
+        let engine = DreamEngine::new(config, tier_config);
+        let tier_index = TierIndex::new();
+
+        let mems = vec![
+            "Alice works at Google in New York",
+            "Bob visited New York last summer",
+            "Google announced new AI features",
+            "Alice and Bob are friends",
+            "New York is a big city",
+        ];
+        for content in mems {
+            let mem = Memory::new("u1", content, "fact").with_importance_score(0.6);
+            let id = store.store(mem).await.unwrap();
+            tier_index.insert(id.to_string(), MemoryTier::LongTerm);
+        }
+
+        let llm: LlmCallback = Arc::new(|_prompt: String| {
+            Box::pin(async move {
+                serde_json::json!({
+                    "entities": [
+                        {"label": "Alice", "type": "person", "confidence": 0.9},
+                        {"label": "Google", "type": "organization", "confidence": 0.95}
+                    ],
+                    "relationships": [
+                        {"from": "Alice", "to": "Google", "relation": "works_at", "confidence": 0.8}
+                    ]
+                })
+                .to_string()
+            })
+        });
+
+        let result = engine
+            .run_rem(store.as_ref(), &tier_index, Some(&llm))
+            .await
+            .unwrap();
+        assert_eq!(result.phase, DreamPhase::Rem);
+        assert!(result.peak_memory_mb.is_some());
+        assert!(result.llm_tokens_input > 0);
+        assert!(result.llm_tokens_output > 0);
+    }
+
+    #[test]
+    fn test_dream_metrics_counters() {
+        let metrics = DreamMetrics::default();
+        let result = DreamResult {
+            dream_id: "dream-test".to_string(),
+            phase: DreamPhase::Light,
+            started_at: SystemTime::now(),
+            finished_at: SystemTime::now(),
+            duration_ms: 42,
+            memories_processed: 10,
+            memories_created: 2,
+            memories_removed: 1,
+            memories_promoted: 3,
+            memories_demoted: 4,
+            peak_memory_mb: Some(123.4),
+            llm_tokens_input: 100,
+            llm_tokens_output: 50,
+            summary: "test".to_string(),
+            errors: vec![],
+        };
+        metrics.record(&result, true);
+        assert_eq!(metrics.dreams_total.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.dreams_failed.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.memories_processed_total.load(Ordering::Relaxed), 10);
+        assert_eq!(metrics.memories_created_total.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.memories_removed_total.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.memories_promoted_total.load(Ordering::Relaxed), 3);
+        assert_eq!(metrics.memories_demoted_total.load(Ordering::Relaxed), 4);
+        assert_eq!(metrics.dream_duration_ms_total.load(Ordering::Relaxed), 42);
+        assert_eq!(metrics.llm_tokens_input_total.load(Ordering::Relaxed), 100);
+        assert_eq!(metrics.llm_tokens_output_total.load(Ordering::Relaxed), 50);
     }
 }

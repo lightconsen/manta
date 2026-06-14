@@ -17,6 +17,7 @@ pub trait MemoryStore: Send + Sync {
     async fn cleanup_expired(&self) -> Result<usize>;
     async fn stats(&self) -> Result<MemoryStats>;
     async fn close(&self) -> Result<()>;
+    fn as_tiered_store(&self) -> Option<&TieredStore>;
 }
 
 #[async_trait]
@@ -83,10 +84,10 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 ## Missing / TODO
 
 - **✅ Implemented**: Effectiveness tracker — `MemoryManager::new()` creates an `EffectivenessTracker` and `retrieve()` calls `record_recall()` for every recalled memory. See `src/memory/manager.rs:149-153` and `src/memory/manager.rs:448-460`.
-- **📝 Partial**: Effectiveness closed-loop feedback — recall hit-rate data is recorded but not yet used to auto-adjust memory importance or trigger tier promotions/demotions.
-- **❌ Missing**: Local embeddings (`local-embeddings` feature) exists but is feature-gated and not validated in CI.
-- **❌ Missing**: Vector store backend abstraction (pgvector, sqlite-vec) — only SQLite FTS5 + in-memory embeddings currently.
-- **❌ Missing**: Memory export/import for migration between workspaces.
-- **❌ Missing**: Soul/personality file auto-generation from conversation patterns.
+- **✅ Implemented**: Effectiveness closed-loop feedback — `EffectivenessTracker` hit-rate stats are fed into `TierEvaluator::evaluate()` via optional `EffectivenessStats`. `MemoryManager::apply_effectiveness_adjustments()` updates importance scores and explicitly migrates memories between tiers when effectiveness thresholds are met, emitting `PromotionApplied` events. See `src/memory/tier.rs:247-295` and `src/memory/manager.rs:889-1024`.
+- **✅ Implemented**: Local embeddings (`local-embeddings` feature) — `ModelSource` parsing, local path resolution, and FTS-only fallback are covered by dedicated unit tests in `src/memory/local_embeddings.rs`. A dedicated CI job (`test-local-embeddings`) runs `cargo test --features local-embeddings` on every push/PR.
+- **✅ Implemented**: Vector store backend abstraction (pgvector, sqlite-vec) — `PgVectorStore` and `SqliteVecStore` implement the `VectorStore` trait behind feature gates `pgvector` and `sqlite-vec`. `VectorBackend` now includes `Postgres` and `SqliteVec` variants. See `src/memory/pgvector_store.rs` and `src/memory/sqlite_vec_store.rs`.
+- **✅ Implemented**: Memory export/import for migration — `ExportService` now supports `import_memories`, `import_conversations`, and `import_all` with `ImportOptions` for skip/update/dry-run semantics. JSON and JSONL formats are supported, and records are validated before insertion. See `src/export/service.rs:345-650`.
+- **✅ Implemented**: Soul/personality file auto-generation — `PersonalityMemory::analyze_conversation_patterns()` heuristically detects language, code style, voice/tone, common topics, and explicit preferences from conversation history. `SoulConfig::merge_analysis()` fills empty SOUL.md fields conservatively, and `MemoryManager::compact_session()` auto-updates SOUL.md after compaction. See `src/memory/personality.rs:410-540` and `src/memory/manager.rs:715-730`.
 - **✅ Implemented**: Dream result human review — `DreamReviewQueue` with `enqueue()`/`approve()`/`reject()`/`list_pending()` and disk persistence, wired into `DreamEngine` via optional `review_queue`. See `src/memory/dreaming.rs:1093-1150`.
-- **❌ Missing**: Dream observability dashboard — no CPU/memory/LLM token metrics are collected during dream cycles.
+- **✅ Implemented**: Dream observability dashboard — `DreamResult` now includes `duration_ms`, `peak_memory_mb`, `llm_tokens_input`, and `llm_tokens_output`. `DreamMetrics` tracks cumulative counters for dreams, memory operations, duration, and tokens. Metrics are exposed via the Prometheus `/metrics` endpoint and the `/health` JSON report. See `src/memory/dreaming.rs:119-207` and `src/gateway/handlers/health.rs`.

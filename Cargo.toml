@@ -138,8 +138,10 @@ daemonize = "0.5"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono"] }
 
 # Vector database (QMD/LanceDB-style)
-pgvector = { version = "0.4", optional = true }
+pgvector = { version = "0.4", optional = true, features = ["sqlx"] }
 lancedb = { version = "0.16", optional = true }
+libsqlite3-sys = { version = "0.30.1", optional = true }
+sqlite-vec = { version = "0.1", optional = true }
 
 # Embeddings (using API-based providers for now)
 # fastembed has dependency issues with ort crate
@@ -193,6 +195,8 @@ local-embeddings = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]
 hot-reload = ["notify-debouncer-full"]
 vision = ["ort", "image", "ndarray"]
+pgvector = ["dep:pgvector", "pgvector/sqlx", "sqlx/postgres"]
+sqlite-vec = ["dep:sqlite-vec", "dep:libsqlite3-sys"]
 # TUI is no longer optional; kept as a no-op feature for backwards compatibility
 tui = []
 

@@ -37,14 +37,14 @@ pub const WORKSPACE_STATE_VERSION: u32 = 1;
 /// Workspace state tracked in .syscity/workspace/.syscity/workspace-state.json
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceState {
- /// State file format version
+    /// State file format version
     pub version: u32,
 
- /// ISO 8601 timestamp when BOOTSTRAP.md was first seeded
+    /// ISO 8601 timestamp when BOOTSTRAP.md was first seeded
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bootstrap_seeded_at: Option<String>,
 
- /// ISO 8601 timestamp when setup was completed
+    /// ISO 8601 timestamp when setup was completed
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "onboarding_completed_at"
@@ -63,12 +63,12 @@ impl Default for WorkspaceState {
 }
 
 impl WorkspaceState {
- /// Create a new default state
+    /// Create a new default state
     pub fn new() -> Self {
         Self::default()
     }
 
- /// Check if setup has been completed
+    /// Check if setup has been completed
     pub fn is_setup_completed(&self) -> bool {
         self.setup_completed_at
             .as_ref()
@@ -76,7 +76,7 @@ impl WorkspaceState {
             .unwrap_or(false)
     }
 
- /// Check if bootstrap has been seeded
+    /// Check if bootstrap has been seeded
     pub fn is_bootstrap_seeded(&self) -> bool {
         self.bootstrap_seeded_at
             .as_ref()
@@ -84,27 +84,27 @@ impl WorkspaceState {
             .unwrap_or(false)
     }
 
- /// Mark bootstrap as seeded
+    /// Mark bootstrap as seeded
     pub fn mark_bootstrap_seeded(&mut self) {
         self.bootstrap_seeded_at = Some(SystemTime::now().to_iso8601());
     }
 
- /// Mark setup as completed
+    /// Mark setup as completed
     pub fn mark_setup_completed(&mut self) {
         self.setup_completed_at = Some(SystemTime::now().to_iso8601());
     }
 
- /// Load state from file, returning default if not exists or invalid
+    /// Load state from file, returning default if not exists or invalid
     pub async fn load(state_path: &Path) -> crate::Result<Self> {
         match fs::read_to_string(state_path).await {
             Ok(raw) => match Self::parse(&raw) {
                 Some(state) => {
- // Migrate legacy onboarding_completed_at to setup_completed_at
+                    // Migrate legacy onboarding_completed_at to setup_completed_at
                     if raw.contains("\"onboarding_completed_at\"")
                         && !raw.contains("\"setup_completed_at\"")
                         && state.setup_completed_at.is_some()
                     {
- // State was already migrated during parsing
+                        // State was already migrated during parsing
                     }
                     Ok(state)
                 }
@@ -127,12 +127,12 @@ impl WorkspaceState {
         }
     }
 
- /// Parse state from JSON string
+    /// Parse state from JSON string
     fn parse(raw: &str) -> Option<Self> {
         serde_json::from_str::<Self>(raw).ok()
     }
 
- /// Save state to file atomically
+    /// Save state to file atomically
     pub async fn save(&self, state_path: &Path) -> crate::Result<()> {
         let parent = state_path
             .parent()
@@ -155,7 +155,7 @@ impl WorkspaceState {
             }
         })?;
 
- // Write atomically via temp file + rename
+        // Write atomically via temp file + rename
         let tmp_path = state_path.with_extension(format!(
             "tmp-{}-{}",
             std::process::id(),
@@ -193,7 +193,7 @@ trait SystemTimeExt {
 
 impl SystemTimeExt for SystemTime {
     fn to_iso8601(&self) -> String {
- // Use RFC 3339 which is ISO 8601 compatible
+        // Use RFC 3339 which is ISO 8601 compatible
         self.duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| {
                 chrono::DateTime::<chrono::Utc>::from_timestamp(
@@ -215,44 +215,44 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
- /// Create a new workspace manager for the given directory
+    /// Create a new workspace manager for the given directory
     pub fn new(workspace_dir: PathBuf) -> Self {
         let state_path = workspace_dir.join(".syscity").join("workspace-state.json");
         Self { workspace_dir, state_path }
     }
 
- /// Load the current workspace state
+    /// Load the current workspace state
     pub async fn load_state(&self) -> crate::Result<WorkspaceState> {
         WorkspaceState::load(&self.state_path).await
     }
 
- /// Save workspace state
+    /// Save workspace state
     pub async fn save_state(&self, state: &WorkspaceState) -> crate::Result<()> {
         state.save(&self.state_path).await
     }
 
- /// Check if this is a brand new workspace (never initialized)
- ///
- /// A workspace is considered "brand new" if:
- /// - No state file exists, AND
- /// - No user content indicators exist (memory/, MEMORY.md, .git/)
+    /// Check if this is a brand new workspace (never initialized)
+    ///
+    /// A workspace is considered "brand new" if:
+    /// - No state file exists, AND
+    /// - No user content indicators exist (memory/, MEMORY.md, .git/)
     pub async fn is_brand_new(&self) -> bool {
- // If state file exists and has setup_completed_at, not brand new
+        // If state file exists and has setup_completed_at, not brand new
         if let Ok(state) = self.load_state().await {
             if state.is_setup_completed() {
                 return false;
             }
         }
 
- // Check for user content indicators
+        // Check for user content indicators
         self.check_user_content_indicators().await.is_none()
     }
 
- /// Check for user content indicators that suggest an existing workspace
- ///
- /// Returns Some(indicator_name) if found, None if workspace appears empty
+    /// Check for user content indicators that suggest an existing workspace
+    ///
+    /// Returns Some(indicator_name) if found, None if workspace appears empty
     async fn check_user_content_indicators(&self) -> Option<String> {
- // Check for memory directory or files
+        // Check for memory directory or files
         let memory_dir = self.workspace_dir.join("memory");
         if memory_dir.exists() {
             return Some("memory/".to_string());
@@ -268,7 +268,7 @@ impl WorkspaceManager {
             return Some("memory.md".to_string());
         }
 
- // Check for .git directory
+        // Check for .git directory
         let git_dir = self.workspace_dir.join(".git");
         if git_dir.exists() {
             return Some(".git/".to_string());
@@ -277,7 +277,7 @@ impl WorkspaceManager {
         None
     }
 
- /// Check if workspace setup is completed
+    /// Check if workspace setup is completed
     pub async fn is_setup_completed(&self) -> bool {
         self.load_state()
             .await
@@ -285,7 +285,7 @@ impl WorkspaceManager {
             .unwrap_or(false)
     }
 
- /// Check if bootstrap has been seeded
+    /// Check if bootstrap has been seeded
     pub async fn is_bootstrap_seeded(&self) -> bool {
         self.load_state()
             .await
@@ -293,7 +293,7 @@ impl WorkspaceManager {
             .unwrap_or(false)
     }
 
- /// Mark bootstrap as seeded and save state
+    /// Mark bootstrap as seeded and save state
     pub async fn mark_bootstrap_seeded(&self) -> crate::Result<()> {
         let mut state = self.load_state().await?;
         state.mark_bootstrap_seeded();
@@ -302,7 +302,7 @@ impl WorkspaceManager {
         Ok(())
     }
 
- /// Mark setup as completed and save state
+    /// Mark setup as completed and save state
     pub async fn mark_setup_completed(&self) -> crate::Result<()> {
         let mut state = self.load_state().await?;
         state.mark_setup_completed();
@@ -311,9 +311,9 @@ impl WorkspaceManager {
         Ok(())
     }
 
- /// Initialize git repo if not already present
- ///
- /// Only initializes for brand new workspaces (won't touch existing repos)
+    /// Initialize git repo if not already present
+    ///
+    /// Only initializes for brand new workspaces (won't touch existing repos)
     pub async fn ensure_git_repo(&self, is_brand_new: bool) -> bool {
         if !is_brand_new {
             debug!("Skipping git init - workspace is not brand new");
@@ -326,13 +326,13 @@ impl WorkspaceManager {
             return true;
         }
 
- // Check if git is available
+        // Check if git is available
         if !is_git_available().await {
             debug!("Git not available, skipping repo initialization");
             return false;
         }
 
- // Initialize git repo
+        // Initialize git repo
         match tokio::process::Command::new("git")
             .arg("init")
             .current_dir(&self.workspace_dir)
@@ -356,33 +356,33 @@ impl WorkspaceManager {
         }
     }
 
- /// Get the workspace directory path
+    /// Get the workspace directory path
     pub fn workspace_dir(&self) -> &Path {
         &self.workspace_dir
     }
 
- /// Get the state file path
+    /// Get the state file path
     pub fn state_path(&self) -> &Path {
         &self.state_path
     }
 
- /// Check if bootstrap file should be created
- ///
- /// Returns true if:
- /// - Setup is not completed AND
- /// - (Workspace is brand new OR bootstrap was seeded but file is missing)
+    /// Check if bootstrap file should be created
+    ///
+    /// Returns true if:
+    /// - Setup is not completed AND
+    /// - (Workspace is brand new OR bootstrap was seeded but file is missing)
     pub async fn should_create_bootstrap(&self) -> bool {
- // If setup is completed, never create bootstrap
+        // If setup is completed, never create bootstrap
         if self.is_setup_completed().await {
             return false;
         }
 
- // If brand new workspace, create bootstrap
+        // If brand new workspace, create bootstrap
         if self.is_brand_new().await {
             return true;
         }
 
- // If bootstrap was seeded but file is missing (partial init recovery)
+        // If bootstrap was seeded but file is missing (partial init recovery)
         if self.is_bootstrap_seeded().await {
             let bootstrap_path = self.workspace_dir.join("BOOTSTRAP.md");
             return !bootstrap_path.exists();
@@ -391,9 +391,9 @@ impl WorkspaceManager {
         false
     }
 
- /// Handle bootstrap file deletion (user completed onboarding)
- ///
- /// Call this when BOOTSTRAP.md is deleted to mark setup as completed
+    /// Handle bootstrap file deletion (user completed onboarding)
+    ///
+    /// Call this when BOOTSTRAP.md is deleted to mark setup as completed
     pub async fn on_bootstrap_deleted(&self) -> crate::Result<()> {
         self.mark_setup_completed().await
     }
@@ -461,7 +461,7 @@ mod tests {
     async fn test_workspace_state_legacy_migration() {
         let (_temp_dir, manager) = create_test_workspace();
 
- // Write legacy format with onboarding_completed_at
+        // Write legacy format with onboarding_completed_at
         let legacy_json = r#"{
   "version": 1,
   "onboarding_completed_at": "2026-03-15T02:30:00.000Z"

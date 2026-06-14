@@ -631,6 +631,8 @@ pub struct GatewayState {
         RwLock<Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>>,
  /// Dream scheduler for background memory consolidation (RwLock for late initialization)
     pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
+    /// Observability counters for dream cycles.
+    pub dream_metrics: Arc<crate::memory::DreamMetrics>,
  /// Standing order manager for persistent background agent programs
     pub standing_order_manager:
         RwLock<Option<crate::standing_orders::StandingOrderManager>>,
@@ -1741,6 +1743,7 @@ impl Gateway {
             heartbeat_wake_tx: RwLock::new(None),
             heartbeat_event_tx: RwLock::new(None),
             dream_scheduler: RwLock::new(None),
+            dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
             standing_order_manager: RwLock::new(None),
             auth_manager,
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
@@ -2400,7 +2403,8 @@ impl Gateway {
                     };
                     let tier_system_config = crate::memory::TierSystemConfig::default();
                     let mut engine =
-                        crate::memory::DreamEngine::new(dream_config, tier_system_config);
+                        crate::memory::DreamEngine::new(dream_config, tier_system_config)
+                            .with_metrics(Arc::clone(&self.state.dream_metrics));
                     if let Some(ref workspace_dir) = self.config.workspace_dir {
                         engine = engine.with_workspace_dir(workspace_dir.clone());
                     }
@@ -5413,6 +5417,23 @@ pub struct HealthReport {
     timestamp: String,
     overall_healthy: bool,
     subsystems: SubsystemHealth,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dream: Option<DreamHealthReport>,
+}
+
+/// Dream observability report embedded in the health endpoint.
+#[derive(Debug, Serialize)]
+pub struct DreamHealthReport {
+    pub dreams_total: u64,
+    pub dreams_failed: u64,
+    pub memories_processed_total: u64,
+    pub memories_created_total: u64,
+    pub memories_removed_total: u64,
+    pub memories_promoted_total: u64,
+    pub memories_demoted_total: u64,
+    pub dream_duration_ms_total: u64,
+    pub llm_tokens_input_total: u64,
+    pub llm_tokens_output_total: u64,
 }
 
 /// Per-subsystem health statuses

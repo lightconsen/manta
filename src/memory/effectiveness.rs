@@ -84,6 +84,10 @@ pub struct EffectivenessConfig {
     pub max_importance: f32,
     /// Minimum importance score floor.
     pub min_importance: f32,
+    /// Hit rate threshold for direct tier promotion (e.g., 0.9 = 90%).
+    pub promote_directly_threshold: f32,
+    /// Hit rate threshold for direct tier demotion (e.g., 0.1 = 10%).
+    pub demote_directly_threshold: f32,
 }
 
 impl Default for EffectivenessConfig {
@@ -97,6 +101,8 @@ impl Default for EffectivenessConfig {
             importance_penalty: 0.1,
             max_importance: 1.0,
             min_importance: 0.0,
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
         }
     }
 }
@@ -123,6 +129,8 @@ pub struct EffectivenessTracker {
     type_stats: RwLock<HashMap<String, EffectivenessStats>>,
     /// memory_id -> aggregated stats (computed on demand)
     memory_stats_cache: RwLock<HashMap<String, EffectivenessStats>>,
+    /// memory_id -> (promotions, demotions) counters for tier migrations.
+    promotion_counters: RwLock<HashMap<String, (u32, u32)>>,
 }
 
 impl EffectivenessTracker {
@@ -134,7 +142,13 @@ impl EffectivenessTracker {
             recall_index: RwLock::new(HashMap::new()),
             type_stats: RwLock::new(HashMap::new()),
             memory_stats_cache: RwLock::new(HashMap::new()),
+            promotion_counters: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Get the tracker configuration.
+    pub fn config(&self) -> &EffectivenessConfig {
+        &self.config
     }
 
     /// Record a recall event.
@@ -210,11 +224,17 @@ impl EffectivenessTracker {
 
     /// Get stats for a specific memory.
     pub async fn memory_stats(&self, memory_id: &str) -> Option<EffectivenessStats> {
-        // Check cache first
+        // Check cache first, but always merge live counters because they may
+        // have changed since the cached value was written.
         {
             let cache = self.memory_stats_cache.read().await;
-            if let Some(stats) = cache.get(memory_id) {
-                return Some(stats.clone());
+            if let Some(mut stats) = cache.get(memory_id).cloned() {
+                let counters = self.promotion_counters.read().await;
+                if let Some(&(promotions, demotions)) = counters.get(memory_id) {
+                    stats.promotions = promotions;
+                    stats.demotions = demotions;
+                }
+                return Some(stats);
             }
         }
 
@@ -229,9 +249,33 @@ impl EffectivenessTracker {
 
         // Update cache
         let mut cache = self.memory_stats_cache.write().await;
+
+        // Merge tier migration counters into stats.
+        {
+            let counters = self.promotion_counters.read().await;
+            if let Some(&(promotions, demotions)) = counters.get(memory_id) {
+                stats.promotions = promotions;
+                stats.demotions = demotions;
+            }
+        }
+
         cache.insert(memory_id.to_string(), stats.clone());
 
         Some(stats)
+    }
+
+    /// Record a tier promotion for a memory.
+    pub async fn record_promotion(&self, memory_id: impl Into<String>) {
+        let memory_id = memory_id.into();
+        let mut counters = self.promotion_counters.write().await;
+        counters.entry(memory_id).or_insert((0, 0)).0 += 1;
+    }
+
+    /// Record a tier demotion for a memory.
+    pub async fn record_demotion(&self, memory_id: impl Into<String>) {
+        let memory_id = memory_id.into();
+        let mut counters = self.promotion_counters.write().await;
+        counters.entry(memory_id).or_insert((0, 0)).1 += 1;
     }
 
     /// Get aggregated stats for a memory type.
@@ -421,6 +465,8 @@ mod tests {
             importance_penalty: 0.1,
             max_importance: 1.0,
             min_importance: 0.0,
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
         };
         let tracker = EffectivenessTracker::new(config);
 

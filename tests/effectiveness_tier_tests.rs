@@ -57,6 +57,8 @@ async fn effectiveness_boost_triggers_tier_promotion() {
         importance_penalty: 0.1,
         max_importance: 1.0,
         min_importance: 0.0,
+        promote_directly_threshold: 0.9,
+        demote_directly_threshold: 0.1,
     });
 
     // 3. Simulate 3 recalls, all hits → hit_rate = 1.0 > 0.7
@@ -146,6 +148,8 @@ async fn effectiveness_penalty_triggers_tier_demotion() {
         importance_penalty: 0.4,
         max_importance: 1.0,
         min_importance: 0.0,
+        promote_directly_threshold: 0.9,
+        demote_directly_threshold: 0.1,
     });
 
     // 3. Simulate 3 recalls, all misses → hit_rate = 0.0 < 0.2
@@ -234,6 +238,8 @@ async fn effectiveness_noop_preserves_tier() {
         importance_penalty: 0.1,
         max_importance: 1.0,
         min_importance: 0.0,
+        promote_directly_threshold: 0.9,
+        demote_directly_threshold: 0.1,
     });
 
     // Simulate 3 recalls, 1 hit → hit_rate = 0.33, between thresholds
@@ -283,6 +289,8 @@ async fn effectiveness_data_consistency_across_backends() {
         importance_penalty: 0.1,
         max_importance: 1.0,
         min_importance: 0.0,
+        promote_directly_threshold: 0.9,
+        demote_directly_threshold: 0.1,
     });
 
     // 3 hits

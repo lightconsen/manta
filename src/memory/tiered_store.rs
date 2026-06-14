@@ -18,8 +18,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::{
-    CompressedJsonlStore, DatabaseStore, InMemoryStore, Memory, MemoryId, MemoryQuery, MemoryStats,
-    MemoryStore, MemoryTier, TierEvaluator, TierIndex, TierSystemConfig,
+    CompressedJsonlStore, DatabaseStore, EffectivenessConfig, InMemoryStore, Memory, MemoryId,
+    MemoryQuery, MemoryStats, MemoryStore, MemoryTier, TierEvaluator, TierIndex, TierSystemConfig,
 };
 
 /// Aggregate store that routes each memory to its tier-specific backend.
@@ -108,6 +108,14 @@ impl TieredStore {
 
     /// Replace the default evaluator.
     pub fn with_evaluator(mut self, evaluator: TierEvaluator) -> Self {
+        self.evaluator = Arc::new(evaluator);
+        self
+    }
+
+    /// Configure the evaluator with effectiveness thresholds.
+    pub fn with_effectiveness_config(mut self, config: EffectivenessConfig) -> Self {
+        let evaluator =
+            TierEvaluator::new(TierSystemConfig::default()).with_effectiveness_config(config);
         self.evaluator = Arc::new(evaluator);
         self
     }
@@ -273,7 +281,7 @@ impl MemoryStore for TieredStore {
         // Fast path: known tier — check if migration is needed
         if let Some(current_tier) = self.index.get_tier(&id.0) {
             if let Some(tiered) = self.index.get(&id.0) {
-                match self.evaluator.evaluate(&memory, &tiered) {
+                match self.evaluator.evaluate(&memory, &tiered, None) {
                     super::tier::TierAction::Keep => {
                         // Same tier, just update in place
                         return self.backend_for(current_tier).update(memory).await;
@@ -319,7 +327,7 @@ impl MemoryStore for TieredStore {
                     last_accessed: None,
                     relevance_score: existing.importance_score,
                 };
-                match self.evaluator.evaluate(&memory, &tiered) {
+                match self.evaluator.evaluate(&memory, &tiered, None) {
                     super::tier::TierAction::Keep => {
                         self.backend_for(tier).update(memory).await?;
                         self.index.insert(&id.0, tier);
@@ -437,6 +445,10 @@ impl MemoryStore for TieredStore {
         self.archival.close().await?;
         info!("TieredStore closed all backends");
         Ok(())
+    }
+
+    fn as_tiered_store(&self) -> Option<&TieredStore> {
+        Some(self)
     }
 }
 

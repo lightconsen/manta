@@ -15,17 +15,21 @@ pub mod events;
 pub mod flush;
 pub mod hybrid;
 pub mod in_memory_store;
+pub mod lancedb;
 pub mod manager;
 pub mod multimodal;
 pub mod personality;
+#[cfg(feature = "pgvector")]
+pub mod pgvector_store;
 pub mod pipeline;
 pub mod qmd;
 pub mod session_search;
 pub mod soul;
 pub mod sqlite;
+#[cfg(feature = "sqlite-vec")]
+pub mod sqlite_vec_store;
 pub mod tier;
 pub mod tiered_store;
-pub mod lancedb;
 pub mod vector;
 pub mod workspace_state;
 
@@ -38,9 +42,9 @@ pub use in_memory_store::InMemoryStore;
 /// Alias for the single canonical SQLite store (WAL + FTS5 + access tracking).
 pub type UnifiedStore = DatabaseStore;
 pub use dreaming::{
-    DreamAction, DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamPhase, DreamResult,
-    DreamReviewItem, DreamReviewQueue, DreamScheduler, DreamSpeed, DreamThinking, KnowledgeEdge,
-    KnowledgeGraph, KnowledgeNode, LlmCallback, ReviewStatus,
+    DreamAction, DreamBudget, DreamCheckpoint, DreamConfig, DreamEngine, DreamMetrics, DreamPhase,
+    DreamResult, DreamReviewItem, DreamReviewQueue, DreamScheduler, DreamSpeed, DreamThinking,
+    KnowledgeEdge, KnowledgeGraph, KnowledgeNode, LlmCallback, ReviewStatus,
 };
 pub use effectiveness::{
     EffectivenessAction, EffectivenessConfig, EffectivenessStats, EffectivenessTracker, RecallEvent,
@@ -57,6 +61,7 @@ pub use hybrid::{
     apply_temporal_decay, hybrid_search, mmr_rerank, HybridSearchConfig, HybridSearchResult,
     MmrConfig, TemporalDecayConfig,
 };
+pub use lancedb::LanceDbVectorStore;
 pub use manager::{MemoryManager, MemoryManagerBuilder, MemoryManagerConfig, SessionContext};
 pub use multimodal::{
     build_multimodal_glob, classify_multimodal_file, FileClassification, MemoryMultimodalConfig,
@@ -64,6 +69,8 @@ pub use multimodal::{
     DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES, IMAGE_EXTENSIONS,
 };
 pub use personality::{MemoryContext, MemoryType, PersonalityMemory};
+#[cfg(feature = "pgvector")]
+pub use pgvector_store::PgVectorStore;
 pub use pipeline::{
     EmbeddingJob, EmbeddingPipeline, EmbeddingPipelineConfig, EmbeddingPipelineHandle,
     PipelineEmbeddingProvider,
@@ -72,6 +79,8 @@ pub use qmd::{QmdExecutor, QmdQueryResult, QmdScope};
 pub use session_search::{SearchResult, SessionSearch, SessionSearchQuery};
 pub use soul::{BehaviorConfig, PreferenceConfig, SoulConfig, SoulFile};
 pub use sqlite::SqliteMemoryStore;
+#[cfg(feature = "sqlite-vec")]
+pub use sqlite_vec_store::SqliteVecStore;
 pub use tier::{
     MemoryTier, TierAction, TierConfig, TierEvaluator, TierIndex, TierSystemConfig, TieredMemory,
 };
@@ -82,7 +91,6 @@ pub use vector::{
     SqliteVectorStore, TextChunker, VectorBackend, VectorMemoryService, VectorStore,
     VectorStoreStats,
 };
-pub use lancedb::LanceDbVectorStore;
 pub use workspace_state::{WorkspaceManager, WorkspaceState, WORKSPACE_STATE_VERSION};
 
 /// Unique identifier for a memory entry
@@ -322,6 +330,14 @@ pub trait MemoryStore: Send + Sync {
 
     /// Close the store (clean up resources)
     async fn close(&self) -> crate::Result<()>;
+
+    /// Return the concrete store as a [`TieredStore`] if it is one.
+    ///
+    /// Used by the effectiveness feedback loop to trigger explicit tier
+    /// migrations based on recall hit rates.
+    fn as_tiered_store(&self) -> Option<&TieredStore> {
+        None
+    }
 }
 
 /// A chat message for conversation history

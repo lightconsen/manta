@@ -22,10 +22,11 @@ use super::{
     events::{MemoryEventBuilder, MemoryEventLog},
     hybrid::{hybrid_search, HybridSearchConfig},
     multimodal::{MemoryMultimodalConfig, MultimodalStore},
+    personality::PersonalityMemory,
     pipeline::EmbeddingPipelineHandle,
     qmd::{QmdExecutor, QmdScope},
     session_search::SessionSearch,
-    tier::{TierIndex, TierSystemConfig},
+    tier::{TierAction, TierIndex, TierSystemConfig},
     vector::VectorMemoryService,
     ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStats, MemoryStore,
     TieredStore, UnifiedStore,
@@ -104,6 +105,8 @@ pub struct MemoryManager {
     last_adjustment: RwLock<Option<std::time::Instant>>,
     /// Optional LLM provider for session compaction and fact extraction.
     llm_provider: Option<Arc<dyn Provider>>,
+    /// Optional personality memory manager for SOUL.md auto-generation.
+    personality_memory: Option<Arc<PersonalityMemory>>,
 }
 
 impl std::fmt::Debug for MemoryManager {
@@ -123,6 +126,7 @@ impl std::fmt::Debug for MemoryManager {
             .field("qmd_executor", &self.qmd_executor.is_some())
             .field("recent_recalls", &"<HashMap>")
             .field("llm_provider", &self.llm_provider.as_ref().map(|p| p.name()))
+            .field("personality_memory", &self.personality_memory.is_some())
             .finish()
     }
 }
@@ -195,6 +199,7 @@ impl MemoryManager {
             recent_recalls: RwLock::new(HashMap::new()),
             last_adjustment: RwLock::new(None),
             llm_provider: None,
+            personality_memory: None,
         }
     }
 
@@ -247,6 +252,12 @@ impl MemoryManager {
     /// Attach an LLM provider for session compaction and fact extraction.
     pub fn with_llm_provider(mut self, provider: Arc<dyn Provider>) -> Self {
         self.llm_provider = Some(provider);
+        self
+    }
+
+    /// Attach a personality memory manager for SOUL.md auto-generation.
+    pub fn with_personality_memory(mut self, memory: Arc<PersonalityMemory>) -> Self {
+        self.personality_memory = Some(memory);
         self
     }
 
@@ -705,6 +716,18 @@ impl MemoryManager {
             }
         }
 
+        // Auto-generate SOUL.md fields from conversation patterns
+        if let Some(ref personality) = self.personality_memory {
+            match personality.analyze_conversation_patterns(&messages) {
+                Ok(analysis) => {
+                    if let Err(e) = personality.update_soul_from_analysis(&analysis).await {
+                        warn!("Failed to update SOUL.md from analysis: {}", e);
+                    }
+                }
+                Err(e) => warn!("Failed to analyze conversation patterns: {}", e),
+            }
+        }
+
         info!("Session {} compacted: {} facts extracted", conversation_id, stored_ids.len());
         Ok(stored_ids)
     }
@@ -919,6 +942,7 @@ impl MemoryManager {
         }
 
         let mut adjusted = 0usize;
+        let mut migrated = 0usize;
 
         for memory_id in memory_ids {
             // Get current memory to read importance score
@@ -946,7 +970,7 @@ impl MemoryManager {
             // Update the memory with new importance score
             let mut updated = memory;
             updated.importance_score = new_score;
-            if let Err(e) = self.store.update(updated).await {
+            if let Err(e) = self.store.update(updated.clone()).await {
                 warn!("Failed to update memory effectiveness for {}: {}", memory_id, e);
                 continue;
             }
@@ -956,10 +980,68 @@ impl MemoryManager {
                 memory_id, old_score, new_score
             );
             adjusted += 1;
+
+            // Closed-loop tier migration: if the store is tiered, re-evaluate
+            // using effectiveness statistics and migrate when the evaluator
+            // recommends a direct promotion/demotion based on hit rate.
+            if let Some(tiered_store) = self.store.as_tiered_store() {
+                let Some(tiered) = tiered_store.tier_index().get(&memory_id) else {
+                    continue;
+                };
+                let Some(stats) = effectiveness.memory_stats(&memory_id).await else {
+                    continue;
+                };
+
+                let tier_action =
+                    tiered_store
+                        .evaluator()
+                        .evaluate(&updated, &tiered, Some(&stats));
+
+                if let TierAction::Promote(target) | TierAction::Demote(target) = tier_action {
+                    if let Err(e) = tiered_store.migrate_memory(&updated, target).await {
+                        warn!(
+                            "Effectiveness-driven migration failed for {} to {}: {}",
+                            memory_id, target, e
+                        );
+                        continue;
+                    }
+
+                    let from_level = tiered.tier.to_string();
+                    let to_level = target.to_string();
+                    info!(
+                        "Effectiveness migration: memory {} {} -> {}",
+                        memory_id, from_level, to_level
+                    );
+
+                    if matches!(tier_action, TierAction::Promote(_)) {
+                        effectiveness.record_promotion(&memory_id).await;
+                    } else {
+                        effectiveness.record_demotion(&memory_id).await;
+                    }
+
+                    if let Some(ref event_log) = self.event_log {
+                        let event = MemoryEventBuilder::new().promotion(
+                            "effectiveness",
+                            format!("promo-{}", uuid::Uuid::new_v4()),
+                            from_level,
+                            to_level,
+                            "effectiveness",
+                        );
+                        if let Err(e) = event_log.append(&event).await {
+                            warn!("Failed to append promotion event: {}", e);
+                        }
+                    }
+
+                    migrated += 1;
+                }
+            }
         }
 
         if adjusted > 0 {
             info!("Applied {} effectiveness adjustments", adjusted);
+        }
+        if migrated > 0 {
+            info!("Migrated {} memories based on effectiveness", migrated);
         }
 
         // Update last adjustment time
@@ -1105,7 +1187,10 @@ impl MemoryManagerBuilder {
 
         if self.config.enable_tiers {
             if let Some(ref workspace_dir) = self.config.workspace_dir {
-                let tiered = TieredStore::new(workspace_dir.join("memory")).await?;
+                let mut tiered = TieredStore::new(workspace_dir.join("memory")).await?;
+                if let Some(ref et) = self.effectiveness_tracker {
+                    tiered = tiered.with_effectiveness_config(et.config().clone());
+                }
                 let short_term = tiered.short_term();
                 store = Arc::new(tiered);
                 chat_history = Arc::new(short_term);
@@ -1469,6 +1554,8 @@ mod tests {
             importance_penalty: 0.1,
             max_importance: 1.0,
             min_importance: 0.0,
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
         };
         let store = Arc::new(UnifiedStore::new_in_memory().await.unwrap());
         let tracker = Arc::new(EffectivenessTracker::new(config));
@@ -1512,5 +1599,91 @@ mod tests {
 
         let new_importance = tracker.apply_action(action, 0.6);
         assert!((new_importance - 0.7).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_apply_effectiveness_adjustments_triggers_tier_migration() {
+        use crate::memory::effectiveness::{EffectivenessConfig, EffectivenessTracker};
+        use crate::memory::MemoryTier;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let config = EffectivenessConfig {
+            auto_adjust: true,
+            promotion_threshold: 0.7,
+            demotion_threshold: 0.2,
+            min_recalls_for_adjustment: 3,
+            importance_boost: 0.1,
+            importance_penalty: 0.1,
+            max_importance: 1.0,
+            min_importance: 0.0,
+            promote_directly_threshold: 0.9,
+            demote_directly_threshold: 0.1,
+        };
+
+        let tracker = Arc::new(EffectivenessTracker::new(config));
+        let tiered = TieredStore::new(workspace.path().join("memory"))
+            .await
+            .unwrap()
+            .with_effectiveness_config(tracker.config().clone());
+        let short_term = tiered.short_term();
+        let store = Arc::new(tiered);
+
+        let mut mm_config = MemoryManagerConfig::default();
+        mm_config.workspace_dir = Some(workspace.path().to_path_buf());
+
+        let mm = MemoryManager::new(store.clone(), Arc::new(short_term), mm_config)
+            .with_effectiveness_tracker(tracker.clone());
+
+        let session_key = "u1:conv-tier";
+
+        // Store a low-importance memory that lands in Working tier.
+        let id = mm
+            .observe("u1", "Tier migration fact", "fact", 0.1)
+            .await
+            .unwrap();
+
+        // Register in the store's tier index (observe does this via manager's own index,
+        // but the TieredStore also tracks it on store). Verify initial tier.
+        let tiered_store = store.as_tiered_store().unwrap();
+        assert_eq!(tiered_store.tier_index().get_tier(&id.0), Some(MemoryTier::Working));
+
+        // Simulate 3 recalls, all hit, so hit_rate is 1.0 >= promote_directly_threshold.
+        for i in 0..3 {
+            let recall_id = format!("recall-tier-{}", i);
+            {
+                let mut guard = mm.recent_recalls.write().await;
+                guard
+                    .entry(session_key.to_string())
+                    .or_default()
+                    .push(RecentRecall {
+                        recall_id: recall_id.clone(),
+                        memory_content: "Tier migration fact".to_string(),
+                    });
+            }
+            tracker
+                .record_recall(&recall_id, &id.0, session_key, "fact", 0.1, 0)
+                .await;
+        }
+
+        mm.evaluate_response_hits(session_key, "I remember the Tier migration fact.")
+            .await;
+
+        let stats = tracker.memory_stats(&id.0).await.unwrap();
+        assert_eq!(stats.hit_rate, 1.0);
+
+        // Apply adjustments. The importance boost and effectiveness-driven tier
+        // evaluator should promote the memory out of the Working tier.
+        mm.apply_effectiveness_adjustments().await;
+
+        let tiered_store = store.as_tiered_store().unwrap();
+        let final_tier = tiered_store.tier_index().get_tier(&id.0);
+        assert!(
+            final_tier != Some(MemoryTier::Working),
+            "Memory should have been promoted based on effectiveness, got {:?}",
+            final_tier
+        );
+
+        let stats = tracker.memory_stats(&id.0).await.unwrap();
+        assert_eq!(stats.promotions, 1);
     }
 }

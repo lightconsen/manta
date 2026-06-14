@@ -5,15 +5,19 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::SystemTime;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info};
 
 use crate::error::{Result, SyscityError};
 use crate::export::formats::{
-    ConversationExport, ExportFormat, ExportMeta, JsonLineMemory, JsonLineMessage, MemoryExport,
+    ConversationExport, ExportFormat, ExportMeta, FullExport, JsonLineMemory, JsonLineMessage,
+    MemoryExport,
 };
-use crate::memory::{ChatHistoryStore, MemoryQuery, MemoryStore, UnifiedStore};
+use crate::memory::{
+    ChatHistoryStore, ChatMessage, Memory, MemoryId, MemoryQuery, MemoryStore, UnifiedStore,
+};
 use sqlx::Row;
 
 /// Export options for controlling export behavior
@@ -109,6 +113,82 @@ pub struct ExportStats {
     pub memory_count: usize,
     /// Total bytes written
     pub bytes_written: u64,
+}
+
+/// Import options for controlling import behavior
+#[derive(Debug, Clone)]
+pub struct ImportOptions {
+    /// Skip records that already exist in the store
+    pub skip_existing: bool,
+    /// Overwrite existing records with the imported data
+    pub update_existing: bool,
+    /// Simulate the import without writing any data
+    pub dry_run: bool,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        Self {
+            skip_existing: false,
+            update_existing: true,
+            dry_run: false,
+        }
+    }
+}
+
+impl ImportOptions {
+    /// Create new import options with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Skip existing records
+    pub fn skip_existing(mut self) -> Self {
+        self.skip_existing = true;
+        self.update_existing = false;
+        self
+    }
+
+    /// Update existing records
+    pub fn update_existing(mut self) -> Self {
+        self.update_existing = true;
+        self.skip_existing = false;
+        self
+    }
+
+    /// Run a dry-run import (no writes)
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+}
+
+/// Import statistics
+#[derive(Debug, Clone, Default)]
+pub struct ImportStats {
+    /// Number of records imported as new
+    pub imported: usize,
+    /// Number of records skipped because they already existed
+    pub skipped: usize,
+    /// Number of existing records updated
+    pub updated: usize,
+    /// Errors encountered during import
+    pub errors: Vec<String>,
+}
+
+impl ImportStats {
+    /// Total number of records processed
+    pub fn total(&self) -> usize {
+        self.imported + self.skipped + self.updated
+    }
+
+    /// Merge another import stats into this one
+    pub fn merge(&mut self, other: ImportStats) {
+        self.imported += other.imported;
+        self.skipped += other.skipped;
+        self.updated += other.updated;
+        self.errors.extend(other.errors);
+    }
 }
 
 /// Export service for generating exports from the database
@@ -300,6 +380,184 @@ impl ExportService {
         info!(
             "Full export complete: {} conversations, {} messages, {} memories",
             total_stats.conversation_count, total_stats.message_count, total_stats.memory_count
+        );
+
+        Ok(total_stats)
+    }
+
+    /// Import memories from a JSON or JSONL file
+    ///
+    /// # Arguments
+    /// * `input_path` - Path to the import file
+    /// * `options` - Import options
+    pub async fn import_memories(
+        &self,
+        input_path: impl AsRef<Path>,
+        options: &ImportOptions,
+    ) -> Result<ImportStats> {
+        let input_path = input_path.as_ref();
+        info!("Importing memories from {}", input_path.display());
+
+        let ext = input_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("jsonl")
+            .to_lowercase();
+
+        let mut stats = ImportStats::default();
+
+        if ext == "json" {
+            let content =
+                tokio::fs::read_to_string(input_path)
+                    .await
+                    .map_err(|e| SyscityError::Storage {
+                        context: format!(
+                            "Failed to read memory import file: {}",
+                            input_path.display()
+                        ),
+                        details: e.to_string(),
+                    })?;
+
+            // Try FullExport first, then MemoryExport
+            if let Ok(full) = serde_json::from_str::<FullExport>(&content) {
+                for json_mem in full.memories {
+                    self.import_memory_record(&json_mem, options, &mut stats)
+                        .await;
+                }
+            } else {
+                let export: MemoryExport =
+                    serde_json::from_str(&content).map_err(|e| SyscityError::Storage {
+                        context: "Failed to parse memory JSON export".to_string(),
+                        details: e.to_string(),
+                    })?;
+                for json_mem in export.memories {
+                    self.import_memory_record(&json_mem, options, &mut stats)
+                        .await;
+                }
+            }
+        } else {
+            self.import_memories_jsonl(input_path, options, &mut stats)
+                .await?;
+        }
+
+        info!(
+            "Memory import complete: {} imported, {} skipped, {} updated, {} errors",
+            stats.imported,
+            stats.skipped,
+            stats.updated,
+            stats.errors.len()
+        );
+
+        Ok(stats)
+    }
+
+    /// Import conversations from a JSON or JSONL file
+    ///
+    /// # Arguments
+    /// * `input_path` - Path to the import file
+    /// * `options` - Import options
+    pub async fn import_conversations(
+        &self,
+        input_path: impl AsRef<Path>,
+        options: &ImportOptions,
+    ) -> Result<ImportStats> {
+        let input_path = input_path.as_ref();
+        info!("Importing conversations from {}", input_path.display());
+
+        let ext = input_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("jsonl")
+            .to_lowercase();
+
+        let mut stats = ImportStats::default();
+
+        if ext == "json" {
+            let content =
+                tokio::fs::read_to_string(input_path)
+                    .await
+                    .map_err(|e| SyscityError::Storage {
+                        context: format!(
+                            "Failed to read conversation import file: {}",
+                            input_path.display()
+                        ),
+                        details: e.to_string(),
+                    })?;
+
+            // Try FullExport first, then ConversationExport
+            if let Ok(full) = serde_json::from_str::<FullExport>(&content) {
+                for messages in full.conversations.into_values() {
+                    for json_msg in messages {
+                        self.import_message_record(&json_msg, options, &mut stats)
+                            .await;
+                    }
+                }
+            } else {
+                let export: ConversationExport =
+                    serde_json::from_str(&content).map_err(|e| SyscityError::Storage {
+                        context: "Failed to parse conversation JSON export".to_string(),
+                        details: e.to_string(),
+                    })?;
+                for json_msg in export.messages {
+                    self.import_message_record(&json_msg, options, &mut stats)
+                        .await;
+                }
+            }
+        } else {
+            self.import_conversations_jsonl(input_path, options, &mut stats)
+                .await?;
+        }
+
+        info!(
+            "Conversation import complete: {} imported, {} skipped, {} updated, {} errors",
+            stats.imported,
+            stats.skipped,
+            stats.updated,
+            stats.errors.len()
+        );
+
+        Ok(stats)
+    }
+
+    /// Import everything from an export directory
+    ///
+    /// Looks for `memories.{json,jsonl}` and `conversations.{json,jsonl}` in the
+    /// provided directory, plus an optional `export.json` metadata file.
+    pub async fn import_all(
+        &self,
+        input_dir: impl AsRef<Path>,
+        options: &ImportOptions,
+    ) -> Result<ImportStats> {
+        let input_dir = input_dir.as_ref();
+        info!("Running full import from {}", input_dir.display());
+
+        if !input_dir.exists() {
+            return Err(SyscityError::Storage {
+                context: format!("Import directory does not exist: {}", input_dir.display()),
+                details: "Directory not found".to_string(),
+            });
+        }
+
+        let mut total_stats = ImportStats::default();
+
+        if let Some(memories_path) = self.find_import_file(input_dir, "memories").await? {
+            let mem_stats = self.import_memories(&memories_path, options).await?;
+            total_stats.merge(mem_stats);
+        }
+
+        if let Some(conversations_path) = self.find_import_file(input_dir, "conversations").await? {
+            let conv_stats = self
+                .import_conversations(&conversations_path, options)
+                .await?;
+            total_stats.merge(conv_stats);
+        }
+
+        info!(
+            "Full import complete: {} imported, {} skipped, {} updated, {} errors",
+            total_stats.imported,
+            total_stats.skipped,
+            total_stats.updated,
+            total_stats.errors.len()
         );
 
         Ok(total_stats)
@@ -716,11 +974,462 @@ impl ExportService {
 
         Ok(())
     }
+    // -------------------------------------------------------------------------
+    // Import helpers
+    // -------------------------------------------------------------------------
+
+    async fn import_memories_jsonl(
+        &self,
+        input_path: &Path,
+        options: &ImportOptions,
+        stats: &mut ImportStats,
+    ) -> Result<()> {
+        let file = File::open(input_path)
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: format!("Failed to open memory JSONL file: {}", input_path.display()),
+                details: e.to_string(),
+            })?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        while let Some(line) = lines.next_line().await.map_err(|e| SyscityError::Storage {
+            context: "Failed to read memory JSONL line".to_string(),
+            details: e.to_string(),
+        })? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<JsonLineMemory>(&line) {
+                Ok(json_mem) => self.import_memory_record(&json_mem, options, stats).await,
+                Err(e) => stats
+                    .errors
+                    .push(format!("Invalid JSONL memory record: {}", e)),
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn import_conversations_jsonl(
+        &self,
+        input_path: &Path,
+        options: &ImportOptions,
+        stats: &mut ImportStats,
+    ) -> Result<()> {
+        let file = File::open(input_path)
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: format!(
+                    "Failed to open conversation JSONL file: {}",
+                    input_path.display()
+                ),
+                details: e.to_string(),
+            })?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        while let Some(line) = lines.next_line().await.map_err(|e| SyscityError::Storage {
+            context: "Failed to read conversation JSONL line".to_string(),
+            details: e.to_string(),
+        })? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<JsonLineMessage>(&line) {
+                Ok(json_msg) => self.import_message_record(&json_msg, options, stats).await,
+                Err(e) => stats
+                    .errors
+                    .push(format!("Invalid JSONL message record: {}", e)),
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn import_memory_record(
+        &self,
+        json: &JsonLineMemory,
+        options: &ImportOptions,
+        stats: &mut ImportStats,
+    ) {
+        let memory = match Self::json_memory_to_memory(json) {
+            Ok(m) => m,
+            Err(e) => {
+                stats.errors.push(e);
+                return;
+            }
+        };
+
+        let exists = match self.memory_exists(&memory.id).await {
+            Ok(e) => e,
+            Err(e) => {
+                stats.errors.push(e.to_string());
+                return;
+            }
+        };
+
+        if exists {
+            if options.skip_existing {
+                stats.skipped += 1;
+                return;
+            }
+            if options.update_existing {
+                if options.dry_run {
+                    stats.updated += 1;
+                    return;
+                }
+                if let Err(e) = self.store.update(memory).await {
+                    stats.errors.push(e.to_string());
+                } else {
+                    stats.updated += 1;
+                }
+                return;
+            }
+            stats
+                .errors
+                .push(format!("Memory {} already exists", memory.id));
+            return;
+        }
+
+        if options.dry_run {
+            stats.imported += 1;
+            return;
+        }
+
+        if let Err(e) = self.store.store(memory).await {
+            stats.errors.push(e.to_string());
+        } else {
+            stats.imported += 1;
+        }
+    }
+
+    async fn import_message_record(
+        &self,
+        json: &JsonLineMessage,
+        options: &ImportOptions,
+        stats: &mut ImportStats,
+    ) {
+        let msg = match Self::json_message_to_chat_message(json) {
+            Ok(m) => m,
+            Err(e) => {
+                stats.errors.push(e);
+                return;
+            }
+        };
+
+        let exists = match self.message_exists(&msg.id).await {
+            Ok(e) => e,
+            Err(e) => {
+                stats.errors.push(e.to_string());
+                return;
+            }
+        };
+
+        if exists {
+            if options.skip_existing {
+                stats.skipped += 1;
+                return;
+            }
+            if options.update_existing {
+                if options.dry_run {
+                    stats.updated += 1;
+                    return;
+                }
+                if let Err(e) = self.update_chat_message(&msg).await {
+                    stats.errors.push(e.to_string());
+                } else {
+                    stats.updated += 1;
+                }
+                return;
+            }
+            stats
+                .errors
+                .push(format!("Message {} already exists", msg.id));
+            return;
+        }
+
+        if options.dry_run {
+            stats.imported += 1;
+            return;
+        }
+
+        if let Err(e) = self.store.store_message(msg).await {
+            stats.errors.push(e.to_string());
+        } else {
+            stats.imported += 1;
+        }
+    }
+
+    async fn memory_exists(&self, id: &MemoryId) -> Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM memories WHERE id = ?")
+            .bind(&id.0)
+            .fetch_optional(self.store.pool())
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: format!("Failed to check memory existence: {}", id),
+                details: e.to_string(),
+            })?;
+        Ok(row.is_some())
+    }
+
+    async fn message_exists(&self, id: &str) -> Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM chat_messages WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.store.pool())
+            .await
+            .map_err(|e| SyscityError::Storage {
+                context: format!("Failed to check message existence: {}", id),
+                details: e.to_string(),
+            })?;
+        Ok(row.is_some())
+    }
+
+    async fn update_chat_message(&self, msg: &ChatMessage) -> Result<()> {
+        let created_at_secs = Self::system_time_to_secs(msg.created_at);
+        let metadata_str = msg
+            .metadata
+            .as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
+
+        sqlx::query(
+            "UPDATE chat_messages SET conversation_id = ?, user_id = ?, role = ?, \
+             content = ?, created_at = ?, metadata = ? WHERE id = ?",
+        )
+        .bind(&msg.conversation_id)
+        .bind(&msg.user_id)
+        .bind(&msg.role)
+        .bind(&msg.content)
+        .bind(created_at_secs)
+        .bind(metadata_str)
+        .bind(&msg.id)
+        .execute(self.store.pool())
+        .await
+        .map_err(|e| SyscityError::Storage {
+            context: format!("Failed to update chat message: {}", msg.id),
+            details: e.to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn system_time_to_secs(time: SystemTime) -> i64 {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+    }
+
+    async fn find_import_file(&self, dir: &Path, base: &str) -> Result<Option<std::path::PathBuf>> {
+        for ext in ["jsonl", "json"] {
+            let path = dir.join(format!("{}.{}", base, ext));
+            if path.exists() {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
+    fn json_memory_to_memory(json: &JsonLineMemory) -> std::result::Result<Memory, String> {
+        json.validate()?;
+        let created_at = Self::parse_timestamp(&json.created_at)?;
+        let expires_at = json
+            .expires_at
+            .as_ref()
+            .map(|s| Self::parse_timestamp(s))
+            .transpose()?;
+
+        Ok(Memory {
+            id: MemoryId::new(&json.id),
+            user_id: json.user_id.clone(),
+            conversation_id: json.conversation_id.clone(),
+            content: json.content.clone(),
+            memory_type: json.memory_type.clone(),
+            embedding: json.embedding.clone(),
+            created_at,
+            expires_at,
+            metadata: json.metadata.clone(),
+            importance_score: json.importance_score,
+            source: json.source.clone(),
+        })
+    }
+
+    fn json_message_to_chat_message(
+        json: &JsonLineMessage,
+    ) -> std::result::Result<ChatMessage, String> {
+        json.validate()?;
+        let created_at = Self::parse_timestamp(&json.timestamp)?;
+
+        Ok(ChatMessage {
+            id: json.id.clone(),
+            conversation_id: json.conversation_id.clone(),
+            user_id: json.user_id.clone(),
+            role: json.role.clone(),
+            content: json.content.clone(),
+            created_at,
+            metadata: json.metadata.clone(),
+        })
+    }
+
+    fn parse_timestamp(s: &str) -> std::result::Result<SystemTime, String> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.with_timezone(&chrono::Utc).into())
+            .map_err(|e| format!("Invalid timestamp '{}': {}", s, e))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    async fn in_memory_store() -> UnifiedStore {
+        UnifiedStore::new_in_memory()
+            .await
+            .expect("in-memory store")
+    }
+
+    #[tokio::test]
+    async fn test_import_memories_jsonl() {
+        let store = in_memory_store().await;
+        let memory = crate::memory::Memory::new("user1", "hello world", "fact");
+        let memory_id = memory.id.clone();
+        store.store(memory).await.unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("memories.jsonl");
+        let export_opts = ExportOptions::new().format(ExportFormat::Jsonl);
+        let service = ExportService::new(store);
+        service.export_memories(&path, &export_opts).await.unwrap();
+
+        let target_store = in_memory_store().await;
+        let target_service = ExportService::new(target_store);
+        let import_opts = ImportOptions::new();
+        let stats = target_service
+            .import_memories(&path, &import_opts)
+            .await
+            .unwrap();
+
+        assert_eq!(stats.imported, 1);
+        assert_eq!(stats.errors.len(), 0);
+        let imported = target_service
+            .store
+            .get(&MemoryId::new(memory_id.to_string()))
+            .await
+            .unwrap();
+        assert!(imported.is_some());
+        assert_eq!(imported.unwrap().content, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_import_memories_skip_update_dry_run() {
+        let store = in_memory_store().await;
+        let memory = crate::memory::Memory::new("user1", "original", "fact");
+        let memory_id = memory.id.clone();
+        store.store(memory).await.unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("memories.jsonl");
+        let export_opts = ExportOptions::new().format(ExportFormat::Jsonl);
+        let service = ExportService::new(store);
+        service.export_memories(&path, &export_opts).await.unwrap();
+
+        // Skip existing
+        let stats = service
+            .import_memories(&path, &ImportOptions::new().skip_existing())
+            .await
+            .unwrap();
+        assert_eq!(stats.skipped, 1);
+
+        // Dry run with default update_existing
+        let stats = service
+            .import_memories(&path, &ImportOptions::new().dry_run())
+            .await
+            .unwrap();
+        assert_eq!(stats.updated, 1);
+
+        // Update existing by mutating file content
+        let mut content = tokio::fs::read_to_string(&path).await.unwrap();
+        content = content.replace("original", "updated");
+        let updated_path = tmp.path().join("updated.jsonl");
+        tokio::fs::write(&updated_path, content).await.unwrap();
+
+        let stats = service
+            .import_memories(&updated_path, &ImportOptions::new().update_existing())
+            .await
+            .unwrap();
+        assert_eq!(stats.updated, 1);
+        let updated = service
+            .store
+            .get(&MemoryId::new(memory_id.to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.content, "updated");
+    }
+
+    #[tokio::test]
+    async fn test_import_conversations_jsonl() {
+        let store = in_memory_store().await;
+        let msg = crate::memory::ChatMessage::new("conv1", "user1", "user", "hi");
+        let msg_id = msg.id.clone();
+        store.store_message(msg).await.unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("conversations.jsonl");
+        let export_opts = ExportOptions::new().format(ExportFormat::Jsonl);
+        let service = ExportService::new(store);
+        service
+            .export_conversations(&path, &export_opts)
+            .await
+            .unwrap();
+
+        let target_store = in_memory_store().await;
+        let target_service = ExportService::new(target_store);
+        let stats = target_service
+            .import_conversations(&path, &ImportOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.imported, 1);
+        let history = target_service
+            .store
+            .get_conversation_history("conv1", 10)
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, msg_id);
+    }
+
+    #[tokio::test]
+    async fn test_import_all_round_trip() {
+        let store = in_memory_store().await;
+        store
+            .store(crate::memory::Memory::new("u1", "memory one", "fact"))
+            .await
+            .unwrap();
+        store
+            .store_message(crate::memory::ChatMessage::new("c1", "u1", "user", "hello"))
+            .await
+            .unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let export_dir = tmp.path().join("export");
+        let service = ExportService::new(store);
+        service
+            .export_all(&export_dir, &ExportOptions::new().format(ExportFormat::Jsonl))
+            .await
+            .unwrap();
+
+        let target_store = in_memory_store().await;
+        let target_service = ExportService::new(target_store);
+        let stats = target_service
+            .import_all(&export_dir, &ImportOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.imported, 2);
+        assert_eq!(stats.errors.len(), 0);
+    }
 
     #[test]
     fn test_export_options_builder() {

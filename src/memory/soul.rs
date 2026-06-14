@@ -34,16 +34,16 @@ use std::collections::HashMap;
 /// Structured agent behavior configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BehaviorConfig {
- /// Whether the agent should proactively suggest actions.
+    /// Whether the agent should proactively suggest actions.
     #[serde(default)]
     pub proactive: Option<bool>,
- /// Whether to ask before destructive operations.
+    /// Whether to ask before destructive operations.
     #[serde(default)]
     pub ask_before_destructive: Option<bool>,
- /// Group chat participation mode.
+    /// Group chat participation mode.
     #[serde(default)]
     pub group_chat_mode: Option<String>,
- /// Additional free-form behavior flags.
+    /// Additional free-form behavior flags.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
@@ -51,50 +51,65 @@ pub struct BehaviorConfig {
 /// User preference configuration embedded in SOUL.md.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreferenceConfig {
- /// Preferred language code (e.g. "en-US", "zh-CN").
+    /// Preferred language code (e.g. "en-US", "zh-CN").
     #[serde(default)]
     pub language: Option<String>,
- /// Preferred code style conventions.
+    /// Preferred code style conventions.
     #[serde(default)]
     pub code_style: Option<String>,
- /// Preferred response format.
+    /// Preferred response format.
     #[serde(default)]
     pub format: Option<String>,
- /// Additional free-form preferences.
+    /// Additional free-form preferences.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// Heuristic analysis of conversation patterns used to auto-populate SOUL.md.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SoulAnalysis {
+    /// Detected preferred language code.
+    pub detected_language: Option<String>,
+    /// Detected dominant programming language or code style.
+    pub detected_code_style: Option<String>,
+    /// Detected assistant voice / tone.
+    pub detected_voice: Option<String>,
+    /// Common topics raised by the user.
+    pub common_topics: Vec<String>,
+    /// Explicit user preferences extracted from messages.
+    pub user_preferences: HashMap<String, String>,
 }
 
 /// Parsed structured configuration from a SOUL.md frontmatter block.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoulConfig {
- /// Agent name / call sign.
+    /// Agent name / call sign.
     #[serde(default)]
     pub name: Option<String>,
- /// Short persona description.
+    /// Short persona description.
     #[serde(default)]
     pub persona: Option<String>,
- /// Voice / tone description.
+    /// Voice / tone description.
     #[serde(default)]
     pub voice: Option<String>,
- /// Signature emoji.
+    /// Signature emoji.
     #[serde(default)]
     pub emoji: Option<String>,
- /// Structured behavior flags.
+    /// Structured behavior flags.
     #[serde(default)]
     pub behavior: BehaviorConfig,
- /// Structured preferences.
+    /// Structured preferences.
     #[serde(default)]
     pub preferences: PreferenceConfig,
- /// Extra top-level keys for forward compatibility.
+    /// Extra top-level keys for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
 
 impl SoulConfig {
- /// Generate a structured system-prompt fragment from the config.
- ///
- /// Returns an empty string if no structured fields are set.
+    /// Generate a structured system-prompt fragment from the config.
+    ///
+    /// Returns an empty string if no structured fields are set.
     pub fn to_prompt_fragment(&self) -> String {
         let mut parts = Vec::new();
 
@@ -151,6 +166,53 @@ impl SoulConfig {
             format!("\n### Agent Profile\n\n{}\n", parts.join("\n\n"))
         }
     }
+
+    /// Merge heuristic analysis into this config, only filling empty fields.
+    ///
+    /// Returns `true` if any field was changed.
+    pub fn merge_analysis(&mut self, analysis: &SoulAnalysis) -> bool {
+        let mut changed = false;
+
+        if self.preferences.language.is_none() {
+            if let Some(lang) = &analysis.detected_language {
+                self.preferences.language = Some(lang.clone());
+                changed = true;
+            }
+        }
+
+        if self.preferences.code_style.is_none() {
+            if let Some(style) = &analysis.detected_code_style {
+                self.preferences.code_style = Some(style.clone());
+                changed = true;
+            }
+        }
+
+        if self.voice.is_none() {
+            if let Some(voice) = &analysis.detected_voice {
+                self.voice = Some(voice.clone());
+                changed = true;
+            }
+        }
+
+        if self.persona.is_none() && !analysis.common_topics.is_empty() {
+            self.persona = Some(format!(
+                "Helpful assistant interested in {}",
+                analysis.common_topics.join(", ")
+            ));
+            changed = true;
+        }
+
+        for (key, value) in &analysis.user_preferences {
+            if !self.preferences.extra.contains_key(key) {
+                self.preferences
+                    .extra
+                    .insert(key.clone(), serde_yaml::Value::String(value.clone()));
+                changed = true;
+            }
+        }
+
+        changed
+    }
 }
 
 fn yaml_to_string(v: &serde_yaml::Value) -> String {
@@ -168,20 +230,20 @@ fn yaml_to_string(v: &serde_yaml::Value) -> String {
 /// A parsed SOUL.md file with optional structured frontmatter and markdown body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoulFile {
- /// Structured configuration from YAML frontmatter (if present).
+    /// Structured configuration from YAML frontmatter (if present).
     pub config: SoulConfig,
- /// Free-form markdown body (everything after the frontmatter).
+    /// Free-form markdown body (everything after the frontmatter).
     pub body: String,
- /// Whether the file contained a valid frontmatter block.
+    /// Whether the file contained a valid frontmatter block.
     pub has_frontmatter: bool,
 }
 
 impl SoulFile {
- /// Parse raw SOUL.md content into structured config + body.
+    /// Parse raw SOUL.md content into structured config + body.
     pub fn parse(content: &str) -> crate::Result<Self> {
         let trimmed = content.trim_start();
 
- // Check for YAML frontmatter delimiter
+        // Check for YAML frontmatter delimiter
         if !trimmed.starts_with("---") {
             return Ok(Self {
                 config: SoulConfig::default(),
@@ -190,10 +252,10 @@ impl SoulFile {
             });
         }
 
- // Find the closing ---
+        // Find the closing ---
         let after_open = &trimmed[3..]; // skip "---"
         let Some(close_idx) = after_open.find("\n---") else {
- // No closing delimiter — treat as body without frontmatter
+            // No closing delimiter — treat as body without frontmatter
             return Ok(Self {
                 config: SoulConfig::default(),
                 body: content.to_string(),
@@ -221,7 +283,7 @@ impl SoulFile {
         })
     }
 
- /// Merge structured config prompt fragment + body into full prompt text.
+    /// Merge structured config prompt fragment + body into full prompt text.
     pub fn to_full_prompt(&self) -> String {
         let fragment = self.config.to_prompt_fragment();
         if self.body.is_empty() {
@@ -331,7 +393,7 @@ Be helpful.
 
     #[test]
     fn test_soul_file_invalid_frontmatter_falls_back() {
- // Opening --- but no closing ---
+        // Opening --- but no closing ---
         let content = "---\nname: Syscity\n# No closing delimiter";
         let soul = SoulFile::parse(content).unwrap();
         assert!(!soul.has_frontmatter);

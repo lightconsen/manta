@@ -51,10 +51,7 @@ mod inner {
                     context: format!("Failed to create LanceDB directory: {:?}", self.uri),
                     details: e.to_string(),
                 })?;
-            info!(
-                "LanceDB store initialized at {:?} (table: {})",
-                self.uri, self.table_name
-            );
+            info!("LanceDB store initialized at {:?} (table: {})", self.uri, self.table_name);
             Ok(())
         }
     }

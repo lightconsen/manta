@@ -444,6 +444,23 @@ mod tests {
         assert_eq!(model.dimension(), 768);
     }
 
+    #[tokio::test]
+    async fn test_model_source_resolve_local() {
+        let source = ModelSource::Local(PathBuf::from("/path/to/model.gguf"));
+        let resolved = source.resolve().await.unwrap();
+        assert_eq!(resolved, PathBuf::from("/path/to/model.gguf"));
+    }
+
+    #[tokio::test]
+    async fn test_local_embedding_provider_creates_fts_only_for_missing_model() {
+        let source = ModelSource::Local(PathBuf::from("/definitely/not/a/real/model.gguf"));
+        let provider = LocalEmbeddingProvider::create(source, 384).await;
+        assert!(provider.is_fts_only());
+        assert!(provider.fts_reason().is_some());
+        assert_eq!(provider.dimension(), 0);
+        assert_eq!(provider.model_name(), "fts-only");
+    }
+
     #[test]
     fn test_local_embedding_provider_fts_only() {
         let provider = LocalEmbeddingProvider::fts_only("no model");

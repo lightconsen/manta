@@ -8,4 +8,4 @@ pub mod formats;
 pub mod service;
 
 pub use formats::{ExportFormat, JsonLineMemory, JsonLineMessage};
-pub use service::{ExportOptions, ExportService, ExportStats};
+pub use service::{ExportOptions, ExportService, ExportStats, ImportOptions, ImportStats};
