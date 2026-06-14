@@ -74,3 +74,14 @@ pub struct McpServerConfig {
 }
 ```
 
+## Implemented Features
+
+- Multi-transport MCP client (stdio, SSE, streamable HTTP)
+- JSON-RPC 2.0 protocol implementation
+- Auto-discovery and registration of MCP tools
+- Prefix-based tool cleanup on disconnect
+- Resource discovery and reading
+- Environment variable resolution in server configs
+- Timeout and auto-connect configuration
+- Integration with `ToolRegistry` for dynamic tool registration
+

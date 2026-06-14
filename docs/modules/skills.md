@@ -16,6 +16,9 @@ A **skill** is a reusable prompt bundle with YAML frontmatter metadata, trigger 
 - **`SkillWatcher`** — File system watcher for hot reload
 - **`SkillFrontmatter`** — YAML frontmatter parser for `SKILL.md` format
 - **`DependencyGraph`** — Resolves skill dependency chains before activation
+- **`SkillConfig`** / **`SkillEntryConfig`** — Configuration-driven skill enablement
+- **`InstallSpec`** — Installation specifications (brew, npm, go, uv, download)
+- **`Semver`** — Version parsing and requirement matching
 
 ### Trigger Types
 
@@ -77,5 +80,31 @@ pub struct SkillTrigger {
     pub user_invocable: bool,
     pub model_invocable: bool,
 }
+
+pub struct SkillMetadata {
+    pub emoji: String,
+    pub always: bool,
+    pub requires: SkillRequires,
+    pub install: Vec<SkillInstallSpec>,
+    pub skill_key: Option<String>,
+    pub primary_env: Option<String>,
+    pub max_size: usize,
+    pub trust: SkillTrust,
+}
 ```
+
+## Implemented Features
+
+- YAML frontmatter parsing for `SKILL.md` format
+- Multi-level skill storage (bundled, user, workspace, project)
+- File system watcher for hot reload
+- Dependency graph resolution with version constraints
+- Runtime requirement checking (binaries, env vars, OS)
+- Installation specification support (brew, npm, go, uv, download)
+- Trust level-based tool access restriction
+- Built-in skill macros for common patterns
+- Remote registry client for skill discovery
+- Token optimization with path compaction and size limits
+- Slash command integration
+- Skill eligibility checking with error reporting
 

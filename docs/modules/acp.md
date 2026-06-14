@@ -10,6 +10,7 @@ ACP provides a control plane for managing agent execution with pause/resume/step
 - **`ExecutionController`** — Pause/resume/step/cancel state machine inserted into the agent's tool-call loop
 - **Session Actor Loop** — Per-session serial message queue (`mpsc::channel`) with `ExecutionController` coordination
 - **ACP Actor Loop** — Routes commands to the appropriate session actor
+- **`CrashRecoveryConfig`** — Automatic crash recovery with retry and backoff for subagents
 
 ### Execution Modes
 
@@ -48,6 +49,7 @@ pub struct AcpControlPlane {
 pub struct ExecutionController {
     state: RwLock<RuntimeState>,
     notify: tokio::sync::Notify,
+    iteration: AtomicUsize,
 }
 
 pub enum AcpCommand {
@@ -60,6 +62,26 @@ pub enum AcpCommand {
     Cancel { session_id },
     GetStatus { session_id, respond_to },
     Shutdown,
+}
+
+pub enum RuntimeState {
+    Idle,
+    Running,
+    Paused,
+    Stepping,
+    Cancelled,
+}
+
+pub enum SpawnMode {
+    Run,
+    Session,
+}
+
+pub enum ThreadBinding {
+    New,
+    Parent,
+    Thread(String),
+    Auto,
 }
 ```
 
@@ -79,3 +101,15 @@ Gateway ──▶ AcpControlPlane ──▶ ACP Actor Loop
 - `AcpSessionTool` and `AcpSpawnTool` in `tools/` expose ACP to the agent
 - `Agent::process_message_with_controller()` checks `ExecutionController` between iterations
 - `SubagentHandle` provides `command_tx` for parent-child communication
+
+## Implemented Features
+
+- Subagent spawning with thread binding modes
+- Session actor queue for serialized execution
+- Execution controller with pause/resume/step/cancel
+- Runtime state machine with atomic iteration counting
+- Crash recovery with configurable retry and backoff
+- Progress callback support for long-running sessions
+- ACP tools for agent-facing subagent control
+- Parent-child communication via command channels
+

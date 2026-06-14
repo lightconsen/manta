@@ -1,35 +1,28 @@
 # Config Module
 
-Configuration management, hot reload system, and the `HotReloadManager` for runtime reconfiguration without restart.
+Configuration management, hot reload system, and runtime reconfiguration without restart.
 
 ## Architecture
 
 Configuration is split into two layers:
 
-- **`GatewayConfig`** (`src/gateway/mod.rs:68-144`) — The main runtime configuration, deserialized from `syscity.toml`. Contains all subsystems as fields.
-- **`HotReloadManager`** (`src/config.rs:1252-1611`) — File watcher + event dispatch that detects config changes and triggers per-type handlers.
+- **`Config`** (`src/config.rs`) — The main application configuration, deserialized from `syscity.toml`. Contains all subsystems as fields.
+- **`HotReloadManager`** (`src/config.rs:hot_reload`) — File watcher + event dispatch that detects config changes and triggers per-type handlers.
 
-### GatewayConfig Fields
+### Config Fields
 
 | Category | Fields | Reload Support |
 |----------|--------|----------------|
-| Network | `host`, `port`, `tailscale_enabled`, `tailscale_domain` | Restart required |
-| Agent | `default_agent` | Restart, or per-agent via `ConfigFileType::Agent` |
-| Channels | `channels` (`HashMap<String, ChannelConfig>`) | Hot-reloadable (add/remove/restart) |
-| Storage | `storage`, `vector_memory` | Restart required |
-| Plugins | `plugins` | Hot-reloadable (file watcher + CLI) |
-| Providers | `providers` (`HashMap<String, ProviderConfig>`) | Hot-reloadable (synced to ModelRouter) |
-| MCP | `mcp` | Hot-reloadable (disconnect/reconnect servers) |
-| Security | `security` (auth, rate limit, CORS) | Hot-reloadable (subset) |
-| Model | `model`, `model_provider` | Hot-reloadable |
-| Computer | `computer` (desktop automation) | Hot-reloadable |
-| Browser | `browser` | Hot-reloadable |
-| Scheduling | `cron`, `heartbeat` | Hot-reloadable |
-| Cost | `cost_guard` | Hot-reloadable |
-| Agent runtime | `capabilities`, `standing_orders` | Hot-reloadable |
-| Hot reload | `hot_reload` | Hot-reloadable (self-referential) |
-| Memory | `dreaming` | Hot-reloadable |
-| Workspace | `workspace_dir`, `workspace_only` | Hot-reloadable |
+| Server | `host`, `port`, `timeout_seconds`, `max_body_size` | Restart required |
+| Logging | `level`, `format`, `file`, `stdout`, `rotation` | Hot-reloadable |
+| Storage | `storage_type`, `connection`, `database` | Restart required |
+| Services | `services` (HashMap of external service configs) | Hot-reloadable |
+| Browser | `browser` (bridge, pool, profiles) | Hot-reloadable |
+| Memory | `memory` (multimodal, dreaming, tier, effectiveness) | Hot-reloadable |
+| Heartbeat | `heartbeat` | Hot-reloadable |
+| Computer | `computer` (remote_control, headless) | Hot-reloadable |
+| Standing Orders | `standing_orders` | Hot-reloadable |
+| Capabilities | `capabilities` (profile, scope, sets) | Hot-reloadable |
 
 ### Hot Reload Architecture
 
@@ -56,28 +49,35 @@ pub enum ConfigFileType {
 }
 ```
 
-### CLI Reload
+### Config Loading Order
 
-`syscity reload` triggers `POST /api/v1/reload` which performs a comprehensive reload:
+1. Default values
+2. Config file (`syscity.toml` or specified path)
+3. Environment variables (`SYSCITY_*`)
 
-| Scope | What reloads |
-|-------|-------------|
-| `plugins` | Unload all plugins, reinitialize from disk |
-| `config` | Read `syscity.toml`, update hot-reloadable fields |
-| `providers` | Sync providers with ModelRouter (add new, remove deleted) |
-| `mcp` | Disconnect all MCP servers, reconnect from new config |
-| `skills` | Reinitialize SkillManager |
-| `all` (default) | All of the above |
+### Secret Resolution
 
-Channels are hot-reloaded automatically by the file watcher when `syscity.toml` changes.
-
-Config changes are now tracked with snapshot-based diff:
-- `GatewayConfig::snapshot()` captures hot-reloadable fields before reload
-- `GatewayConfig::diff_since()` compares current state against a snapshot
-- Results are logged to `PersistentAuditLog` (`AuditEventType::ConfigChange`)
-- Wired into both `POST /api/v1/reload` (CLI) and `HotReloadManager Gateway` handler (file watcher)
+`Config::resolve_secrets()` uses `SecretResolver` to resolve `SecretRef` values in service configurations via environment variables, files, or external executables.
 
 ## Key Types
+
+```rust
+pub struct Config {
+    pub schema_version: u32,
+    pub app: AppConfig,
+    pub server: ServerConfig,
+    pub logging: LoggingConfig,
+    pub storage: StorageConfig,
+    pub services: HashMap<String, ServiceConfig>,
+    pub browser: BrowserConfig,
+    pub memory: MemoryConfig,
+    pub heartbeat: HeartbeatConfig,
+    pub computer: ComputerConfig,
+    pub standing_orders: StandingOrderConfig,
+    pub capabilities: CapabilitiesConfig,
+    pub extra: HashMap<String, toml::Value>,
+}
+```
 
 ```rust
 pub struct HotReloadManager {
@@ -85,10 +85,12 @@ pub struct HotReloadManager {
     handlers: Arc<RwLock<HashMap<ConfigFileType, Vec<ConfigChangeHandler>>>>,
     change_tx: mpsc::Sender<ConfigChangeEvent>,
     change_rx: Arc<RwLock<mpsc::Receiver<ConfigChangeEvent>>>,
-    // Optional notify-based file watcher (feature-gated)
+    #[cfg(feature = "hot-reload")]
     watcher: Arc<RwLock<Option<Debouncer<RecommendedWatcher, FileIdMap>>>>,
 }
+```
 
+```rust
 pub struct ConfigChangeEvent {
     pub path: PathBuf,
     pub config_type: ConfigFileType,
@@ -96,18 +98,15 @@ pub struct ConfigChangeEvent {
 }
 ```
 
-```rust
-/// Snapshot of hot-reloadable fields for change detection.
-pub struct ConfigSnapshot {
-    pub timestamp: String,
-    pub fields: HashMap<String, serde_json::Value>,
-}
+## Implemented Features
 
-/// A single field change detected during hot reload.
-pub struct ConfigChange {
-    pub path: String,
-    pub old_value: Option<serde_json::Value>,
-    pub new_value: Option<serde_json::Value>,
-}
-```
+- Multi-source configuration loading (defaults, TOML file, environment variables)
+- Environment variable interpolation in TOML (`$VAR` and `${VAR}`)
+- Schema versioning with migration support
+- Cross-field validation (ports, log levels, protocols, storage connections)
+- File watcher with 500ms debounce for hot reload
+- Per-config-type handler registration
+- Secret resolution with `SecretRef` (env, file, exec providers)
+- `ReloadableConfig` with broadcast-based change notifications
+- Comprehensive unit tests for all config subsystems
 

@@ -80,14 +80,35 @@ Started in `Gateway::start()` with `event_log` and `workspace_dir` wired in.
 - **Hybrid Search** (`hybrid.rs`) — Combines semantic + keyword with MMR rerank and temporal decay
 - **Effectiveness** (`effectiveness.rs`) — Tracks recall hit rates to tune memory importance
 - **Session Search** (`session_search.rs`) — Search across conversation history
+- **Personality** (`personality.rs`) — Conversation pattern analysis and SOUL.md auto-generation
+- **Soul** (`soul.rs`) — Soul/personality file management with `SoulConfig`
+- **Workspace State** (`workspace_state.rs`) — Workspace-level state persistence
+- **Flush** (`flush.rs`) — Memory flush decision logic for compaction
+- **Pipeline** (`pipeline.rs`) — Embedding pipeline with background job processing
+- **Local Embeddings** (`local_embeddings.rs`) — Local GGUF embedding model support (behind `local-embeddings` feature)
+- **PgVector** (`pgvector_store.rs`) — PostgreSQL pgvector backend (behind `pgvector` feature)
+- **SQLite-Vec** (`sqlite_vec_store.rs`) — SQLite vector extension backend (behind `sqlite-vec` feature)
+- **LanceDB** (`lancedb.rs`) — LanceDB vector store backend
 
-## Missing / TODO
+## Implemented Features
 
-- **✅ Implemented**: Effectiveness tracker — `MemoryManager::new()` creates an `EffectivenessTracker` and `retrieve()` calls `record_recall()` for every recalled memory. See `src/memory/manager.rs:149-153` and `src/memory/manager.rs:448-460`.
-- **✅ Implemented**: Effectiveness closed-loop feedback — `EffectivenessTracker` hit-rate stats are fed into `TierEvaluator::evaluate()` via optional `EffectivenessStats`. `MemoryManager::apply_effectiveness_adjustments()` updates importance scores and explicitly migrates memories between tiers when effectiveness thresholds are met, emitting `PromotionApplied` events. See `src/memory/tier.rs:247-295` and `src/memory/manager.rs:889-1024`.
-- **✅ Implemented**: Local embeddings (`local-embeddings` feature) — `ModelSource` parsing, local path resolution, and FTS-only fallback are covered by dedicated unit tests in `src/memory/local_embeddings.rs`. A dedicated CI job (`test-local-embeddings`) runs `cargo test --features local-embeddings` on every push/PR.
-- **✅ Implemented**: Vector store backend abstraction (pgvector, sqlite-vec) — `PgVectorStore` and `SqliteVecStore` implement the `VectorStore` trait behind feature gates `pgvector` and `sqlite-vec`. `VectorBackend` now includes `Postgres` and `SqliteVec` variants. See `src/memory/pgvector_store.rs` and `src/memory/sqlite_vec_store.rs`.
-- **✅ Implemented**: Memory export/import for migration — `ExportService` now supports `import_memories`, `import_conversations`, and `import_all` with `ImportOptions` for skip/update/dry-run semantics. JSON and JSONL formats are supported, and records are validated before insertion. See `src/export/service.rs:345-650`.
-- **✅ Implemented**: Soul/personality file auto-generation — `PersonalityMemory::analyze_conversation_patterns()` heuristically detects language, code style, voice/tone, common topics, and explicit preferences from conversation history. `SoulConfig::merge_analysis()` fills empty SOUL.md fields conservatively, and `MemoryManager::compact_session()` auto-updates SOUL.md after compaction. See `src/memory/personality.rs:410-540` and `src/memory/manager.rs:715-730`.
-- **✅ Implemented**: Dream result human review — `DreamReviewQueue` with `enqueue()`/`approve()`/`reject()`/`list_pending()` and disk persistence, wired into `DreamEngine` via optional `review_queue`. See `src/memory/dreaming.rs:1093-1150`.
-- **✅ Implemented**: Dream observability dashboard — `DreamResult` now includes `duration_ms`, `peak_memory_mb`, `llm_tokens_input`, and `llm_tokens_output`. `DreamMetrics` tracks cumulative counters for dreams, memory operations, duration, and tokens. Metrics are exposed via the Prometheus `/metrics` endpoint and the `/health` JSON report. See `src/memory/dreaming.rs:119-207` and `src/gateway/handlers/health.rs`.
+- Tiered memory store with promotion/demotion/eviction
+- SQLite-backed chat history with WAL + FTS5
+- Semantic search with embedding providers (API, cached, local GGUF)
+- Hybrid search with MMR rerank and temporal decay
+- Background dreaming scheduler (Light/Deep/REM phases)
+- Knowledge graph persistence for cross-session associations
+- Memory event logging (JSONL) for operational visibility
+- Effectiveness tracking with closed-loop feedback into tier evaluation
+- QMD integration for document-aware retrieval
+- Multimodal file classification and storage
+- Session search across conversation history
+- Personality analysis and SOUL.md auto-generation
+- Dream review queue with human approval/rejection
+- Dream observability dashboard with metrics and Prometheus export
+- Memory export/import for migration (JSON/JSONL)
+- Local embedding model support (GGUF)
+- Multiple vector backends (SQLite, PostgreSQL pgvector, SQLite-vec, LanceDB)
+- Workspace state persistence
+- Embedding pipeline with background job processing
+

@@ -1,6 +1,6 @@
 # Core Module
 
-Domain models and shared business logic.
+Domain models, shared business logic, and cross-cutting infrastructure for the Syscity system.
 
 ## Design
 
@@ -41,8 +41,15 @@ impl Id {
 
 ### Tracing Context
 
-1. WebSocket handler (`handle_acp_execute_session`, `handle_acp_execute_run`) creates a `RequestContext`
+1. WebSocket handler creates a `RequestContext`
 2. Attaches the context to a tracing span with `trace_id`, `session_id`, `user_id`
 3. The async future is `.instrument(span)`-ed so `#[instrument]`-ed functions inherit the fields
 4. All `tracing::info!` / `warn!` / `debug!` calls in the call tree carry the context
+
+## Implemented Features
+
+- UUID-based identifiers with parsing and display support
+- Atomic engine metrics for operational visibility
+- Publish-subscribe event bus for decoupled cross-module communication
+- Structured request context with tracing span integration
 

@@ -1,7 +1,6 @@
 # Providers Module
 
-LLM provider abstractions with a protocol-driven architecture: 3 protocol implementations
-(OpenAI, Anthropic, Gemini) serve all vendors via configurable presets.
+LLM provider abstractions with a protocol-driven architecture: 3 protocol implementations (OpenAI, Anthropic, Gemini) serve all vendors via configurable presets.
 
 ## Architecture
 
@@ -13,8 +12,7 @@ Vendor (preset, e.g. "kimi") ──► Protocol (OpenAI / Anthropic / Gemini) �
        └── "custom" type for fully-manual configuration
 ```
 
-Key insight: **vendor ≠ protocol**. A single vendor (e.g. Kimi) may expose multiple
-protocol endpoints (OpenAI-compatible and Anthropic-compatible).
+Key insight: **vendor ≠ protocol**. A single vendor (e.g. Kimi) may expose multiple protocol endpoints (OpenAI-compatible and Anthropic-compatible).
 
 ### Core Types
 
@@ -50,9 +48,7 @@ src/providers/
 | Anthropic | `anthropic.rs` | `content_block_delta`, `message_stop` events | `x-api-key` |
 | Gemini | `gemini.rs` | Newline-delimited JSON (non-SSE) | `x-goog-api-key` |
 
-All three accept `ProviderInstanceConfig`, making them fully config-driven.
-Vendors like Moonshot/Minimax are variants of `OpenAiProvider` with different
-stream families, not separate provider files.
+All three accept `ProviderInstanceConfig`, making them fully config-driven. Vendors like Moonshot/Minimax are variants of `OpenAiProvider` with different stream families, not separate provider files.
 
 ### Builtin Presets (`preset.rs`)
 
@@ -71,10 +67,8 @@ stream families, not separate provider files.
 ### Resolver (`resolver.rs`)
 
 - `resolve_provider()` — Quick resolution: preset name + optional overrides → `Arc<dyn Provider>`
-- `resolve_from_config()` — Full resolution with all overrides (protocol, base_url, model,
-  max_context, vision/tools support, stream_family, auth_method)
-- Automatically selects the correct protocol variant (e.g. Kimi's Anthropic endpoint
-  when `protocol = "anthropic"`)
+- `resolve_from_config()` — Full resolution with all overrides (protocol, base_url, model, max_context, vision/tools support, stream_family, auth_method)
+- Automatically selects the correct protocol variant (e.g. Kimi's Anthropic endpoint when `protocol = "anthropic"`)
 - Custom providers fall through to manual configuration
 
 ## Design
@@ -98,9 +92,7 @@ stream families, not separate provider files.
 | Fallback | `fallback.rs` | Chains multiple providers with failover logic |
 | Mock | `mock.rs` | Programmable test provider with sequence/callback modes |
 
-All vendor-specific variants (Ollama, Moonshot, MiniMax, DeepSeek, Qwen) are
-now handled as `OpenAiProvider` instances configured via `resolver.rs` with
-different base URLs, models, and stream families. No separate files needed.
+All vendor-specific variants (Ollama, Moonshot, MiniMax, DeepSeek, Qwen) are now handled as `OpenAiProvider` instances configured via `resolver.rs` with different base URLs, models, and stream families. No separate files needed.
 
 ### Stream Wrappers
 
@@ -161,25 +153,26 @@ pub struct ProviderInstanceConfig {
 }
 ```
 
-## Done / Implemented
+## Implemented Features
 
-- **Done**: Protocol-driven architecture — 3 protocol implementations serve all vendors via `resolver.rs` + `preset.rs`.
-- **Done**: Vendor ≠ Protocol separation — Kimi supports both OpenAI and Anthropic protocols via `ProtocolVariant` selection.
-- **Done**: Config-driven providers — `OpenAiProvider::from_config()`, `AnthropicProvider::from_config()`, `GeminiProvider::from_config()`.
-- **Done**: Redundant files eliminated — `ollama.rs`, `moonshot.rs`, `minimax.rs` replaced by resolver-based dispatch.
-- **Done**: New OpenAI-compatible vendor = one line in `preset.rs` + nothing else.
-- **Done**: Full backward compatibility — existing `ProviderType` enum mapped to preset names.
-- **Done**: Auth profile store with SQLite persistence (`AuthProfileStore`) — key state metadata only (failure counts, cooldown, status); raw keys remain in config.
-- **Done**: API key rotation with `AuthProfile` / `AuthProfileManager` — automatic failover between multiple keys per provider.
-- **Done**: OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `syscity provider auth` command.
-- **Done**: Differentiated cooldown — `FailureClass::default_backoff_secs()` used per failure type (RateLimit=60s, AuthTemporary=5s, etc.), never below config minimum.
-- **Done**: Usage tracking (`ProviderUsageTracker`) — per-provider token consumption, cost estimation, time windows (today/this_hour/this_month), budget enforcement.
-- **Done**: Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list, `/v1/models` and `/api/v1/models` endpoints.
-- **Done**: Doctor diagnostic system (`syscity doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point.
-- **Done**: Credential state machine (`AuthProfile`) — Active→Cooldown→Disabled lifecycle with key rotation, SQLite persistence (`auth_profile.rs:13-270`).
-- **Done**: OAuth token auto-refresh (`refresh_if_needed()`) — called at the start of every `complete()` and `stream()` in both `openai.rs` and `anthropic.rs` providers.
-- **Done**: Model suppression (`ModelCatalog::suppress/unsuppress/is_suppressed`) — fully wired in `list()`, `find_by_capability()`, `find_by_provider()`; auto-suppress on `ModelNotFound` errors (`model_catalog.rs:350-368`).
-- **Done**: Plugin-extensible providers (`PluginProvider` + `PluginProviderRegistry`) — WASM-backed providers registered through `PluginManager::register_plugin_providers()` (`plugins/provider_extension.rs`).
-- **Done**: Smart routing (`resolve_alias_with_capabilities()`) — capability-based model selection (vision, tools, reasoning) in `model_router/mod.rs:1594`.
-- **Done**: Remote usage fetch (`UsageFetcher` trait) — `OpenAiUsageFetcher` hits OpenAI billing API, `LocalBudgetFetcher` reads config budget (`usage_fetcher.rs`).
-- **Done**: Stream family wrappers (`ProviderStreamFamily`) — OpenAi, OpenAiReasoning, Anthropic, AnthropicThinking, GoogleThinking, Moonshot, Minimax, OpenRouter, Generic.
+- Protocol-driven architecture — 3 protocol implementations serve all vendors via `resolver.rs` + `preset.rs`
+- Vendor ≠ Protocol separation — Kimi supports both OpenAI and Anthropic protocols via `ProtocolVariant` selection
+- Config-driven providers — `OpenAiProvider::from_config()`, `AnthropicProvider::from_config()`, `GeminiProvider::from_config()`
+- Redundant files eliminated — `ollama.rs`, `moonshot.rs`, `minimax.rs` replaced by resolver-based dispatch
+- New OpenAI-compatible vendor = one line in `preset.rs` + nothing else
+- Full backward compatibility — existing `ProviderType` enum mapped to preset names
+- Auth profile store with SQLite persistence (`AuthProfileStore`) — key state metadata only (failure counts, cooldown, status); raw keys remain in config
+- API key rotation with `AuthProfile` / `AuthProfileManager` — automatic failover between multiple keys per provider
+- OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `syscity provider auth` command
+- Differentiated cooldown — `FailureClass::default_backoff_secs()` used per failure type (RateLimit=60s, AuthTemporary=5s, etc.), never below config minimum
+- Usage tracking (`ProviderUsageTracker`) — per-provider token consumption, cost estimation, time windows (today/this_hour/this_month), budget enforcement
+- Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list, `/v1/models` and `/api/v1/models` endpoints
+- Doctor diagnostic system (`syscity doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point
+- Credential state machine (`AuthProfile`) — Active→Cooldown→Disabled lifecycle with key rotation, SQLite persistence
+- OAuth token auto-refresh (`refresh_if_needed()`) — called at the start of every `complete()` and `stream()` in both `openai.rs` and `anthropic.rs` providers
+- Model suppression (`ModelCatalog::suppress/unsuppress/is_suppressed`) — fully wired in `list()`, `find_by_capability()`, `find_by_provider()`; auto-suppress on `ModelNotFound` errors
+- Plugin-extensible providers (`PluginProvider` + `PluginProviderRegistry`) — WASM-backed providers registered through `PluginManager::register_plugin_providers()`
+- Smart routing (`resolve_alias_with_capabilities()`) — capability-based model selection (vision, tools, reasoning) in `model_router/mod.rs`
+- Remote usage fetch (`UsageFetcher` trait) — `OpenAiUsageFetcher` hits OpenAI billing API, `LocalBudgetFetcher` reads config budget
+- Stream family wrappers (`ProviderStreamFamily`) — OpenAi, OpenAiReasoning, Anthropic, AnthropicThinking, GoogleThinking, Moonshot, Minimax, OpenRouter, Generic
+
