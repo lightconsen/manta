@@ -120,6 +120,7 @@ pub trait ResolutionProvider: Send + Sync {
 
 /// Uses explicit `@agent_name` mentions or commands to resolve.
 pub struct CommandProvider {
+    #[allow(dead_code)]
     default_agent_id: String,
 }
 

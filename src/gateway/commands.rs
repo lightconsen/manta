@@ -88,11 +88,13 @@ impl CommandDef {
         }
     }
 
+    #[allow(dead_code)]
     fn with_tier(mut self, tier: CommandTier) -> Self {
         self.tier = tier;
         self
     }
 
+    #[allow(dead_code)]
     fn with_provider_hint(mut self, hint: CommandProviderHint) -> Self {
         self.provider_hint = Some(hint);
         self
@@ -108,11 +110,13 @@ impl CommandDef {
         self
     }
 
+    #[allow(dead_code)]
     fn dm(mut self) -> Self {
         self.scope = CommandScope::DirectMessage;
         self
     }
 
+    #[allow(dead_code)]
     fn channel(mut self) -> Self {
         self.scope = CommandScope::Channel;
         self
@@ -142,7 +146,7 @@ impl CommandDef {
 /// Built-in command catalog
 pub fn built_in_commands() -> Vec<CommandDef> {
     vec![
- // Session
+        // Session
         CommandDef::new("new", "new", "Start a new session", CommandCategory::Session)
             .with_args("[model]")
             .with_aliases(&["clear"])
@@ -167,7 +171,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Session,
         )
         .with_args("[path]"),
- // Model
+        // Model
         CommandDef::new(
             "model",
             "model",
@@ -192,7 +196,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         .with_args("[on|off|stream]"),
         CommandDef::new("queue", "queue", "Set queue behavior", CommandCategory::Model)
             .with_args("<mode>"),
- // Status / Query
+        // Status / Query
         CommandDef::new("help", "help", "Show help summary", CommandCategory::Status)
             .with_aliases(&["commands"])
             .essential(),
@@ -211,7 +215,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Status,
         )
         .with_args("[list|detail|json]"),
- // Agents / ACP
+        // Agents / ACP
         CommandDef::new("subagents", "subagents", "Manage sub-agents", CommandCategory::Agents)
             .with_args("list|kill|log|info|send|steer|spawn"),
         CommandDef::new("acp", "acp", "Manage ACP sessions", CommandCategory::Agents)
@@ -228,7 +232,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
         CommandDef::new("focus", "focus", "Bind thread to session target", CommandCategory::Agents)
             .with_args("<target>"),
         CommandDef::new("unfocus", "unfocus", "Remove thread binding", CommandCategory::Agents),
- // Skills / Approval
+        // Skills / Approval
         CommandDef::new(
             "allowlist",
             "allowlist",
@@ -251,7 +255,7 @@ pub fn built_in_commands() -> Vec<CommandDef> {
             CommandCategory::Agents,
         )
         .with_args("<question>"),
- // Admin (owner-only)
+        // Admin (owner-only)
         CommandDef::new("config", "config", "Read or write config", CommandCategory::Admin)
             .with_args("show|get|set|unset")
             .admin()
@@ -372,13 +376,13 @@ pub async fn handle_commands_execute(
 
     debug!("Executing command: /{} args='{}'", normalized, params.args);
 
- // Determine session_id for persistence
+    // Determine session_id for persistence
     let mut session_id = params.session_id.clone();
     if session_id.is_none() {
         session_id = conn.read().await.subscriptions.first().cloned();
     }
 
- // Persist user command input
+    // Persist user command input
     let user_text = if params.args.is_empty() {
         format!("/{}", normalized)
     } else {
@@ -389,7 +393,10 @@ pub async fn handle_commands_execute(
             tracing::info!("Persisting command /{} to session {}", normalized, sid);
             if let Err(e) = store
                 .append_message(&crate::agent::session_store::AppendMessageParams {
-                    session_id: sid, role: "user", content: &user_text, ..Default::default()
+                    session_id: sid,
+                    role: "user",
+                    content: &user_text,
+                    ..Default::default()
                 })
                 .await
             {
@@ -402,14 +409,13 @@ pub async fn handle_commands_execute(
         tracing::warn!("No session_id for command /{}, cannot persist", normalized);
     }
 
- // Execute command and capture response
+    // Execute command and capture response
     let response = async {
- // Find the command definition
+        // Find the command definition
         let commands = built_in_commands();
-        let def = match commands
-            .iter()
-            .find(|c| c.key == normalized || c.name == normalized || c.aliases.contains(&normalized))
-        {
+        let def = match commands.iter().find(|c| {
+            c.key == normalized || c.name == normalized || c.aliases.contains(&normalized)
+        }) {
             Some(d) => d.clone(),
             None => {
                 return WsResponse::err(
@@ -420,7 +426,7 @@ pub async fn handle_commands_execute(
             }
         };
 
- // Check admin requirement
+        // Check admin requirement
         if def.requires_admin {
             let conn_guard = conn.read().await;
             let scopes = &conn_guard.scopes;
@@ -495,7 +501,7 @@ pub async fn handle_commands_execute(
             );
         }
 
- // Dispatch by canonical key so aliases resolve to the same handler
+        // Dispatch by canonical key so aliases resolve to the same handler
         match def.key.as_str() {
             "help" | "commands" => handle_help(req, &params.args),
             "status" => handle_status(req, state).await,
@@ -540,7 +546,7 @@ pub async fn handle_commands_execute(
     }
     .await;
 
- // Persist command result
+    // Persist command result
     let result_text = if response.ok {
         response
             .payload
@@ -561,7 +567,10 @@ pub async fn handle_commands_execute(
         if let Some(ref store) = state.session_store {
             if let Err(e) = store
                 .append_message(&crate::agent::session_store::AppendMessageParams {
-                    session_id: sid, role: "assistant", content: &result_text, ..Default::default()
+                    session_id: sid,
+                    role: "assistant",
+                    content: &result_text,
+                    ..Default::default()
                 })
                 .await
             {
@@ -592,7 +601,8 @@ fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
     let page = help_args.page.clamp(1, total_pages);
     let start = (page - 1) * page_size;
     let _end = start + page_size.min(total_commands.saturating_sub(start));
-    let page_commands: Vec<&CommandDef> = filtered.into_iter().skip(start).take(page_size).collect();
+    let page_commands: Vec<&CommandDef> =
+        filtered.into_iter().skip(start).take(page_size).collect();
 
     let mut lines = vec!["📋 **Syscity Commands**".to_string(), "".to_string()];
 
@@ -606,7 +616,10 @@ fn handle_help(req: &WsRequest, args: &str) -> WsResponse {
     ];
 
     for (cat, title) in &categories {
-        let cat_cmds: Vec<&&CommandDef> = page_commands.iter().filter(|c| c.category == *cat).collect();
+        let cat_cmds: Vec<&&CommandDef> = page_commands
+            .iter()
+            .filter(|c| c.category == *cat)
+            .collect();
         if cat_cmds.is_empty() {
             continue;
         }
@@ -705,7 +718,7 @@ async fn handle_reset(
             mgr.terminate_session(&sid);
             mgr.create_session(sid.clone());
         }
- // Clear persisted history so the session truly resets
+        // Clear persisted history so the session truly resets
         if let Some(ref store) = state.session_store {
             if let Err(e) = store.delete_session(&sid).await {
                 tracing::warn!("Failed to delete session {} during reset: {}", sid, e);
@@ -799,7 +812,7 @@ async fn handle_compact(
         );
     };
 
- // Resolve agent for session
+    // Resolve agent for session
     let route = state.agent_router.resolve_by_session(&sid).await;
     let agents = state.agents.read().await;
     let agent_handle = match agents.get(&route.agent_id) {
@@ -813,10 +826,10 @@ async fn handle_compact(
     };
     drop(agents);
 
- // Run context compaction via the Summarize strategy
+    // Run context compaction via the Summarize strategy
     let compact_result = agent_handle.agent.compact_context(&sid).await;
 
- // Flush transcript to disk as a compaction step
+    // Flush transcript to disk as a compaction step
     let export_result = state
         .transcript_store
         .export(&sid, TranscriptFormat::Markdown)
@@ -1092,7 +1105,7 @@ async fn handle_kill(
         );
     }
 
- // Try to shutdown the specific subagent
+    // Try to shutdown the specific subagent
     match state.acp.shutdown_subagent(trimmed).await {
         Ok(true) => WsResponse::ok(
             &req.id,
@@ -1334,7 +1347,7 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
     let mut settings = state.runtime_settings.write().await;
 
     if enabled {
- // Save current model and switch to fast alias
+        // Save current model and switch to fast alias
         let current_model = state.config.read().await.model.clone();
         settings.insert("fast.original_model".to_string(), serde_json::json!(current_model));
         if let Some(fast_model) = state.model_router.resolve_alias("fast").await {
@@ -1351,7 +1364,7 @@ async fn handle_fast(req: &WsRequest, state: &Arc<GatewayState>, args: &str) -> 
             serde_json::json!({ "text": "⚡ Fast mode enabled (no fast alias configured, using current model)." }),
         )
     } else {
- // Restore original model
+        // Restore original model
         let original = settings.get("fast.original_model").and_then(|v| v.as_str());
         if let Some(orig) = original {
             state.config.write().await.model = orig.to_string();
@@ -1430,7 +1443,7 @@ async fn handle_context(
         );
     };
 
- // Resolve agent for session
+    // Resolve agent for session
     let route = state.agent_router.resolve_by_session(&sid).await;
     let agents = state.agents.read().await;
     let Some(agent_handle) = agents.get(&route.agent_id) else {
@@ -1959,7 +1972,10 @@ mod tests {
     #[test]
     fn test_tier_filter_essential() {
         let cmds = built_in_commands();
-        let essential: Vec<&CommandDef> = cmds.iter().filter(|c| c.tier == CommandTier::Essential).collect();
+        let essential: Vec<&CommandDef> = cmds
+            .iter()
+            .filter(|c| c.tier == CommandTier::Essential)
+            .collect();
         assert!(!essential.is_empty());
         assert!(essential.iter().any(|c| c.key == "help"));
         assert!(essential.iter().any(|c| c.key == "new"));
@@ -1968,7 +1984,10 @@ mod tests {
     #[test]
     fn test_tier_filter_power() {
         let cmds = built_in_commands();
-        let power: Vec<&CommandDef> = cmds.iter().filter(|c| c.tier == CommandTier::Power).collect();
+        let power: Vec<&CommandDef> = cmds
+            .iter()
+            .filter(|c| c.tier == CommandTier::Power)
+            .collect();
         assert!(!power.is_empty());
         assert!(power.iter().any(|c| c.key == "config"));
         assert!(power.iter().any(|c| c.key == "bash"));

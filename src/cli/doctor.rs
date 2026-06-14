@@ -133,6 +133,7 @@ pub trait DoctorPlugin: Send + Sync {
     #[allow(dead_code)]
     fn name(&self) -> &str;
     /// Run plugin-specific diagnostics against a provider
+    #[allow(dead_code)]
     fn diagnose(
         &self,
         provider: &str,

@@ -234,8 +234,11 @@ pub struct PluginRuntime {
     /// Event subscribers: plugin_id/wildcard → senders
     #[cfg(feature = "plugins")]
     event_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::UnboundedSender<PluginEvent>>>>>,
-    /// Receiver side of the plugin event channel
+    /// Receiver side of the plugin event channel (kept so the channel stays open
+    /// while the runtime is alive; the actual receiver is moved into the dispatch
+    /// task spawned in `new()`).
     #[cfg(feature = "plugins")]
+    #[allow(dead_code)]
     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>>,
     /// Per-plugin metrics registry
     metrics: Arc<PluginMetricsRegistry>,
