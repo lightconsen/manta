@@ -1,80 +1,181 @@
 # Syscity Architecture
 
-Syscity is a personal AI assistant built in Rust. It routes messages from multiple channels through an agent core to LLM providers, with persistent memory, tool execution, and security controls.
+Syscity is a Rust-based personal AI assistant platform. It routes messages from multiple inbound channels through an agent core to LLM providers, with persistent memory, tool execution, security controls, and physical/desktop automation.
 
 ## System Overview
 
 ```
-User Interfaces          Channel Layer           Agent Core              Providers
-     |                        |                       |                      |
-  CLI / Web           ┌──────────────┐      ┌──────────────┐       ┌──────────────┐
-Telegram              │   Channel    │      │   Message    │       │   OpenAI     │
-Discord    ────────▶  │   Trait      │ ───▶ │   Router     │  ───▶ │  Anthropic   │
- Slack               │ + Registry   │      │ + Context    │       │  Fallback    │
-                      └──────────────┘      └──────────────┘       └──────────────┘
-                                                   │
-                       ┌───────────────────────────┼───────────────────────────┐
-                       ▼                           ▼                           ▼
-               ┌──────────────┐          ┌──────────────┐            ┌──────────────┐
-               │ Memory Store │          │ Tool System  │            │  Security    │
-               │ (Tiered)     │          │ + Registry   │            │  Layer       │
-               └──────────────┘          └──────────────┘            └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  User Interfaces                                                              │
+│  CLI · TUI · Telegram · Discord · Slack · WebSocket · Webhook · Browser     │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Gateway (Control Plane)                                                      │
+│  ── HTTP/WebSocket API · channel registry · agent spawning · auth · hooks    │
+└───────────────────────┬───────────────────────────────────────┬─────────────┘
+                        │                                       │
+                        ▼                                       ▼
+        ┌───────────────────────┐                   ┌───────────────────────┐
+        │  Inbound Pipeline     │                   │  Outbound Pipeline    │
+        │  debounce → enrich    │                   │  format → SSE →      │
+        │  → route → enqueue    │                   │  dispatch → side fx   │
+        └───────────┬───────────┘                   └───────────┬───────────┘
+                    │                                           │
+                    ▼                                           ▼
+        ┌───────────────────────┐                   ┌───────────────────────┐
+        │  Agent Core           │                   │  Channels / Users     │
+        │  context · memory     │                   │                       │
+        │  · tool calls · ACP   │                   │                       │
+        └───────┬───────────────┘                   └───────────────────────┘
+                │
+    ┌───────────┼───────────┬───────────────┬───────────────┐
+    ▼           ▼           ▼               ▼               ▼
+┌───────┐  ┌───────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐
+│Memory │  │ Tools │  │Providers │  │ Computer │  │   Planner    │
+│Store   │  │Registry│  │ Router   │  │ Adapter  │  │  Goal DAG    │
+└───────┘  └───────┘  └──────────┘  └──────────┘  └──────────────┘
 ```
 
-## Modules
+## Core Layers
 
-| Module | Purpose | Key File |
-|--------|---------|----------|
-| `agent` | Conversation orchestration, context management, routing | `src/agent/mod.rs` |
-| `channels` | Communication interfaces (CLI, Telegram, Discord, Slack, etc.) | `src/channels/mod.rs` |
-| `memory` | Persistent storage: conversations, messages, semantic memories, tiered store | `src/memory/mod.rs` |
-| `providers` | LLM provider abstractions (OpenAI, Anthropic, streaming) | `src/providers/mod.rs` |
-| `tools` | Capabilities the AI can invoke (file, shell, web, MCP, etc.) | `src/tools/mod.rs` |
-| `gateway` | Control plane: HTTP/WebSocket API, agent spawning, auth | `src/gateway/mod.rs` |
-| `security` | Auth, sandbox, path/command validation | `src/security/mod.rs` |
-| `config` | Configuration loading, hot reload, validation | `src/config.rs` |
-| `core` | Domain models and shared business logic | `src/core/mod.rs` |
+| Layer | Responsibility | Key Module |
+|-------|----------------|------------|
+| Interface | CLI, TUI, chat channels, webhooks | `cli`, `channels`, `tui` |
+| Control Plane | HTTP/WebSocket server, lifecycle, auth | `gateway`, `server`, `security` |
+| Conversation | Session management, message routing, context | `agent`, `channels`, `inbound`, `outbound` |
+| Reasoning | Tool selection, planning, desktop/server automation | `tools`, `planner`, `computer`, `capabilities` |
+| Memory | Conversations, semantic search, tiered storage, dreaming | `memory` |
+| Providers | LLM routing, fallbacks, streaming, cost guard | `providers`, `model_router` |
+| Extensions | Plugins, skills, MCP, browser automation | `plugins`, `skills`, `mcp`, `browser` |
+| Operations | Cron, heartbeat, standing orders, export, eval | `cron`, `heartbeat`, `standing_orders`, `export`, `eval` |
 
 ## Data Flow
 
-### Message Processing
+### Inbound Message
 
 ```
-User ──▶ Channel ──▶ Gateway ──▶ Agent ──▶ LLM Provider
-                              │
-                              ├──▶ Memory (retrieve context)
-                              ├──▶ Tools (if tool calls)
-                              └──▶ Security (validate)
+Channel event
+    │
+    ▼
+InboundPipeline::receive()
+    │
+    ├──▶ Debounce / media download / identity resolution
+    │
+    ▼
+ConversationResolver ──▶ agent_id + session_id
+    │
+    ▼
+Agent::process_message()
+    │
+    ├──▶ MemoryManager::retrieve() ──▶ context memories
+    ├──▶ ToolRegistry::available() ──▶ tool schemas
+    └──▶ Provider::complete() ──▶ LLM response
+                │
+                ├──▶ Tool call ──▶ ToolRegistry::execute()
+                │                    │
+                │                    ├──▶ Security / sandbox validation
+                │                    ├──▶ Approval queue (if required)
+                │                    └──▶ Content filter on output
+                │
+                └──▶ Final text ──▶ OutboundPipeline
+                                          │
+                                          ▼
+                                    Channel response
 ```
 
 ### Tool Execution
 
 ```
-LLM ──▶ Tool Call ──▶ Security Validation ──▶ Execute ──▶ Result ──▶ LLM
-            │
-            └──▶ Approval Queue (human-in-the-loop, if configured)
+LLM tool call
+    │
+    ▼
+ToolRegistry::execute()
+    │
+    ├──▶ Command / path / sandbox validation
+    ├──▶ Approval check (human-in-the-loop)
+    ├──▶ Capability scope check (os_control)
+    ├──▶ Execute tool
+    ├──▶ Secret / PII scan on output
+    └──▶ Return result to LLM
+```
+
+### Goal Planning (Physical / OS Automation)
+
+```
+User goal
+    │
+    ▼
+GoalPlanner::achieve()
+    │
+    ├──▶ GoalDecomposer ──▶ Task DAG
+    ├──▶ DagScheduler ──▶ parallel execution
+    │       │
+    │       └──▶ TaskExecutor
+    │               │
+    │               ├──▶ ComputerAdapter (desktop/server)
+    │               ├──▶ VerificationEngine
+    │               └──▶ RollbackManager (on failure)
+    │
+    └──▶ Record experience to memory
 ```
 
 ## Key Design Decisions
 
-1. **Trait-based abstraction** — `Channel`, `Provider`, `MemoryStore`, `Tool` are all traits, allowing pluggable implementations.
-2. **Arc + dyn for shared state** — `Arc<dyn MemoryStore>` and `Arc<dyn ChatHistoryStore>` enable runtime backend selection (e.g., unified SQLite vs. tiered store).
-3. **Feature-gated channels** — Each channel is behind a Cargo feature to keep the binary small.
-4. **Tiered memory** — Memories route across Working (in-memory), ShortTerm (SQLite), LongTerm (SQLite), and Archival (compressed JSONL) based on importance.
-5. **Context compressor** — Automatically compresses conversation history when approaching token limits.
+1. **Trait-based abstractions** — `Channel`, `Provider`, `MemoryStore`, `Tool`, `ComputerAdapter`, `CapabilitySet` are traits, enabling pluggable implementations.
+2. **`Arc<dyn ...>` for shared state** — Runtime backend selection (unified SQLite vs. tiered memory, multiple LLM providers).
+3. **Feature-gated channels and tools** — Cargo features keep binaries small; optional vision, pgvector, sqlite-vec, tailscale.
+4. **Tiered memory** — Working (in-memory), ShortTerm/LongTerm (SQLite), Archival (compressed JSONL) with `TierEvaluator` promotion/demotion.
+5. **CapabilitySet + ToolRegistry** — OS-specific tools are grouped by platform/environment, runtime-detected, and exported individually into `ToolRegistry`.
+6. **Security-first execution** — Path/command validation, sandboxed resource limits, approval levels, RBAC, content filtering, audit logging.
+7. **Planner + ComputerAdapter** — High-level goals decompose into task DAGs executed against a unified desktop/server abstraction.
 
-## Documentation Map
+## Module Documentation Map
 
-- [`docs/modules/agent.md`](modules/agent.md) — Agent orchestration
-- [`docs/modules/channels.md`](modules/channels.md) — Channel interfaces
-- [`docs/modules/memory.md`](modules/memory.md) — Memory system
-- [`docs/modules/providers.md`](modules/providers.md) — LLM providers
-- [`docs/modules/tools.md`](modules/tools.md) — Tool system
-- [`docs/modules/gateway.md`](modules/gateway.md) — Gateway control plane
-- [`docs/modules/security.md`](modules/security.md) — Security layer
-- [`docs/modules/config.md`](modules/config.md) — Configuration
-- [`docs/modules/core.md`](modules/core.md) — Domain models
-- [`docs/modules/acp.md`](modules/acp.md) — Agent Control Plane (subagent spawning)
-- [`docs/modules/skills.md`](modules/skills.md) — Skill system
-- [`docs/modules/mcp.md`](modules/mcp.md) — Model Context Protocol
-- [`docs/modules/plugins.md`](modules/plugins.md) — Plugin system
+- [`modules/acp.md`](modules/acp.md) — Agent Control Plane (subagents, sessions, execution control)
+- [`modules/agent.md`](modules/agent.md) — Agent orchestration, context, turns, artifacts
+- [`modules/browser.md`](modules/browser.md) — Browser automation, CDP, ARIA snapshots, browser pool
+- [`modules/canvas.md`](modules/canvas.md) — A2UI component system for rich assistant UI
+- [`modules/capabilities.md`](modules/capabilities.md) — Platform capability sets and OS control scopes
+- [`modules/channels.md`](modules/channels.md) — Channel interfaces, resolver, thread binding
+- [`modules/cli.md`](modules/cli.md) — Command-line interface
+- [`modules/computer.md`](modules/computer.md) — Cross-platform desktop/server automation
+- [`modules/config.md`](modules/config.md) — Configuration loading, validation, hot reload
+- [`modules/core.md`](modules/core.md) — Domain models and shared types
+- [`modules/cron.md`](modules/cron.md) — Scheduled task execution
+- [`modules/eval.md`](modules/eval.md) — Evaluation framework
+- [`modules/export.md`](modules/export.md) — Conversation and memory export
+- [`modules/flow.md`](modules/flow.md) — DAG-based workflow engine
+- [`modules/gateway.md`](modules/gateway.md) — Gateway control plane
+- [`modules/heartbeat.md`](modules/heartbeat.md) — Periodic wake/heartbeat
+- [`modules/inbound.md`](modules/inbound.md) — Inbound message pipeline
+- [`modules/mcp.md`](modules/mcp.md) — Model Context Protocol
+- [`modules/memory.md`](modules/memory.md) — Memory and storage system
+- [`modules/model_router.md`](modules/model_router.md) — LLM provider routing
+- [`modules/outbound.md`](modules/outbound.md) — Outbound response pipeline
+- [`modules/planner.md`](modules/planner.md) — Goal planning and task execution
+- [`modules/plugins.md`](modules/plugins.md) — Plugin system
+- [`modules/providers.md`](modules/providers.md) — LLM provider implementations
+- [`modules/security.md`](modules/security.md) — Security layer
+- [`modules/server.md`](modules/server.md) — HTTP/WebSocket server
+- [`modules/skills.md`](modules/skills.md) — Skill system
+- [`modules/standing_orders.md`](modules/standing_orders.md) — Standing background agent programs
+- [`modules/tailscale.md`](modules/tailscale.md) — Tailscale integration
+- [`modules/taskflow.md`](modules/taskflow.md) — Durable execution
+- [`modules/team.md`](modules/team.md) — Team mesh coordination
+- [`modules/tools.md`](modules/tools.md) — Tool system
+- [`modules/tui.md`](modules/tui.md) — Terminal UI client
+- [`modules/utils.md`](modules/utils.md) — Utilities (batch, logging, pool, profiling)
+- [`os.md`](os.md) — Operating-system control architecture and roadmap
+
+## Technology Stack
+
+- **Language**: Rust (tokio async runtime)
+- **Web framework**: Axum
+- **CLI**: clap
+- **TUI**: ratatui + crossterm
+- **Serialization**: serde + toml + json
+- **Database**: SQLite (sqlx), optional Postgres (pgvector)
+- **Observability**: tracing + Prometheus metrics
+- **Plugins**: WASM + wapm-style registry
