@@ -1674,8 +1674,8 @@ impl McpManager {
     }
 
     /// Set the event sender used to emit MCP lifecycle events.
-    pub fn with_event_tx(self, tx: mpsc::UnboundedSender<McpEvent>) -> Self {
-        *self.event_tx.blocking_write() = Some(tx);
+    pub async fn with_event_tx(self, tx: mpsc::UnboundedSender<McpEvent>) -> Self {
+        *self.event_tx.write().await = Some(tx);
         self
     }
 

@@ -1459,7 +1459,7 @@ impl Gateway {
         // Create the shared MCP manager with an internal event channel.
         let (mcp_event_tx, mut mcp_event_rx) =
             mpsc::unbounded_channel::<crate::tools::mcp::McpEvent>();
-        let mcp_manager = Arc::new(McpManager::new().with_event_tx(mcp_event_tx));
+        let mcp_manager = Arc::new(McpManager::new().with_event_tx(mcp_event_tx).await);
 
         // Create shared approval queue for human-in-the-loop tool policy enforcement
         let approval_queue = Arc::new(ApprovalQueue::new());
