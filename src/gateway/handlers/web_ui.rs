@@ -87,6 +87,30 @@ pub async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     StatusCode::NOT_FOUND.into_response()
 }
 
+/// Service worker handler — serves the Vite PWA service worker registration script.
+pub async fn register_sw_handler() -> impl IntoResponse {
+    let js = match crate::embed::WebAssets::get("registerSW.js") {
+        Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
+        None => tokio::fs::read_to_string("dist/registerSW.js")
+            .await
+            .unwrap_or_else(|_| {
+                "if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('./sw.js',{scope:'./'})})}".to_string()
+            }),
+    };
+    ([(header::CONTENT_TYPE, "application/javascript")], js)
+}
+
+/// Web app manifest handler — serves the Vite PWA manifest.
+pub async fn manifest_handler() -> impl IntoResponse {
+    let manifest = match crate::embed::WebAssets::get("manifest.webmanifest") {
+        Some(file) => String::from_utf8_lossy(file.data.as_ref()).to_string(),
+        None => tokio::fs::read_to_string("dist/manifest.webmanifest")
+            .await
+            .unwrap_or_default(),
+    };
+    ([(header::CONTENT_TYPE, "application/manifest+json")], manifest)
+}
+
 /// Logo handler for /syscity.png — static route with no path params.
 pub async fn syscity_png_handler() -> impl IntoResponse {
     let path = "syscity.png";

@@ -2849,6 +2849,8 @@ impl Gateway {
             .route("/", get(web_terminal_html_handler))
             .route("/favicon.svg", get(favicon_handler))
             .route("/syscity.png", get(syscity_png_handler))
+            .route("/manifest.webmanifest", get(manifest_handler))
+            .route("/registerSW.js", get(register_sw_handler))
             .route("/assets/*path", get(asset_handler));
 
         // Merge all routers and apply global CORS
