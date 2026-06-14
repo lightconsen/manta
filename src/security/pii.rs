@@ -193,10 +193,8 @@ impl PiiDetector {
                         .checked_sub(1)
                         .and_then(|i| line.as_bytes().get(i));
                     let after = line.as_bytes().get(mat.end());
-                    let preceded_by_digit =
-                        before.map(|b| b.is_ascii_digit()).unwrap_or(false);
-                    let followed_by_digit =
-                        after.map(|b| b.is_ascii_digit()).unwrap_or(false);
+                    let preceded_by_digit = before.map(|b| b.is_ascii_digit()).unwrap_or(false);
+                    let followed_by_digit = after.map(|b| b.is_ascii_digit()).unwrap_or(false);
                     if preceded_by_digit || followed_by_digit {
                         continue;
                     }
@@ -223,9 +221,7 @@ impl PiiDetector {
         let mut findings = Vec::new();
 
         for (pattern, raw_str, start, end, confidence) in raw {
-            let overlaps = kept_ranges
-                .iter()
-                .any(|(ks, ke)| start < *ke && end > *ks);
+            let overlaps = kept_ranges.iter().any(|(ks, ke)| start < *ke && end > *ks);
             if overlaps {
                 continue;
             }
@@ -304,11 +300,8 @@ fn validate_chinese_id(id: &str) -> bool {
     }
 
     // Checksum weights
-    const WEIGHTS: [u32; 17] = [
-        7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2,
-    ];
-    const CHECK_CHARS: [char; 11] =
-        ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
+    const WEIGHTS: [u32; 17] = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+    const CHECK_CHARS: [char; 11] = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
 
     let mut sum = 0u32;
     for (i, ch) in prefix.chars().enumerate() {
@@ -395,11 +388,7 @@ fn redact_landline(phone: &str) -> String {
     };
     let keep = area_len + 2;
     if digits.len() > keep + 2 {
-        format!(
-            "{}****{}",
-            &digits[..keep],
-            &digits[digits.len() - 2..]
-        )
+        format!("{}****{}", &digits[..keep], &digits[digits.len() - 2..])
     } else {
         format!("{}****", &digits[..keep])
     }

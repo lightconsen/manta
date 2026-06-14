@@ -14,16 +14,16 @@ use tracing::debug;
 /// Hook execution result
 #[derive(Debug, Clone)]
 pub enum HookResult {
- /// Continue with this (possibly modified) event
+    /// Continue with this (possibly modified) event
     Continue(GatewayEvent),
- /// Drop the event (don't broadcast)
+    /// Drop the event (don't broadcast)
     Drop,
- /// Replace with a different event
+    /// Replace with a different event
     Replace(GatewayEvent),
 }
 
 impl HookResult {
- /// Get the event if continuing or replacing
+    /// Get the event if continuing or replacing
     pub fn into_event(self) -> Option<GatewayEvent> {
         match self {
             HookResult::Continue(e) | HookResult::Replace(e) => Some(e),
@@ -48,34 +48,34 @@ pub type AfterHook = Arc<
 
 /// Event hook entry (before + after for a specific event filter)
 pub struct EventHook {
- /// Name of the hook (for identification/removal)
+    /// Name of the hook (for identification/removal)
     pub name: String,
- /// Priority (lower = earlier execution)
+    /// Priority (lower = earlier execution)
     pub priority: i32,
- /// Optional filter: only apply to events matching this substring in their JSON
+    /// Optional filter: only apply to events matching this substring in their JSON
     pub event_filter: Option<String>,
- /// Before hook (can modify/drop event)
+    /// Before hook (can modify/drop event)
     pub before: Option<BeforeHook>,
- /// After hook (read-only notification)
+    /// After hook (read-only notification)
     pub after: Option<AfterHook>,
 }
 
 /// Registry of event hooks
 #[derive(Default)]
 pub struct EventHookRegistry {
- /// Before hooks, sorted by priority
+    /// Before hooks, sorted by priority
     before_hooks: RwLock<Vec<EventHook>>,
- /// After hooks, sorted by priority
+    /// After hooks, sorted by priority
     after_hooks: RwLock<Vec<EventHook>>,
 }
 
 impl EventHookRegistry {
- /// Create a new empty registry
+    /// Create a new empty registry
     pub fn new() -> Self {
         Self::default()
     }
 
- /// Register a before hook
+    /// Register a before hook
     pub async fn register_before(
         &self,
         name: impl Into<String>,
@@ -95,7 +95,7 @@ impl EventHookRegistry {
         debug!("Registered before hook: {} (priority={})", hooks.last().unwrap().name, priority);
     }
 
- /// Register an after hook
+    /// Register an after hook
     pub async fn register_after(
         &self,
         name: impl Into<String>,
@@ -115,7 +115,7 @@ impl EventHookRegistry {
         debug!("Registered after hook: {} (priority={})", hooks.last().unwrap().name, priority);
     }
 
- /// Remove a hook by name
+    /// Remove a hook by name
     pub async fn unregister(&self, name: &str) -> bool {
         let mut before = self.before_hooks.write().await;
         let before_len = before.len();
@@ -130,8 +130,8 @@ impl EventHookRegistry {
         removed_before || removed_after
     }
 
- /// Run all before hooks on an event
- /// Returns None if the event should be dropped
+    /// Run all before hooks on an event
+    /// Returns None if the event should be dropped
     pub async fn run_before(&self, event: GatewayEvent) -> Option<GatewayEvent> {
         let hooks = self.before_hooks.read().await;
         let event_json = serde_json::to_string(&event).unwrap_or_default();
@@ -159,7 +159,7 @@ impl EventHookRegistry {
         Some(current)
     }
 
- /// Run all after hooks on an event (fire-and-forget)
+    /// Run all after hooks on an event (fire-and-forget)
     pub async fn run_after(&self, event: GatewayEvent) {
         let hooks = self.after_hooks.read().await;
         let event_json = serde_json::to_string(&event).unwrap_or_default();
@@ -182,7 +182,7 @@ impl EventHookRegistry {
         }
     }
 
- /// List all registered hooks
+    /// List all registered hooks
     pub async fn list_hooks(&self) -> Vec<HookInfo> {
         let before = self.before_hooks.read().await;
         let after = self.after_hooks.read().await;
@@ -223,15 +223,15 @@ pub async fn emit_event(
     hooks: &EventHookRegistry,
     event: GatewayEvent,
 ) {
- // Run before hooks
+    // Run before hooks
     let Some(event) = hooks.run_before(event).await else {
         return; // Event dropped
     };
 
- // Broadcast
+    // Broadcast
     let _ = event_tx.send(event.clone());
 
- // Run after hooks (fire-and-forget)
+    // Run after hooks (fire-and-forget)
     hooks.run_after(event).await;
 }
 
@@ -256,7 +256,7 @@ mod tests {
     async fn test_hook_registry() {
         let registry = EventHookRegistry::new();
 
- // Register a before hook that logs messages
+        // Register a before hook that logs messages
         registry
             .register_before(
                 "test_log",
@@ -304,7 +304,7 @@ mod tests {
                 None,
                 Arc::new(|event| {
                     Box::pin(async move {
- // Replace with a different event type
+                        // Replace with a different event type
                         HookResult::Continue(event)
                     })
                 }),
@@ -377,7 +377,7 @@ mod tests {
         };
 
         registry.run_after(event).await;
- // Give spawned task a moment
+        // Give spawned task a moment
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
     }

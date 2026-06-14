@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,8 +38,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 // Plugin Management API Handlers
 
@@ -235,11 +235,7 @@ pub async fn uninstall_plugin_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<InstallPluginRequest>,
 ) -> impl IntoResponse {
-    match state
-        .plugin_manager
-        .uninstall_plugin(&req.name)
-        .await
-    {
+    match state.plugin_manager.uninstall_plugin(&req.name).await {
         Ok(()) => {
             let response = serde_json::json!({
                 "success": true,
@@ -280,8 +276,7 @@ pub async fn search_plugins_handler(
                     })
                 })
                 .collect();
-            (StatusCode::OK, Json(serde_json::json!({ "results": results_json })))
-                .into_response()
+            (StatusCode::OK, Json(serde_json::json!({ "results": results_json }))).into_response()
         }
         Err(e) => {
             let error = serde_json::json!({

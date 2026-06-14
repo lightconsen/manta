@@ -50,12 +50,12 @@ use tracing::{debug, info, warn};
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum DmPolicy {
- /// Anyone can DM the bot (no restrictions).
+    /// Anyone can DM the bot (no restrictions).
     #[default]
     Open,
- /// Users must request access; admin approves by code.
+    /// Users must request access; admin approves by code.
     Pairing,
- /// Only pre-approved users can DM (static allowlist).
+    /// Only pre-approved users can DM (static allowlist).
     Allowlist,
 }
 
@@ -87,29 +87,29 @@ impl std::str::FromStr for DmPolicy {
 /// A pending pairing request (user-initiated).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingRequest {
- /// Unique pairing code (e.g., "ABC123").
+    /// Unique pairing code (e.g., "ABC123").
     pub code: String,
- /// Channel type (e.g., "telegram", "discord").
+    /// Channel type (e.g., "telegram", "discord").
     pub channel: String,
- /// User ID on that channel.
+    /// User ID on that channel.
     pub user_id: String,
- /// Optional username/handle for display.
+    /// Optional username/handle for display.
     pub username: Option<String>,
- /// When the request was created.
+    /// When the request was created.
     pub created_at: SystemTime,
- /// When the request expires.
+    /// When the request expires.
     pub expires_at: SystemTime,
- /// Number of approval attempts (for rate limiting).
+    /// Number of approval attempts (for rate limiting).
     pub attempt_count: u32,
 }
 
 impl PendingRequest {
- /// Return `true` if the request has not yet expired.
+    /// Return `true` if the request has not yet expired.
     pub fn is_valid(&self) -> bool {
         SystemTime::now() < self.expires_at
     }
 
- /// Check if max attempts exceeded.
+    /// Check if max attempts exceeded.
     pub fn is_locked(&self, max_attempts: u32) -> bool {
         self.attempt_count >= max_attempts
     }
@@ -118,24 +118,24 @@ impl PendingRequest {
 /// A successfully authorized user entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizedUser {
- /// Channel the user is authorized on.
+    /// Channel the user is authorized on.
     pub channel: String,
- /// User ID.
+    /// User ID.
     pub user_id: String,
- /// Optional username/handle.
+    /// Optional username/handle.
     pub username: Option<String>,
- /// When authorization was granted.
+    /// When authorization was granted.
     pub authorized_at: SystemTime,
- /// When authorization expires (`None` = never).
+    /// When authorization expires (`None` = never).
     pub expires_at: Option<SystemTime>,
- /// Who approved the pairing (admin user ID).
+    /// Who approved the pairing (admin user ID).
     pub approved_by: Option<String>,
- /// Pairing code that was used (for audit).
+    /// Pairing code that was used (for audit).
     pub code_used: Option<String>,
 }
 
 impl AuthorizedUser {
- /// Return `true` if the authorization has not yet expired.
+    /// Return `true` if the authorization has not yet expired.
     pub fn is_valid(&self) -> bool {
         self.expires_at
             .map(|exp| SystemTime::now() < exp)
@@ -146,16 +146,16 @@ impl AuthorizedUser {
 /// Result of requesting access.
 #[derive(Debug, Clone)]
 pub enum RequestAccessResult {
- /// New pairing request created.
+    /// New pairing request created.
     NewRequest { code: String },
- /// Already has a pending request.
+    /// Already has a pending request.
     AlreadyPending {
         code: String,
         created_at: SystemTime,
     },
- /// Already authorized.
+    /// Already authorized.
     AlreadyAuthorized,
- /// Rate limited (too many requests).
+    /// Rate limited (too many requests).
     RateLimited { retry_after: Duration },
 }
 
@@ -164,19 +164,19 @@ pub enum RequestAccessResult {
 /// Thread-safe store for pairing requests and authorized users.
 #[derive(Debug, Clone)]
 pub struct PairingStore {
- /// Pending requests keyed by code for O(1) lookup.
+    /// Pending requests keyed by code for O(1) lookup.
     pending: Arc<RwLock<HashMap<String, PendingRequest>>>,
- /// Reverse index: (channel, user_id) -> code for checking existing requests.
+    /// Reverse index: (channel, user_id) -> code for checking existing requests.
     pending_index: Arc<RwLock<HashMap<(String, String), String>>>,
- /// Authorized users keyed by (channel, user_id).
+    /// Authorized users keyed by (channel, user_id).
     authorized: Arc<RwLock<HashMap<(String, String), AuthorizedUser>>>,
- /// Multi-dimensional allowlist for fine-grained access control.
+    /// Multi-dimensional allowlist for fine-grained access control.
     allowlist: Arc<crate::security::allowlist::Allowlist>,
- /// Default TTL for pairing requests.
+    /// Default TTL for pairing requests.
     default_ttl: Duration,
- /// Max pending requests per user per channel (rate limiting).
+    /// Max pending requests per user per channel (rate limiting).
     max_requests_per_user: usize,
- /// Min time between requests from same user.
+    /// Min time between requests from same user.
     min_request_interval: Duration,
 }
 
@@ -195,12 +195,12 @@ impl Default for PairingStore {
 }
 
 impl PairingStore {
- /// Create a new empty store.
+    /// Create a new empty store.
     pub fn new() -> Self {
         Self::default()
     }
 
- /// Create with custom TTL and rate limits.
+    /// Create with custom TTL and rate limits.
     pub fn with_config(
         default_ttl: Duration,
         max_requests_per_user: usize,
@@ -217,16 +217,16 @@ impl PairingStore {
         }
     }
 
- /// Get a reference to the multi-dimensional allowlist.
+    /// Get a reference to the multi-dimensional allowlist.
     pub fn allowlist(&self) -> &Arc<crate::security::allowlist::Allowlist> {
         &self.allowlist
     }
 
- // ── User-initiated pairing ───────────────────────────────
+    // ── User-initiated pairing ───────────────────────────────
 
- /// Request access to the bot (called when unknown user sends first DM).
- ///
- /// Returns the pairing code for the user to share with admin.
+    /// Request access to the bot (called when unknown user sends first DM).
+    ///
+    /// Returns the pairing code for the user to share with admin.
     pub async fn request_access(
         &self,
         channel: &str,
@@ -235,12 +235,12 @@ impl PairingStore {
     ) -> Result<RequestAccessResult, PairingError> {
         let key = (channel.to_string(), user_id.to_string());
 
- // Check if already authorized
+        // Check if already authorized
         if self.is_authorized(channel, user_id).await {
             return Ok(RequestAccessResult::AlreadyAuthorized);
         }
 
- // Check if already has pending request
+        // Check if already has pending request
         {
             let index = self.pending_index.read().await;
             if let Some(code) = index.get(&key) {
@@ -256,10 +256,10 @@ impl PairingStore {
             }
         }
 
- // Check rate limits
+        // Check rate limits
         self.check_rate_limits(channel, user_id).await?;
 
- // Generate new request
+        // Generate new request
         let code = generate_pairing_code();
         let now = SystemTime::now();
         let expires_at = now + self.default_ttl;
@@ -293,9 +293,9 @@ impl PairingStore {
         Ok(RequestAccessResult::NewRequest { code })
     }
 
- /// Admin approves a pending request by code.
- ///
- /// Returns the authorized user info if found and approved.
+    /// Admin approves a pending request by code.
+    ///
+    /// Returns the authorized user info if found and approved.
     pub async fn approve(
         &self,
         channel: &str,
@@ -308,7 +308,7 @@ impl PairingStore {
 
         let request = pending.get_mut(code)?;
 
- // Verify channel matches
+        // Verify channel matches
         if request.channel != channel {
             warn!(
                 code = %code,
@@ -319,20 +319,20 @@ impl PairingStore {
             return None;
         }
 
- // Check if expired
+        // Check if expired
         if !request.is_valid() {
             warn!(code = %code, "Pairing code expired");
- // Clean up expired request
+            // Clean up expired request
             let key = (request.channel.clone(), request.user_id.clone());
             pending.remove(code);
             index.remove(&key);
             return None;
         }
 
- // Increment attempt count
+        // Increment attempt count
         request.attempt_count += 1;
 
- // Create authorized user
+        // Create authorized user
         let now = SystemTime::now();
         let user = AuthorizedUser {
             channel: request.channel.clone(),
@@ -344,7 +344,7 @@ impl PairingStore {
             code_used: Some(code.to_string()),
         };
 
- // Move from pending to authorized
+        // Move from pending to authorized
         let key = (request.channel.clone(), request.user_id.clone());
         pending.remove(code);
         index.remove(&key);
@@ -360,12 +360,12 @@ impl PairingStore {
         Some(user)
     }
 
- /// Reject/deny a pending request by code.
+    /// Reject/deny a pending request by code.
     pub async fn reject(&self, channel: &str, code: &str) -> Option<PendingRequest> {
         let mut pending = self.pending.write().await;
         let mut index = self.pending_index.write().await;
 
- // Check the request exists and matches channel before removing
+        // Check the request exists and matches channel before removing
         let request = pending.get(code).cloned()?;
 
         if request.channel != channel {
@@ -386,12 +386,12 @@ impl PairingStore {
         Some(request)
     }
 
- // ── Access checks ─────────────────────────────────────────────────────────
+    // ── Access checks ─────────────────────────────────────────────────────────
 
- /// Return `true` if `user_id` is currently authorized on `channel`.
- /// Checks both the direct authorized list and the multi-dimensional allowlist.
+    /// Return `true` if `user_id` is currently authorized on `channel`.
+    /// Checks both the direct authorized list and the multi-dimensional allowlist.
     pub async fn is_authorized(&self, channel: &str, user_id: &str) -> bool {
- // First check direct authorized list (pairing flow)
+        // First check direct authorized list (pairing flow)
         let key = (channel.to_string(), user_id.to_string());
         {
             let auth = self.authorized.read().await;
@@ -400,11 +400,11 @@ impl PairingStore {
             }
         }
 
- // Then check multi-dimensional allowlist
+        // Then check multi-dimensional allowlist
         crate::security::allowlist::is_user_allowed(&self.allowlist, channel, user_id, None).await
     }
 
- /// Check if user has a pending request.
+    /// Check if user has a pending request.
     pub async fn has_pending(&self, channel: &str, user_id: &str) -> Option<PendingRequest> {
         let key = (channel.to_string(), user_id.to_string());
         let index = self.pending_index.read().await;
@@ -413,15 +413,15 @@ impl PairingStore {
         pending.get(code).cloned()
     }
 
- /// Get pending request by code.
+    /// Get pending request by code.
     pub async fn get_pending_by_code(&self, code: &str) -> Option<PendingRequest> {
         let pending = self.pending.read().await;
         pending.get(code).cloned()
     }
 
- // ── Listing ───────────────────────────────────────────────────────────────
+    // ── Listing ───────────────────────────────────────────────────────────────
 
- /// List all pending requests for a channel.
+    /// List all pending requests for a channel.
     pub async fn list_pending(&self, channel: &str) -> Vec<PendingRequest> {
         let pending = self.pending.read().await;
         pending
@@ -431,13 +431,13 @@ impl PairingStore {
             .collect()
     }
 
- /// List all currently valid authorizations.
+    /// List all currently valid authorizations.
     pub async fn list_authorized(&self) -> Vec<AuthorizedUser> {
         let auth = self.authorized.read().await;
         auth.values().filter(|u| u.is_valid()).cloned().collect()
     }
 
- /// List authorized users filtered by channel.
+    /// List authorized users filtered by channel.
     pub async fn list_authorized_for_channel(&self, channel: &str) -> Vec<AuthorizedUser> {
         let auth = self.authorized.read().await;
         auth.values()
@@ -446,11 +446,11 @@ impl PairingStore {
             .collect()
     }
 
- // ── Revocation ────────────────────────────────────────────────────────────
+    // ── Revocation ────────────────────────────────────────────────────────────
 
- /// Revoke access for `user_id` on `channel`.
- ///
- /// Returns `true` if an entry was removed.
+    /// Revoke access for `user_id` on `channel`.
+    ///
+    /// Returns `true` if an entry was removed.
     pub async fn revoke(&self, channel: &str, user_id: &str) -> bool {
         let key = (channel.to_string(), user_id.to_string());
         let mut auth = self.authorized.write().await;
@@ -461,9 +461,9 @@ impl PairingStore {
         removed
     }
 
- // ── Allowlist (static) support ────────────────────────────────────────────
+    // ── Allowlist (static) support ────────────────────────────────────────────
 
- /// Add a user directly to authorized list (for allowlist policy).
+    /// Add a user directly to authorized list (for allowlist policy).
     pub async fn add_to_allowlist(
         &self,
         channel: &str,
@@ -494,15 +494,15 @@ impl PairingStore {
         user
     }
 
- // ── Maintenance ───────────────────────────────────────────────────────────
+    // ── Maintenance ───────────────────────────────────────────────────────────
 
- /// Remove expired pending codes and expired authorizations.
+    /// Remove expired pending codes and expired authorizations.
     pub async fn sweep_expired(&self) {
         let mut pending = self.pending.write().await;
         let mut index = self.pending_index.write().await;
         let before = pending.len();
 
- // Remove expired entries from both maps
+        // Remove expired entries from both maps
         let expired_codes: Vec<String> = pending
             .values()
             .filter(|r| !r.is_valid())
@@ -526,10 +526,10 @@ impl PairingStore {
         debug!("Pairing store sweep: removed {} expired pending requests", removed);
     }
 
- // ── Internal helpers ──────────────────────────────────────────────────────
+    // ── Internal helpers ──────────────────────────────────────────────────────
 
     async fn check_rate_limits(&self, channel: &str, user_id: &str) -> Result<(), PairingError> {
- // Count existing pending requests for this user
+        // Count existing pending requests for this user
         let pending = self.pending.read().await;
         let user_request_count = pending
             .values()
@@ -552,12 +552,12 @@ impl PairingStore {
 /// Errors that can occur during pairing operations.
 #[derive(Debug, Clone)]
 pub enum PairingError {
- /// Rate limit exceeded.
+    /// Rate limit exceeded.
     RateLimited {
         message: String,
         retry_after: Duration,
     },
- /// Internal error.
+    /// Internal error.
     Internal(String),
 }
 
@@ -598,7 +598,7 @@ mod tests {
     async fn test_request_access_and_approve() {
         let store = PairingStore::new();
 
- // User requests access
+        // User requests access
         let result = store
             .request_access("telegram", "123456", Some("@alice"))
             .await;
@@ -609,10 +609,10 @@ mod tests {
             _ => panic!("Expected NewRequest"),
         };
 
- // Not authorized yet
+        // Not authorized yet
         assert!(!store.is_authorized("telegram", "123456").await);
 
- // Admin approves
+        // Admin approves
         let approved = store.approve("telegram", &code, Some("admin")).await;
         assert!(approved.is_some());
 
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(user.username, Some("@alice".to_string()));
         assert_eq!(user.approved_by, Some("admin".to_string()));
 
- // Now authorized
+        // Now authorized
         assert!(store.is_authorized("telegram", "123456").await);
     }
 
@@ -629,7 +629,7 @@ mod tests {
     async fn test_already_authorized() {
         let store = PairingStore::new();
 
- // First request
+        // First request
         let result = store.request_access("telegram", "123456", None).await;
         let code = match result.unwrap() {
             RequestAccessResult::NewRequest { code } => code,
@@ -637,7 +637,7 @@ mod tests {
         };
         store.approve("telegram", &code, None).await;
 
- // Second request from same user
+        // Second request from same user
         let result = store.request_access("telegram", "123456", None).await;
         assert!(matches!(result, Ok(RequestAccessResult::AlreadyAuthorized)));
     }
@@ -646,14 +646,14 @@ mod tests {
     async fn test_already_pending() {
         let store = PairingStore::new();
 
- // First request
+        // First request
         let result = store.request_access("telegram", "123456", None).await;
         let code = match result.unwrap() {
             RequestAccessResult::NewRequest { code } => code,
             _ => panic!("Expected NewRequest"),
         };
 
- // Second request from same user (before approval)
+        // Second request from same user (before approval)
         let result = store.request_access("telegram", "123456", None).await;
         assert!(matches!(
             result,
@@ -695,10 +695,10 @@ mod tests {
         let rejected = store.reject("telegram", &code).await;
         assert!(rejected.is_some());
 
- // Not authorized after rejection
+        // Not authorized after rejection
         assert!(!store.is_authorized("telegram", "123456").await);
 
- // Pending list empty
+        // Pending list empty
         let pending = store.list_pending("telegram").await;
         assert!(pending.is_empty());
     }
@@ -707,7 +707,7 @@ mod tests {
     async fn test_allowlist() {
         let store = PairingStore::new();
 
- // Add directly to allowlist (no pairing flow)
+        // Add directly to allowlist (no pairing flow)
         let user = store
             .add_to_allowlist("telegram", "123456", Some("@alice"), Some("admin"))
             .await;
@@ -754,10 +754,10 @@ mod tests {
             _ => panic!("Expected NewRequest"),
         };
 
- // 6 characters
+        // 6 characters
         assert_eq!(code.len(), 6);
 
- // No ambiguous characters
+        // No ambiguous characters
         assert!(!code.contains('0'));
         assert!(!code.contains('O'));
         assert!(!code.contains('1'));

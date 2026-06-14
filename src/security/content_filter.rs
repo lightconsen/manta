@@ -191,7 +191,10 @@ impl ContentFilter {
             if !secret_findings.is_empty() {
                 // Secret redaction: the original text is needed for replacement.
                 // The actual replacement happens in the re-scan block below.
-                tracing::debug!("{} secret finding(s) detected, will redact", secret_findings.len());
+                tracing::debug!(
+                    "{} secret finding(s) detected, will redact",
+                    secret_findings.len()
+                );
             }
         }
 
@@ -221,11 +224,8 @@ impl ContentFilter {
                     }
                     if let Some(ref d) = result.data {
                         let data_text = d.to_string();
-                        if let Some(original) =
-                            self.find_secret_original(&data_text, finding)
-                        {
-                            let new_data_text =
-                                data_text.replace(&original, &finding.redacted);
+                        if let Some(original) = self.find_secret_original(&data_text, finding) {
+                            let new_data_text = data_text.replace(&original, &finding.redacted);
                             data = serde_json::from_str(&new_data_text)
                                 .ok()
                                 .or(Some(Value::String(new_data_text)));
@@ -260,8 +260,7 @@ impl ContentFilter {
             combined.push(' ');
             combined.push_str(&d.to_string());
         }
-        self.pii_detector.contains_pii(&combined)
-            || !self.secret_scanner.scan(&combined).is_empty()
+        self.pii_detector.contains_pii(&combined) || !self.secret_scanner.scan(&combined).is_empty()
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,8 +38,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 use ::cron::Schedule;
 
 // ── Cron job management ───────────────────────────────────────────────────────
@@ -238,4 +238,3 @@ pub async fn cron_job_logs_handler(
             .into_response(),
     }
 }
-

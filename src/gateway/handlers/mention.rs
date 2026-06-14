@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,12 +38,12 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 #[allow(dead_code)]
 /// `GET /api/v1/mentions/policy` — get current mention gate policy.
-pub async fn get_mention_policy_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+pub async fn get_mention_policy_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
     let policy = state.mention_gate.policy().await;
     (
         StatusCode::OK,
@@ -194,4 +196,3 @@ pub async fn remove_mention_blocklist_handler(
     )
         .into_response()
 }
-

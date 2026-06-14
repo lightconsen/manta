@@ -169,10 +169,7 @@ impl TrustedProxyAuthenticator {
         let proxy_ip = direct_ip.ok_or(TrustedProxyError::NoUserExtracted)?;
 
         if !self.is_trusted_proxy(&proxy_ip) {
-            warn!(
-                "Trusted proxy auth rejected: direct connection from untrusted IP {}",
-                proxy_ip
-            );
+            warn!("Trusted proxy auth rejected: direct connection from untrusted IP {}", proxy_ip);
             return Err(TrustedProxyError::UntrustedProxy { proxy_ip });
         }
 
@@ -183,9 +180,7 @@ impl TrustedProxyAuthenticator {
                     "Trusted proxy auth rejected: missing required header '{}' from {}",
                     header_name, proxy_ip
                 );
-                return Err(TrustedProxyError::MissingHeader {
-                    header: header_name.clone(),
-                });
+                return Err(TrustedProxyError::MissingHeader { header: header_name.clone() });
             }
         }
 
@@ -198,13 +193,8 @@ impl TrustedProxyAuthenticator {
         };
 
         if !self.is_user_allowed(&user_id) {
-            warn!(
-                "Trusted proxy auth rejected: user '{}' not in allowlist",
-                user_id
-            );
-            return Err(TrustedProxyError::UserNotAllowed {
-                user_id: user_id.clone(),
-            });
+            warn!("Trusted proxy auth rejected: user '{}' not in allowlist", user_id);
+            return Err(TrustedProxyError::UserNotAllowed { user_id: user_id.clone() });
         }
 
         debug!(
@@ -212,11 +202,7 @@ impl TrustedProxyAuthenticator {
             user_id, header_name, proxy_ip
         );
 
-        Ok(TrustedProxyUser {
-            user_id,
-            header_name,
-            proxy_ip,
-        })
+        Ok(TrustedProxyUser { user_id, header_name, proxy_ip })
     }
 
     /// Get the underlying config.
@@ -291,9 +277,15 @@ mod tests {
             "".to_string(),
         ]);
         assert_eq!(nets.len(), 3);
-        assert!(nets.iter().any(|n: &IpNet| n.contains(&"127.0.0.1".parse::<IpAddr>().unwrap())));
-        assert!(nets.iter().any(|n: &IpNet| n.contains(&"10.5.5.5".parse::<IpAddr>().unwrap())));
-        assert!(nets.iter().any(|n: &IpNet| n.contains(&"::1".parse::<IpAddr>().unwrap())));
+        assert!(nets
+            .iter()
+            .any(|n: &IpNet| n.contains(&"127.0.0.1".parse::<IpAddr>().unwrap())));
+        assert!(nets
+            .iter()
+            .any(|n: &IpNet| n.contains(&"10.5.5.5".parse::<IpAddr>().unwrap())));
+        assert!(nets
+            .iter()
+            .any(|n: &IpNet| n.contains(&"::1".parse::<IpAddr>().unwrap())));
     }
 
     #[test]
@@ -362,14 +354,13 @@ mod tests {
     #[test]
     fn test_authenticate_success() {
         let auth = TrustedProxyAuthenticator::new(sample_config());
-        let mut req = Request::builder()
-            .uri("/api/v1/health")
-            .body(())
-            .unwrap();
+        let mut req = Request::builder().uri("/api/v1/health").body(()).unwrap();
         req.headers_mut()
             .insert("X-Forwarded-User", HeaderValue::from_static("alice"));
 
-        let user = auth.authenticate(&req, Some("127.0.0.1".parse().unwrap())).unwrap();
+        let user = auth
+            .authenticate(&req, Some("127.0.0.1".parse().unwrap()))
+            .unwrap();
         assert_eq!(user.user_id, "alice");
         assert_eq!(user.header_name, "X-Forwarded-User");
     }

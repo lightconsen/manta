@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,8 +38,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 // Auth Profile Handlers
 
@@ -81,11 +81,12 @@ pub async fn rotate_auth_profile_handler(
 }
 
 #[allow(dead_code)]
-pub async fn list_auth_profiles_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+pub async fn list_auth_profiles_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
     let profiles = state.model_router.list_auth_profiles().await;
     Json(serde_json::json!({
         "profiles": profiles,
         "count": profiles.len(),
     }))
 }
-

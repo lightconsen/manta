@@ -26,6 +26,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::*;
+use crate::gateway::{DreamHealthReport, GatewayState, HealthReport, SubsystemHealth};
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -37,8 +39,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::{DreamHealthReport, GatewayState, HealthReport, SubsystemHealth};
-use crate::gateway::*;
 
 // HTTP Handlers
 
@@ -240,17 +240,20 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     if let Some(ref em) = state.engine_metrics {
         gauge(
             "syscity_engine_entities_created",
-            em.entities_created.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            em.entities_created
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total entities created by the core engine",
         );
         gauge(
             "syscity_engine_entities_updated",
-            em.entities_updated.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            em.entities_updated
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total entities updated by the core engine",
         );
         gauge(
             "syscity_engine_entities_deleted",
-            em.entities_deleted.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            em.entities_deleted
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total entities deleted by the core engine",
         );
         gauge(
@@ -265,7 +268,8 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         );
         gauge(
             "syscity_engine_entities_archived_total",
-            em.entities_archived.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            em.entities_archived
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total entities archived by the core engine",
         );
     }
@@ -275,52 +279,72 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
         let metrics = dm.metrics();
         gauge(
             "syscity_dreams_total",
-            metrics.dreams_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .dreams_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total number of dream cycles run",
         );
         gauge(
             "syscity_dreams_failed_total",
-            metrics.dreams_failed.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .dreams_failed
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total number of dream cycles that failed",
         );
         gauge(
             "syscity_dream_memories_processed_total",
-            metrics.memories_processed_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .memories_processed_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total memories processed by dream cycles",
         );
         gauge(
             "syscity_dream_memories_created_total",
-            metrics.memories_created_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .memories_created_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total memories created by dream cycles",
         );
         gauge(
             "syscity_dream_memories_removed_total",
-            metrics.memories_removed_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .memories_removed_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total memories removed by dream cycles",
         );
         gauge(
             "syscity_dream_memories_promoted_total",
-            metrics.memories_promoted_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .memories_promoted_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total memories promoted by dream cycles",
         );
         gauge(
             "syscity_dream_memories_demoted_total",
-            metrics.memories_demoted_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .memories_demoted_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total memories demoted by dream cycles",
         );
         gauge(
             "syscity_dream_duration_ms_total",
-            metrics.dream_duration_ms_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .dream_duration_ms_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total dream cycle duration in milliseconds",
         );
         gauge(
             "syscity_dream_llm_tokens_input_total",
-            metrics.llm_tokens_input_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .llm_tokens_input_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total estimated LLM input tokens consumed during dreams",
         );
         gauge(
             "syscity_dream_llm_tokens_output_total",
-            metrics.llm_tokens_output_total.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            metrics
+                .llm_tokens_output_total
+                .load(std::sync::atomic::Ordering::Relaxed) as f64,
             "Total estimated LLM output tokens produced during dreams",
         );
     }
@@ -329,18 +353,14 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     let plugin_snapshots = state.plugin_manager.metrics().all_snapshots().await;
     for (plugin_id, snap) in &plugin_snapshots {
         let plugin_label = &plugin_id.replace('"', "");
-        lines.push(format!(
-            "# HELP syscity_plugin_tool_calls_total Total tool calls per plugin"
-        ));
+        lines.push(format!("# HELP syscity_plugin_tool_calls_total Total tool calls per plugin"));
         lines.push(format!("# TYPE syscity_plugin_tool_calls_total counter"));
         lines.push(format!(
             "syscity_plugin_tool_calls_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.tool_calls
         ));
 
-        lines.push(format!(
-            "# HELP syscity_plugin_tool_errors_total Total tool errors per plugin"
-        ));
+        lines.push(format!("# HELP syscity_plugin_tool_errors_total Total tool errors per plugin"));
         lines.push(format!("# TYPE syscity_plugin_tool_errors_total counter"));
         lines.push(format!(
             "syscity_plugin_tool_errors_total{{plugin=\"{}\"}} {}",
@@ -356,18 +376,14 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
             plugin_label, snap.http_requests
         ));
 
-        lines.push(format!(
-            "# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin"
-        ));
+        lines.push(format!("# HELP syscity_plugin_http_errors_total Total HTTP errors per plugin"));
         lines.push(format!("# TYPE syscity_plugin_http_errors_total counter"));
         lines.push(format!(
             "syscity_plugin_http_errors_total{{plugin=\"{}\"}} {}",
             plugin_label, snap.http_errors
         ));
 
-        lines.push(format!(
-            "# HELP syscity_plugin_memory_bytes Current memory usage per plugin"
-        ));
+        lines.push(format!("# HELP syscity_plugin_memory_bytes Current memory usage per plugin"));
         lines.push(format!("# TYPE syscity_plugin_memory_bytes gauge"));
         lines.push(format!(
             "syscity_plugin_memory_bytes{{plugin=\"{}\"}} {}",
@@ -423,23 +439,26 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     let daily_spend = state.cost_guard.daily_spend_cents() as f64 / 100.0;
 
     // Dream metrics
-    let dream_report = state.dream_scheduler.read().await.as_ref().map(|scheduler| {
-        let metrics = scheduler.metrics();
-        crate::gateway::DreamHealthReport {
-            dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
-            dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
-            memories_processed_total: metrics
-                .memories_processed_total
-                .load(Ordering::Relaxed),
-            memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
-            memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
-            memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
-            memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
-            dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
-            llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
-            llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
-        }
-    });
+    let dream_report = state
+        .dream_scheduler
+        .read()
+        .await
+        .as_ref()
+        .map(|scheduler| {
+            let metrics = scheduler.metrics();
+            crate::gateway::DreamHealthReport {
+                dreams_total: metrics.dreams_total.load(Ordering::Relaxed),
+                dreams_failed: metrics.dreams_failed.load(Ordering::Relaxed),
+                memories_processed_total: metrics.memories_processed_total.load(Ordering::Relaxed),
+                memories_created_total: metrics.memories_created_total.load(Ordering::Relaxed),
+                memories_removed_total: metrics.memories_removed_total.load(Ordering::Relaxed),
+                memories_promoted_total: metrics.memories_promoted_total.load(Ordering::Relaxed),
+                memories_demoted_total: metrics.memories_demoted_total.load(Ordering::Relaxed),
+                dream_duration_ms_total: metrics.dream_duration_ms_total.load(Ordering::Relaxed),
+                llm_tokens_input_total: metrics.llm_tokens_input_total.load(Ordering::Relaxed),
+                llm_tokens_output_total: metrics.llm_tokens_output_total.load(Ordering::Relaxed),
+            }
+        });
 
     // Overall: agents + providers are critical; others are warnings
     let overall_healthy = agent_ready && healthy_providers > 0;
@@ -577,4 +596,3 @@ pub async fn cost_status_handler(State(state): State<Arc<GatewayState>>) -> impl
         "budget_exceeded": budget_exceeded,
     }))
 }
-

@@ -38,39 +38,39 @@ pub async fn reload_all_handler(
     let pre_snapshot = state.config.read().await.snapshot();
 
     // ── 1. Reload main configuration from disk ────────────────────────────
-    let new_config = if scope == "all" || scope == "config" || scope == "providers" || scope == "mcp"
-    {
-        let config_path = state
-            .config_path
-            .clone()
-            .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
+    let new_config =
+        if scope == "all" || scope == "config" || scope == "providers" || scope == "mcp" {
+            let config_path = state
+                .config_path
+                .clone()
+                .unwrap_or_else(|| crate::dirs::syscity_dir().join("syscity.toml"));
 
-        if config_path.exists() {
-            match tokio::fs::read_to_string(&config_path).await {
-                Ok(content) => {
-                    match toml::from_str::<crate::gateway::GatewayConfig>(&content) {
-                        Ok(cfg) => {
-                            info!("Reloaded configuration from {:?}", config_path);
-                            Some(cfg)
-                        }
-                        Err(e) => {
-                            error!("Failed to parse syscity.toml: {}", e);
-                            None
+            if config_path.exists() {
+                match tokio::fs::read_to_string(&config_path).await {
+                    Ok(content) => {
+                        match toml::from_str::<crate::gateway::GatewayConfig>(&content) {
+                            Ok(cfg) => {
+                                info!("Reloaded configuration from {:?}", config_path);
+                                Some(cfg)
+                            }
+                            Err(e) => {
+                                error!("Failed to parse syscity.toml: {}", e);
+                                None
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("Failed to read syscity.toml: {}", e);
+                        None
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to read syscity.toml: {}", e);
-                    None
-                }
+            } else {
+                warn!("Config file not found at {:?}", config_path);
+                None
             }
         } else {
-            warn!("Config file not found at {:?}", config_path);
             None
-        }
-    } else {
-        None
-    };
+        };
 
     // ── 2. Plugins ────────────────────────────────────────────────────────
     if scope == "all" || scope == "plugins" {
@@ -182,8 +182,10 @@ pub async fn reload_all_handler(
         if let Some(ref new_cfg) = new_config {
             for (name, provider_config) in &new_cfg.providers {
                 if !current_names.contains(name) {
-                    if let Err(e) =
-                        state.model_router.add_provider(name, provider_config.clone()).await
+                    if let Err(e) = state
+                        .model_router
+                        .add_provider(name, provider_config.clone())
+                        .await
                     {
                         warn!("Failed to add provider '{}': {}", name, e);
                     } else {
@@ -230,11 +232,7 @@ pub async fn reload_all_handler(
                     .await
                 {
                     Ok(tools) => {
-                        info!(
-                            "MCP server '{}' connected: {} tool(s)",
-                            server_id,
-                            tools.len()
-                        );
+                        info!("MCP server '{}' connected: {} tool(s)", server_id, tools.len());
                         // Register discovered tools
                         if let Some(client_arc) = state.mcp_manager.get_client(server_id).await {
                             let max_tools = if server_config.max_tools == 0 {
@@ -301,9 +299,7 @@ pub async fn reload_all_handler(
 
 /// GET /api/v1/channels — List all channels and their enabled status.
 #[allow(dead_code)]
-pub async fn channel_list_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+pub async fn channel_list_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let config = state.config.read().await;
     let channels: Vec<serde_json::Value> = config
         .channels

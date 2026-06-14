@@ -41,16 +41,16 @@ use tracing::{debug, info};
 /// Mention gating configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MentionGatingConfig {
- /// Enable mention gating.
+    /// Enable mention gating.
     #[serde(default = "default_true")]
     pub enabled: bool,
- /// Default policy when enabled.
+    /// Default policy when enabled.
     #[serde(default)]
     pub policy: MentionPolicy,
- /// Global allowlist (applies to all channels).
+    /// Global allowlist (applies to all channels).
     #[serde(default)]
     pub allowlist: Vec<String>,
- /// Global blocklist (applies to all channels).
+    /// Global blocklist (applies to all channels).
     #[serde(default)]
     pub blocklist: Vec<String>,
 }
@@ -77,14 +77,14 @@ fn default_true() -> bool {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum MentionPolicy {
- /// Allow all mentions (no restriction).
+    /// Allow all mentions (no restriction).
     #[default]
     Allow,
- /// Block all mentions.
+    /// Block all mentions.
     Block,
- /// Only respond to mentions on the allowlist.
+    /// Only respond to mentions on the allowlist.
     Allowlist,
- /// Respond to all mentions except those on the blocklist.
+    /// Respond to all mentions except those on the blocklist.
     Blocklist,
 }
 
@@ -104,9 +104,9 @@ impl std::fmt::Display for MentionPolicy {
 /// Allowlist / blocklist entries for a single channel.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelMentions {
- /// Mention patterns on the allowlist.
+    /// Mention patterns on the allowlist.
     pub allowlist: Vec<String>,
- /// Mention patterns on the blocklist.
+    /// Mention patterns on the blocklist.
     pub blocklist: Vec<String>,
 }
 
@@ -115,14 +115,14 @@ pub struct ChannelMentions {
 /// Gate that decides whether a mention should trigger an agent response.
 #[derive(Debug, Clone)]
 pub struct MentionGate {
- /// Global policy.
+    /// Global policy.
     policy: Arc<RwLock<MentionPolicy>>,
- /// Per-channel mention lists.
+    /// Per-channel mention lists.
     channels: Arc<RwLock<HashMap<String, ChannelMentions>>>,
 }
 
 impl MentionGate {
- /// Create a new mention gate with the given policy.
+    /// Create a new mention gate with the given policy.
     pub fn new(policy: MentionPolicy) -> Self {
         Self {
             policy: Arc::new(RwLock::new(policy)),
@@ -130,26 +130,26 @@ impl MentionGate {
         }
     }
 
- /// Create with default `Allow` policy.
+    /// Create with default `Allow` policy.
     pub fn default_allow() -> Self {
         Self::new(MentionPolicy::Allow)
     }
 
- /// Get the current global policy.
+    /// Get the current global policy.
     pub async fn policy(&self) -> MentionPolicy {
         *self.policy.read().await
     }
 
- /// Set the global policy.
+    /// Set the global policy.
     pub async fn set_policy(&self, policy: MentionPolicy) {
         let mut p = self.policy.write().await;
         *p = policy;
         info!("Mention gate policy set to: {}", policy);
     }
 
- /// Check whether a mention should trigger a response.
- ///
- /// Returns `true` if the agent should respond to this mention.
+    /// Check whether a mention should trigger a response.
+    ///
+    /// Returns `true` if the agent should respond to this mention.
     pub async fn check(&self, channel: &str, mention: &str) -> bool {
         let policy = *self.policy.read().await;
 
@@ -189,7 +189,7 @@ impl MentionGate {
         }
     }
 
- /// Add a mention pattern to the allowlist for a channel.
+    /// Add a mention pattern to the allowlist for a channel.
     pub async fn add_allowlist(&self, channel: impl Into<String>, pattern: impl Into<String>) {
         let mut channels = self.channels.write().await;
         let channel = channel.into();
@@ -201,7 +201,7 @@ impl MentionGate {
         }
     }
 
- /// Remove a mention pattern from the allowlist for a channel.
+    /// Remove a mention pattern from the allowlist for a channel.
     pub async fn remove_allowlist(&self, channel: &str, pattern: &str) -> bool {
         let mut channels = self.channels.write().await;
         if let Some(entry) = channels.get_mut(channel) {
@@ -217,7 +217,7 @@ impl MentionGate {
         }
     }
 
- /// Add a mention pattern to the blocklist for a channel.
+    /// Add a mention pattern to the blocklist for a channel.
     pub async fn add_blocklist(&self, channel: impl Into<String>, pattern: impl Into<String>) {
         let mut channels = self.channels.write().await;
         let channel = channel.into();
@@ -229,7 +229,7 @@ impl MentionGate {
         }
     }
 
- /// Remove a mention pattern from the blocklist for a channel.
+    /// Remove a mention pattern from the blocklist for a channel.
     pub async fn remove_blocklist(&self, channel: &str, pattern: &str) -> bool {
         let mut channels = self.channels.write().await;
         if let Some(entry) = channels.get_mut(channel) {
@@ -245,7 +245,7 @@ impl MentionGate {
         }
     }
 
- /// Get all allowlist entries for a channel.
+    /// Get all allowlist entries for a channel.
     pub async fn list_allowlist(&self, channel: &str) -> Vec<String> {
         let channels = self.channels.read().await;
         channels
@@ -254,7 +254,7 @@ impl MentionGate {
             .unwrap_or_default()
     }
 
- /// Get all blocklist entries for a channel.
+    /// Get all blocklist entries for a channel.
     pub async fn list_blocklist(&self, channel: &str) -> Vec<String> {
         let channels = self.channels.read().await;
         channels
@@ -263,20 +263,20 @@ impl MentionGate {
             .unwrap_or_default()
     }
 
- /// Get all channels with configured mention lists.
+    /// Get all channels with configured mention lists.
     pub async fn list_channels(&self) -> Vec<String> {
         let channels = self.channels.read().await;
         channels.keys().cloned().collect()
     }
 
- /// Clear all mention lists for a channel.
+    /// Clear all mention lists for a channel.
     pub async fn clear_channel(&self, channel: &str) {
         let mut channels = self.channels.write().await;
         channels.remove(channel);
         info!("Cleared mention lists for channel '{}'", channel);
     }
 
- /// Export configuration as JSON.
+    /// Export configuration as JSON.
     pub async fn export_json(&self) -> Result<String, serde_json::Error> {
         let channels = self.channels.read().await;
         serde_json::to_string_pretty(&*channels)
@@ -323,7 +323,11 @@ impl ImplicitMentionDetector {
 
     /// Check the message for any form of implicit mention and return the
     /// corresponding `MentionState`.
-    pub fn check(&self, message: &str, reply_to_user_id: Option<&str>) -> crate::channels::MentionState {
+    pub fn check(
+        &self,
+        message: &str,
+        reply_to_user_id: Option<&str>,
+    ) -> crate::channels::MentionState {
         if is_reply_to_bot(&self.bot_user_id, reply_to_user_id) {
             crate::channels::MentionState::Mentioned
         } else if is_quoting_bot(message, &self.bot_name) {

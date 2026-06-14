@@ -147,10 +147,7 @@ mod tests {
     fn test_explicit_hint_wins() {
         let hint = CommandProviderHint::provider_model("openai", "gpt-4o", "explicit");
         let def = def_with_hint(hint.clone());
-        assert_eq!(
-            CommandProviderResolver::resolve(&def, UserLevel::User, None),
-            Some(hint)
-        );
+        assert_eq!(CommandProviderResolver::resolve(&def, UserLevel::User, None), Some(hint));
     }
 
     #[test]
@@ -185,9 +182,7 @@ mod tests {
         let mut caps = ChannelCapabilities::default();
         caps.supports_commands = false;
         let standard = def(CommandCategory::Agents, CommandTier::Standard);
-        assert!(
-            CommandProviderResolver::resolve(&standard, UserLevel::User, Some(&caps)).is_none()
-        );
+        assert!(CommandProviderResolver::resolve(&standard, UserLevel::User, Some(&caps)).is_none());
 
         let essential = def(CommandCategory::Status, CommandTier::Essential);
         assert!(

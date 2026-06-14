@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,8 +38,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 // Provider Management Handlers
 
@@ -242,7 +242,9 @@ pub async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl
 }
 
 #[allow(dead_code)]
-pub async fn get_default_model_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+pub async fn get_default_model_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
     let default = state.model_router.get_default_model().await;
     Json(serde_json::json!({
         "default_model": default,
@@ -252,7 +254,9 @@ pub async fn get_default_model_handler(State(state): State<Arc<GatewayState>>) -
 /// `GET /v1/models`
 ///
 /// Returns available model aliases in OpenAI wire format.
-pub async fn openai_list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+pub async fn openai_list_models_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
     let entries = state.model_router.model_catalog.list().await;
     let data: Vec<_> = entries
         .iter()
@@ -268,4 +272,3 @@ pub async fn openai_list_models_handler(State(state): State<Arc<GatewayState>>) 
 
     Json(serde_json::json!({ "object": "list", "data": data }))
 }
-

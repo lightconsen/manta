@@ -25,6 +25,8 @@ use crate::agent::{Agent, AgentConfig};
 use crate::canvas::{CanvasEvent, CanvasManager};
 use crate::channels::{Channel, ChannelExtension, ChannelType};
 use crate::config::hot_reload::{ConfigFileType, HotReloadManager};
+use crate::gateway::GatewayState;
+use crate::gateway::*;
 use crate::inbound::*;
 use crate::memory::vector::{
     ApiEmbeddingProvider, CachedEmbeddingProvider, EmbeddingConfig, LocalGgufEmbeddingProvider,
@@ -36,8 +38,6 @@ use crate::security::pairing::DmPolicy;
 use crate::tools::approval::{ApprovalDecision, ApprovalFilter, ApprovalQueue};
 use crate::tools::mcp::{McpManager, McpSettings, McpToolWrapper};
 use crate::tools::ToolRegistry;
-use crate::gateway::GatewayState;
-use crate::gateway::*;
 
 /// HTML handler for the web chat UI
 ///
@@ -76,10 +76,7 @@ pub async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     }
 
     // Fallback to filesystem for development
-    let fs_paths = [
-        format!("dist/{}", path),
-        format!("dist/assets/{}", path),
-    ];
+    let fs_paths = [format!("dist/{}", path), format!("dist/assets/{}", path)];
     for fs_path in &fs_paths {
         if let Ok(data) = tokio::fs::read(fs_path).await {
             let mime = crate::embed::guess_mime(&path);
@@ -102,4 +99,3 @@ pub async fn syscity_png_handler() -> impl IntoResponse {
     }
     StatusCode::NOT_FOUND.into_response()
 }
-

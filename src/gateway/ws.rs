@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use tracing::{debug, info, Instrument, warn};
+use tracing::{debug, info, warn, Instrument};
 use uuid::Uuid;
 
 use crate::core::context::RequestContext;
@@ -428,22 +428,20 @@ async fn dispatch_method(
                                 format!("Command error: Missing required scope: {}", required);
                             if let Some(ref store) = state.session_store {
                                 let _ = store
-                                    .append_message(
-                                        &AppendMessageParams {
-                                            session_id, role: "user", content: &user_text,
-                                            ..Default::default()
-                                        },
-                                    )
+                                    .append_message(&AppendMessageParams {
+                                        session_id,
+                                        role: "user",
+                                        content: &user_text,
+                                        ..Default::default()
+                                    })
                                     .await;
                                 let _ = store
-                                    .append_message(
-                                        &AppendMessageParams {
-                                            session_id,
-                                            role: "assistant",
-                                            content: &error_text,
-                                            ..Default::default()
-                                        },
-                                    )
+                                    .append_message(&AppendMessageParams {
+                                        session_id,
+                                        role: "assistant",
+                                        content: &error_text,
+                                        ..Default::default()
+                                    })
                                     .await;
                             }
                         }
@@ -541,7 +539,11 @@ async fn handle_permissions_request_macos_accessibility(req: &WsRequest) -> WsRe
     }
     #[cfg(not(target_os = "macos"))]
     {
-        WsResponse::err(&req.id, "UNSUPPORTED_PLATFORM", "This permission request is only available on macOS")
+        WsResponse::err(
+            &req.id,
+            "UNSUPPORTED_PLATFORM",
+            "This permission request is only available on macOS",
+        )
     }
 }
 
@@ -804,8 +806,11 @@ async fn handle_chat_send(
     if let Some(ref store) = state.session_store {
         if let Err(e) = store
             .append_message(&AppendMessageParams {
-            session_id: &session_id, role: "user", content: &params.message, ..Default::default()
-        })
+                session_id: &session_id,
+                role: "user",
+                content: &params.message,
+                ..Default::default()
+            })
             .await
         {
             tracing::warn!("Failed to save user message to session history: {}", e);
@@ -2718,13 +2723,9 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         ScheduleInput::Cron(expr) => crate::planner::Schedule::cron(expr),
     };
 
-    let task = crate::planner::ScheduledTask::new(
-        payload.id.clone(),
-        payload.name,
-        schedule,
-        vec![],
-    )
-    .with_description(payload.description);
+    let task =
+        crate::planner::ScheduledTask::new(payload.id.clone(), payload.name, schedule, vec![])
+            .with_description(payload.description);
 
     let scheduler = scheduler.lock().await;
     match scheduler.add(task).await {
@@ -2780,15 +2781,12 @@ async fn handle_tasks_delete(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
 
     let scheduler = scheduler.lock().await;
     match scheduler.remove(&payload.id).await {
-        Ok(true) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "status": "deleted", "id": payload.id }),
-        ),
-        Ok(false) => WsResponse::err(
-            &req.id,
-            "NOT_FOUND",
-            format!("Task '{}' not found", payload.id),
-        ),
+        Ok(true) => {
+            WsResponse::ok(&req.id, serde_json::json!({ "status": "deleted", "id": payload.id }))
+        }
+        Ok(false) => {
+            WsResponse::err(&req.id, "NOT_FOUND", format!("Task '{}' not found", payload.id))
+        }
         Err(e) => WsResponse::err(&req.id, "DELETE_FAILED", format!("{}", e)),
     }
 }
@@ -2817,15 +2815,12 @@ async fn handle_tasks_enable(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
 
     let scheduler = scheduler.lock().await;
     match scheduler.enable(&payload.id).await {
-        Ok(true) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "status": "enabled", "id": payload.id }),
-        ),
-        Ok(false) => WsResponse::err(
-            &req.id,
-            "NOT_FOUND",
-            format!("Task '{}' not found", payload.id),
-        ),
+        Ok(true) => {
+            WsResponse::ok(&req.id, serde_json::json!({ "status": "enabled", "id": payload.id }))
+        }
+        Ok(false) => {
+            WsResponse::err(&req.id, "NOT_FOUND", format!("Task '{}' not found", payload.id))
+        }
         Err(e) => WsResponse::err(&req.id, "ENABLE_FAILED", format!("{}", e)),
     }
 }
@@ -2854,15 +2849,12 @@ async fn handle_tasks_disable(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
 
     let scheduler = scheduler.lock().await;
     match scheduler.disable(&payload.id).await {
-        Ok(true) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({ "status": "disabled", "id": payload.id }),
-        ),
-        Ok(false) => WsResponse::err(
-            &req.id,
-            "NOT_FOUND",
-            format!("Task '{}' not found", payload.id),
-        ),
+        Ok(true) => {
+            WsResponse::ok(&req.id, serde_json::json!({ "status": "disabled", "id": payload.id }))
+        }
+        Ok(false) => {
+            WsResponse::err(&req.id, "NOT_FOUND", format!("Task '{}' not found", payload.id))
+        }
         Err(e) => WsResponse::err(&req.id, "DISABLE_FAILED", format!("{}", e)),
     }
 }
