@@ -160,7 +160,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Memory subsystems
-    let vector_memory_ready = if state.vector_memory.read().await.is_some() {
+    let vector_memory_ready = if state.vector_memory.is_initialized().await {
         1.0
     } else {
         0.0
@@ -182,7 +182,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     );
 
     // Cron
-    let cron_ready = if state.cron_scheduler.read().await.is_some() {
+    let cron_ready = if state.cron_scheduler.is_initialized().await {
         1.0
     } else {
         0.0
@@ -275,7 +275,7 @@ pub async fn build_prometheus_metrics(state: &Arc<GatewayState>) -> String {
     }
 
     // Dream metrics
-    if let Some(ref dm) = *state.dream_scheduler.read().await {
+    if let Some(dm) = state.dream_scheduler.get_opt().await {
         let metrics = dm.metrics();
         gauge(
             "syscity_dreams_total",
@@ -417,13 +417,13 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     drop(channels);
 
     // Vector memory
-    let vector_memory_ready = state.vector_memory.read().await.is_some();
+    let vector_memory_ready = state.vector_memory.is_initialized().await;
 
     // Memory manager
     let memory_manager_ready = state.memory_manager.read().await.is_some();
 
     // Cron scheduler
-    let cron_ready = state.cron_scheduler.read().await.is_some();
+    let cron_ready = state.cron_scheduler.is_initialized().await;
 
     // Plugins
     let plugin_count = state.plugin_manager.list_plugins().await.len();
@@ -441,9 +441,8 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     // Dream metrics
     let dream_report = state
         .dream_scheduler
-        .read()
+        .get_opt()
         .await
-        .as_ref()
         .map(|scheduler| {
             let metrics = scheduler.metrics();
             crate::gateway::DreamHealthReport {

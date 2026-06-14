@@ -28,6 +28,7 @@ use config::StandingOrderConfig;
 /// Each enabled order in the config spawns a separate tokio task that sleeps
 /// until the next cron tick, fires the prompt against the configured agent,
 /// and optionally dispatches the response via `ReplyDispatcher`.
+#[derive(Clone)]
 pub struct StandingOrderManager {
     config: StandingOrderConfig,
     state: Arc<GatewayState>,

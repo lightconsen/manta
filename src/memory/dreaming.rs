@@ -1479,6 +1479,7 @@ impl DreamReviewQueue {
 }
 
 /// A scheduled dreaming service that runs dreams via cron.
+#[derive(Clone)]
 pub struct DreamScheduler {
     engine: Arc<DreamEngine>,
     /// Handle to the background scheduling task (for cancellation)

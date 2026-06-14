@@ -678,28 +678,28 @@ pub struct GatewayState {
     pub plugin_manager: Arc<PluginManager>,
     /// ACP control plane for subagent spawning
     pub acp: Arc<AcpControlPlane>,
-    /// Vector memory service for semantic search (RwLock for late initialization)
-    pub vector_memory: RwLock<Option<Arc<VectorMemoryService>>>,
-    /// Session search for FTS5 conversation indexing (RwLock for late initialization)
-    pub session_search: RwLock<Option<Arc<crate::memory::SessionSearch>>>,
-    /// Memory manager — unified orchestrator with hybrid search (Arc<RwLock> so tools
-    /// and handlers can share late-initialized access without &mut GatewayState)
+    /// Vector memory service for semantic search (late initialization)
+    pub vector_memory: crate::utils::LateInit<Arc<VectorMemoryService>>,
+    /// Session search for FTS5 conversation indexing (late initialization)
+    pub session_search: crate::utils::LateInit<Arc<crate::memory::SessionSearch>>,
+    /// Memory manager — unified orchestrator with hybrid search (late initialization).
+    /// Kept as `Arc<RwLock<Option<_>>>` so the shared holder wired into tools can be populated later.
     pub memory_manager: Arc<RwLock<Option<Arc<crate::memory::MemoryManager>>>>,
-    /// Hot reload manager for config changes (RwLock for late initialization)
-    pub hot_reload: RwLock<Option<Arc<HotReloadManager>>>,
-    /// Cron scheduler for scheduled jobs (RwLock for late initialization)
-    pub cron_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>>,
-    /// Heartbeat wake channel sender (for requesting immediate heartbeat)
-    pub heartbeat_wake_tx: RwLock<Option<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>>,
-    /// Heartbeat event broadcast sender (RwLock for late initialization)
+    /// Hot reload manager for config changes (late initialization)
+    pub hot_reload: crate::utils::LateInit<Arc<HotReloadManager>>,
+    /// Cron scheduler for scheduled jobs (late initialization)
+    pub cron_scheduler: crate::utils::LateInit<Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>>,
+    /// Heartbeat wake channel sender (for requesting immediate heartbeat) (late initialization)
+    pub heartbeat_wake_tx: crate::utils::LateInit<tokio::sync::mpsc::Sender<crate::heartbeat::WakeRequest>>,
+    /// Heartbeat event broadcast sender (late initialization)
     pub heartbeat_event_tx:
-        RwLock<Option<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>>,
-    /// Dream scheduler for background memory consolidation (RwLock for late initialization)
-    pub dream_scheduler: RwLock<Option<crate::memory::DreamScheduler>>,
+        crate::utils::LateInit<tokio::sync::broadcast::Sender<crate::heartbeat::HeartbeatEvent>>,
+    /// Dream scheduler for background memory consolidation (late initialization)
+    pub dream_scheduler: crate::utils::LateInit<crate::memory::DreamScheduler>,
     /// Observability counters for dream cycles.
     pub dream_metrics: Arc<crate::memory::DreamMetrics>,
-    /// Standing order manager for persistent background agent programs
-    pub standing_order_manager: RwLock<Option<crate::standing_orders::StandingOrderManager>>,
+    /// Standing order manager for persistent background agent programs (late initialization)
+    pub standing_order_manager: crate::utils::LateInit<crate::standing_orders::StandingOrderManager>,
     /// Auth manager for authentication
     pub auth_manager: Arc<crate::security::AuthManager>,
     /// DM pairing store for access control
@@ -784,8 +784,8 @@ pub struct GatewayState {
     pub computer_adapter: tokio::sync::RwLock<Option<Arc<dyn crate::computer::ComputerAdapter>>>,
     /// Engine metrics counters (populated when a core `Engine` is wired in).
     pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
-    /// Task scheduler for recurring / cron-like agent tasks.
-    pub task_scheduler: RwLock<Option<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>>,
+    /// Task scheduler for recurring / cron-like agent tasks (late initialization)
+    pub task_scheduler: crate::utils::LateInit<Arc<tokio::sync::Mutex<crate::planner::TaskScheduler>>>,
     /// Log line broadcast channel for real-time log streaming to WebSocket clients
     pub log_tx: broadcast::Sender<String>,
     /// Channel account snapshot store for per-channel health tracking.
@@ -1430,16 +1430,16 @@ impl Gateway {
             canvas_manager: tools_init.canvas_manager.clone(),
             plugin_manager: tools_init.plugin_manager.clone(),
             acp: acp.clone(),
-            vector_memory: RwLock::new(None),
-            session_search: RwLock::new(None),
+            vector_memory: crate::utils::LateInit::new(),
+            session_search: crate::utils::LateInit::new(),
             memory_manager: tools_init.memory_manager_holder.clone(),
-            hot_reload: RwLock::new(None),
-            cron_scheduler: RwLock::new(None),
-            heartbeat_wake_tx: RwLock::new(None),
-            heartbeat_event_tx: RwLock::new(None),
-            dream_scheduler: RwLock::new(None),
+            hot_reload: crate::utils::LateInit::new(),
+            cron_scheduler: crate::utils::LateInit::new(),
+            heartbeat_wake_tx: crate::utils::LateInit::new(),
+            heartbeat_event_tx: crate::utils::LateInit::new(),
+            dream_scheduler: crate::utils::LateInit::new(),
             dream_metrics: Arc::new(crate::memory::DreamMetrics::default()),
-            standing_order_manager: RwLock::new(None),
+            standing_order_manager: crate::utils::LateInit::new(),
             auth_manager: security_init.auth_manager.clone(),
             pairing_store: Arc::new(crate::security::pairing::PairingStore::new()),
             device_pairing_store: Arc::new(
@@ -1514,7 +1514,7 @@ impl Gateway {
             browser_bridge: tokio::sync::RwLock::new(None),
             computer_adapter: tokio::sync::RwLock::new(tools_init.computer_adapter.clone()),
             engine_metrics: None,
-            task_scheduler: RwLock::new(None),
+            task_scheduler: crate::utils::LateInit::new(),
             snapshot_store: None,
             acp_bridge: None,
             health_monitor: None,
@@ -1638,7 +1638,7 @@ impl Gateway {
                 }
 
                 // Watch WASM files for hot-reload
-                if let Some(ref hot_reload) = *self.state.hot_reload.read().await {
+                if let Some(hot_reload) = self.state.hot_reload.get_opt().await {
                     let plugins = self.state.plugin_manager.list_plugins().await;
                     for plugin in plugins {
                         if let Some(ref main) = plugin.manifest.main {
@@ -1681,7 +1681,7 @@ impl Gateway {
         }
 
         // Initialize hot reload if enabled
-        let hot_reload = self.state.hot_reload.read().await.clone();
+        let hot_reload = self.state.hot_reload.get_opt().await;
         if let Some(ref hot_reload) = hot_reload {
             let config_path = crate::dirs::default_config_file();
             if let Err(e) = hot_reload
@@ -1775,7 +1775,7 @@ impl Gateway {
 
         // Start dream scheduler if enabled
         if self.config.dreaming.enabled {
-            if let Some(ref mm) = *self.state.memory_manager.read().await {
+            if let Some(mm) = self.state.memory_manager.read().await.as_ref().cloned() {
                 if let Some(tier_index) = mm.tier_index() {
                     let dreaming = &self.config.dreaming;
                     // Convert string-based MemoryDreamingConfig to enum-based DreamConfig
@@ -1818,7 +1818,7 @@ impl Gateway {
                     let mut scheduler = crate::memory::DreamScheduler::new(engine);
                     scheduler.start(mm.store(), tier_index);
                     info!("Dream scheduler started");
-                    self.state.dream_scheduler.write().await.replace(scheduler);
+                    self.state.dream_scheduler.init(scheduler).await;
                 }
             }
         }
@@ -1831,11 +1831,7 @@ impl Gateway {
             );
             manager.start();
             info!("Standing orders manager started");
-            self.state
-                .standing_order_manager
-                .write()
-                .await
-                .replace(manager);
+            self.state.standing_order_manager.init(manager).await;
         }
 
         // Start browser bridge server if enabled
@@ -1917,8 +1913,8 @@ impl Gateway {
             let runner = crate::heartbeat::HeartbeatRunner::new(self.state.clone());
             let wake_tx = runner.wake_sender();
             let event_tx = runner.event_tx.clone();
-            *self.state.heartbeat_wake_tx.write().await = Some(wake_tx.clone());
-            *self.state.heartbeat_event_tx.write().await = Some(event_tx);
+            self.state.heartbeat_wake_tx.init(wake_tx.clone()).await;
+            self.state.heartbeat_event_tx.init(event_tx).await;
             tokio::spawn(async move {
                 runner.start().await;
             });
@@ -1926,7 +1922,7 @@ impl Gateway {
 
             // Wire heartbeat wake sender into cron scheduler so cron jobs
             // with wake_mode: heartbeat_nuke can trigger immediate heartbeats
-            if let Some(ref cron_arc) = *self.state.cron_scheduler.read().await {
+            if let Some(cron_arc) = self.state.cron_scheduler.get_opt().await {
                 let mut scheduler = cron_arc.lock().await;
                 scheduler.set_heartbeat_wake_tx(wake_tx);
                 info!("Cron heartbeat wake integration enabled");
@@ -1989,13 +1985,13 @@ impl Gateway {
             })?;
 
         // Stop dream scheduler on shutdown
-        if let Some(mut scheduler) = self.state.dream_scheduler.write().await.take() {
+        if let Some(mut scheduler) = self.state.dream_scheduler.get_opt().await {
             scheduler.stop().await;
             info!("Dream scheduler stopped");
         }
 
         // Stop standing orders manager on shutdown
-        if let Some(mut manager) = self.state.standing_order_manager.write().await.take() {
+        if let Some(mut manager) = self.state.standing_order_manager.get_opt().await {
             manager.stop().await;
             info!("Standing orders manager stopped");
         }
@@ -2196,7 +2192,7 @@ async fn spawn_agent_inner(
 
     // Create the actual Agent instance with model, memory manager, chat history,
     // shared cost guard, and session management stores.
-    let memory_manager = state.memory_manager.read().await.clone();
+    let memory_manager = state.memory_manager.read().await.as_ref().cloned();
     let cost_guard = Arc::clone(&state.cost_guard);
 
     // Read computer config for the agent
@@ -2210,7 +2206,7 @@ async fn spawn_agent_inner(
     };
     let computer_adapter = state.computer_adapter.read().await.clone();
 
-    let agent = if let Some(ref mm) = memory_manager {
+    let agent = if let Some(mm) = memory_manager {
         let chat_history = mm.chat_history();
         let mut builder = Agent::new(config.clone(), provider, tools)
             .with_model(model.clone())
@@ -2265,8 +2261,7 @@ async fn spawn_agent_inner(
     // jobs can run. Only the first agent is wired; subsequent agents keep
     // the first one active unless explicitly overwritten.
     {
-        let cron_guard = state.cron_scheduler.read().await;
-        if let Some(ref cron_arc) = *cron_guard {
+        if let Some(cron_arc) = state.cron_scheduler.get_opt().await {
             cron_arc.lock().await.set_agent(agent.clone()).await;
             debug!("Routine engine: wired agent '{}' into cron scheduler", id);
         }

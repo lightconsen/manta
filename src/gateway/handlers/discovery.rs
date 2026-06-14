@@ -104,7 +104,7 @@ pub async fn spawn_discovered_agent_handler(
 
         let tools = state.tool_registry.clone();
         let model = state.config.read().await.model.clone();
-        let memory_manager = state.memory_manager.read().await.clone();
+        let memory_manager = state.memory_manager.read().await.as_ref().cloned();
         let (tx, mut rx) = mpsc::channel(100);
 
         let agent = if let Some(mm) = memory_manager {
@@ -296,7 +296,7 @@ pub async fn spawn_all_discovered_agents_handler(
             if let Ok(provider) = state.model_router.create_default_provider().await {
                 let tools = state.tool_registry.clone();
                 let model = state.config.read().await.model.clone();
-                let memory_manager = state.memory_manager.read().await.clone();
+                let memory_manager = state.memory_manager.read().await.as_ref().cloned();
                 let (tx, mut rx) = mpsc::channel(100);
 
                 let agent = if let Some(mm) = memory_manager {

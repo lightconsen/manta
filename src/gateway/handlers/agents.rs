@@ -114,7 +114,7 @@ pub async fn create_agent_handler(
     // Get tools, model, and memory manager
     let tools = state.tool_registry.clone();
     let model = state.config.read().await.model.clone();
-    let memory_manager = state.memory_manager.read().await.clone();
+    let memory_manager = state.memory_manager.read().await.as_ref().cloned();
 
     // Create agent instance with memory manager and session management stores
     let agent = if let Some(mm) = memory_manager {

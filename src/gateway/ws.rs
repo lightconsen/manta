@@ -2663,12 +2663,9 @@ async fn handle_mcp_disconnect(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_cron_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let jobs = {
-        let scheduler_opt = state.cron_scheduler.read().await;
-        match scheduler_opt.as_ref() {
-            Some(s) => s.lock().await.list_jobs().await,
-            None => Vec::new(),
-        }
+    let jobs = match state.cron_scheduler.get_opt().await {
+        Some(s) => s.lock().await.list_jobs().await,
+        None => Vec::new(),
     };
     WsResponse::ok(
         &req.id,
@@ -2705,8 +2702,7 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
         Err(res) => return res,
     };
 
-    let scheduler_opt = state.task_scheduler.read().await;
-    let scheduler = match scheduler_opt.as_ref() {
+    let scheduler = match state.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2741,12 +2737,9 @@ async fn handle_tasks_schedule(req: &WsRequest, state: &Arc<GatewayState>) -> Ws
 }
 
 async fn handle_tasks_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
-    let tasks = {
-        let scheduler_opt = state.task_scheduler.read().await;
-        match scheduler_opt.as_ref() {
-            Some(s) => s.lock().await.list().await,
-            None => Vec::new(),
-        }
+    let tasks = match state.task_scheduler.get_opt().await {
+        Some(s) => s.lock().await.list().await,
+        None => Vec::new(),
     };
     WsResponse::ok(
         &req.id,
@@ -2767,8 +2760,7 @@ async fn handle_tasks_delete(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler_opt = state.task_scheduler.read().await;
-    let scheduler = match scheduler_opt.as_ref() {
+    let scheduler = match state.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2801,8 +2793,7 @@ async fn handle_tasks_enable(req: &WsRequest, state: &Arc<GatewayState>) -> WsRe
         Err(res) => return res,
     };
 
-    let scheduler_opt = state.task_scheduler.read().await;
-    let scheduler = match scheduler_opt.as_ref() {
+    let scheduler = match state.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
@@ -2835,8 +2826,7 @@ async fn handle_tasks_disable(req: &WsRequest, state: &Arc<GatewayState>) -> WsR
         Err(res) => return res,
     };
 
-    let scheduler_opt = state.task_scheduler.read().await;
-    let scheduler = match scheduler_opt.as_ref() {
+    let scheduler = match state.task_scheduler.get_opt().await {
         Some(s) => s,
         None => {
             return WsResponse::err(
